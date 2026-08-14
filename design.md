@@ -328,6 +328,7 @@ Rather than scanning the entire `src/` directory, the system reads an explicit a
 
     [render.envsubst]
     # Shell script providing env variables for envsubst
+    # If it's a relative path, it's always relative to the 'config' folder under of working directory.
     # The file is located at "config/envsubst.bash" .
     input_file = "envsubst.bash"
 
@@ -478,7 +479,26 @@ on_update = "post-update.bash"
 
 ```
 
-If the package config toml file is not present, and this package is not disabled in workspace config `drift.toml` file, an error will be thrown to prevent system corruption, and the render process will not start. You can always using CLI `drift add <package-folder> [<package.toml | drift_package.toml>]` to init a package level config in that folder.  
+If the package config toml file is not present, and one of the follwing things happened:  
+
+1. this package is explicitly mentioned in commands.
+2. this package is not disabled in workspace config `drift.toml` file, and the user invokes a global operation without specific package name.  
+
+Then an error will be thrown to prevent system corruption, and the render process will not start.  
+
+You can always using CLI `drift new <package-folder> [<package.toml | drift_package.toml>]` to init a package level config in that folder.  
+
+The package toml config file can be a template, the template should be rendered using the render engines defined in workspace config file `drift.toml` . The rendered output is stored at `render/<pkg>/package.toml | drift_package.toml` . The output name depends on the template name. Only one level of rendering is allowed.  
+
+The overall file detection order should be like:  
+1. drift_package.toml
+2. package.toml
+3. drift_package.<engine1>.toml
+4. package.<engine1>.toml  
+5. template for engine 2 and so on.  
+
+The engine 1, engine 2, engine 3 is ordered by its definition in `drift.toml` .  
+
 
 ---
 

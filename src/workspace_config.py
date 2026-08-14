@@ -1,10 +1,13 @@
 import os
 import re
 import tempfile
+import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from .toml_parser import parse_toml
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,6 +33,7 @@ class RenderEngineConfig:
 @dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift.toml."""
+    drift_root_path: str = ""
     source_directory: str = "src"
     render_directory: str = "render"
     install_directory: str = "install"
@@ -78,7 +82,7 @@ class WorkspaceConfig:
         return self.render_engine_config
 
     @classmethod
-    def from_dict(cls, data: dict) -> "WorkspaceConfig":
+    def from_dict(cls, data: dict, drift_root_path: str = "") -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         workspace_data = data.get("workspace", {})
         packages_data = data.get("packages", {})
@@ -118,6 +122,7 @@ class WorkspaceConfig:
             default_target_dir = os.path.expanduser(default_target_dir)
 
         config = cls(
+            drift_root_path=drift_root_path,
             source_directory=str(workspace_data.get("source_directory", "src")),
             render_directory=str(workspace_data.get("render_directory", "render")),
             install_directory=str(workspace_data.get("install_directory", "install")),
@@ -126,80 +131,6 @@ class WorkspaceConfig:
             packages_enable=packages,
             packages_enable_default=bool(packages_enable_data.get("DEFAULT", False)),
             render_engine_config=render_engine_config,
-        )
-        config.validate()
-        return config
-
-
-@dataclass
-class PackageConfig:
-    """Represents the package-specific configuration inside src/<pkg>/package.toml."""
-    name: str
-    enable_render: bool = True
-    enable_install: bool = True
-    install_method: str = "stow"
-    target_directory: Optional[str] = None
-    sudo: bool = False
-    fully_controlled_dirs: List[str] = field(default_factory=list)
-    on_install: Optional[str] = None
-    on_update: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        """Handles path expansion on load/initialization."""
-        if self.target_directory and self.target_directory.startswith("~"):
-            self.target_directory = os.path.expanduser(self.target_directory)
-
-    def validate(self) -> None:
-        """Validates configuration values."""
-        if not self.name or not isinstance(self.name, str):
-            raise ValueError("Package config must have a non-empty 'name'.")
-        if self.install_method not in ("stow", "copy"):
-            raise ValueError(
-                f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
-                "Must be 'stow' or 'copy'."
-            )
-        if not isinstance(self.enable_render, bool):
-            raise TypeError(f"enable_render must be a boolean for package '{self.name}'.")
-        if not isinstance(self.enable_install, bool):
-            raise TypeError(f"enable_install must be a boolean for package '{self.name}'.")
-        if not isinstance(self.sudo, bool):
-            raise TypeError(f"sudo must be a boolean for package '{self.name}'.")
-        if not isinstance(self.fully_controlled_dirs, list):
-            raise TypeError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
-        for d in self.fully_controlled_dirs:
-            if not isinstance(d, str):
-                raise TypeError(f"fully_controlled_dirs entries must be strings for package '{self.name}'.")
-
-    @classmethod
-    def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
-        """Builds a PackageConfig instance from a parsed TOML dictionary."""
-        package_data = data.get("package", {})
-        
-        name = package_data.get("name", default_name)
-        if not name:
-            raise ValueError("Package configuration is missing the required 'name' field.")
-            
-        fcd = package_data.get("fully_controlled_dirs", [])
-        if isinstance(fcd, str):
-            fcd = [fcd]
-        elif not isinstance(fcd, list):
-            fcd = []
-
-        # Expand home directory for target_directory on load
-        target_dir = package_data.get("target_directory")
-        if target_dir and str(target_dir).startswith("~"):
-            target_dir = os.path.expanduser(str(target_dir))
-            
-        config = cls(
-            name=str(name),
-            enable_render=bool(package_data.get("enable_render", True)),
-            enable_install=bool(package_data.get("enable_install", True)),
-            install_method=str(package_data.get("install_method", "stow")),
-            target_directory=target_dir,
-            sudo=bool(package_data.get("sudo", False)),
-            fully_controlled_dirs=[str(d) for d in fcd],
-            on_install=package_data.get("on_install"),
-            on_update=package_data.get("on_update")
         )
         config.validate()
         return config
@@ -243,38 +174,15 @@ def load_workspace_config(file_path: str) -> WorkspaceConfig:
         if os.path.exists(envst_path):
             actual_path = render_workspace_config_toml(envst_path)
         else:
-            raise FileNotFoundError(f"Workspace configuration file not found: {file_path}")
+            raise FileNotFoundError(
+                    f"Workspace configuration file not found: {file_path} or {envst_path}")
             
-    print(f"Workspace config is loaded from: {actual_path}")
+    logger.info(f"Workspace config is loaded from: {actual_path}")
     with open(actual_path, "r", encoding="utf-8") as f:
         content = f.read()
     data = parse_toml(content)
-    return WorkspaceConfig.from_dict(data)
+    
+    # Compute drift_root_path (parent of 'config' directory containing drift.toml)
+    drift_root_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.abspath(file_path))))
+    return WorkspaceConfig.from_dict(data, drift_root_path=drift_root_path)
 
-
-def load_package_config(file_path: str, default_name: Optional[str] = None) -> PackageConfig:
-    """Loads and parses a package configuration from drift_package.toml or package.toml."""
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Package configuration file not found: {file_path}")
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    data = parse_toml(content)
-    return PackageConfig.from_dict(data, default_name=default_name)
-
-
-def find_package_config_file(package_dir: str) -> Optional[str]:
-    """Finds the drift_package.toml or package.toml in a given package directory."""
-    for filename in ("drift_package.toml", "package.toml"):
-        path = os.path.join(package_dir, filename)
-        if os.path.isfile(path):
-            return path
-    return None
-
-
-def load_package_config_from_dir(package_dir: str, package_name: str) -> PackageConfig:
-    """Loads package configuration from a package directory."""
-    config_file = find_package_config_file(package_dir)
-    if config_file:
-        return load_package_config(config_file, default_name=package_name)
-    else:
-        raise FileNotFoundError(f"No package configuration file found in directory: {package_dir}")

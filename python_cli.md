@@ -217,7 +217,10 @@ Enables seamless bidirectional workflows. When GUI tools modify configuration fi
         ```
 *   **Safeguard**: Aborts with an error if the package is still declared as active/enabled in `config.toml`, preventing accidental uninstalls of packages scheduled to run in bulk deploys, unless `--force` is supplied.
 
----
+---  
+
+### TODO: `drift add <package> <realfile>`  
+### TODO: `drift new <package> [package.toml | drift_package.toml]`  
 
 ## 5. Global Configuration: `drift.toml`
 
