@@ -1,13 +1,14 @@
 import os
 from typing import Optional
 
+from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
 from ..workspace_config import load_workspace_config
 from ..render_package import render_package, render_all_packages
 
 
 def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
-    config_path = os.path.join(drift_root, "config", "drift.toml")
+    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
     workspace_config = load_workspace_config(config_path)
 
     if package_name:

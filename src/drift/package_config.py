@@ -1,7 +1,8 @@
 import os
-from typing import Dict, List, Optional
+from typing import List, Optional
 from .toml_parser import parse_toml
 
+from .constants import PACKAGE_CONFIG_FILE_NAME_LIST
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 
 from dataclasses import dataclass, field
@@ -136,31 +137,27 @@ def get_package_config_file_info(
     - type: 'static' or 'template'
     - path: path to the file/template
     - engine: RenderEngineConfig instance (if 'template', otherwise None)
-    - target_name: 'drift_package.toml' or 'package.toml'
+    - target_name: 'drift_package.toml' or 'package.toml' (PACKAGE_CONFIG_FILE_NAMES)
     """
-    # 1. drift_package.toml
-    p = os.path.join(package_dir, "drift_package.toml")
-    if os.path.isfile(p):
-        return PackageConfigFileInfo(type="static", path=p, engine=None, target_name="drift_package.toml")
 
-    # 2. package.toml
-    p = os.path.join(package_dir, "package.toml")
-    if os.path.isfile(p):
-        return PackageConfigFileInfo(type="static", path=p, engine=None, target_name="package.toml")
+    # 1. drift_package.toml and package.toml
+    for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
+        p = os.path.join(package_dir, filename)
+        if os.path.isfile(p):
+            return PackageConfigFileInfo(type="static", path=p, engine=None,
+                                         target_name=filename)
 
-    # 3 & 4. Iterate over render engines in definition order
+    # 2. Iterate over render engines in definition order
     for engine in workspace_config.render_engine_configs.values():
         suffix = engine.suffix
         if not suffix:
             continue
-
-        p = os.path.join(package_dir, f"drift_package.{suffix}.toml")
-        if os.path.isfile(p):
-            return PackageConfigFileInfo(type="template", path=p, engine=engine, target_name="drift_package.toml")
-
-        p = os.path.join(package_dir, f"package.{suffix}.toml")
-        if os.path.isfile(p):
-            return PackageConfigFileInfo(type="template", path=p, engine=engine, target_name="package.toml")
+        for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
+            template_filename = filename.replace(".toml", f".{suffix}.toml")
+            p = os.path.join(package_dir, template_filename)
+            if os.path.isfile(p):
+                return PackageConfigFileInfo(type="template", path=p, engine=engine,
+                                             target_name=filename)
 
     return None
 
