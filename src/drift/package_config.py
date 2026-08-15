@@ -27,6 +27,11 @@ class PackageConfig:
         if self.target_directory and self.target_directory.startswith("~"):
             self.target_directory = os.path.expanduser(self.target_directory)
 
+    def is_static(self) -> bool:
+        return (self.config_template_path is not None
+            and self.config_rendered_path is not None
+            and self.config_template_path == self.config_rendered_path)
+
     def validate(self) -> None:
         """Validates configuration values."""
         if not self.name or not isinstance(self.name, str):
@@ -94,8 +99,8 @@ def load_package_config_static(
         content = f.read()
     data = parse_toml(content)
     config = PackageConfig.from_dict(data, default_name=default_name)
-    config.config_template_path = file_path
-    config.config_rendered_path = file_path
+    config.config_template_path = os.path.abspath(file_path)
+    config.config_rendered_path = os.path.abspath(file_path)
     return config
 
 
@@ -110,7 +115,11 @@ def locate_package_config_file_static(package_dir: str) -> Optional[str]:
 
 @dataclass
 class PackageConfigFileInfo:
-    """Represents file info for a found package config file (or template)."""
+    """
+    Represents file info for a found package config file (or template).
+    This class is only used in this file, and is not part of the public API.
+    Public API users should use the PackageConfig class instead.
+    """
     type: str  # 'static' or 'template'
     path: str  # path to the file/template
     engine: Optional[RenderEngineConfig] = None  # RenderEngineConfig instance (if 'template', otherwise None)
@@ -202,6 +211,6 @@ def load_package_config_from_dir(
 
         # Load from the rendered path
         config = load_package_config_static(output_file_path, default_name=package_name)
-        config.config_template_path = info.path
-        config.config_rendered_path = output_file_path
+        config.config_template_path = os.path.abspath(info.path)
+        config.config_rendered_path = os.path.abspath(output_file_path)
         return config

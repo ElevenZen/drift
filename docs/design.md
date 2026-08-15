@@ -566,7 +566,7 @@ def cli_show_diff_C(target_pkg=None, stat=False):
 # Full Safe Deployment (make deploy)
 def cli_deploy_full_sequence(target_pkg=None):
     state_registry = load_state_registry("install/state.toml")
-    # TODO: check for deploying packages here, if we have deploying package, then abort.
+    # TODO: check for state 'deploying' packages here, if we have deploying package, then abort.
 
     # --- Bulk Garbage Collection (Self-Cleaning) ---
     if target_pkg is None:

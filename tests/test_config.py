@@ -1,17 +1,17 @@
 import os
 import tempfile
 import unittest
-from src.toml_parser import (
+from drift.toml_parser import (
     parse_toml,
     _parse_toml_fallback,
     parse_toml_value,
     split_array_elements,
 )
-from src.workspace_config import (
+from drift.workspace_config import (
     WorkspaceConfig,
    load_workspace_config,
 )
-from src.package_config import (
+from drift.package_config import (
     PackageConfig,
     locate_package_config_file_static,
     load_package_config_static,
@@ -257,7 +257,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(config.config_rendered_path, alt_config_path)
 
     def test_get_package_config_file_info(self) -> None:
-        from src.workspace_config import RenderEngineConfig
+        from drift.workspace_config import RenderEngineConfig
         pkg_dir = os.path.join(self.temp_dir.name, "test_find_info")
         os.makedirs(pkg_dir)
 
@@ -354,7 +354,7 @@ class TestConfigLoaders(unittest.TestCase):
             """)
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
-        from src.dependency import render_input_templates
+        from drift.dependency import render_input_templates
         render_input_templates(list(workspace_config.render_engine_configs.values()), workspace_config.drift_root_path)
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/package.toml)
@@ -380,7 +380,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_render_engine_config_validation(self) -> None:
-        from src.workspace_config import RenderEngineConfig
+        from drift.workspace_config import RenderEngineConfig
         config = RenderEngineConfig(
             name="envsubst",
             input_file="envsubst.bash",
@@ -393,7 +393,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             RenderEngineConfig(name="", input_file="a", suffix="b", render_command="c").validate()
 
     def test_workspace_config_with_render_engines(self) -> None:
-        from src.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig
         data = {
             "workspace": {
                 "render_directory": "custom_render",
@@ -418,7 +418,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.render_engine_configs["mustache"].input_file, "mustache.envst.json")
 
     def test_meta_rendering_drift_envst_toml(self) -> None:
-        from src.workspace_config import load_workspace_config
+        from drift.workspace_config import load_workspace_config
         # We set an env variable
         os.environ["MY_TEST_RENDER_DIR"] = "templated_render"
         os.environ["MY_TEST_INSTALL_DIR"] = "templated_install"

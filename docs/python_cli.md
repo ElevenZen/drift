@@ -133,7 +133,7 @@ Deploys configurations using a robust, atomic two-stage deployment engine.
 If no drift is detected (or `--force` is supplied):
 1.  **Render**: Compiles `src/` templates into `render/` (`Primitive 2`).
 2.  **Commit Render**: Automatically commits compiled sandbox history (`Primitive 3`).
-3.  **Sync Render to Install**: Merges changes from `render/` to `install/`, isolating deleted, added, and modified files (`Primitive 4`).
+3.  **Stage Render to Install**: Merges changes from `render/` to `install/`, isolating deleted, added, and modified files (`Primitive 4`).
 4.  **Install Deployment**: Operates manual file-by-file copy/linking with collision checks and infinite stow loop prevention (`Primitive 5`).
 5.  **Commit Install**: Scope commits the deployed configurations and `state.toml` inside the `install/` database (`Primitive 6`).
 
@@ -168,7 +168,7 @@ successfully committed configurations.
     1.  Resets the local state database to the last clean commit: `git -C install reset --hard HEAD`.
     2.  Computes active packages from configurations.
     3.  Performs a high-level **Full Redeploy** (recreating all symlinks and rewriting physical files) to bring the active host system back into complete alignment with the reset state database.
-*   **Operational Protection**: If run under healthy system conditions (no midway fail flag exists in workspace memory), drift will prompt a prominent confirmation screen:
+*   **Operational Protection**: If run under healthy system conditions (no midway fail flag exists in workspace memory such as 'install/state.toml'), drift will prompt a prominent confirmation screen:
     ```bash
     ⚠️  WARNING: No mid-deployment failure was recorded in this workspace.
        Running 'rollback' now will bypass reverse synchronization and hard-reset
@@ -219,8 +219,135 @@ Enables seamless bidirectional workflows. When GUI tools modify configuration fi
 
 ---  
 
-### TODO: `drift add <package> <realfile>`  
-### TODO: `drift new <package> [package.toml | drift_package.toml]`  
+### H. Package Creation: `drift new <package> [config_filename] [--force]`
+#### **Common Usage**
+Create a new package directory with the default `package.toml` configuration file:
+```bash
+$ drift new nvim
+✨ Package 'nvim' created successfully!
+📝 Generated package.toml at src/nvim/package.toml.
+```
+
+#### **Details & Deep Probing Logic**
+*   **Command Signature**: `drift new <package> [config_filename] [--force / -f]`
+*   **Optional Arguments**:
+    - `<config_filename>`: Explicitly name the config file as `drift_package.toml` or `package.toml` (defaults to `package.toml`).
+    - `--force / -f`: Forcefully overwrites any existing config file inside the package.
+*   **Probing Guard**:
+    - The CLI first checks if *any* configuration file already exists inside the package directory `src/<package>/`.
+    - Specifically, it probes:
+      1. `drift_package.toml`
+      2. `package.toml`
+      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.
+    - If any configuration file exists:
+      - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
+      - If `--force` **is** supplied: Overwrites the configuration with the default template.
+*   **Default Configuration Output**:
+    ```toml
+    # src/<package>/package.toml
+    [package]
+    name = "<package>"
+    install_method = "stow"
+    enable_render = true
+    enable_install = true
+    ```
+
+---
+
+### I. Resource Import: `drift add <package> <realfile> [--force]`
+#### **Common Usage**
+Import a physical active system configuration file (like `~/.config/nvim/init.lua`) into your declarative source folder:
+```bash
+$ drift add nvim ~/.config/nvim/init.lua
+🚀 Imported ~/.config/nvim/init.lua into nvim package!
+📁 Copied contents to src/nvim/dot-config/nvim/init.lua (Translated dot-prefix).
+```
+
+#### **Details & Deep Logic**
+*   **Command Signature**: `drift add <package> <realfile> [--force / -f]`
+*   **Link State Safeguard**:
+    - The command checks if `realfile` is a symlink pointing into the `install/` state database repository. If it is, the CLI aborts because the file is already under drift's active governance.
+*   **Symlink Resolution Policy**:
+    - If `realfile` is a symlink pointing *elsewhere* (not to the state repository), or if it's a directory containing symlink entries, drift **recursively resolves all symlinks and copies their actual physical contents** rather than copying the links. This ensures complete package self-containment, portability, and reproducibility across fresh machines.
+*   **Path Resolution & prefix Translation**:
+    - Computes `package_config.target_directory` (with a fallback to `workspace_config.default_target_directory`).
+    - Resolves both paths absolutely and computes the relative path: `rel_path = os.path.relpath(abs_realfile, abs_target_dir)`.
+    - **Dot-Prefix Translation (Symmetric Symmetry)**:
+      - Directories and files starting with standard dots `.` must be translated to a `dot-` prefix to maintain Git-friendly name handling in the repository.
+      - *Example*: `.config/nvim/init.lua` is translated to `dot-config/nvim/init.lua`.
+*   **Collision Guard & Backup Policy**:
+    - Before writing, drift checks if there's an existing file or template in the source directory that compiles/renders to the same `realfile` (e.g., checking for both `src/<package>/dot-config/nvim/init.lua` and templates like `init.envst.lua`).
+    - If a collision occurs:
+      - Without `--force`: The command halts and warns of the collision.
+      - With `--force`: Drift **safely moves the colliding template/file to `backup/<package>/deleted_files/`** to avoid irreversible data loss, before overwriting it with the new source file.
+
+---
+
+### J. Low-Level Control Commands
+These commands are intended for advanced troubleshooting, continuous integration, or automation scripts.
+
+#### **1. Low-Level Render: `drift render [<package>]`**
+##### **Common Usage**
+```bash
+$ drift render
+🚀 Rendering all active package templates to sandbox render/
+```
+##### **Details**
+*   If `<package>` is provided: Recursively compiles templates and copies files for *only* that package.
+*   If `<package>` is omitted: Recursively processes *all* enabled packages.
+
+#### **2. Low-Level Commit: `drift render-commit -m "message"`**
+##### **Common Usage**
+```bash
+$ drift render-commit -m "Render: Update Neovim templates"
+✨ Committed render sandbox changes.
+```
+##### **Details**
+*   Stages all compiled/copied configurations inside the sandbox using `git add -A` and commits them under the `render/` repository with the specified message. Returns gracefully if the repository is already clean.  
+
+#### **3. Low-Level Reverse Sync: `drift reverse-sync [<package>]`**
+##### **Common Usage**
+```bash
+$ drift reverse-sync nvim
+🔍 Pulling live configuration overrides from host system for 'nvim' into install state...
+```
+##### **Details**
+*   **Mechanism (Primitive 1)**: Traverses the live target directories on the system. It checks for files deleted by the user/system, files with modifications (pulling their overrides), and scans Fully-Controlled Directories (FCD) for untracked/new files, copy-syncing them back to `install/`.
+*   If `<package>` is provided: Scopes the reverse synchronization strictly to that package.
+*   If `<package>` is omitted: Bulk reverse-syncs all enabled packages.
+
+#### **4. Low-Level Sandbox Staging: `drift stage [<package>] [--force]`**
+##### **Common Usage**
+```bash
+$ drift stage nvim
+🚀 Staging compiled sandbox templates from render/ to install/ state database...
+```
+##### **Details**
+*   **Mechanism (Primitive 4)**: Reconciles the sandbox `render/` folder into the `install/` state database folder. It computes added, modified, or deleted files between the directories and moves deprecated configs to `backup/`.
+*   **Guard**: If the `install/` repository has uncommitted local modifications, this command will abort **unless** the `--force / -f` flag is supplied, in which case it overwrites them.
+
+#### **5. Low-Level State Application: `drift apply [<package>] [--full]`**
+##### **Common Usage**
+```bash
+$ drift apply nvim
+🚀 Applying 'nvim' configurations from state database to active host system...
+```
+##### **Details**
+*   **Mechanism (Primitive 5)**: Applies files inside the `install/` state database to the live target paths on the host system. To avoid naming confusion with standard package managers or the registration of new dotfiles, this command is named **`apply`** (representing the physical application of the database state to the host).
+*   **Options**:
+    - `--full`: Runs a heavy-duty **Full Redeploy** (using high-level Stow or copy directory utilities) instead of the surgical, incremental file-by-file update engine.
+
+#### **6. Low-Level State Commit: `drift install-commit -m "message"`**
+##### **Common Usage**
+```bash
+$ drift install-commit -m "Deploy: Manual update of Neovim configs"
+✨ Committed state database changes.
+```
+##### **Details**
+*   **Mechanism (Primitive 6)**: Stages and locks the deployed configurations inside the `install/` local state tracking repository with an automated commit.
+*   **Parameters**:
+    - `-m "message"` (Required): Specifying the commit message.
+    - If a specific package argument was used or is tracked, it scopes the `git add` and `git commit` actions strictly to that package folder (e.g. `install/<package>/`) and `state.toml`. Otherwise, it commits the entire repository.
 
 ## 5. Global Configuration: `drift.toml`
 

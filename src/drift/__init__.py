@@ -14,6 +14,11 @@ from .render_core import (
     render_template,
     render_template_to_file,
 )
+from .render_package import (
+    render_package,
+    render_all_packages,
+    commit_render_repo,
+)
 from .dependency import (
     find_engine_for_file,
     strip_engine_suffix,

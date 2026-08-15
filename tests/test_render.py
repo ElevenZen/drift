@@ -2,9 +2,9 @@ import os
 import tempfile
 import unittest
 import subprocess
-from src.workspace_config import RenderEngineConfig, WorkspaceConfig
-from src.render_core import render_template, render_template_to_file
-from src.dependency import (
+from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
+from drift.render_core import render_template, render_template_to_file
+from drift.dependency import (
     find_engine_for_file,
     strip_engine_suffix,
     resolve_dependencies,
@@ -454,6 +454,285 @@ class TestDependencyResolver(unittest.TestCase):
         with open(expected_output_path, "r", encoding="utf-8") as f:
             rendered_json = f.read().strip()
         self.assertEqual(rendered_json, '{"var": "abs_val"}')
+
+
+class TestRenderPackage(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_render_package_success_static_config(self) -> None:
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+
+        drift_root = self.temp_dir.name
+
+        # 1. Create config and env file
+        config_dir = os.path.join(drift_root, "config")
+        os.makedirs(config_dir, exist_ok=True)
+        with open(os.path.join(config_dir, "env.sh"), "w", encoding="utf-8") as f:
+            f.write("export MY_ENV_VAR='drift_render_test'\n")
+
+        # 2. Setup WorkspaceConfig
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory="src",
+            render_directory="render",
+        )
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file="env.sh",
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+
+        # 3. Create a package src directory
+        pkg_dir = os.path.join(drift_root, "src", "my_pkg")
+        os.makedirs(pkg_dir, exist_ok=True)
+
+        # 4. Write static package config
+        with open(os.path.join(pkg_dir, "package.toml"), "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "my_pkg"
+            enable_render = true
+            """)
+
+        # 5. Write static file and template file
+        with open(os.path.join(pkg_dir, "static.txt"), "w", encoding="utf-8") as f:
+            f.write("Static content")
+
+        with open(os.path.join(pkg_dir, "templated.envst.txt"), "w", encoding="utf-8") as f:
+            f.write("Rendered: $MY_ENV_VAR")
+
+        # 6. Run render_package
+        render_package(workspace_config, pkg_dir)
+
+        # 7. Verify outputs in render/my_pkg/
+        render_pkg_dir = os.path.join(drift_root, "render", "my_pkg")
+
+        # Verify static file was copied
+        self.assertTrue(os.path.exists(os.path.join(render_pkg_dir, "static.txt")))
+        with open(os.path.join(render_pkg_dir, "static.txt"), "r") as f:
+            self.assertEqual(f.read(), "Static content")
+
+        # Verify template was rendered
+        self.assertTrue(os.path.exists(os.path.join(render_pkg_dir, "templated.txt")))
+        with open(os.path.join(render_pkg_dir, "templated.txt"), "r") as f:
+            self.assertEqual(f.read(), "Rendered: drift_render_test")
+
+        # Verify package.toml was copied since it is static
+        self.assertTrue(os.path.exists(os.path.join(render_pkg_dir, "package.toml")))
+
+    def test_render_package_disabled(self) -> None:
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig
+
+        drift_root = self.temp_dir.name
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory="src",
+            render_directory="render",
+        )
+
+        pkg_dir = os.path.join(drift_root, "src", "my_pkg")
+        os.makedirs(pkg_dir, exist_ok=True)
+
+        # package config with enable_render = false
+        with open(os.path.join(pkg_dir, "package.toml"), "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "my_pkg"
+            enable_render = false
+            """)
+
+        with open(os.path.join(pkg_dir, "static.txt"), "w", encoding="utf-8") as f:
+            f.write("Static content")
+
+        # Run render_package
+        render_package(workspace_config, pkg_dir)
+
+        # Verify render dir does not contain the package since rendering is disabled
+        render_pkg_dir = os.path.join(drift_root, "render", "my_pkg")
+        self.assertFalse(os.path.exists(render_pkg_dir))
+
+    def test_render_package_templated_config(self) -> None:
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+
+        drift_root = self.temp_dir.name
+
+        config_dir = os.path.join(drift_root, "config")
+        os.makedirs(config_dir, exist_ok=True)
+        with open(os.path.join(config_dir, "env.sh"), "w", encoding="utf-8") as f:
+            f.write("export PKG_NAME='rendered_pkg_name'\n")
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory="src",
+            render_directory="render",
+        )
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file="env.sh",
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+
+        pkg_dir = os.path.join(drift_root, "src", "my_pkg")
+        os.makedirs(pkg_dir, exist_ok=True)
+
+        # Write templated package config
+        with open(os.path.join(pkg_dir, "package.envst.toml"), "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "$PKG_NAME"
+            enable_render = true
+            """)
+
+        # Run render_package
+        render_package(workspace_config, pkg_dir)
+
+        # Verify output in render/my_pkg/
+        render_pkg_dir = os.path.join(drift_root, "render", "my_pkg")
+
+        # package.toml was rendered (loaded from package.envst.toml)
+        rendered_config_path = os.path.join(render_pkg_dir, "package.toml")
+        self.assertTrue(os.path.exists(rendered_config_path))
+        with open(rendered_config_path, "r") as f:
+            content = f.read()
+        self.assertIn('name = "rendered_pkg_name"', content)
+
+        # There shouldn't be any package.envst.toml in render dir
+        self.assertFalse(os.path.exists(os.path.join(render_pkg_dir, "package.envst.toml")))
+
+    def test_render_all_packages(self) -> None:
+        from drift.render_package import render_all_packages
+        from drift.workspace_config import WorkspaceConfig
+
+        drift_root = self.temp_dir.name
+
+        # Setup WorkspaceConfig
+        # pkg_a is explicitly enabled (True)
+        # pkg_b is explicitly disabled (False)
+        # pkg_c is not listed, but packages_enable_default is True
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory="src",
+            render_directory="render",
+            packages_enable={
+                "pkg_a": True,
+                "pkg_b": False,
+            },
+            packages_enable_default=True
+        )
+
+        # Create package source folders under src/
+        for pkg_name in ("pkg_a", "pkg_b", "pkg_c"):
+            pkg_dir = os.path.join(drift_root, "src", pkg_name)
+            os.makedirs(pkg_dir, exist_ok=True)
+            with open(os.path.join(pkg_dir, "package.toml"), "w", encoding="utf-8") as f:
+                f.write(f"""
+                [package]
+                name = "{pkg_name}"
+                enable_render = true
+                """)
+            with open(os.path.join(pkg_dir, "file.txt"), "w", encoding="utf-8") as f:
+                f.write(f"Content for {pkg_name}")
+
+        # Run render_all_packages
+        render_all_packages(workspace_config)
+
+        # Verify pkg_a is rendered
+        self.assertTrue(os.path.exists(os.path.join(drift_root, "render", "pkg_a", "file.txt")))
+        # Verify pkg_b is NOT rendered
+        self.assertFalse(os.path.exists(os.path.join(drift_root, "render", "pkg_b", "file.txt")))
+        # Verify pkg_c is rendered (due to default=True)
+        self.assertTrue(os.path.exists(os.path.join(drift_root, "render", "pkg_c", "file.txt")))
+
+    def test_commit_render_repo(self) -> None:
+        from drift.render_package import commit_render_repo
+        from drift.workspace_config import WorkspaceConfig
+        import subprocess
+
+        drift_root = self.temp_dir.name
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory="src",
+            render_directory="render",
+        )
+
+        # 1. Create render directory
+        render_dir = os.path.join(drift_root, "render")
+        os.makedirs(render_dir, exist_ok=True)
+
+        # 2. Initialize a git repository inside the render directory
+        # Also, configure standard dummy git user for testing environments to avoid commit issues
+        subprocess.run(["git", "init"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, capture_output=True, check=True)
+
+        # 3. Write a file inside render directory
+        test_file_path = os.path.join(render_dir, "test.txt")
+        with open(test_file_path, "w", encoding="utf-8") as f:
+            f.write("Hello render")
+
+        # 4. Commit using commit_render_repo (unscoped)
+        msg = "Test dynamic commit message"
+        commit_render_repo(workspace_config, msg)
+
+        # 5. Verify the commit message
+        log_res = subprocess.run(
+            ["git", "-C", render_dir, "log", "-1", "--pretty=%B"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.assertEqual(log_res.stdout.strip(), msg)
+
+        # 6. Run again on a clean repo (should return gracefully without error)
+        commit_render_repo(workspace_config, "Should not commit anything")
+
+        # 7. Test scoped commit to a specific package
+        pkg_a_dir = os.path.join(render_dir, "pkg_a")
+        pkg_b_dir = os.path.join(render_dir, "pkg_b")
+        os.makedirs(pkg_a_dir, exist_ok=True)
+        os.makedirs(pkg_b_dir, exist_ok=True)
+
+        with open(os.path.join(pkg_a_dir, "file_a.txt"), "w", encoding="utf-8") as f:
+            f.write("pkg_a file")
+        with open(os.path.join(pkg_b_dir, "file_b.txt"), "w", encoding="utf-8") as f:
+            f.write("pkg_b file")
+
+        # Commit pkg_a specifically
+        scoped_msg = "Commit pkg_a changes"
+        commit_render_repo(workspace_config, scoped_msg, "pkg_a")
+
+        # Verify only pkg_a was committed
+        status_res = subprocess.run(
+            ["git", "-C", render_dir, "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        status_output = status_res.stdout.strip()
+        # pkg_b should still be untracked (marked as ??)
+        self.assertTrue("?? pkg_b/" in status_output or "?? pkg_b/file_b.txt" in status_output)
+        # pkg_a should NOT be in the status output because it is clean
+        self.assertNotIn("pkg_a/", status_output)
+
+        # Verify the commit message of the scoped commit
+        log_scoped = subprocess.run(
+            ["git", "-C", render_dir, "log", "-1", "--pretty=%B"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.assertEqual(log_scoped.stdout.strip(), scoped_msg)
 
 
 if __name__ == "__main__":

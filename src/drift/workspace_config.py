@@ -186,3 +186,4 @@ def load_workspace_config(file_path: str) -> WorkspaceConfig:
     drift_root_path = os.path.abspath(os.path.dirname(os.path.dirname(os.path.abspath(file_path))))
     return WorkspaceConfig.from_dict(data, drift_root_path=drift_root_path)
 
+
