@@ -1,12 +1,11 @@
 import os
-import shutil
 import tempfile
 import unittest
 import logging
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
-from drift.stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
+from drift.stage_repo import run_primitive_4_stage_render_to_install
 from drift.render_package import render_package
 
 
@@ -200,7 +199,7 @@ class TestStageRepo(unittest.TestCase):
             f.write("Should not be copied")
 
         with self.assertRaises(RuntimeError) as cm:
-            changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
+            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
         self.assertIn("No active packages are enabled", str(cm.exception))
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 

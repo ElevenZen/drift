@@ -1,7 +1,7 @@
 import os
 import sys
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -50,13 +50,29 @@ def run_argparse_cli(argv=None) -> None:
     )
     stage_parser.add_argument(
         "package",
-        nargs="?",
-        help="Optional package name to stage specifically"
+        nargs="*",
+        help="Optional package name(s) to stage specifically"
     )
     stage_parser.add_argument(
         "-f", "--force",
         action="store_true",
         help="Force staging and bypass uncommitted modifications check"
+    )
+
+    # apply subcommand
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="Apply configurations from state database to active host system"
+    )
+    apply_parser.add_argument(
+        "package",
+        nargs="*",
+        help="Optional package name(s) to apply specifically"
+    )
+    apply_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force deployment and bypass check"
     )
 
     # render-commit subcommand
@@ -115,6 +131,17 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_stage(drift_root, args.package, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "apply":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_apply(drift_root, args.package, force=args.force)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

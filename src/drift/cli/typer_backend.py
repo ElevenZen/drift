@@ -1,11 +1,11 @@
 import os
 import sys
-from typing import Optional
+from typing import Optional, List
 
 import typer
 from rich import print as rprint
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -95,9 +95,9 @@ def typer_render(
 @app.command("stage")
 def typer_stage(
     ctx: typer.Context,
-    package: Optional[str] = typer.Argument(
+    packages: Optional[List[str]] = typer.Argument(
         None,
-        help="Optional package name to stage specifically"
+        help="Optional package name(s) to stage specifically"
     ),
     force: bool = typer.Option(
         False,
@@ -110,7 +110,31 @@ def typer_stage(
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_stage(drift_root, package, force=force)
+        execute_stage(drift_root, packages, force=force)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("apply")
+def typer_apply(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to apply specifically"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force deployment and bypass check"
+    )
+) -> None:
+    """Apply configurations from state database to active host system."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_apply(drift_root, packages, force=force)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

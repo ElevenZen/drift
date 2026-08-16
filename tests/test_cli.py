@@ -9,6 +9,11 @@ from drift.cli import main
 
 
 class TestCLI(unittest.TestCase):
+    def assertIn_stripped(self, expected: str, actual: str) -> None:
+        import re
+        stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', actual)
+        self.assertIn(expected, stripped)
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = self.temp_dir.name
@@ -80,7 +85,7 @@ class TestCLI(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("✨ Successfully rendered all enabled packages!", stdout.getvalue())
+        self.assertIn_stripped("✨ Successfully rendered all enabled packages!", stdout.getvalue())
 
         # pkg_a is enabled -> should be rendered
         self.assertTrue(os.path.exists(os.path.join(self.drift_root, "render", "pkg_a", "file.txt")))
@@ -98,7 +103,7 @@ class TestCLI(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("✨ Successfully rendered package 'pkg_b'!", stdout.getvalue())
+        self.assertIn_stripped("✨ Successfully rendered package 'pkg_b'!", stdout.getvalue())
 
         # pkg_b was explicitly requested -> should be rendered even if disabled in bulk
         self.assertTrue(os.path.exists(os.path.join(self.drift_root, "render", "pkg_b", "file.txt")))
@@ -134,7 +139,7 @@ class TestCLI(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("✨ Successfully rendered package 'pkg_a'!", stdout.getvalue())
+        self.assertIn_stripped("✨ Successfully rendered package 'pkg_a'!", stdout.getvalue())
 
     def test_render_outside_git_repository_raises_friendly_error(self) -> None:
         """Verifies that running render outside a Git repository prints our friendly error message."""
@@ -199,6 +204,38 @@ class TestCLI(unittest.TestCase):
         # Verify commit worked in render repo
         res = subprocess.run(["git", "log", "-n", "1", "--oneline"], cwd=render_dir, capture_output=True, text=True, check=True)
         self.assertIn("Manual templates commit", res.stdout)
+
+    def test_cli_apply(self) -> None:
+        """Verifies that running 'apply' deploys files to target directories."""
+        # Write a package.toml with target_directory
+        pkg_path = os.path.join(self.src_dir, "pkg_a")
+        target_dir = os.path.join(self.drift_root, "system_home")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "pkg_a"
+            enable_render = true
+            target_directory = "{target_dir}"
+            """)
+
+        # 1. Initialize, render, stage, then apply
+        main(["-C", self.drift_root, "init", "--force"])
+        main(["-C", self.drift_root, "render", "pkg_a"])
+        main(["-C", self.drift_root, "stage", "pkg_a"])
+
+        # 2. Run apply CLI
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "apply", "pkg_a"])
+        finally:
+            sys.stdout = original_stdout
+
+        # Verify that pkg_a files are applied/deployed to system target (simulating system_home)
+        self.assertTrue(os.path.islink(os.path.join(target_dir, "file.txt")))
 
 
 if __name__ == "__main__":

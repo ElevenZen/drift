@@ -575,6 +575,8 @@ def deploy_package(
                         target_dir=target_dir,
                         sudo=metadata.sudo
                     )
+
+    logger.info(f"File deployment for package '{pkg}' completed successfully, with install method '{metadata.install_method}'. Now updating state registry and triggering lifecycle hooks.")
                     
     # 3. Lifecycle Hooks & State registry update
     if is_first_time:
@@ -585,6 +587,8 @@ def deploy_package(
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
     save_state_registry(state_file, state_registry)
+
+    logger.info(f"Deployment of package '{pkg}' completed successfully")
 
 
 def run_primitive_5_install_deployment(

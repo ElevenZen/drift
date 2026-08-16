@@ -109,7 +109,7 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: str) -> None:
     correct_path = os.path.join(package_dir, ".drift_ignore")
     if os.path.isfile(misspelled_path) and not os.path.isfile(correct_path):
         logger.warning(
-            f"⚠️ Warning: Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
+            f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
             "Please rename it to '.drift_ignore'."
         )
         warned_misspelled = True
@@ -129,7 +129,7 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: str) -> None:
             if file == ".driftignore":
                 if not warned_misspelled:
                     logger.warning(
-                        f"⚠️ Warning: Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
+                        f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
                         "Please rename it to '.drift_ignore'."
                     )
                     warned_misspelled = True
@@ -143,32 +143,11 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: str) -> None:
             )
 
 
-def get_discovered_packages(workspace_config: WorkspaceConfig) -> List[str]:
-    """Finds all potential package subdirectory names within the source directory."""
-    source_dir = os.path.join(workspace_config.drift_root_path, workspace_config.source_directory)
-    if not os.path.exists(source_dir) or not os.path.isdir(source_dir):
-        return []
-
-    packages = []
-    for entry in os.listdir(source_dir):
-        entry_path = os.path.join(source_dir, entry)
-        if os.path.isdir(entry_path):
-            packages.append(entry)
-    return sorted(packages)
-
-
-def is_package_enabled(workspace_config: WorkspaceConfig, package_name: str) -> bool:
-    """Checks if a package is enabled based on WorkspaceConfig packages list or packages_enable_default."""
-    if package_name in workspace_config.packages_enable:
-        return workspace_config.packages_enable[package_name]
-    return workspace_config.packages_enable_default
-
-
 def render_all_packages(workspace_config: WorkspaceConfig) -> None:
     """Renders all enabled packages discovered in the workspace config's source directory."""
-    discovered = get_discovered_packages(workspace_config)
+    discovered = workspace_config.get_package_names_from_source_dir()
     for package_name in discovered:
-        if is_package_enabled(workspace_config, package_name):
+        if workspace_config.is_package_enabled(package_name):
             package_dir = os.path.join(
                 workspace_config.drift_root_path,
                 workspace_config.source_directory,

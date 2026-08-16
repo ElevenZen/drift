@@ -3,7 +3,7 @@ import re
 import tempfile
 import logging
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, List
 
 from .constants import in_test_mode
 from .toml_parser import parse_toml
@@ -81,6 +81,39 @@ class WorkspaceConfig:
     def render_engine_configs(self) -> Dict[str, RenderEngineConfig]:
         """Alias property for render_engine_config to support backward compatibility."""
         return self.render_engine_config
+
+    @classmethod
+    def get_package_names_from_dir(cls, custom_dir: str) -> List[str]:
+        if not os.path.exists(custom_dir) or not os.path.isdir(custom_dir):
+            return []
+
+        packages = []
+        for entry in os.listdir(custom_dir):
+            entry_path = os.path.join(custom_dir, entry)
+            if os.path.isdir(entry_path) and entry != '.git':
+                packages.append(entry)
+        return sorted(packages)
+
+    def get_package_names_from_source_dir(self) -> List[str]:
+        """Finds all potential package subdirectory names within the source directory."""
+        source_dir = os.path.join(self.drift_root_path, self.source_directory)
+        return WorkspaceConfig.get_package_names_from_dir(source_dir)
+
+    def get_package_names_from_render_dir(self) -> List[str]:
+        """Finds all potential package subdirectory names within the render directory."""
+        render_dir = os.path.join(self.drift_root_path, self.render_directory)
+        return WorkspaceConfig.get_package_names_from_dir(render_dir)
+
+    def get_package_names_from_install_dir(self) -> List[str]:
+        """Finds all potential package subdirectory names within the install directory."""
+        install_dir = os.path.join(self.drift_root_path, self.install_directory)
+        return WorkspaceConfig.get_package_names_from_dir(install_dir)
+
+    def is_package_enabled(self, package_name: str) -> bool:
+        """Checks if a package is enabled based on WorkspaceConfig packages list or packages_enable_default."""
+        if package_name in self.packages_enable:
+            return self.packages_enable[package_name]
+        return self.packages_enable_default
 
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: str = "") -> "WorkspaceConfig":

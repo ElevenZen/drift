@@ -461,6 +461,51 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.render_directory, "templated_render")
         self.assertEqual(config.install_directory, "templated_install")
 
+    def test_package_discovery_methods(self) -> None:
+        """Verifies package discovery methods on WorkspaceConfig correctly find folders from source, render, and install dirs."""
+        from drift.workspace_config import WorkspaceConfig
+        temp_root = tempfile.TemporaryDirectory()
+        try:
+            root_path = temp_root.name
+            
+            # Setup directories
+            os.makedirs(os.path.join(root_path, "src", "pkg_src_a"), exist_ok=True)
+            os.makedirs(os.path.join(root_path, "src", "pkg_src_b"), exist_ok=True)
+            
+            os.makedirs(os.path.join(root_path, "render", "pkg_render_a"), exist_ok=True)
+            os.makedirs(os.path.join(root_path, "render", ".git"), exist_ok=True) # should be skipped
+            
+            os.makedirs(os.path.join(root_path, "install", "pkg_install_a"), exist_ok=True)
+            os.makedirs(os.path.join(root_path, "install", ".git"), exist_ok=True) # should be skipped
+
+            config = WorkspaceConfig(
+                drift_root_path=root_path,
+                source_directory="src",
+                render_directory="render",
+                install_directory="install"
+            )
+
+            # Test source dir discovery
+            self.assertEqual(config.get_package_names_from_source_dir(), ["pkg_src_a", "pkg_src_b"])
+
+            # Test render dir discovery
+            self.assertEqual(config.get_package_names_from_render_dir(), ["pkg_render_a"])
+
+            # Test install dir discovery
+            self.assertEqual(config.get_package_names_from_install_dir(), ["pkg_install_a"])
+
+            # Test is_package_enabled
+            config.packages_enable = {"pkg_src_a": True, "pkg_src_b": False}
+            config.packages_enable_default = False
+            self.assertTrue(config.is_package_enabled("pkg_src_a"))
+            self.assertFalse(config.is_package_enabled("pkg_src_b"))
+            self.assertFalse(config.is_package_enabled("pkg_unlisted"))
+
+            config.packages_enable_default = True
+            self.assertTrue(config.is_package_enabled("pkg_unlisted"))
+        finally:
+            temp_root.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@
 import os
 import shutil
 import logging
-from typing import List, Optional
+from typing import List, Union, Optional
 from dataclasses import dataclass, field
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
@@ -12,6 +12,7 @@ from .package_config import load_package_config_static, PackageConfig
 from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_file
 from .ignore import DriftIgnore
 from .check_repo import has_uncommitted_modifications
+from .state_registry import load_state_registry, save_state_registry
 
 logger = logging.getLogger(__name__)
 
@@ -27,30 +28,33 @@ class PackageStageChanges:
 
 def load_active_packages(
     discovered: List[str],
-    target_pkg: Optional[str],
+    target_pkgs: Optional[Union[str, List[str]]],
     workspace_config: WorkspaceConfig,
     force: bool = False
 ) -> List[str]:
     """Initializes active packages for staging.
 
     Raises:
-        ValueError if the target package is not discovered (unless force is True).
+        ValueError if any target package is not discovered (unless force is True).
     """
-    if target_pkg is not None:
-        if target_pkg in discovered:
-            return [target_pkg]
-        else:
-            if force:
-                return [target_pkg]
-            raise ValueError(
-                f"Target package '{target_pkg}' was not discovered in source directory '{workspace_config.source_directory}'. "
-                "Use --force flag to force target_pkg processing."
-            )
+    if target_pkgs is not None:
+        if isinstance(target_pkgs, str):
+            target_pkgs = [target_pkgs]
+            
+        active_packages = []
+        for pkg in target_pkgs:
+            if pkg in discovered or force:
+                active_packages.append(pkg)
+            else:
+                raise ValueError(
+                    f"Target package '{pkg}' was not discovered in render directory '{workspace_config.render_directory}'. "
+                    "Use --force flag to force target_pkg processing."
+                )
+        return active_packages
 
     active_packages = []
     for pkg in discovered:
-        from .render_package import is_package_enabled
-        if is_package_enabled(workspace_config, pkg):
+        if workspace_config.is_package_enabled(pkg):
             active_packages.append(pkg)
     return active_packages
 
@@ -217,9 +221,10 @@ def ensure_install_pkg_dir_clean(install_base: str, pkg: str) -> None:
             "Please commit or stash your changes before staging, or use --force flag to bypass this check."
         )
 
+
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
-    target_pkg: Optional[str] = None,
+    target_pkgs: Optional[Union[str, List[str]]] = None,
     force: bool = False
 ) -> List[PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
@@ -227,14 +232,12 @@ def run_primitive_4_stage_render_to_install(
     Returns:
         A list of PackageStageChanges objects representing package changes.
     """
-    from .render_package import get_discovered_packages
-
-    discovered = get_discovered_packages(workspace_config)
+    discovered = workspace_config.get_package_names_from_render_dir()
     
     # Load active packages
     active_packages = load_active_packages(
         discovered=discovered,
-        target_pkg=target_pkg,
+        target_pkgs=target_pkgs,
         workspace_config=workspace_config,
         force=force
     )
@@ -267,6 +270,16 @@ def run_primitive_4_stage_render_to_install(
         for pkg in pkg_metadata.keys():
             ensure_install_pkg_dir_clean(install_base, pkg)
 
+    logger.info(f"Staging the following packages from render/ to install/: {list(pkg_metadata.keys())}")
+
+    # Set state of packages to "deploying" before staging to prevent partial staging issues
+    state_file = os.path.join(install_base, "state.toml")
+    state_registry = load_state_registry(state_file)
+    for pkg in pkg_metadata.keys():
+        metadata = pkg_metadata[pkg]
+        state_registry.set_package_state(pkg, "deploying", install_method=metadata.install_method)
+    save_state_registry(state_file, state_registry)
+
     pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
 
     # 2. Process Deletions
@@ -288,5 +301,20 @@ def run_primitive_4_stage_render_to_install(
             changes=pkg_changes[pkg]
         )
 
+    pkg_changes_with_actual_changes = [
+            change for change in pkg_changes.values()
+            if change.added_files or change.modified_files or change.deleted_files]
+    logger.info("Staging completed. Summary of changes:")
+    for pkg_change in pkg_changes_with_actual_changes:
+        logger.info(f"Package '{pkg_change.package_name}': Added: {len(pkg_change.added_files)}, Modified: {len(pkg_change.modified_files)}, Deleted: {len(pkg_change.deleted_files)}")
+
+    # Set state of packages to "installed" after successful staging
+    for pkg in pkg_metadata.keys():
+        metadata = pkg_metadata[pkg]
+        import datetime
+        now_str = datetime.datetime.now().isoformat()
+        state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
+    save_state_registry(state_file, state_registry)
+
     # Return only the packages that have actual changes
-    return [c for c in pkg_changes.values() if c.added_files or c.modified_files or c.deleted_files]
+    return pkg_changes_with_actual_changes

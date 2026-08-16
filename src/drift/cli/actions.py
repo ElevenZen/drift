@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Optional
+from typing import Optional, List
 
 from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
 from ..workspace_config import load_workspace_config
@@ -38,14 +38,18 @@ def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:
         render_all_packages(workspace_config)
 
 
-def execute_stage(drift_root: str, package_name: Optional[str] = None, force: bool = False) -> None:
+def execute_stage(drift_root: str, package_names: Optional[List[str]] = None, force: bool = False) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..stage_repo import run_primitive_4_stage_render_to_install
 
     config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
     workspace_config = load_workspace_config(config_path)
 
-    changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkg=package_name, force=force)
+    # Convert single string to a list for robustness
+    if isinstance(package_names, str):
+        package_names = [package_names]
+
+    changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=package_names, force=force)
     if not changes:
         logger.info("No changes staged. All files are up-to-date.")
     else:
@@ -57,6 +61,40 @@ def execute_stage(drift_root: str, package_name: Optional[str] = None, force: bo
                 logger.info(f"  [*] {file}")
             for file in pkg_change.deleted_files:
                 logger.info(f"  [-] {file}")
+
+
+def execute_apply(drift_root: str, package_names: Optional[List[str]] = None, force: bool = False) -> None:
+    """Core function to execute state application (apply), shared by both CLI backends."""
+    from ..install_repo import run_primitive_5_install_deployment
+
+    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
+    workspace_config = load_workspace_config(config_path)
+
+    # Convert single string to a list for robustness
+    if isinstance(package_names, str):
+        package_names = [package_names]
+
+    # Determine packages to redeploy
+    if package_names:
+        packages_to_redeploy = []
+        discovered = workspace_config.get_package_names_from_install_dir()
+        for pkg in package_names:
+            if pkg in discovered or force:
+                packages_to_redeploy.append(pkg)
+            else:
+                raise ValueError(f"Target package '{pkg}' was not discovered in install directory '{workspace_config.install_directory}'. "
+                                 f"Use --force to force {pkg} deployment.")
+    else:
+        # Redeploy all active packages currently inside install/ State Database
+        packages_to_redeploy = workspace_config.get_package_names_from_install_dir()
+
+    run_primitive_5_install_deployment(
+        workspace_config=workspace_config,
+        packages_to_redeploy=packages_to_redeploy,
+        resolve_symlinks=True,
+        force=force,
+        package_changes=None
+    )
 
 
 def execute_render_commit(drift_root: str, message: str, package_name: Optional[str] = None) -> None:
