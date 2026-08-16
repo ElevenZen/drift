@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
+from .constants import in_test_mode
 from .toml_parser import parse_toml
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,9 @@ class WorkspaceConfig:
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: str = "") -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
+        if "workspace" not in data:
+            raise ValueError("Missing '[workspace]' section in workspace configuration.")
+            
         workspace_data = data.get("workspace", {})
         packages_data = data.get("packages", {})
         
@@ -103,7 +107,12 @@ class WorkspaceConfig:
                 packages[pkg] = True
             else:
                 packages[pkg] = False
-                
+
+        packages_enable_default = bool(packages_enable_data.get("DEFAULT", False))
+        if not in_test_mode() and not packages_enable_default and len(packages) == 0:
+            logger.warning("No packages are enabled in the workspace configuration. "
+                        + "Consider enabling packages or setting 'DEFAULT = true' under [packages].")
+
         # Parse render engines configurations under [render.*]
         render_data = data.get("render", {})
         render_engine_config = {}
@@ -129,7 +138,7 @@ class WorkspaceConfig:
             backup_directory=str(workspace_data.get("backup_directory", "backup")),
             default_target_directory=default_target_dir,
             packages_enable=packages,
-            packages_enable_default=bool(packages_enable_data.get("DEFAULT", False)),
+            packages_enable_default=packages_enable_default,
             render_engine_config=render_engine_config,
         )
         config.validate()

@@ -4,6 +4,12 @@ from typing import Optional
 from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
 from ..workspace_config import load_workspace_config
 from ..render_package import render_package, render_all_packages
+from ..init_repo import init_drift_workspace
+
+
+def execute_init(drift_root: str, force: bool = False) -> None:
+    """Core function to initialize a drift workspace, shared by both CLI backends."""
+    init_drift_workspace(drift_root, force=force)
 
 
 def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:

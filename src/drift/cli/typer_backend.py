@@ -5,7 +5,7 @@ from typing import Optional
 import typer
 from rich import print as rprint
 
-from .actions import execute_render
+from .actions import execute_render, execute_init
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -25,6 +25,35 @@ def main_callback(
     )
 ) -> None:
     ctx.obj = {"directory": directory}
+
+
+@app.command("init")
+def typer_init(
+    ctx: typer.Context,
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force re-initialization and overwrite existing files"
+    )
+) -> None:
+    """Initialize a new drift workspace."""
+    directory = ctx.obj.get("directory") if ctx.obj else None
+
+    if directory:
+        drift_root = os.path.abspath(directory)
+    else:
+        drift_root = os.getcwd()
+
+    try:
+        execute_init(drift_root, force=force)
+        rprint("[bold yellow]✨[/bold yellow] [bold green]Initialized drift workspace![/bold green]")
+        rprint("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]")
+        rprint("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]")
+        rprint("[bold yellow]📝[/bold yellow] [bold green]Generated drift.toml template.[/bold green]")
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
 
 
 @app.command("render")

@@ -1,6 +1,12 @@
 import os
 import tempfile
 import unittest
+from drift.constants import (
+    CONFIG_DIR_NAME,
+    GLOBAL_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME_LIST,
+    set_test_mode,
+)
 from drift.toml_parser import (
     parse_toml,
     _parse_toml_fallback,
@@ -20,6 +26,8 @@ from drift.package_config import (
     PackageConfigFileInfo,
 )
 
+# Enable test mode for the duration of these tests
+set_test_mode(True)
 
 class TestConfigParser(unittest.TestCase):
     def setUp(self) -> None:

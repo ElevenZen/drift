@@ -1,7 +1,7 @@
 import os
 import sys
 
-from .actions import execute_render
+from .actions import execute_render, execute_init
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -15,6 +15,17 @@ def run_argparse_cli(argv=None) -> None:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
+
+    # init subcommand
+    init_parser = subparsers.add_parser(
+        "init",
+        help="Initialize a new drift workspace"
+    )
+    init_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force re-initialization and overwrite existing files"
+    )
 
     # render subcommand
     render_parser = subparsers.add_parser(
@@ -35,7 +46,17 @@ def run_argparse_cli(argv=None) -> None:
     else:
         drift_root = os.getcwd()
 
-    if args.command == "render":
+    if args.command == "init":
+        try:
+            execute_init(drift_root, force=args.force)
+            print("✨ Initialized drift workspace!")
+            print("📁 Created render/ sandbox Git database.")
+            print("📁 Created install/ local state Git database.")
+            print("📝 Generated drift.toml template.")
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "render":
         try:
             execute_render(drift_root, args.package)
             if args.package:

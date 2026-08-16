@@ -1,0 +1,53 @@
+# =====================================================================
+# drift.toml Configuration
+# =====================================================================
+
+[workspace]
+# Source directory for packages, default value is "src"
+source_directory = "src"
+
+# Sandbox rendering output path
+render_directory = "render"
+
+# Deployment database tracking folder
+install_directory = "install"
+
+# Backup archive folder for collisions & deletions
+backup_directory = "backup"
+
+# Global default target directory
+# Supports home expansion (~ at the beginning).
+default_target_directory = "~"
+
+[render.envsubst]
+# Shell script providing env variables for envsubst
+# If it's a relative path, it's always relative to the 'config' folder under drift root directory.
+# The file is located at "config/envsubst.bash" .
+input_file = "envsubst.bash"
+
+# Files with name "file.envst.suffix" or "file.envst" will be rendered using envsubst.
+suffix = "envst"
+
+# The output of render_command will be written as render result.
+# %i means engine input, %s means source template.
+render_command = "bash -c 'source %i && envsubst < %s'"
+
+[render.mustache]
+# Json file as the input to mustache template render engine.
+# This filename ends with "envst.json", so it need to be rendered with envsubst first to get the actual json file.
+input_file = "mustache.envst.json"
+
+# Files with name "file.mustache.suffix" or "file.mustache" will be rendered using mustache.
+suffix = "mustache"
+render_command = "mustache %i %s"
+
+# ---------------------------------------------------------------------
+# Enabled Packages Registry
+# ---------------------------------------------------------------------
+# Key: package folder name under src/
+# Value: True/False to enable or disable the package globally
+# For example, "pkg_a = true" will enable package "pkg_a".
+# Entry "DEFAULT = true | false" will set the default value for unlisted packages.
+# "DEFAULT = false" is the default setting.
+[packages.enable]
+DEFAULT = false

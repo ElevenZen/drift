@@ -19,6 +19,9 @@ from .render_package import (
     render_all_packages,
     commit_render_repo,
 )
+from .init_repo import (
+    init_drift_workspace,
+)
 from .dependency import (
     find_engine_for_file,
     strip_engine_suffix,
