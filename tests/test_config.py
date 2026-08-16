@@ -374,7 +374,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(pkg_config.sudo, True)
 
         # Verify path trackers are set correctly (and are different since it was rendered)
-        expected_rendered_path = os.path.join(drift_root, "my_render", "my_pkg", "package.toml")
+        expected_rendered_path = os.path.join(drift_root, "my_render", "my_pkg", "drift_package.toml")
         self.assertEqual(pkg_config.config_template_path, pkg_template_path)
         self.assertEqual(pkg_config.config_rendered_path, expected_rendered_path)
         self.assertTrue(os.path.exists(expected_rendered_path))

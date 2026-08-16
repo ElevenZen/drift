@@ -1,0 +1,286 @@
+"""Feature implementation for staging render sandbox into install state database."""
+
+import os
+import shutil
+import logging
+from typing import List, Optional, Tuple, Set
+
+from .constants import PACKAGE_CONFIG_FILE_NAME
+from .workspace_config import WorkspaceConfig
+from .package_config import load_package_config_static, PackageConfig
+from .file_utils import tree_relative_files, file_contents_differ, rmdir_parents
+from .ignore import DriftIgnore
+
+logger = logging.getLogger(__name__)
+
+
+def load_active_packages(
+    discovered: List[str],
+    target_pkg: Optional[str],
+    workspace_config: WorkspaceConfig,
+    force: bool = False
+) -> List[str]:
+    """Initializes active packages for staging.
+
+    Raises:
+        ValueError if the target package is not discovered (unless force is True).
+    """
+    if target_pkg is not None:
+        if target_pkg in discovered:
+            return [target_pkg]
+        else:
+            if force:
+                return [target_pkg]
+            raise ValueError(
+                f"Target package '{target_pkg}' was not discovered in source directory '{workspace_config.source_directory}'. "
+                "Use --force flag to force target_pkg processing."
+            )
+
+    active_packages = []
+    for pkg in discovered:
+        from .render_package import is_package_enabled
+        if is_package_enabled(workspace_config, pkg):
+            active_packages.append(pkg)
+    return active_packages
+
+
+def create_stow_ignore_file(install_pkg_dir: str, render_ignore_path: str) -> None:
+    """Copies render's .drift_ignore to install's .stow-local-ignore,
+    and appends '^/.drift_ignore' to it so Stow ignores it during stowing.
+    """
+    stow_ignore_path = os.path.join(install_pkg_dir, ".stow-local-ignore")
+    
+    # Overwrite/remove if exists and is directory or symlink
+    if os.path.lexists(stow_ignore_path):
+        if os.path.isdir(stow_ignore_path) and not os.path.islink(stow_ignore_path):
+            shutil.rmtree(stow_ignore_path)
+        else:
+            os.remove(stow_ignore_path)
+            
+    os.makedirs(install_pkg_dir, exist_ok=True)
+    shutil.copy2(render_ignore_path, stow_ignore_path)
+    
+    # Read and append "^/.drift_ignore" to .stow-local-ignore
+    content = ""
+    if os.path.exists(stow_ignore_path):
+        with open(stow_ignore_path, "r", encoding="utf-8") as f:
+            content = f.read()
+            
+    # Check lines to prevent substring false positives
+    lines = [line.strip() for line in content.splitlines()]
+    if "^/.drift_ignore" not in lines:
+        with open(stow_ignore_path, "a", encoding="utf-8") as f:
+            if content and not content.endswith("\n"):
+                f.write("\n")
+            f.write("^/.drift_ignore\n")
+    logger.info(f"Created Stow ignore copy and appended '^/.drift_ignore' at {stow_ignore_path}")
+
+
+def process_package_deletions(
+    pkg: str,
+    install_base: str,
+    render_base: str,
+    backup_base: str,
+    deleted_files: List[str],
+    packages_to_redeploy: Set[str]
+) -> None:
+    """Processes deletions for a single package (present in install/ but missing in render/)."""
+    install_pkg_dir = os.path.join(install_base, pkg)
+    render_pkg_dir = os.path.join(render_base, pkg)
+
+    # Load ignore patterns from RENDER directory only.
+    ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
+
+    if os.path.exists(install_pkg_dir) and os.path.isdir(install_pkg_dir):
+        relative_install_files = tree_relative_files(install_pkg_dir)
+        for rel_file in relative_install_files:
+            # Skip if it is an internal system metadata file
+            from .constants import IGNORED_FILENAMES
+            if os.path.basename(rel_file) in IGNORED_FILENAMES:
+                continue
+
+            # Check if it should be deleted (either because it is ignored under .drift_ignore now, OR missing in render/)
+            is_deleted = False
+            if ignore_handler.match_path(rel_file):
+                is_deleted = True
+            else:
+                render_file = os.path.join(render_pkg_dir, rel_file)
+                if not os.path.exists(render_file):
+                    is_deleted = True
+            
+            if is_deleted:
+                # TODO: Extract the delete part into a function into utility codes, because it will be reused in
+                # reverse-sync process
+                install_file = os.path.join(install_pkg_dir, rel_file)
+                backup_dir = os.path.join(backup_base, pkg, "deleted_files")
+                backup_file = os.path.join(backup_dir, rel_file)
+                
+                logger.info(f"Moving deleted file to backup: {pkg}/{rel_file}")
+                
+                os.makedirs(os.path.dirname(backup_file), exist_ok=True)
+                shutil.copy2(install_file, backup_file)
+                os.remove(install_file)
+                
+                rmdir_parents(os.path.dirname(install_file), install_pkg_dir)
+                
+                deleted_files.append(f"{pkg}/{rel_file}")
+                packages_to_redeploy.add(pkg)
+
+
+def copy_ignore_and_config_files(install_pkg_dir: str, render_pkg_dir: str) -> None:
+    """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
+    # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
+    render_ignore = os.path.join(render_pkg_dir, ".drift_ignore")
+    if os.path.isfile(render_ignore):
+        install_ignore = os.path.join(install_pkg_dir, ".drift_ignore")
+        os.makedirs(install_pkg_dir, exist_ok=True)
+        shutil.copy2(render_ignore, install_ignore)
+        # Create physical .stow-local-ignore and append exclusion pattern
+        create_stow_ignore_file(install_pkg_dir, render_ignore)
+
+    # 2. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
+    render_config = os.path.join(render_pkg_dir, PACKAGE_CONFIG_FILE_NAME)
+    if not os.path.isfile(render_config):
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")
+        
+    install_config = os.path.join(install_pkg_dir, PACKAGE_CONFIG_FILE_NAME)
+    os.makedirs(install_pkg_dir, exist_ok=True)
+    shutil.copy2(render_config, install_config)
+
+
+def process_package_additions_modifications(
+    pkg: str,
+    install_base: str,
+    render_base: str,
+    added_files: List[str],
+    modified_files: List[str],
+    packages_to_redeploy: Set[str]
+) -> None:
+    """Processes additions and modifications for a single package (present in render/ but missing/different in install/)."""
+    install_pkg_dir = os.path.join(install_base, pkg)
+    render_pkg_dir = os.path.join(render_base, pkg)
+    
+    # If the render directory doesn't exist, raise an Error because the package has no render output
+    if not os.path.exists(render_pkg_dir):
+        raise RuntimeError(f"Render sandbox directory for package '{pkg}' does not exist. Please render first.")
+
+    ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
+
+    if os.path.exists(render_pkg_dir) and os.path.isdir(render_pkg_dir):
+        relative_render_files = tree_relative_files(render_pkg_dir)
+        for rel_file in relative_render_files:
+            if ignore_handler.match_path(rel_file):
+                continue
+            
+            src = os.path.join(render_pkg_dir, rel_file)
+            dst = os.path.join(install_pkg_dir, rel_file)
+            
+            if not os.path.exists(dst):
+                logger.info(f"Adding new file: {pkg}/{rel_file}")
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(src, dst)
+                added_files.append(f"{pkg}/{rel_file}")
+                packages_to_redeploy.add(pkg)
+            elif file_contents_differ(src, dst):
+                logger.info(f"Modifying file: {pkg}/{rel_file}")
+                shutil.copy2(src, dst)
+                modified_files.append(f"{pkg}/{rel_file}")
+                packages_to_redeploy.add(pkg)
+
+    # Extract copying and configuring internal files to a separate function
+    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)
+
+
+def load_config_from_render(render_base: str, pkg: str, force: bool = False) -> PackageConfig:
+    pkg_render_dir = os.path.join(render_base, pkg)
+    try:
+        # the drift_package.toml should exist as a static package config.
+        config_file = os.path.join(pkg_render_dir, PACKAGE_CONFIG_FILE_NAME)
+        if not os.path.exists(config_file):
+            raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox");
+        else:
+            metadata = load_package_config_static(config_file, default_name=pkg)
+        return metadata
+
+    except Exception as e:
+        if not force:
+            raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
+        logger.warning(f"Skipping package '{pkg}' during staging as config loading failed (force enabled): {e}")
+        metadata = PackageConfig(pkg)
+        metadata.enable_render = True
+        metadata.enable_install = True
+        return metadata
+
+
+def run_primitive_4_stage_render_to_install(
+    workspace_config: WorkspaceConfig,
+    target_pkg: Optional[str] = None,
+    force: bool = False
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
+
+    Returns:
+        A tuple of (added_files, modified_files, deleted_files, redeploy_packages)
+    """
+    from .render_package import get_discovered_packages
+
+    discovered = get_discovered_packages(workspace_config)
+    
+    # Load active packages
+    active_packages = load_active_packages(
+        discovered=discovered,
+        target_pkg=target_pkg,
+        workspace_config=workspace_config,
+        force=force
+    )
+
+    # If active_packages is empty, we should just return empty lists and not proceed further.
+    if not active_packages:
+        logger.info("No active packages selected for staging. Skipping.")
+        return [], [], [], []
+
+    render_base = os.path.join(workspace_config.drift_root_path, workspace_config.render_directory)
+    install_base = os.path.join(workspace_config.drift_root_path, workspace_config.install_directory)
+    backup_base = os.path.join(workspace_config.drift_root_path, workspace_config.backup_directory)
+
+    # 1. First find all active packages to process and load their metadata from RENDER directory
+    # Filter out packages that are not enabled for installation/deployment.
+    pkg_metadata = {}
+    for pkg in active_packages:
+        metadata = load_config_from_render(render_base, pkg, force=force)
+        if not (force or metadata.enable_install):
+            continue
+        pkg_metadata[pkg] = metadata
+
+    # Check if active_packages is empty after filtering by enable_install, and if so, raise an error
+    if not pkg_metadata:
+        raise RuntimeError("No active packages are enabled for installation/deployment.")
+
+    added_files = []
+    modified_files = []
+    deleted_files = []
+    packages_to_redeploy = set()
+
+    # 2. Process Deletions
+    for pkg, metadata in pkg_metadata.items():
+        process_package_deletions(
+            pkg=pkg,
+            install_base=install_base,
+            render_base=render_base,
+            backup_base=backup_base,
+            deleted_files=deleted_files,
+            packages_to_redeploy=packages_to_redeploy
+        )
+
+    # 3. Process Additions and Modifications
+    for pkg, metadata in pkg_metadata.items():
+        process_package_additions_modifications(
+            pkg=pkg,
+            install_base=install_base,
+            render_base=render_base,
+            added_files=added_files,
+            modified_files=modified_files,
+            packages_to_redeploy=packages_to_redeploy
+        )
+
+    return added_files, modified_files, deleted_files, sorted(list(packages_to_redeploy))

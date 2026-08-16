@@ -2,7 +2,10 @@
 
 CONFIG_DIR_NAME = "config"
 GLOBAL_CONFIG_FILE_NAME = "drift.toml"
-PACKAGE_CONFIG_FILE_NAME_LIST = ["drift_package.toml", "package.toml"]
+PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
+PACKAGE_CONFIG_FILE_NAME_LIST = [PACKAGE_CONFIG_FILE_NAME, "package.toml"]
+DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
+IGNORED_FILENAMES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, ".stow-local-ignore"]
 
 import os
 IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"

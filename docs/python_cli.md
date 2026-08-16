@@ -38,7 +38,7 @@ Comparing **drift** to popular dotfiles managers listed on `dotfiles.github.io/u
 
 ```
                      [ 1. DECLARATIVE SOURCE ]
-                     src/ (Templates & config.toml)
+                     src/ (Templates & drift.toml)
                                  │
                                  ▼ (drift render / Stage 2 sandbox compiler)
                     [ 2. SANDBOX RENDER ZONE ]
@@ -61,22 +61,30 @@ Comparing **drift** to popular dotfiles managers listed on `dotfiles.github.io/u
 By replacing complex Makefiles, drift exposes a rich, intuitive, and colored CLI interface powered by Python's `Typer` and `rich`.
 
 ```
-drift [command] [package] [--flags]
+drift [--global-flags] [command] [package] [--command-flags]
 ```
 
+Global Flags:  
+`-C, --directory` Run as if drift is started in `<directory>` instead of current working directory.  
+`--no-git-root` Stop resolving git root of cwd or -C directory, using the literal path instead.  
+
+
 ### A. Initialization: `drift init`
-Initializes the active repository as a drift workspace.
+Initializes the active repository as a drift workspace.  
+Only works if the directory is empty or tracked by git.  
 *   **Actions**:
-    1.  Verifies the main repository is tracked by Git.
-    2.  Creates `.gitignore` entries to isolate `render/` and `install/` folders.
-    3.  Initializes `render/` and `install/` as independent, untracked local Git repositories.
-    4.  Creates default directory templates (`src/`, `config.toml`, `install/state.toml`).
+    1.  If the directory is empty and not tracked by git, then init an empty git repo.  
+    2.  Verifies the main repository is tracked by Git, if not, raise an error.  
+    3.  Change to git root, and check if it's already inited with necessary files.  
+    4.  Creates `.gitignore` entries to isolate `render/` and `install/` folders.
+    5.  Initializes `render/` and `install/` as independent, untracked local Git repositories.
+    6.  Creates default directory templates (`src/`, `drift.toml`, `install/state.toml`).
 *   **Terminal Output**:
     ```bash
     ✨ Initialized drift workspace!
     📁 Created render/ sandbox Git database.
     📁 Created install/ local state Git database.
-    📝 Generated config.toml template.
+    📝 Generated drift.toml template.
     ```
 
 ### B. Status Inspection: `drift status [package]`
@@ -215,7 +223,7 @@ Enables seamless bidirectional workflows. When GUI tools modify configuration fi
         git -C install rm -r --ignore-unmatch <package>/
         git -C install commit -m "Uninstall: Removed package <package>"
         ```
-*   **Safeguard**: Aborts with an error if the package is still declared as active/enabled in `config.toml`, preventing accidental uninstalls of packages scheduled to run in bulk deploys, unless `--force` is supplied.
+*   **Safeguard**: Aborts with an error if the package is still declared as active/enabled in `drift.toml`, preventing accidental uninstalls of packages scheduled to run in bulk deploys, unless `--force` is supplied.
 
 ---  
 
@@ -235,11 +243,14 @@ $ drift new nvim
     - `--force / -f`: Forcefully overwrites any existing config file inside the package.
 *   **Probing Guard**:
     - The CLI first checks if *any* configuration file already exists inside the package directory `src/<package>/`.
-    - Specifically, it probes:
+    - Specifically, it probes following files if `<config_filename>` is not present:
       1. `drift_package.toml`
       2. `package.toml`
-      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.
-    - If any configuration file exists:
+      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.  
+
+      TODO: If config_filename is given, only check if any file will render to that name.  
+
+    - If any configuration file exists:  
       - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
       - If `--force` **is** supplied: Overwrites the configuration with the default template.
 *   **Default Configuration Output**:
@@ -250,6 +261,9 @@ $ drift new nvim
     install_method = "stow"
     enable_render = true
     enable_install = true
+    target_directory = "~"
+    fully_controlled_dirs = []
+    sudo = false
     ```
 
 ---
@@ -281,7 +295,19 @@ $ drift add nvim ~/.config/nvim/init.lua
       - Without `--force`: The command halts and warns of the collision.
       - With `--force`: Drift **safely moves the colliding template/file to `backup/<package>/deleted_files/`** to avoid irreversible data loss, before overwriting it with the new source file.
 
----
+---  
+
+### TODO: help commands  
+TODO:
+`drift help` will show the overall model of drift, and its basic work flow.
+`drift help package` will show the concept 'package' in drift, and the concept of package config file.
+`drift help src` will show what the source directory do in drift and how to write a basic drift package.
+`drift help render` will show the concept 'render' in drift and what the render directory do in drift.  
+`drift help install` will show the concept 'install process' in drift and what the install directory do in drift.
+`drift help {package.toml | drift_package.toml}` will show a package.toml template containing all available options and its meaning.  
+`drift help {drift.toml}` will show a drift.toml template containing all available options and its meaning.  
+
+These help documents should print to PAGER unless pipe is used in output.
 
 ### J. Low-Level Control Commands
 These commands are intended for advanced troubleshooting, continuous integration, or automation scripts.
@@ -359,6 +385,9 @@ A centralized configuration file located at the repository root controls global 
 # =====================================================================
 
 [workspace]
+# Source directory for packages, default value is "src"
+source_directory = "src"
+
 # Sandbox rendering output path
 render_directory = "render"
 
@@ -372,12 +401,36 @@ backup_directory = "backup"
 # Supports home expansion (~ at the beginning).
 default_target_directory = "~"
 
+[render.envsubst]
+# Shell script providing env variables for envsubst
+# If it's a relative path, it's always relative to the 'config' folder under of working directory.
+# The file is located at "config/envsubst.bash" .
+input_file = "envsubst.bash"
+
+# Files with name "file.envst.suffix" or "file.envst" will be rendered using envsubst.
+suffix = "envst"
+
+# The output of render_command will be written as render result.
+# %i means engine input, %s means source template.
+render_command = "bash -c 'source %i && envsubst < %s'"
+
+[render.mustache]
+# Json file as the input to mustache template render engine.
+# This filename ends with "envst.json", so it need to be rendered with envsubst first to get the actual json file.
+input_file = "mustache.envst.json"
+
+# Files with name "file.mustache.suffix" or "file.mustache" will be rendered using mustache.
+suffix = "mustache"
+render_command = "mustache %i %s"
+
 # ---------------------------------------------------------------------
 # Enabled Packages Registry
 # ---------------------------------------------------------------------
 # Key: package folder name under src/
 # Value: True/False to enable or disable the package globally
-[packages]
+# Entry "DEFAULT = true | false" will set the default value for unlisted packages.
+# "DEFAULT = false" is the default setting.
+[packages.enable]
 shell = true
 nvim = true
 qbittorrent = true

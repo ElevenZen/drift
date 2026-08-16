@@ -2,6 +2,8 @@ import os
 import tempfile
 import unittest
 import subprocess
+
+from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
 from drift.render_core import render_template, render_template_to_file
 from drift.dependency import (
@@ -524,8 +526,8 @@ class TestRenderPackage(unittest.TestCase):
         with open(os.path.join(render_pkg_dir, "templated.txt"), "r") as f:
             self.assertEqual(f.read(), "Rendered: drift_render_test")
 
-        # Verify package.toml was copied since it is static
-        self.assertTrue(os.path.exists(os.path.join(render_pkg_dir, "package.toml")))
+        # Verify package.toml was copied to drift_package.toml since it is static
+        self.assertTrue(os.path.exists(os.path.join(render_pkg_dir, PACKAGE_CONFIG_FILE_NAME)))
 
     def test_render_package_disabled(self) -> None:
         from drift.render_package import render_package
@@ -600,8 +602,8 @@ class TestRenderPackage(unittest.TestCase):
         # Verify output in render/my_pkg/
         render_pkg_dir = os.path.join(drift_root, "render", "my_pkg")
 
-        # package.toml was rendered (loaded from package.envst.toml)
-        rendered_config_path = os.path.join(render_pkg_dir, "package.toml")
+        # package.toml was rendered (loaded from package.envst.toml) and renamed to drift_package.toml
+        rendered_config_path = os.path.join(render_pkg_dir, PACKAGE_CONFIG_FILE_NAME)
         self.assertTrue(os.path.exists(rendered_config_path))
         with open(rendered_config_path, "r") as f:
             content = f.read()

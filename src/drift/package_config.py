@@ -2,7 +2,7 @@ import os
 from typing import List, Optional
 from .toml_parser import parse_toml
 
-from .constants import PACKAGE_CONFIG_FILE_NAME_LIST
+from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 
 from dataclasses import dataclass, field
@@ -107,7 +107,7 @@ def load_package_config_static(
 
 def locate_package_config_file_static(package_dir: str) -> Optional[str]:
     """Finds the drift_package.toml or package.toml in a given package directory."""
-    for filename in ("drift_package.toml", "package.toml"):
+    for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
         path = os.path.join(package_dir, filename)
         if os.path.isfile(path):
             return path
@@ -186,15 +186,14 @@ def load_package_config_from_dir(
         engine = info.engine
         if engine is None:
             raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
-        target_name = info.target_name
 
-        # Determine output path: render/<package_name>/<target_name>
+        # Determine output path: render/<package_name>/drift_package.toml
         render_dir = workspace_config.render_directory
         output_file_path = os.path.join(
             workspace_config.drift_root_path,
             render_dir,
             package_name,
-            target_name
+            PACKAGE_CONFIG_FILE_NAME
         )
 
         # Perform rendering using standard render function

@@ -22,6 +22,9 @@ from .render_package import (
 from .init_repo import (
     init_drift_workspace,
 )
+from .stage_repo import (
+    run_primitive_4_stage_render_to_install,
+)
 from .dependency import (
     find_engine_for_file,
     strip_engine_suffix,

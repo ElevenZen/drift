@@ -3,6 +3,7 @@ import shutil
 import logging
 from typing import List, Optional
 
+from .constants import PACKAGE_CONFIG_FILE_NAME
 from .workspace_config import WorkspaceConfig
 from .package_config import (
     load_package_config_from_dir,
@@ -40,7 +41,7 @@ def copy_static_package_config(render_pkg_dir: str, pkg_config: PackageConfig) -
     src_path = pkg_config.config_template_path
     if not src_path or not os.path.isfile(src_path):
         raise FileNotFoundError(f"Package config file not found: {src_path}")
-    dest_path = os.path.join(render_pkg_dir, os.path.basename(src_path))
+    dest_path = os.path.join(render_pkg_dir, PACKAGE_CONFIG_FILE_NAME)
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     shutil.copy2(src_path, dest_path)
     logger.debug(f"Copied static package config from {src_path} to {dest_path}")
@@ -102,6 +103,20 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: str) -> None:
     if pkg_config.is_static():
         copy_static_package_config(render_pkg_dir, pkg_config)
 
+    # Misspelled .driftignore warning and copy logic
+    warned_misspelled = False
+    misspelled_path = os.path.join(package_dir, ".driftignore")
+    correct_path = os.path.join(package_dir, ".drift_ignore")
+    if os.path.isfile(misspelled_path) and not os.path.isfile(correct_path):
+        logger.warning(
+            f"⚠️ Warning: Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
+            "Please rename it to '.drift_ignore'."
+        )
+        warned_misspelled = True
+        dest_correct = os.path.join(render_pkg_dir, ".drift_ignore")
+        os.makedirs(os.path.dirname(dest_correct), exist_ok=True)
+        shutil.copy2(misspelled_path, dest_correct)
+
     # 3. Recursively process all other files inside the package directory
     for root, _, files in os.walk(package_dir):
         for file in files:
@@ -109,6 +124,15 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: str) -> None:
 
             # Skip if the file is the package config file or its template itself
             if is_package_config_file(file_path, pkg_config.config_template_path):
+                continue
+
+            if file == ".driftignore":
+                if not warned_misspelled:
+                    logger.warning(
+                        f"⚠️ Warning: Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
+                        "Please rename it to '.drift_ignore'."
+                    )
+                    warned_misspelled = True
                 continue
 
             render_or_copy_file(

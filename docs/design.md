@@ -33,8 +33,8 @@ The architecture separates configurations into four distinct physical and logica
                                ▼ (Stage 2: sandbox render)
                   [ 2. SANDBOX RENDER ZONE ]
                     render/ (Git repo tracking template-only history)
-       │
-                      Diff A   ▼ (Stage 2: incremental sync)
+                               │
+                      Diff A   ▼ (Stage 2: incremental staging)
                       (Dry)   [ 3. LOCAL STATE DATABASE ]
                     install/ (Git repo tracking live configuration state)
                                ▲
@@ -124,7 +124,7 @@ All workflows in this dotfiles system are composed of these eight atomic, sequen
            - Show Diff B                        │ Stage 2 Sequential Flow:      │
            - Require manual commit              │ 2. Render                     │
                                                 │ 3. Render Repo Commit         │
-                                                │ 4. Sync Render to Install     │
+                                                │ 4. Stage Render to Install     │
                                                 │ 5. Install Repo Deployment    │
                                                 │ 6. Install Repo Commit        │
                                                 └───────────────┬───────────────┘
@@ -153,7 +153,7 @@ git -C render add -A
 git -C render commit -m "Render: Update templates at $(date)"
 ```
 
-### Primitive 4: Sync Render to Install [Optional: `<package>`])
+### Primitive 4: Stage Render to Install [Optional: `<package>`])
 Reconciles the sandbox `render/` folder into the `install/` database. During this step, the engine compares `render/` and `install/`, and **records exactly which files and packages require redeployment** (due to additions, modifications, or deletions).
 
 ### Primitive 5: Install Repo Deployment [Optional: `<package>`])
@@ -183,7 +183,7 @@ Restores the system configuration and the local state database to the last known
     This completely cleans any half-written or uncommitted states inside the `install/` tracking directory.
 *   **Full Redeploy**: Triggers a **Full Package Redeploy** (Primitive 5 with `full_redeploy=True`) for the target package or all enabled active packages to rebuild physical symlinks or file copies.
 *   **Operational Mandate & Hazard Warning**: 
-    *   **Strict Midway Use**: This primitive **MUST ONLY** be used when a `deploy` command fails midway (i.e., during template rendering, syncing render to install, or during physical file copies/symlinking on the active system). Under these mid-failure conditions, the active system may be left in an inconsistent/broken state, and `install/` lacks the final Stage 2 commit.
+    *   **Strict Midway Use**: This primitive **MUST ONLY** be used when a `deploy` command fails midway (i.e., during template rendering, staging render to install, or during physical file copies/symlinking on the active system). Under these mid-failure conditions, the active system may be left in an inconsistent/broken state, and `install/` lacks the final Stage 2 commit.
     *   **Hazard of Misuse**: It **MUST NOT** be run under normal circumstances when no deployment failure occurred. Because this primitive bypasses Stage 1's `Reverse Sync`, running it outside of a recovery scenario will discard all local system drifts and runtime changes (the uncommitted state), causing permanent loss of system configuration drift information (system drift tracking).
 
 ---
@@ -286,7 +286,8 @@ To minimize system disruption and application reloads, deployment is executed un
 2.  **Full Deployment (Heavy-Duty Fallback)**:
     *   When triggering a standalone deployment, running `make rollback`, or performing a first-time setup, the system defaults to a robust **Full Package Redeploy**.
     *   It utilizes high-level automated commands:
-        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`.
+        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`.  
+        TODO: If stow >= 2.4.0 is not found, we should symlink file by file in the package folder, and print a warning at the end.
         *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.
 
 ### D. Ignored Files and Name Conversion Rules
@@ -612,8 +613,8 @@ def cli_deploy_full_sequence(target_pkg=None):
     try:
         state_registry.set("packages", pkg, "deploying")
         save_state_registry("install/state.toml", state_registry)
-        # Step 4: Sync Sandbox into Local DB & compute changes
-        changelist = run_primitive_4_sync_render_to_install(target_pkg)
+        # Step 4: Stage Sandbox into Local DB & compute changes
+        changelist = run_primitive_4_stage_render_to_install(target_pkg)
         # Step 5: Physically deploy changes to host system (Incremental mode)
         run_primitive_5_install_deployment(changelist, full_redeploy=False)
         state_registry.set("packages", pkg, "installed")
@@ -743,7 +744,7 @@ def run_primitive_1_reverse_sync(target_pkg=None):
 #### 3. Primitives 4, 5, 6, 7 & 8: Reconcile, Deploy, Commit, Uninstall & Rollback
 
 ```python
-def run_primitive_4_sync_render_to_install(target_pkg=None):
+def run_primitive_4_stage_render_to_install(target_pkg=None):
     packages_to_redeploy = set()
     active_packages = get_discovered_active_packages(target_pkg)
     
