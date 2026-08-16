@@ -3,15 +3,26 @@
 import os
 import shutil
 import logging
-from typing import List, Optional, Tuple, Set
+from typing import List, Optional
+from dataclasses import dataclass, field
 
-from .constants import PACKAGE_CONFIG_FILE_NAME
+from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_static, PackageConfig
-from .file_utils import tree_relative_files, file_contents_differ, rmdir_parents
+from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_file
 from .ignore import DriftIgnore
+from .check_repo import has_uncommitted_modifications
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class PackageStageChanges:
+    """Represents staging changes for a single package."""
+    package_name: str
+    added_files: List[str] = field(default_factory=list)
+    modified_files: List[str] = field(default_factory=list)
+    deleted_files: List[str] = field(default_factory=list)
 
 
 def load_active_packages(
@@ -81,12 +92,12 @@ def process_package_deletions(
     install_base: str,
     render_base: str,
     backup_base: str,
-    deleted_files: List[str],
-    packages_to_redeploy: Set[str]
+    changes: PackageStageChanges
 ) -> None:
     """Processes deletions for a single package (present in install/ but missing in render/)."""
     install_pkg_dir = os.path.join(install_base, pkg)
     render_pkg_dir = os.path.join(render_base, pkg)
+    backup_dir = os.path.join(backup_base, pkg, "deleted_files")
 
     # Load ignore patterns from RENDER directory only.
     ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
@@ -94,8 +105,7 @@ def process_package_deletions(
     if os.path.exists(install_pkg_dir) and os.path.isdir(install_pkg_dir):
         relative_install_files = tree_relative_files(install_pkg_dir)
         for rel_file in relative_install_files:
-            # Skip if it is an internal system metadata file
-            from .constants import IGNORED_FILENAMES
+            # Skip if it is an internal system metadata file, or it will be matched in ignore_handler.
             if os.path.basename(rel_file) in IGNORED_FILENAMES:
                 continue
 
@@ -109,22 +119,11 @@ def process_package_deletions(
                     is_deleted = True
             
             if is_deleted:
-                # TODO: Extract the delete part into a function into utility codes, because it will be reused in
-                # reverse-sync process
                 install_file = os.path.join(install_pkg_dir, rel_file)
-                backup_dir = os.path.join(backup_base, pkg, "deleted_files")
                 backup_file = os.path.join(backup_dir, rel_file)
-                
-                logger.info(f"Moving deleted file to backup: {pkg}/{rel_file}")
-                
-                os.makedirs(os.path.dirname(backup_file), exist_ok=True)
-                shutil.copy2(install_file, backup_file)
-                os.remove(install_file)
-                
-                rmdir_parents(os.path.dirname(install_file), install_pkg_dir)
-                
-                deleted_files.append(f"{pkg}/{rel_file}")
-                packages_to_redeploy.add(pkg)
+                logger.info(f"Moving deleted file to backup: {backup_file}")
+                backup_and_delete_file(install_file, backup_file, limit_dir=install_pkg_dir)
+                changes.deleted_files.append(rel_file)
 
 
 def copy_ignore_and_config_files(install_pkg_dir: str, render_pkg_dir: str) -> None:
@@ -152,9 +151,7 @@ def process_package_additions_modifications(
     pkg: str,
     install_base: str,
     render_base: str,
-    added_files: List[str],
-    modified_files: List[str],
-    packages_to_redeploy: Set[str]
+    changes: PackageStageChanges
 ) -> None:
     """Processes additions and modifications for a single package (present in render/ but missing/different in install/)."""
     install_pkg_dir = os.path.join(install_base, pkg)
@@ -179,13 +176,11 @@ def process_package_additions_modifications(
                 logger.info(f"Adding new file: {pkg}/{rel_file}")
                 os.makedirs(os.path.dirname(dst), exist_ok=True)
                 shutil.copy2(src, dst)
-                added_files.append(f"{pkg}/{rel_file}")
-                packages_to_redeploy.add(pkg)
+                changes.added_files.append(rel_file)
             elif file_contents_differ(src, dst):
                 logger.info(f"Modifying file: {pkg}/{rel_file}")
                 shutil.copy2(src, dst)
-                modified_files.append(f"{pkg}/{rel_file}")
-                packages_to_redeploy.add(pkg)
+                changes.modified_files.append(rel_file)
 
     # Extract copying and configuring internal files to a separate function
     copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)
@@ -212,15 +207,25 @@ def load_config_from_render(render_base: str, pkg: str, force: bool = False) -> 
         return metadata
 
 
+def ensure_install_pkg_dir_clean(install_base: str, pkg: str) -> None:
+    install_pkg_dir = os.path.join(install_base, pkg)
+    if not os.path.isdir(install_pkg_dir):
+        return
+    if has_uncommitted_modifications(install_base, install_pkg_dir):
+        raise RuntimeError(
+            f"Package '{pkg}' in install directory has uncommitted local modifications. "
+            "Please commit or stash your changes before staging, or use --force flag to bypass this check."
+        )
+
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
     target_pkg: Optional[str] = None,
     force: bool = False
-) -> Tuple[List[str], List[str], List[str], List[str]]:
+) -> List[PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
     Returns:
-        A tuple of (added_files, modified_files, deleted_files, redeploy_packages)
+        A list of PackageStageChanges objects representing package changes.
     """
     from .render_package import get_discovered_packages
 
@@ -237,7 +242,7 @@ def run_primitive_4_stage_render_to_install(
     # If active_packages is empty, we should just return empty lists and not proceed further.
     if not active_packages:
         logger.info("No active packages selected for staging. Skipping.")
-        return [], [], [], []
+        return []
 
     render_base = os.path.join(workspace_config.drift_root_path, workspace_config.render_directory)
     install_base = os.path.join(workspace_config.drift_root_path, workspace_config.install_directory)
@@ -256,10 +261,13 @@ def run_primitive_4_stage_render_to_install(
     if not pkg_metadata:
         raise RuntimeError("No active packages are enabled for installation/deployment.")
 
-    added_files = []
-    modified_files = []
-    deleted_files = []
-    packages_to_redeploy = set()
+    # Check every package folder in install/ if it has uncommitted local modifications.
+    # If so and the force flag is not present, raise an Error.
+    if not force:
+        for pkg in pkg_metadata.keys():
+            ensure_install_pkg_dir_clean(install_base, pkg)
+
+    pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
 
     # 2. Process Deletions
     for pkg, metadata in pkg_metadata.items():
@@ -268,8 +276,7 @@ def run_primitive_4_stage_render_to_install(
             install_base=install_base,
             render_base=render_base,
             backup_base=backup_base,
-            deleted_files=deleted_files,
-            packages_to_redeploy=packages_to_redeploy
+            changes=pkg_changes[pkg]
         )
 
     # 3. Process Additions and Modifications
@@ -278,9 +285,8 @@ def run_primitive_4_stage_render_to_install(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
-            added_files=added_files,
-            modified_files=modified_files,
-            packages_to_redeploy=packages_to_redeploy
+            changes=pkg_changes[pkg]
         )
 
-    return added_files, modified_files, deleted_files, sorted(list(packages_to_redeploy))
+    # Return only the packages that have actual changes
+    return [c for c in pkg_changes.values() if c.added_files or c.modified_files or c.deleted_files]

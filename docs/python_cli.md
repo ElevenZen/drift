@@ -322,14 +322,14 @@ $ drift render
 *   If `<package>` is provided: Recursively compiles templates and copies files for *only* that package.
 *   If `<package>` is omitted: Recursively processes *all* enabled packages.
 
-#### **2. Low-Level Commit: `drift render-commit -m "message"`**
+#### **2. Low-Level Commit: `drift render-commit [<package>] -m "message"`**
 ##### **Common Usage**
 ```bash
 $ drift render-commit -m "Render: Update Neovim templates"
 ✨ Committed render sandbox changes.
 ```
 ##### **Details**
-*   Stages all compiled/copied configurations inside the sandbox using `git add -A` and commits them under the `render/` repository with the specified message. Returns gracefully if the repository is already clean.  
+*   Stages compiled/copied configurations of selected package or all packages inside the sandbox using `git add -A` and commits them under the `render/` repository with the specified message. Returns gracefully if the repository is already clean.  
 
 #### **3. Low-Level Reverse Sync: `drift reverse-sync [<package>]`**
 ##### **Common Usage**
@@ -350,7 +350,7 @@ $ drift stage nvim
 ```
 ##### **Details**
 *   **Mechanism (Primitive 4)**: Reconciles the sandbox `render/` folder into the `install/` state database folder. It computes added, modified, or deleted files between the directories and moves deprecated configs to `backup/`.
-*   **Guard**: If the `install/` repository has uncommitted local modifications, this command will abort **unless** the `--force / -f` flag is supplied, in which case it overwrites them.
+*   **Guard**: If the `install/` repository has uncommitted local modifications, this command will abort **unless** the `--force / -f` flag is supplied, in which case it overwrites them. If the package folder in `render/` repository does not include a `drift_package.toml`, this command will abort **unless** the `--force / -f` flag is supplied.
 
 #### **5. Low-Level State Application: `drift apply [<package>] [--full]`**
 ##### **Common Usage**

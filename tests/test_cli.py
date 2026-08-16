@@ -157,6 +157,49 @@ class TestCLI(unittest.TestCase):
         finally:
             non_git_dir.cleanup()
 
+    def test_cli_stage(self) -> None:
+        """Verifies that running 'stage' stages the package into install directory."""
+        # 1. Initialize the workspace properly to setup directories and git repos
+        main(["-C", self.drift_root, "init", "--force"])
+
+        # 2. Render package a
+        main(["-C", self.drift_root, "render", "pkg_a"])
+
+        # 3. Stage package a
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "stage", "pkg_a"])
+        finally:
+            sys.stdout = original_stdout
+
+        # Verify that pkg_a files are copied to install/
+        self.assertTrue(os.path.exists(os.path.join(self.drift_root, "install", "pkg_a", "file.txt")))
+
+    def test_cli_render_commit(self) -> None:
+        """Verifies that running 'render-commit' commits sandbox changes."""
+        main(["-C", self.drift_root, "init", "--force"])
+        main(["-C", self.drift_root, "render", "pkg_a"])
+
+        render_dir = os.path.join(self.drift_root, "render")
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, check=True)
+
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "render-commit", "-m", "Manual templates commit", "pkg_a"])
+        finally:
+            sys.stdout = original_stdout
+
+        # Verify commit worked in render repo
+        res = subprocess.run(["git", "log", "-n", "1", "--oneline"], cwd=render_dir, capture_output=True, text=True, check=True)
+        self.assertIn("Manual templates commit", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

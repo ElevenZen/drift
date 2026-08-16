@@ -5,7 +5,7 @@ from typing import Optional
 import typer
 from rich import print as rprint
 
-from .actions import get_drift_root, execute_render, execute_init
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -87,6 +87,54 @@ def typer_render(
             rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package '{package}'![/bold green]")
         else:
             rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully rendered all enabled packages![/bold green]")
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("stage")
+def typer_stage(
+    ctx: typer.Context,
+    package: Optional[str] = typer.Argument(
+        None,
+        help="Optional package name to stage specifically"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force staging and bypass uncommitted modifications check"
+    )
+) -> None:
+    """Stage compiled sandbox templates from render/ to install/ state database."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_stage(drift_root, package, force=force)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("render-commit")
+def typer_render_commit(
+    ctx: typer.Context,
+    package: Optional[str] = typer.Argument(
+        None,
+        help="Optional package name to commit specifically"
+    ),
+    message: str = typer.Option(
+        ...,
+        "-m",
+        "--message",
+        help="Commit message"
+    )
+) -> None:
+    """Stage and commit compiled render sandbox changes."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_render_commit(drift_root, message, package)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

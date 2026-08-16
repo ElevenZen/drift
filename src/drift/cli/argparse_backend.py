@@ -1,7 +1,7 @@
 import os
 import sys
 
-from .actions import get_drift_root, execute_render, execute_init
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -43,6 +43,38 @@ def run_argparse_cli(argv=None) -> None:
         help="Optional package name to render specifically"
     )
 
+    # stage subcommand
+    stage_parser = subparsers.add_parser(
+        "stage",
+        help="Stage compiled sandbox templates from render/ to install/ state database"
+    )
+    stage_parser.add_argument(
+        "package",
+        nargs="?",
+        help="Optional package name to stage specifically"
+    )
+    stage_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force staging and bypass uncommitted modifications check"
+    )
+
+    # render-commit subcommand
+    render_commit_parser = subparsers.add_parser(
+        "render-commit",
+        help="Stage and commit compiled render sandbox changes"
+    )
+    render_commit_parser.add_argument(
+        "package",
+        nargs="?",
+        help="Optional package name to commit specifically"
+    )
+    render_commit_parser.add_argument(
+        "-m", "--message",
+        required=True,
+        help="Commit message"
+    )
+
     args = parser.parse_args(argv)
 
     # Resolve literal base directory path
@@ -72,6 +104,28 @@ def run_argparse_cli(argv=None) -> None:
                 print(f"✨ Successfully rendered package '{args.package}'!")
             else:
                 print("✨ Successfully rendered all enabled packages!")
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "stage":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_stage(drift_root, args.package, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "render-commit":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_render_commit(drift_root, args.message, args.package)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

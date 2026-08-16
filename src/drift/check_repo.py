@@ -1,5 +1,6 @@
 import os
 import subprocess
+from typing import Optional
 
 def is_git_tracked(dir_path: str) -> bool:
     """Checks if a directory is inside a Git repository."""
@@ -172,3 +173,27 @@ def check_existing_workspace_status(drift_root: str) -> bool:
         return False
 
     return True
+
+
+def has_uncommitted_modifications(repo_path: str, sub_path: Optional[str] = None) -> bool:
+    """Checks if a git repository (or a specific path inside it) has uncommitted local modifications.
+
+    Uncommitted modifications include staged changes, unstaged changes, and untracked files.
+    """
+    if not is_git_tracked(repo_path):
+        return False
+
+    cmd = ["git", "-C", repo_path, "status", "--porcelain"]
+    if sub_path:
+        cmd.append(sub_path)
+
+    try:
+        res = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return bool(res.stdout.strip())
+    except subprocess.CalledProcessError:
+        return False

@@ -24,6 +24,7 @@ from .init_repo import (
 )
 from .stage_repo import (
     run_primitive_4_stage_render_to_install,
+    PackageStageChanges,
 )
 from .dependency import (
     find_engine_for_file,

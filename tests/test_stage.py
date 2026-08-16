@@ -6,7 +6,7 @@ import logging
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
-from drift.stage_repo import run_primitive_4_stage_render_to_install
+from drift.stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
 from drift.render_package import render_package
 
 
@@ -113,12 +113,13 @@ class TestStageRepo(unittest.TestCase):
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("Hello additions")
 
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        self.assertEqual(added, ["pkg_a/file1.txt"])
-        self.assertEqual(modified, [])
-        self.assertEqual(deleted, [])
-        self.assertEqual(redeploy, ["pkg_a"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
+        self.assertEqual(changes[0].added_files, ["file1.txt"])
+        self.assertEqual(changes[0].modified_files, [])
+        self.assertEqual(changes[0].deleted_files, [])
 
         # Check file exists in install/
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
@@ -140,12 +141,13 @@ class TestStageRepo(unittest.TestCase):
         with open(file_path, "w", encoding="utf-8") as f:
             f.write("Modified content")
 
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        self.assertEqual(added, [])
-        self.assertEqual(modified, ["pkg_a/file1.txt"])
-        self.assertEqual(deleted, [])
-        self.assertEqual(redeploy, ["pkg_a"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
+        self.assertEqual(changes[0].added_files, [])
+        self.assertEqual(changes[0].modified_files, ["file1.txt"])
+        self.assertEqual(changes[0].deleted_files, [])
 
         # Check modified file in install/
         with open(os.path.join(self.install_dir, "pkg_a", "file1.txt"), "r", encoding="utf-8") as f:
@@ -172,12 +174,13 @@ class TestStageRepo(unittest.TestCase):
         # Remove file2 from render/
         os.remove(file2)
 
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        self.assertEqual(added, [])
-        self.assertEqual(modified, [])
-        self.assertEqual(deleted, ["pkg_a/file2.txt"])
-        self.assertEqual(redeploy, ["pkg_a"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
+        self.assertEqual(changes[0].added_files, [])
+        self.assertEqual(changes[0].modified_files, [])
+        self.assertEqual(changes[0].deleted_files, ["file2.txt"])
 
         # Verify file2 is removed from install/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file2.txt")))
@@ -197,7 +200,7 @@ class TestStageRepo(unittest.TestCase):
             f.write("Should not be copied")
 
         with self.assertRaises(RuntimeError) as cm:
-            added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
+            changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
         self.assertIn("No active packages are enabled", str(cm.exception))
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
@@ -224,10 +227,13 @@ class TestStageRepo(unittest.TestCase):
         with open(os.path.join(pkg_ignored_render, PACKAGE_CONFIG_FILE_NAME), "w") as f:
             f.write("name = 'pkg_ignored'")
 
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_ignored")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_ignored")
 
-        self.assertEqual(added, ["pkg_ignored/valid.txt"])
-        self.assertEqual(redeploy, ["pkg_ignored"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_ignored")
+        self.assertEqual(changes[0].added_files, ["valid.txt"])
+        self.assertEqual(changes[0].modified_files, [])
+        self.assertEqual(changes[0].deleted_files, [])
 
         # Check that only valid.txt and ignore-related files exist in install/
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", PACKAGE_CONFIG_FILE_NAME)))
@@ -280,9 +286,11 @@ class TestStageRepo(unittest.TestCase):
         with open(os.path.join(pkg_misspelled_render, "misspelled_ignored.txt"), "w") as f:
             f.write("ignored")
 
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_misspelled")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_misspelled")
 
-        self.assertEqual(added, ["pkg_misspelled/valid.txt"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_misspelled")
+        self.assertEqual(changes[0].added_files, ["valid.txt"])
 
         # Check that install/pkg_misspelled has .drift_ignore and .stow-local-ignore file
         install_pkg_misspelled = os.path.join(self.install_dir, "pkg_misspelled")
@@ -317,7 +325,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(tree_relative_files(nested_dir), ["file1.txt", "subdir/file2.txt"])
 
     def test_file_contents_differ_utility(self) -> None:
-        """Tests file_contents_differ utility function using hash comparisons."""
+        """Tests file_contents_differ utility function."""
         from drift.file_utils import file_contents_differ
         util_dir = os.path.join(self.drift_root, "util_differ")
         os.makedirs(util_dir, exist_ok=True)
@@ -376,11 +384,8 @@ class TestStageRepo(unittest.TestCase):
             packages_enable_default=False,
             drift_root_path=self.drift_root
         )
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(empty_config)
-        self.assertEqual(added, [])
-        self.assertEqual(modified, [])
-        self.assertEqual(deleted, [])
-        self.assertEqual(redeploy, [])
+        changes = run_primitive_4_stage_render_to_install(empty_config)
+        self.assertEqual(changes, [])
 
     def test_stage_newly_ignored_file_gets_pruned_and_backed_up(self) -> None:
         """Verifies that if a tracked file in install/ becomes ignored, it gets pruned and backed up."""
@@ -398,15 +403,88 @@ class TestStageRepo(unittest.TestCase):
             f.write("file1.txt\n")
 
         # 3. Stage again
-        added, modified, deleted, redeploy = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
         # It should be deleted!
-        self.assertEqual(deleted, ["pkg_a/file1.txt"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
+        self.assertEqual(changes[0].deleted_files, ["file1.txt"])
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
         
         # Verify it was backed up
         backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
         self.assertTrue(os.path.isfile(backup_file))
+
+    def test_backup_and_delete_file_utility(self) -> None:
+        """Tests backup_and_delete_file utility function."""
+        from drift.file_utils import backup_and_delete_file
+        util_dir = os.path.join(self.drift_root, "util_backup_delete")
+        os.makedirs(util_dir, exist_ok=True)
+        
+        limit_dir = os.path.join(util_dir, "limit")
+        sub_dir = os.path.join(limit_dir, "nested", "dirs")
+        os.makedirs(sub_dir, exist_ok=True)
+        
+        file_path = os.path.join(sub_dir, "test.txt")
+        backup_path = os.path.join(util_dir, "backup", "test_backup.txt")
+        
+        with open(file_path, "w") as f:
+            f.write("hello backup")
+            
+        backup_and_delete_file(file_path, backup_path, limit_dir=limit_dir)
+        
+        # Verify file is deleted
+        self.assertFalse(os.path.exists(file_path))
+        # Verify nested parent directories are pruned up to limit_dir
+        self.assertFalse(os.path.exists(os.path.join(limit_dir, "nested")))
+        self.assertTrue(os.path.exists(limit_dir))
+        # Verify backup is created with same content
+        self.assertTrue(os.path.isfile(backup_path))
+        with open(backup_path, "r") as f:
+            self.assertEqual(f.read(), "hello backup")
+
+    def test_stage_aborts_on_uncommitted_local_modifications(self) -> None:
+        """Verifies that stage raises RuntimeError if there are uncommitted modifications in install repo, unless force is True."""
+        import subprocess
+        # 1. Initialize git in self.install_dir to make it a tracked repository
+        subprocess.run(["git", "init"], cwd=self.install_dir, check=True, capture_output=True)
+        # Configure git identity so commit works everywhere
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.install_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.install_dir, check=True)
+
+        # Create a package dir inside install/
+        pkg_a_install = os.path.join(self.install_dir, "pkg_a")
+        os.makedirs(pkg_a_install, exist_ok=True)
+        
+        # Create and commit a file to establish clean state
+        test_file = os.path.join(pkg_a_install, "file1.txt")
+        with open(test_file, "w") as f:
+            f.write("clean content")
+            
+        subprocess.run(["git", "add", "pkg_a/file1.txt"], cwd=self.install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.install_dir, check=True, capture_output=True)
+
+        # 2. Verify staging works when repository is clean
+        # Let's ensure render directory has a different content or same
+        pkg_a_render = os.path.join(self.render_dir, "pkg_a")
+        os.makedirs(pkg_a_render, exist_ok=True)
+        with open(os.path.join(pkg_a_render, "file1.txt"), "w") as f:
+            f.write("staged content")
+
+        # 3. Create uncommitted modification (modify the file in install/)
+        with open(test_file, "w") as f:
+            f.write("modified uncommitted content")
+
+        # Now, staging should raise RuntimeError because of uncommitted modifications
+        with self.assertRaises(RuntimeError) as cm:
+            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=False)
+        self.assertIn("has uncommitted local modifications", str(cm.exception))
+
+        # Staging with force=True should bypass the check and succeed
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=True)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
+        self.assertEqual(changes[0].modified_files, ["file1.txt"])
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 
 import hashlib
 import os
+import shutil
+from typing import Optional
 
 
 def tree_relative_files(dir_path: str) -> list:
@@ -26,10 +28,15 @@ def compute_file_hash(file_path: str) -> str:
 
 
 def file_contents_differ(file1: str, file2: str) -> bool:
-    """Returns True if the contents of file1 and file2 differ using hashes."""
+    """Returns True if the contents of file1 and file2 differ using stream comparison."""
     if os.path.getsize(file1) != os.path.getsize(file2):
         return True
-    return compute_file_hash(file1) != compute_file_hash(file2)
+    # compare the file reading in chunks to avoid loading large files into memory
+    with open(file1, "rb") as f1, open(file2, "rb") as f2:
+        for chunk1, chunk2 in zip(iter(lambda: f1.read(65536), b""), iter(lambda: f2.read(65536), b"")):
+            if chunk1 != chunk2:
+                return True
+    return False
 
 
 def rmdir_parents(dir_path: str, limit_dir: str) -> None:
@@ -45,3 +52,13 @@ def rmdir_parents(dir_path: str, limit_dir: str) -> None:
             curr = os.path.dirname(curr)
         else:
             break
+
+
+def backup_and_delete_file(file_path: str, backup_path: str, limit_dir: Optional[str] = None) -> None:
+    """Backs up a file to backup_path, deletes it, and cleans up empty parent directories up to limit_dir."""
+    if os.path.exists(file_path):
+        os.makedirs(os.path.dirname(backup_path), exist_ok=True)
+        shutil.copy2(file_path, backup_path)
+        os.remove(file_path)
+        if limit_dir:
+            rmdir_parents(os.path.dirname(file_path), limit_dir)
