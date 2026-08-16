@@ -257,16 +257,25 @@ To safely determine whether a package should execute its `on_install` or `on_upd
 *   This registry tracks successful package deployments:
     ```toml
     # install/state.toml
-    [packages]
-    nvim = "installed"
-    qbittorrent = "installed"
-    wezterm = "deploying"
+    [packages.nvim]
+    state = "installed"
+    last_deployed = "2026-08-16T21:10:50.123456"
+    install_method = "stow"
+
+    [packages.qbittorrent]
+    state = "installed"
+    last_deployed = "2026-08-16T21:10:51.987654"
+    install_method = "copy"
+
+    [packages.wezterm]
+    state = "deploying"
+    install_method = "stow"
     ```
 *   When a package is about to be deployed:
     1.  The system reads `install/state.toml`.
     2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** and the `on_install` hook is triggered upon successful deploy.
-    3.  If the package is **already listed** as `"installed"`, it is classified as an **Update/Redeploy** and the `on_update` hook is triggered.  
-    4.  If the package is **already listed** as `"deploying"`, it means previous deployment ended in errors. The system should abort current deployment and tells user to call rollback manually.
+    3.  If the package is **already listed** with state `"installed"`, it is classified as an **Update/Redeploy** and the `on_update` hook is triggered.  
+    4.  If the package is **already listed** with state `"deploying"`, it means previous deployment ended in errors. The system should abort current deployment and tells user to call rollback manually.
 
 ### B. Physical Conflict Prevention (Collision Guard)
 To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces two safety rules:

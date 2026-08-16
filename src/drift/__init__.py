@@ -26,6 +26,14 @@ from .stage_repo import (
     run_primitive_4_stage_render_to_install,
     PackageStageChanges,
 )
+from .state_registry import (
+    StateRegistry,
+    load_state_registry,
+    save_state_registry,
+)
+from .install_repo import (
+    run_primitive_5_install_deployment,
+)
 from .dependency import (
     find_engine_for_file,
     strip_engine_suffix,
