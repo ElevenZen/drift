@@ -1,9 +1,11 @@
 import os
 import tempfile
 import unittest
+from typing import cast
 from drift.constants import (
     CONFIG_DIR_NAME,
     GLOBAL_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
     set_test_mode,
 )
@@ -25,6 +27,14 @@ from drift.package_config import (
     get_package_config_file_info,
     PackageConfigFileInfo,
 )
+
+def add_envst(filename: str) -> str:
+    stem, suffix = os.path.splitext(filename)
+    return stem + '.envst' + suffix
+
+package_config_template_name = add_envst(PACKAGE_CONFIG_FILE_NAME)
+alter_package_config_file_name = PACKAGE_CONFIG_FILE_NAME_LIST[-1]
+alter_package_config_template_name = add_envst(alter_package_config_file_name)
 
 # Enable test mode for the duration of these tests
 set_test_mode(True)
@@ -218,7 +228,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(config.drift_root_path, os.path.abspath(self.temp_dir.name))
 
     def test_load_package_config(self) -> None:
-        pkg_config_path = os.path.join(self.temp_dir.name, "package.toml")
+        pkg_config_path = os.path.join(self.temp_dir.name, alter_package_config_file_name)
 
         # Nonexistent without default_name raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
@@ -249,7 +259,7 @@ class TestConfigLoaders(unittest.TestCase):
             load_package_config_from_dir(pkg_dir, "my_pkg_folder")
 
         # Creating drift_package.toml (alternative name)
-        alt_config_path = os.path.join(pkg_dir, "drift_package.toml")
+        alt_config_path = os.path.join(pkg_dir, PACKAGE_CONFIG_FILE_NAME)
         with open(alt_config_path, "w", encoding="utf-8") as f:
             f.write("""
             [package]
@@ -279,48 +289,48 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertIsNone(res)
 
         # 2. package.envst.toml exists
-        template_pkg_path = os.path.join(pkg_dir, "package.envst.toml")
+        template_pkg_path = os.path.join(pkg_dir, alter_package_config_template_name)
         with open(template_pkg_path, "w", encoding="utf-8") as f:
             f.write("")
-        res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "template")
         self.assertEqual(res.path, template_pkg_path)
         self.assertEqual(res.engine, engine)
-        self.assertEqual(res.target_name, "package.toml")
+        self.assertEqual(res.target_name, alter_package_config_file_name)
 
         # 3. drift_package.envst.toml exists (takes precedence over package.envst.toml)
-        template_drift_path = os.path.join(pkg_dir, "drift_package.envst.toml")
+        template_drift_path = os.path.join(pkg_dir, package_config_template_name)
         with open(template_drift_path, "w", encoding="utf-8") as f:
             f.write("")
-        res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "template")
         self.assertEqual(res.path, template_drift_path)
         self.assertEqual(res.engine, engine)
-        self.assertEqual(res.target_name, "drift_package.toml")
+        self.assertEqual(res.target_name, PACKAGE_CONFIG_FILE_NAME)
 
         # 4. package.toml exists (takes precedence over templates)
-        pkg_toml_path = os.path.join(pkg_dir, "package.toml")
+        pkg_toml_path = os.path.join(pkg_dir, alter_package_config_file_name)
         with open(pkg_toml_path, "w", encoding="utf-8") as f:
             f.write("")
-        res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "static")
         self.assertEqual(res.path, pkg_toml_path)
         self.assertIsNone(res.engine)
-        self.assertEqual(res.target_name, "package.toml")
+        self.assertEqual(res.target_name, alter_package_config_file_name)
 
         # 5. drift_package.toml exists (takes precedence over package.toml)
-        drift_package_toml_path = os.path.join(pkg_dir, "drift_package.toml")
+        drift_package_toml_path = os.path.join(pkg_dir, PACKAGE_CONFIG_FILE_NAME)
         with open(drift_package_toml_path, "w", encoding="utf-8") as f:
             f.write("")
-        res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "static")
         self.assertEqual(res.path, drift_package_toml_path)
         self.assertIsNone(res.engine)
-        self.assertEqual(res.target_name, "drift_package.toml")
+        self.assertEqual(res.target_name, PACKAGE_CONFIG_FILE_NAME)
 
     def test_package_toml_template_rendering(self) -> None:
         drift_root = self.temp_dir.name
@@ -328,7 +338,7 @@ class TestConfigLoaders(unittest.TestCase):
         # 1. Create config/drift.toml
         config_dir = os.path.join(drift_root, "config")
         os.makedirs(config_dir, exist_ok=True)
-        drift_toml_path = os.path.join(config_dir, "drift.toml")
+        drift_toml_path = os.path.join(config_dir, GLOBAL_CONFIG_FILE_NAME)
         with open(drift_toml_path, "w", encoding="utf-8") as f:
             f.write("""
             [workspace]
@@ -352,7 +362,7 @@ class TestConfigLoaders(unittest.TestCase):
         # 3. Create package template: src/my_pkg/package.envst.toml
         pkg_dir = os.path.join(drift_root, "src", "my_pkg")
         os.makedirs(pkg_dir, exist_ok=True)
-        pkg_template_path = os.path.join(pkg_dir, "package.envst.toml")
+        pkg_template_path = os.path.join(pkg_dir, alter_package_config_template_name)
         with open(pkg_template_path, "w", encoding="utf-8") as f:
             f.write("""
             [package]
@@ -365,7 +375,7 @@ class TestConfigLoaders(unittest.TestCase):
         from drift.dependency import render_input_templates
         render_input_templates(list(workspace_config.render_engine_configs.values()), workspace_config.drift_root_path)
 
-        # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/package.toml)
+        # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
         pkg_config = load_package_config_from_dir(pkg_dir, "my_pkg", workspace_config)
 
         # Verify fields and values
@@ -374,7 +384,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(pkg_config.sudo, True)
 
         # Verify path trackers are set correctly (and are different since it was rendered)
-        expected_rendered_path = os.path.join(drift_root, "my_render", "my_pkg", "drift_package.toml")
+        expected_rendered_path = os.path.join(drift_root, "my_render", "my_pkg", PACKAGE_CONFIG_FILE_NAME)
         self.assertEqual(pkg_config.config_template_path, pkg_template_path)
         self.assertEqual(pkg_config.config_rendered_path, expected_rendered_path)
         self.assertTrue(os.path.exists(expected_rendered_path))
@@ -432,7 +442,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         os.environ["MY_TEST_INSTALL_DIR"] = "templated_install"
 
         os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
-        envst_toml_path = os.path.join(self.temp_dir.name, "config/drift.envst.toml")
+
+        base, ext = os.path.splitext(GLOBAL_CONFIG_FILE_NAME)
+        config_envst_name = base + ".envst" + ext
+        envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
         with open(envst_toml_path, "w", encoding="utf-8") as f:
             f.write("""
             [workspace]
@@ -441,7 +454,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             """)
 
         # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml
-        toml_path = os.path.join(self.temp_dir.name, "config/drift.toml")
+        toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME))
         config = load_workspace_config(toml_path)
 
         self.assertEqual(config.drift_root_path, os.path.abspath(self.temp_dir.name))

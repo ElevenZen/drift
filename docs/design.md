@@ -498,7 +498,7 @@ The overall file detection order should be like:
 4. package.<engine1>.toml  
 5. template for engine 2 and so on.  
 
-The engine 1, engine 2, engine 3 is ordered by its definition in `drift.toml` .  
+The order of engine 1, engine 2, engine 3 is undefined, because toml dict doesn't have a reliable key order.
 
 
 ---

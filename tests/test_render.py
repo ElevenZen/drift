@@ -1,7 +1,7 @@
 import os
 import tempfile
 import unittest
-import subprocess
+from typing import cast
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
@@ -265,9 +265,13 @@ class TestDependencyResolver(unittest.TestCase):
             RenderEngineConfig(name="mustache", input_file="mustache.json", suffix="mustache", render_command="cmd")
         ]
         # Match by intermediate segment
-        self.assertEqual(find_engine_for_file("mustache.envst.json", engines).name, "envsubst")
+        engine1: RenderEngineConfig = cast(RenderEngineConfig,
+                                           find_engine_for_file("mustache.envst.json", engines))
+        self.assertEqual(engine1.name, "envsubst")
         # Match by terminal suffix
-        self.assertEqual(find_engine_for_file("mustache.mustache", engines).name, "mustache")
+        engine2: RenderEngineConfig = cast(RenderEngineConfig,
+                                           find_engine_for_file("mustache.mustache", engines))
+        self.assertEqual(engine2.name, "mustache")
         # No match
         self.assertIsNone(find_engine_for_file("static.json", engines))
 

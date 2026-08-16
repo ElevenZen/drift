@@ -1,6 +1,6 @@
 import os
 import logging
-from typing import Dict, List, Optional
+from typing import Mapping, Dict, List, Optional
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 from .render_core import render_template_to_file
 from .constants import CONFIG_DIR_NAME
@@ -50,7 +50,7 @@ def resolve_dependencies(engines: List[RenderEngineConfig]) -> Dict[str, Optiona
     return dependency_map
 
 
-def check_cyclic_dependencies(dependency_map: Dict[str, Optional[str]]) -> None:
+def check_cyclic_dependencies(dependency_map: Mapping[str, Optional[str]]) -> None:
     """Checks if the dependency map contains any cyclic dependencies.
 
     Raises:
@@ -76,13 +76,13 @@ def check_cyclic_dependencies(dependency_map: Dict[str, Optional[str]]) -> None:
             dfs(node)
 
 
-def check_multi_level_dependencies(dependency_map: Dict[str, Optional[str]]) -> None:
+def check_multi_level_dependencies(dependency_map: Mapping[str, Optional[str]]) -> None:
     for name, dep_name in dependency_map.items():
         if dep_name is not None:
             if dependency_map.get(dep_name) is not None:
                 raise ValueError(
                     f"Multi-level dependency chain detected: engine '{name}' depends on '{dep_name}', "
-                    f"which itself depends on '{dependency_map[dep_name]}'. "
+                    f"which itself depends on '{dependency_map.get(dep_name)}'. "
                     f"Only one level of rendering is allowed."
                 )
 

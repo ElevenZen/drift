@@ -3,7 +3,7 @@ import re
 import tempfile
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict
 
 from .constants import in_test_mode
 from .toml_parser import parse_toml
