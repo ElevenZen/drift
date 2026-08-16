@@ -160,7 +160,7 @@ Reconciles the sandbox `render/` folder into the `install/` database. During thi
 Applies changes to the physical active system.
 *   **For `stow` packages**: Executes individual manual symlinks (Incremental) or runs GNU Stow (Full Deploy).
 *   **For `copy` packages**: Copies files to `target_directory` (prefixed with `sudo` if configured).
-*   *Note*: When executed contiguously after Primitive 4, this step only deploys the changed packages (Incremental Deploy). When executed independently, it falls back to redeploying all active packages (Full Redeploy).
+*   *Note*: When executed contiguously after Primitive 4, this step only deploys the changed packages (Incremental Deploy). When executed independently, it falls back to redeploying selected package or all active packages (Full Redeploy).
 
 ### Primitive 6: Install Repo Commit [Optional: `<package>`])
 Locks the deployed configurations into the local state database with an automated commit:
@@ -286,9 +286,11 @@ To minimize system disruption and application reloads, deployment is executed un
 2.  **Full Deployment (Heavy-Duty Fallback)**:
     *   When triggering a standalone deployment, running `make rollback`, or performing a first-time setup, the system defaults to a robust **Full Package Redeploy**.
     *   It utilizes high-level automated commands:
-        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`.  
-        TODO: If stow >= 2.4.0 is not found, we should symlink file by file in the package folder, and print a warning at the end.
-        *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.
+        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`, prefixed with `sudo` if configured.  
+        TODO: If stow >= 2.4.1 (which fix --dotfiles problems with stow ignore) is not found, we should symlink file by file in the package folder, and print a warning at the end.
+        *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured. Use `rsync` first, if not available, fallback to `cp`) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+
+The program needs to ensure the compatibility between these two ways. In either way, the program needs to check the package config has 'enable_install=true' and load the install method, install location, sudo flag from it.
 
 ### D. Ignored Files and Name Conversion Rules
 Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
