@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+import subprocess
 from io import StringIO
 
 from drift.cli import main
@@ -11,6 +12,9 @@ class TestCLI(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = self.temp_dir.name
+
+        # Initialize Git in the temporary directory
+        subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
         # Create config and env file
         self.config_dir = os.path.join(self.drift_root, "config")
@@ -131,6 +135,27 @@ class TestCLI(unittest.TestCase):
             sys.stdout = original_stdout
 
         self.assertIn("✨ Successfully rendered package 'pkg_a'!", stdout.getvalue())
+
+    def test_render_outside_git_repository_raises_friendly_error(self) -> None:
+        """Verifies that running render outside a Git repository prints our friendly error message."""
+        non_git_dir = tempfile.TemporaryDirectory()
+        try:
+            stderr = StringIO()
+            original_stderr = sys.stderr
+            sys.stderr = stderr
+
+            try:
+                with self.assertRaises(SystemExit) as cm:
+                    main(["-C", non_git_dir.name, "render"])
+                self.assertEqual(cm.exception.code, 1)
+            finally:
+                sys.stderr = original_stderr
+
+            self.assertIn("is not inside a Git repository", stderr.getvalue())
+            self.assertIn("drift requires a Git-backed workspace", stderr.getvalue())
+            self.assertIn("Run 'drift init' to initialize a new workspace", stderr.getvalue())
+        finally:
+            non_git_dir.cleanup()
 
 
 if __name__ == "__main__":

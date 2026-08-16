@@ -1,4 +1,5 @@
 import sys
+import logging
 
 from .argparse_backend import run_argparse_cli
 
@@ -10,7 +11,29 @@ except ImportError:
     HAS_TYPER = False
 
 
+def setup_logging() -> None:
+    """Sets up a beautiful, polished logging format across the application."""
+    try:
+        from rich.logging import RichHandler
+        # We configure rich handler for high-signal formatted output
+        handler = RichHandler(rich_tracebacks=True, markup=True, show_path=False)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(message)s",
+            datefmt="[%X]",
+            handlers=[handler]
+        )
+    except ImportError:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+            stream=sys.stderr
+        )
+
+
 def main(argv=None) -> None:
+    setup_logging()
     if HAS_TYPER:
         from .typer_backend import app
         args_list = argv if argv is not None else sys.argv[1:]

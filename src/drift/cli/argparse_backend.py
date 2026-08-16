@@ -1,7 +1,7 @@
 import os
 import sys
 
-from .actions import execute_render, execute_init
+from .actions import get_drift_root, execute_render, execute_init
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -12,6 +12,11 @@ def run_argparse_cli(argv=None) -> None:
     parser.add_argument(
         "-C", "--directory",
         help="Run as if drift was started in <directory> instead of current working directory"
+    )
+    parser.add_argument(
+        "--no-git-root",
+        action="store_true",
+        help="Stop resolving git root of cwd or -C directory, using the literal path instead"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
@@ -40,15 +45,14 @@ def run_argparse_cli(argv=None) -> None:
 
     args = parser.parse_args(argv)
 
-    # Resolve drift root path
-    if args.directory:
-        drift_root = os.path.abspath(args.directory)
-    else:
-        drift_root = os.getcwd()
+    # Resolve literal base directory path
+    base_dir = os.path.abspath(args.directory) if args.directory else os.getcwd()
 
     if args.command == "init":
+        # Bypassing show-toplevel check for init, using raw directory/cwd as root
+        drift_root = base_dir
         try:
-            execute_init(drift_root, force=args.force)
+            execute_init(drift_root, force=args.force, no_git_root=args.no_git_root)
             print("✨ Initialized drift workspace!")
             print("📁 Created render/ sandbox Git database.")
             print("📁 Created install/ local state Git database.")
@@ -57,6 +61,11 @@ def run_argparse_cli(argv=None) -> None:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "render":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
         try:
             execute_render(drift_root, args.package)
             if args.package:

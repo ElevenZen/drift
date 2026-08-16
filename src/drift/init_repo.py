@@ -91,7 +91,7 @@ DEFAULT = false
 """
 
 
-def init_drift_workspace(drift_root: str, force: bool = False) -> None:
+def init_drift_workspace(drift_root: str, force: bool = False, no_git_root: bool = False) -> None:
     """Initializes the active repository as a drift workspace.
 
     Only works if the directory is empty or tracked by git, unless force is True.
@@ -112,7 +112,8 @@ def init_drift_workspace(drift_root: str, force: bool = False) -> None:
         is_git = True
 
     # 3. Change to git root, and check git health unless force is True
-    drift_root = get_drift_root(drift_root, force=force)
+    if not no_git_root:
+        drift_root = get_drift_root(drift_root, force=force)
 
     # Validate main git repo health (bare, detached head, merge/rebase in progress)
     ensure_git_repository_health(drift_root, force=force)
@@ -129,7 +130,7 @@ def init_drift_workspace(drift_root: str, force: bool = False) -> None:
 
         if os.path.exists(config_file) or os.path.isdir(render_dir) or os.path.isdir(install_dir):
             raise RuntimeError(
-                f"drift workspace exists at '{drift_root}' but has an invalid, incomplete, or corrupt configuration. "
+                f"drift workspace exists at '{drift_root}' but has an invalid or corrupt configuration. "
                 f"Use --force to overwrite and re-initialize."
             )
 

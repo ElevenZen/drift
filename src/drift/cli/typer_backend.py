@@ -5,13 +5,26 @@ from typing import Optional
 import typer
 from rich import print as rprint
 
-from .actions import execute_render, execute_init
+from .actions import get_drift_root, execute_render, execute_init
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
     add_completion=False,
     no_args_is_help=True
 )
+
+class DriftCLIContext:
+    """CLI context helper to hold parameters and resolve directory root with type safety."""
+    def __init__(self, directory: Optional[str] = None, no_git_root: bool = False) -> None:
+        self.directory: Optional[str] = directory
+        self.no_git_root: bool = no_git_root
+
+    def get_drift_root(self) -> str:
+        """Resolves the absolute path to the drift root repository."""
+        base_dir = os.path.abspath(self.directory) if self.directory else os.getcwd()
+        if self.no_git_root:
+            return base_dir
+        return get_drift_root(base_dir)
 
 
 @app.callback()
@@ -22,9 +35,14 @@ def main_callback(
         "-C",
         "--directory",
         help="Run as if drift was started in <directory> instead of current working directory"
+    ),
+    no_git_root: bool = typer.Option(
+        False,
+        "--no-git-root",
+        help="Stop resolving git root of cwd or -C directory, using the literal path instead"
     )
 ) -> None:
-    ctx.obj = {"directory": directory}
+    ctx.obj = DriftCLIContext(directory=directory, no_git_root=no_git_root)
 
 
 @app.command("init")
@@ -38,15 +56,11 @@ def typer_init(
     )
 ) -> None:
     """Initialize a new drift workspace."""
-    directory = ctx.obj.get("directory") if ctx.obj else None
-
-    if directory:
-        drift_root = os.path.abspath(directory)
-    else:
-        drift_root = os.getcwd()
-
     try:
-        execute_init(drift_root, force=force)
+        cli_ctx: DriftCLIContext = ctx.obj
+        # Bypassing show-toplevel check for init, using raw directory/cwd as root
+        drift_root = os.path.abspath(cli_ctx.directory) if cli_ctx.directory else os.getcwd()
+        execute_init(drift_root, force=force, no_git_root=cli_ctx.no_git_root)
         rprint("[bold yellow]✨[/bold yellow] [bold green]Initialized drift workspace![/bold green]")
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]")
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]")
@@ -65,14 +79,9 @@ def typer_render(
     )
 ) -> None:
     """Render templates of a package or all enabled packages."""
-    directory = ctx.obj.get("directory") if ctx.obj else None
-
-    if directory:
-        drift_root = os.path.abspath(directory)
-    else:
-        drift_root = os.getcwd()
-
     try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
         execute_render(drift_root, package)
         if package:
             rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package '{package}'![/bold green]")

@@ -253,6 +253,57 @@ class TestInitWorkspace(unittest.TestCase):
 
         self.assertIn("Initialized drift workspace!", stdout.getvalue())
 
+    def test_init_with_no_git_root_literal(self) -> None:
+        """Verifies that --no-git-root stops drift from climbing to the Git repository root."""
+        # Initialize Git at self.drift_root
+        subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
+
+        # Create a sub-directory
+        sub_dir = os.path.join(self.drift_root, "nested_dir")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        # Initialize with no_git_root=True
+        init_drift_workspace(sub_dir, no_git_root=True)
+
+        # Workspace should be initialized inside nested_dir literally, not self.drift_root
+        self.assertTrue(os.path.isdir(os.path.join(sub_dir, "render", ".git")))
+        self.assertTrue(os.path.isdir(os.path.join(sub_dir, "install", ".git")))
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
+        # The parent self.drift_root should NOT have these folders/files created
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+
+    def test_cli_init_typer_with_no_git_root(self) -> None:
+        """Verifies that Typer CLI respects --no-git-root."""
+        # Initialize Git at self.drift_root
+        subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
+
+        # Create a sub-directory
+        sub_dir = os.path.join(self.drift_root, "nested_typer_dir")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        # Run with --no-git-root
+        main(["-C", sub_dir, "--no-git-root", "init"])
+
+        # Workspace should be inside nested_typer_dir
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+
+    def test_cli_init_argparse_with_no_git_root(self) -> None:
+        """Verifies that Argparse CLI respects --no-git-root."""
+        # Initialize Git at self.drift_root
+        subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
+
+        # Create a sub-directory
+        sub_dir = os.path.join(self.drift_root, "nested_argparse_dir")
+        os.makedirs(sub_dir, exist_ok=True)
+
+        # Run with --no-git-root
+        run_argparse_cli(["-C", sub_dir, "--no-git-root", "init"])
+
+        # Workspace should be inside nested_argparse_dir
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+
 
 if __name__ == "__main__":
     unittest.main()

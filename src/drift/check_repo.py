@@ -27,7 +27,14 @@ def get_drift_root(dir_path: str, force: bool = False) -> str:
         return os.path.abspath(res.stdout.strip())
     except subprocess.CalledProcessError as e:
         ensure_git_repository_health(dir_path, force=force)
-        raise RuntimeError(f"Failed to resolve git repository root: {e.stderr}")
+        # Check if the error is due to not being inside a Git repo
+        if not is_git_tracked(dir_path):
+            raise RuntimeError(
+                f"The directory '{dir_path}' is not inside a Git repository. "
+                "drift requires a Git-backed workspace to manage configuration state. "
+                "Run 'drift init' to initialize a new workspace, or specify '--no-git-root' to run drift in literal mode."
+            )
+        raise RuntimeError(f"Failed to resolve git repository root: {e.stderr.strip()}")
 
 
 def is_bare_repository(dir_path: str) -> bool:
@@ -89,6 +96,8 @@ def is_merge_or_rebase_in_progress(dir_path: str) -> bool:
 def ensure_git_repository_health(dir_path: str, force: bool = False) -> None:
     """Validates that the Git repository at dir_path is healthy and compatible with drift."""
     if force:
+        return
+    if not is_git_tracked(dir_path):
         return
     if is_bare_repository(dir_path):
         raise RuntimeError("Bare Git repositories are not supported for drift workspace.")

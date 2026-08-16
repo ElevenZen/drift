@@ -5,11 +5,14 @@ from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
 from ..workspace_config import load_workspace_config
 from ..render_package import render_package, render_all_packages
 from ..init_repo import init_drift_workspace
+from ..check_repo import get_drift_root
 
+# Disable unused import warning for get_drift_root, as it may be used in CLI backends.
+_ = get_drift_root
 
-def execute_init(drift_root: str, force: bool = False) -> None:
+def execute_init(drift_root: str, force: bool = False, no_git_root: bool = False) -> None:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
-    init_drift_workspace(drift_root, force=force)
+    init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
 
 
 def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:
