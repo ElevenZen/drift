@@ -289,6 +289,98 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook updated")
 
+    def test_symlinked_parent_safety_abort(self) -> None:
+        """Verifies that a symlinked parent directory outside the package's target_dir raises a RuntimeError to prevent deleting/recreating unrelated system folders."""
+        pkg = "pkg_stow"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        # Setup target directory for the package inside system_target_dir
+        pkg_target_dir = os.path.join(self.system_target_dir, "pkg_safety_target")
+
+        # Write package config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{pkg_target_dir}"
+            """)
+
+        # Add physical file in install
+        with open(os.path.join(pkg_install_dir, "dot-bashrc"), "w", encoding="utf-8") as f:
+            f.write("some file content")
+
+        # Let's make the parent directory of pkg_target_dir, which is self.system_target_dir, a symlink pointing into drift_root!
+        # First remove existing directory to make it a symlink
+        os.rmdir(self.system_target_dir)
+        
+        fake_drift_dest = os.path.join(self.drift_root, "fake_drift_dest")
+        os.makedirs(fake_drift_dest, exist_ok=True)
+        os.symlink(fake_drift_dest, self.system_target_dir)
+
+        # Now, attempting to deploy should raise a RuntimeError containing "Safety Abort"
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_5_install_deployment(
+                self.workspace_config,
+                [pkg],
+                package_changes=None
+            )
+        
+        self.assertIn("Safety Abort", str(ctx.exception))
+        self.assertIn("lies outside", str(ctx.exception))
+
+    def test_symlinked_parent_rebuilt_inside_target_dir(self) -> None:
+        """Verifies that a parent symlink situated INSIDE the package's target_dir is successfully backed up, deleted, and rebuilt as a physical folder."""
+        pkg = "pkg_stow"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        # Write config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # Add physical file under subfolder nested_app in install
+        nested_src_dir = os.path.join(pkg_install_dir, "nested_app")
+        os.makedirs(nested_src_dir, exist_ok=True)
+        with open(os.path.join(nested_src_dir, "config.json"), "w", encoding="utf-8") as f:
+            f.write("config content")
+
+        # Make the parent "nested_app" inside system_target_dir a symlink pointing to drift_root (simulating folding/stow conflict inside target)
+        nested_target_symlink = os.path.join(self.system_target_dir, "nested_app")
+        fake_drift_dest = os.path.join(self.drift_root, "fake_drift_dest")
+        os.makedirs(fake_drift_dest, exist_ok=True)
+        os.symlink(fake_drift_dest, nested_target_symlink)
+
+        # Deploy
+        from drift.stage_repo import PackageStageChanges
+        run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            package_changes=[PackageStageChanges(package_name=pkg, added_files=["nested_app/config.json"])]
+        )
+
+        # 1. Parent symlink should be removed and rebuilt as a physical directory
+        self.assertTrue(os.path.isdir(nested_target_symlink))
+        self.assertFalse(os.path.islink(nested_target_symlink))
+
+        # 2. Backup path structure should preserve the nested relative path (overwritten/nested_app)
+        backup_parent = os.path.join(self.backup_dir, pkg, "overwritten", "nested_app")
+        self.assertTrue(os.path.exists(backup_parent))
+
+        # 3. File nested_app/config.json should be successfully deployed as a symlink
+        deployed_file = os.path.join(nested_target_symlink, "config.json")
+        self.assertTrue(os.path.islink(deployed_file))
+        self.assertEqual(
+            os.path.abspath(os.path.join(os.path.dirname(deployed_file), os.readlink(deployed_file))),
+            os.path.abspath(os.path.join(nested_src_dir, "config.json"))
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

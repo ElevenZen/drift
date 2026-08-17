@@ -66,19 +66,22 @@ def is_stow_version_sufficient(version: str) -> bool:
         return False
 
 
-def get_symlinked_parent(system_target: str, install_base: str) -> Optional[str]:
-    """Returns the symlinked parent directory of system_target if it is a symlink pointing to install/."""
+def get_symlinked_parent(system_target: str, drift_root: str) -> Optional[str]:
+    """Returns the symlinked parent directory of system_target if it is a symlink pointing into drift_root."""
     parent_dir = os.path.dirname(system_target)
     home_dir = os.path.expanduser("~")
     while parent_dir and parent_dir != "/" and parent_dir != home_dir:
         if os.path.islink(parent_dir):
             try:
                 link_target = os.readlink(parent_dir)
+                # os.path.join will handle if link_target is absolute or relative
                 abs_link = os.path.abspath(os.path.join(os.path.dirname(parent_dir), link_target))
-                if "install/" in abs_link or abs_link.startswith(os.path.abspath(install_base)):
+                
+                if abs_link.startswith(os.path.abspath(drift_root)):
                     return parent_dir
             except Exception:
                 pass
+        # iterate up the directory tree
         parent = os.path.dirname(parent_dir)
         if parent == parent_dir:
             break
@@ -86,9 +89,9 @@ def get_symlinked_parent(system_target: str, install_base: str) -> Optional[str]
     return None
 
 
-def is_stow_linked_parent(system_target: str, install_base: str) -> bool:
-    """Infinite Loop Protection: checks if any parent directory of system_target is a symlink into install/."""
-    return get_symlinked_parent(system_target, install_base) is not None
+def is_stow_linked_parent(system_target: str, drift_root: str) -> bool:
+    """Repo Pollution And Infinite Loop Protection: checks if any parent directory of system_target is a symlink into drift_root."""
+    return get_symlinked_parent(system_target, drift_root) is not None
 
 
 def ensure_dir_exists_with_sudo(path: str, sudo: bool) -> None:
@@ -271,21 +274,38 @@ def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageCo
 def handle_symlinked_parent_error(
     system_target: str,
     pkg: str,
-    install_base: str,
+    target_dir: str,
     workspace_config: WorkspaceConfig,
     sudo: bool,
     resolve_symlinks: bool = True
 ) -> None:
-    """Treated as an error, backups the symlinked parent folder, removes it, and recreates it as a physical folder."""
-    parent_symlink = get_symlinked_parent(system_target, install_base)
+    """
+    Treated as an error, backups the symlinked parent folder, removes it, and recreates it as a physical folder.
+    Raises severe error if parent symlink lies outside package's own target directory.
+    """
+    parent_symlink = get_symlinked_parent(system_target, workspace_config.drift_root_path)
     if not parent_symlink:
         return
+        
+    # Enforce severe safety guard: only allow automatic repair if parent_symlink lies inside target_dir
+    abs_parent = os.path.abspath(parent_symlink)
+    abs_target = os.path.abspath(target_dir)
+    if not abs_parent.startswith(abs_target):
+        raise RuntimeError(
+            f"Safety Abort: Parent directory '{parent_symlink}' is a symlink pointing into "
+            f"drift workspace root '{workspace_config.drift_root_path}', but lies outside "
+            f"the package target directory '{target_dir}'. Resolving this automatically is "
+            f"unsafe and could permanently delete unrelated system paths. Please resolve manually."
+        )
+        
+    # Maintain nested relative path structure in overwriting backups
+    rel_parent = os.path.relpath(parent_symlink, target_dir)
     backup_path = os.path.join(
         workspace_config.drift_root_path,
         workspace_config.backup_directory,
         pkg,
         "overwritten",
-        os.path.basename(parent_symlink)
+        rel_parent
     )
     logger.warning(
         f"[RECOVERY] Symlinked parent directory error. "
@@ -316,12 +336,12 @@ def run_single_file_collision_guard(
     """Collision guard logic for a single configuration file."""
     system_target = resolve_system_target(rel_file, target_dir)
     
-    # Check for symlinked parent directories and handle them as errors, for any install method.
-    if is_stow_linked_parent(system_target, install_base):
+    # Check for symlinked parent directories inside workspace_config.drift_root_path and handle them as errors
+    if is_stow_linked_parent(system_target, workspace_config.drift_root_path):
         handle_symlinked_parent_error(
             system_target=system_target,
             pkg=pkg,
-            install_base=install_base,
+            target_dir=target_dir,
             workspace_config=workspace_config,
             sudo=metadata.sudo,
             resolve_symlinks=resolve_symlinks
@@ -337,8 +357,10 @@ def run_single_file_collision_guard(
         if os.path.islink(system_target):
             try:
                 link_target = os.readlink(system_target)
+                # os.path.join will handle if link_target is absolute or relative
                 abs_link_target = os.path.abspath(os.path.join(os.path.dirname(system_target), link_target))
-                if abs_link_target.startswith(os.path.abspath(install_base)):
+                
+                if abs_link_target.startswith(os.path.abspath(workspace_config.drift_root_path)):
                     # Skip backup if symlink already points to the SAME package's install path
                     if abs_link_target.startswith(os.path.abspath(pkg_install_dir)):
                         return
