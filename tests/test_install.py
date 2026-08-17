@@ -9,7 +9,7 @@ from unittest.mock import patch
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
-from drift.state_registry import load_state_registry, save_state_registry, StateRegistry
+from drift.state_registry import load_state_registry, save_state_registry, StateRegistry, PackageState
 from drift.install_repo import (
     resolve_system_target,
     is_stow_linked_parent,
@@ -82,6 +82,21 @@ class TestInstallRepo(unittest.TestCase):
         loaded.remove_package("nvim")
         self.assertFalse(loaded.has_deploying_package())
         self.assertIsNone(loaded.get_package_state("nvim"))
+
+    def test_package_state_dataclass(self) -> None:
+        """Verifies the PackageState dataclass attributes and defaults."""
+        p_state = PackageState(state="installed", last_deployed="2026-08-17", install_method="copy", deployed_files=[Path("file1"), Path("file2")])
+        self.assertEqual(p_state.state, "installed")
+        self.assertEqual(p_state.last_deployed, "2026-08-17")
+        self.assertEqual(p_state.install_method, "copy")
+        self.assertEqual(p_state.deployed_files, [Path("file1"), Path("file2")])
+
+        # Test defaults
+        default_state = PackageState(state="deploying")
+        self.assertEqual(default_state.state, "deploying")
+        self.assertIsNone(default_state.last_deployed)
+        self.assertIsNone(default_state.install_method)
+        self.assertEqual(default_state.deployed_files, [])
 
     def test_resolve_system_target(self) -> None:
         """Verifies resolves system targets correctly, translating dot- prefixes to dot."""
@@ -519,6 +534,187 @@ class TestInstallRepo(unittest.TestCase):
         with open(backup_deleted, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "pre-existing on target")
+
+    def test_standalone_apply_prunes_orphaned_files(self) -> None:
+        """Verifies that standalone deploy_package (without package_changes) reconciles the state database,
+
+        and prunes any orphaned files that are no longer present in the install/ package folder.
+        """
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup two physical files under install/pkg_stow
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        with open(os.path.join(pkg_install_dir, "file1.txt"), "w", encoding="utf-8") as f:
+            f.write("first file")
+        with open(os.path.join(pkg_install_dir, "file2.txt"), "w", encoding="utf-8") as f:
+            f.write("second file")
+
+        # First deployment (registers both file1.txt and file2.txt in state.toml)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # Verify both files are deployed
+        system_file1 = self.system_target_dir / "file1.txt"
+        system_file2 = self.system_target_dir / "file2.txt"
+        self.assertTrue(system_file1.exists() or system_file1.is_symlink())
+        self.assertTrue(system_file2.exists() or system_file2.is_symlink())
+
+        # Verify state.toml has registered them in deployed_files
+        from drift.state_registry import load_state_registry
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        self.assertEqual(sorted(registry.get_package_deployed_files(pkg)), [Path("file1.txt"), Path("file2.txt")])
+
+        # 2. Simulate manual deletion of file2.txt from install/pkg_stow
+        os.remove(os.path.join(pkg_install_dir, "file2.txt"))
+
+        # Re-run standalone deployment (without package_changes)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # 3. Assert file2.txt is pruned from system target
+        self.assertFalse(system_file2.exists())
+        # file1.txt should still exist
+        self.assertTrue(system_file1.exists() or system_file1.is_symlink())
+
+        # Assert file2.txt was backed up under deleted_files
+        backup_pruned = self.backup_dir / pkg / "deleted_files" / "file2.txt"
+        self.assertTrue(backup_pruned.exists())
+        with open(backup_pruned, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "second file")
+
+        # Assert state.toml was updated and only contains file1.txt
+        registry2 = load_state_registry(state_file)
+        self.assertEqual(registry2.get_package_deployed_files(pkg), [Path("file1.txt")])
+
+    def test_standalone_apply_prunes_stale_stow_links(self) -> None:
+        """Verifies that standalone deploy_package with install_method="stow" unlinks/deletes stale stow links,
+
+        but does NOT attempt to create a backup of a broken Stow link (which has no target data).
+        """
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup config with stow method
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        with open(os.path.join(pkg_install_dir, "file1.txt"), "w", encoding="utf-8") as f:
+            f.write("first stow file")
+        with open(os.path.join(pkg_install_dir, "file2.txt"), "w", encoding="utf-8") as f:
+            f.write("second stow file")
+
+        # Deploy first time using stow
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # Verify links are deployed
+        system_file1 = self.system_target_dir / "file1.txt"
+        system_file2 = self.system_target_dir / "file2.txt"
+        self.assertTrue(os.path.islink(system_file1))
+        self.assertTrue(os.path.islink(system_file2))
+
+        # 2. Simulate manual deletion of file2.txt from install/pkg_stow (which breaks its symlink)
+        os.remove(os.path.join(pkg_install_dir, "file2.txt"))
+
+        # Re-run standalone deployment
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # 3. Assert the stale symlink was successfully pruned/deleted from the host target
+        self.assertFalse(os.path.exists(system_file2))
+        self.assertFalse(os.path.islink(system_file2))
+
+        # Assert no backup was created (since the broken Stow link contains no real file target content)
+        backup_pruned = self.backup_dir / pkg / "deleted_files" / "file2.txt"
+        self.assertFalse(backup_pruned.exists())
+
+    def test_collision_guard_handles_internal_and_external_symlinks(self) -> None:
+        """Verifies collision guard behavior with internal (dangling/valid) and external symlinks.
+
+        - Symlink pointing into drift_root: deleted without backup.
+        - Symlink pointing outside drift_root (resolvable): treated as collision, target contents backed up, and replaced.
+        - Symlink pointing outside drift_root (broken): treated as collision, symlink itself backed up, and replaced.
+        """
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup config with stow method
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # We have three files to deploy: internal_link.txt, external_link.txt, and external_broken.txt
+        with open(os.path.join(pkg_install_dir, "internal_link.txt"), "w", encoding="utf-8") as f:
+            f.write("internal target content")
+        with open(os.path.join(pkg_install_dir, "external_link.txt"), "w", encoding="utf-8") as f:
+            f.write("external target content")
+        with open(os.path.join(pkg_install_dir, "external_broken.txt"), "w", encoding="utf-8") as f:
+            f.write("external broken content")
+
+        # Now, before deployment, let's pre-create symlinks at the system target paths:
+        system_internal = self.system_target_dir / "internal_link.txt"
+        system_external = self.system_target_dir / "external_link.txt"
+        system_external_broken = self.system_target_dir / "external_broken.txt"
+
+        # A. Internal symlink (pointing inside drift_root, e.g. a dangling pointer into install_dir or render_dir)
+        # Note: can point to a non-existent path inside drift_root (dangling)
+        dangling_drift_target = self.install_dir / "some_deleted_package" / "file.txt"
+        os.symlink(dangling_drift_target, system_internal)
+
+        # B. External symlink (pointing outside drift_root, e.g. pointing to a random external config file)
+        external_temp = tempfile.TemporaryDirectory()
+        self.addCleanup(external_temp.cleanup)
+        external_file = Path(external_temp.name) / "external_source.txt"
+        with open(external_file, "w", encoding="utf-8") as f:
+            f.write("external config source")
+        os.symlink(external_file, system_external)
+
+        # C. External broken symlink (pointing outside drift_root, but target does not exist)
+        nonexistent_external_file = Path("/tmp/nonexistent_external_target_file_12345.txt")
+        os.symlink(nonexistent_external_file, system_external_broken)
+
+        # Execute deployment
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # 2. Assertions:
+        # - The internal symlink was deleted without backup:
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / "internal_link.txt").exists())
+        # But it should be replaced by the newly stowed symlink pointing to pkg_install_dir:
+        self.assertTrue(system_internal.is_symlink())
+        
+        # - The external symlink was backed up by its content because the link can be resolved:
+        backup_external = self.backup_dir / pkg / "overwritten" / "external_link.txt"
+        self.assertTrue(backup_external.exists())
+        with open(backup_external, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "external config source")
+        # And it should be replaced by the newly stowed symlink pointing to pkg_install_dir:
+        self.assertTrue(system_external.is_symlink())
+
+        # - The external broken symlink was backed up as a symlink itself because it cannot be resolved:
+        backup_external_broken = self.backup_dir / pkg / "overwritten" / "external_broken.txt"
+        self.assertTrue(backup_external_broken.is_symlink())
+        self.assertEqual(backup_external_broken.readlink(), nonexistent_external_file)
+        # And it should be replaced by the newly stowed symlink pointing to pkg_install_dir:
+        self.assertTrue(system_external_broken.is_symlink())
 
 
 if __name__ == "__main__":

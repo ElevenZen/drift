@@ -16,7 +16,7 @@ def resolve_render_template_args(
     engine_config_input_relative_to: Path,
     template_file_path: Path,
     input_file_path: Optional[Path] = None
-) -> str:
+    ) -> Path:
     """Checks the validity of the arguments for rendering a template and resolves the input file path."""
     if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
@@ -27,29 +27,23 @@ def resolve_render_template_args(
     if "%s" not in engine_config.render_command:
         raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
-    resolved_input_file = input_file_path
-    if not resolved_input_file:
+    if input_file_path:
+        if not input_file_path.exists():
+            raise FileNotFoundError(f"Input file does not exist: {input_file_path}")
+        resolved_input_file = input_file_path
+    else:
         # Resolve input file if not explicitly provided
         if not engine_config.input_file or str(engine_config.input_file) in ("", "."):
             raise ValueError(f"Render engine '{engine_config.name}' requires an input file")
-            
-        p_engine_input = engine_config.input_file
-        if p_engine_input.is_absolute():
-            # 1. Try directly as absolute path
-            if not p_engine_input.exists():
+        config_path = engine_config_input_relative_to / engine_config.input_file
+        if not config_path.exists():
+            if config_path.is_absolute():
                 raise FileNotFoundError(f"Input file specified in engine config does not exist: {engine_config.input_file}")
-            resolved_input_file = p_engine_input
-        else:
-            # 2. Try relative path
-            config_path = engine_config_input_relative_to / p_engine_input
-            if not config_path.exists():
+            else:
                 raise FileNotFoundError(f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}")
-            resolved_input_file = config_path
+        resolved_input_file = config_path
 
-    if not resolved_input_file.exists():
-        raise FileNotFoundError(f"Resolved input file does not exist: {resolved_input_file}")
-
-    return str(resolved_input_file)
+    return resolved_input_file
 
 
 def render_template(
@@ -77,14 +71,14 @@ def render_template(
         ValueError: If an input file is required but cannot be found or resolved.
         RuntimeError: If the render subprocess fails.
     """
-    resolved_input_file = resolve_render_template_args(
+    resolved_input_file: Path = resolve_render_template_args(
         engine_config=engine_config,
         engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
         template_file_path=template_file_path,
         input_file_path=input_file_path
     )
     cmd = engine_config.render_command
-    cmd = cmd.replace("%i", resolved_input_file)
+    cmd = cmd.replace("%i", str(resolved_input_file))
     cmd = cmd.replace("%s", str(template_file_path))
 
     logger.debug(f"Executing render command: {cmd}")

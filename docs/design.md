@@ -261,16 +261,22 @@ To safely determine whether a package should execute its `on_install` or `on_upd
     state = "installed"
     last_deployed = "2026-08-16T21:10:50.123456"
     install_method = "stow"
+    deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
 
     [packages.qbittorrent]
     state = "installed"
     last_deployed = "2026-08-16T21:10:51.987654"
     install_method = "copy"
+    deployed_files = ["config.ini"]
 
     [packages.wezterm]
     state = "deploying"
     install_method = "stow"
+    deployed_files = []
     ```
+*   **Desired-State Manifest Tracking**:
+    To ensure self-healing and robust deletion behavior during standalone executions, retries, or rollbacks without relying on event-driven stages (Primitive 4), the registry tracks the precise relative paths of all successfully deployed files under the `deployed_files` array.
+    Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
 *   When a package is about to be deployed:
     1.  The system reads `install/state.toml`.
     2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** and the `on_install` hook is triggered upon successful deploy.
@@ -827,7 +833,7 @@ def run_primitive_5_install_deployment(packages_to_redeploy, full_redeploy=False
         # Is this package deployed for the first time?
         is_first_time = (pkg not in state_registry.get("packages", {}))
         
-        print(f"Deploying package configurations: {pkg}...")
+        print(f"Deploying package {pkg}...")
         
         # C. Collision Guard
         for file in get_files(f"install/{pkg}"):

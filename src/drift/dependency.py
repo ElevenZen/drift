@@ -144,11 +144,7 @@ def render_input_templates(
             dep_input_file = resolve_static_input_file(dep_engine.input_file, drift_root, dep_engine.name)
 
             # Formulate template file path (supporting both absolute and config-relative paths)
-            p_engine_input = engine.input_file
-            if p_engine_input.is_absolute():
-                template_file_path = p_engine_input
-            else:
-                template_file_path = drift_root / CONFIG_DIR_NAME / p_engine_input
+            template_file_path = drift_root / CONFIG_DIR_NAME / engine.input_file
 
             if not template_file_path.exists():
                 raise FileNotFoundError(
