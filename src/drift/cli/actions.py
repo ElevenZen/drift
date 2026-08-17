@@ -1,5 +1,7 @@
-import os
+"""Core action implementations for drift CLI backend triggers using pathlib."""
+
 import logging
+from pathlib import Path
 from typing import Optional, List
 
 from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
@@ -14,23 +16,19 @@ logger = logging.getLogger(__name__)
 _ = get_drift_root
 
 
-def execute_init(drift_root: str, force: bool = False, no_git_root: bool = False) -> None:
+def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
     init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
 
 
-def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:
+def execute_render(drift_root: Path, package_name: Optional[str] = None) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
-    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
     if package_name:
-        package_dir = os.path.join(
-            workspace_config.drift_root_path,
-            workspace_config.source_directory,
-            package_name
-        )
-        if not os.path.exists(package_dir):
+        package_dir = workspace_config.source_path / package_name
+        if not package_dir.exists():
             raise FileNotFoundError(f"Package directory does not exist: {package_dir}")
 
         render_package(workspace_config, package_dir)
@@ -38,11 +36,11 @@ def execute_render(drift_root: str, package_name: Optional[str] = None) -> None:
         render_all_packages(workspace_config)
 
 
-def execute_stage(drift_root: str, package_names: Optional[List[str]] = None, force: bool = False) -> None:
+def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..stage_repo import run_primitive_4_stage_render_to_install
 
-    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
     # Convert single string to a list for robustness
@@ -56,18 +54,18 @@ def execute_stage(drift_root: str, package_names: Optional[List[str]] = None, fo
         for pkg_change in changes:
             logger.info(f"Package '{pkg_change.package_name}' staged changes:")
             for file in pkg_change.added_files:
-                logger.info(f"  [+] {file}")
+                logger.info(f"  [+] {file.as_posix()}")
             for file in pkg_change.modified_files:
-                logger.info(f"  [*] {file}")
+                logger.info(f"  [*] {file.as_posix()}")
             for file in pkg_change.deleted_files:
-                logger.info(f"  [-] {file}")
+                logger.info(f"  [-] {file.as_posix()}")
 
 
-def execute_apply(drift_root: str, package_names: Optional[List[str]] = None, force: bool = False) -> None:
+def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..install_repo import run_primitive_5_install_deployment
 
-    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
     # Convert single string to a list for robustness
@@ -97,11 +95,11 @@ def execute_apply(drift_root: str, package_names: Optional[List[str]] = None, fo
     )
 
 
-def execute_render_commit(drift_root: str, message: str, package_name: Optional[str] = None) -> None:
+def execute_render_commit(drift_root: Path, message: str, package_name: Optional[str] = None) -> None:
     """Core function to execute committing render repository changes, shared by both CLI backends."""
     from ..render_package import commit_render_repo
 
-    config_path = os.path.join(drift_root, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME)
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
     commit_render_repo(workspace_config, commit_message=message, package_name=package_name)

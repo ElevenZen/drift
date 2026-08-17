@@ -1,9 +1,13 @@
-import os
+"""State registry subsystem using pathlib."""
+
+from pathlib import Path
 from typing import Dict, Optional
 from .toml_parser import parse_toml
 
+
 class StateRegistry:
     """Manages reading, updating, and saving install/state.toml with timestamps and metadata."""
+
     def __init__(self, packages: Dict[str, dict]):
         self.packages = packages
 
@@ -13,7 +17,13 @@ class StateRegistry:
             return pkg_data.get("state")
         return pkg_data  # fallback for simple string values
 
-    def set_package_state(self, pkg: str, state: str, last_deployed: Optional[str] = None, install_method: Optional[str] = None) -> None:
+    def set_package_state(
+        self,
+        pkg: str,
+        state: str,
+        last_deployed: Optional[str] = None,
+        install_method: Optional[str] = None
+    ) -> None:
         if pkg not in self.packages or not isinstance(self.packages[pkg], dict):
             self.packages[pkg] = {}
         self.packages[pkg]["state"] = state
@@ -35,13 +45,12 @@ class StateRegistry:
         return False
 
 
-def load_state_registry(filepath: str) -> StateRegistry:
+def load_state_registry(filepath: Path) -> StateRegistry:
     """Loads state.toml from the given filepath. Returns empty registry if file doesn't exist."""
-    if not os.path.exists(filepath):
+    if not filepath.exists():
         return StateRegistry({})
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
+        content = filepath.read_text(encoding="utf-8")
         data = parse_toml(content)
         packages = data.get("packages", {})
         
@@ -56,9 +65,9 @@ def load_state_registry(filepath: str) -> StateRegistry:
         return StateRegistry({})
 
 
-def save_state_registry(filepath: str, registry: StateRegistry) -> None:
+def save_state_registry(filepath: Path, registry: StateRegistry) -> None:
     """Saves the state registry to the given filepath in valid TOML format."""
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    filepath.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for pkg, data in sorted(registry.packages.items()):
         lines.append(f"[packages.{pkg}]")
@@ -68,5 +77,4 @@ def save_state_registry(filepath: str, registry: StateRegistry) -> None:
         else:
             lines.append(f'state = "{data}"')
         lines.append("")  # Empty line separator
-    with open(filepath, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    filepath.write_text("\n".join(lines), encoding="utf-8")

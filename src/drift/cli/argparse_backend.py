@@ -1,5 +1,5 @@
-import os
 import sys
+from pathlib import Path
 
 from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply
 
@@ -94,7 +94,7 @@ def run_argparse_cli(argv=None) -> None:
     args = parser.parse_args(argv)
 
     # Resolve literal base directory path
-    base_dir = os.path.abspath(args.directory) if args.directory else os.getcwd()
+    base_dir = Path(args.directory).resolve() if args.directory else Path.cwd().resolve()
 
     if args.command == "init":
         # Bypassing show-toplevel check for init, using raw directory/cwd as root

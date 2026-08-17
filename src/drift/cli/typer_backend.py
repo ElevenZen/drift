@@ -1,6 +1,6 @@
-import os
 import sys
 from typing import Optional, List
+from pathlib import Path
 
 import typer
 from rich import print as rprint
@@ -19,9 +19,9 @@ class DriftCLIContext:
         self.directory: Optional[str] = directory
         self.no_git_root: bool = no_git_root
 
-    def get_drift_root(self) -> str:
+    def get_drift_root(self) -> Path:
         """Resolves the absolute path to the drift root repository."""
-        base_dir = os.path.abspath(self.directory) if self.directory else os.getcwd()
+        base_dir = Path(self.directory).resolve() if self.directory else Path.cwd().resolve()
         if self.no_git_root:
             return base_dir
         return get_drift_root(base_dir)
@@ -59,7 +59,7 @@ def typer_init(
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         # Bypassing show-toplevel check for init, using raw directory/cwd as root
-        drift_root = os.path.abspath(cli_ctx.directory) if cli_ctx.directory else os.getcwd()
+        drift_root = Path(cli_ctx.directory).resolve() if cli_ctx.directory else Path.cwd().resolve()
         execute_init(drift_root, force=force, no_git_root=cli_ctx.no_git_root)
         rprint("[bold yellow]✨[/bold yellow] [bold green]Initialized drift workspace![/bold green]")
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]")

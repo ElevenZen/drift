@@ -1,4 +1,6 @@
-import os
+"""Package-specific configuration loading and metadata parsing using pathlib."""
+
+from pathlib import Path
 from typing import List, Optional
 from .toml_parser import parse_toml
 
@@ -12,21 +14,21 @@ from dataclasses import dataclass, field
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/package.toml."""
     name: str
-    config_template_path: Optional[str] = None
-    config_rendered_path: Optional[str] = None
+    config_template_path: Optional[Path] = None
+    config_rendered_path: Optional[Path] = None
     enable_render: bool = True
     enable_install: bool = True
     install_method: str = "stow"
-    target_directory: Optional[str] = None
+    target_directory: Optional[Path] = None
     sudo: bool = False
-    fully_controlled_dirs: List[str] = field(default_factory=list)
+    fully_controlled_dirs: List[Path] = field(default_factory=list)
     on_install: Optional[str] = None
     on_update: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Handles path expansion on load/initialization."""
-        if self.target_directory and self.target_directory.startswith("~"):
-            self.target_directory = os.path.expanduser(self.target_directory)
+        if self.target_directory:
+            self.target_directory = Path(self.target_directory).expanduser()
 
     def is_static(self) -> bool:
         return (self.config_template_path is not None
@@ -51,8 +53,8 @@ class PackageConfig:
         if not isinstance(self.fully_controlled_dirs, list):
             raise TypeError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
         for d in self.fully_controlled_dirs:
-            if not isinstance(d, str):
-                raise TypeError(f"fully_controlled_dirs entries must be strings for package '{self.name}'.")
+            if not isinstance(d, Path):
+                raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
 
     @classmethod
     def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
@@ -71,8 +73,8 @@ class PackageConfig:
 
         # Expand home directory for target_directory on load
         target_dir = package_data.get("target_directory")
-        if target_dir and str(target_dir).startswith("~"):
-            target_dir = os.path.expanduser(str(target_dir))
+        if target_dir:
+            target_dir = Path(target_dir).expanduser()
             
         config = cls(
             name=str(name),
@@ -81,7 +83,7 @@ class PackageConfig:
             install_method=str(package_data.get("install_method", "stow")),
             target_directory=target_dir,
             sudo=bool(package_data.get("sudo", False)),
-            fully_controlled_dirs=[str(d) for d in fcd],
+            fully_controlled_dirs=[Path(d) for d in fcd],
             on_install=package_data.get("on_install"),
             on_update=package_data.get("on_update")
         )
@@ -90,45 +92,44 @@ class PackageConfig:
 
 
 def load_package_config_static(
-    file_path: str,
+    file_path: Path,
     default_name: Optional[str] = None
 ) -> PackageConfig:
     """Loads and parses a package configuration from drift_package.toml or package.toml."""
-    if not os.path.exists(file_path):
+    if not file_path.exists():
         raise FileNotFoundError(f"Package configuration file not found: {file_path}")
-    with open(file_path, "r", encoding="utf-8") as f:
-        content = f.read()
+    content = file_path.read_text(encoding="utf-8")
     data = parse_toml(content)
     config = PackageConfig.from_dict(data, default_name=default_name)
-    config.config_template_path = os.path.abspath(file_path)
-    config.config_rendered_path = os.path.abspath(file_path)
+    config.config_template_path = file_path.resolve()
+    config.config_rendered_path = file_path.resolve()
     return config
 
 
-def locate_package_config_file_static(package_dir: str) -> Optional[str]:
+def locate_package_config_file_static(package_dir: Path) -> Optional[Path]:
     """Finds the drift_package.toml or package.toml in a given package directory."""
     for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
-        path = os.path.join(package_dir, filename)
-        if os.path.isfile(path):
+        path = package_dir / filename
+        if path.is_file():
             return path
     return None
 
 
 @dataclass
 class PackageConfigFileInfo:
-    """
-    Represents file info for a found package config file (or template).
+    """Represents file info for a found package config file (or template).
+
     This class is only used in this file, and is not part of the public API.
     Public API users should use the PackageConfig class instead.
     """
     type: str  # 'static' or 'template'
-    path: str  # path to the file/template
+    path: Path  # path to the file/template
     engine: Optional[RenderEngineConfig] = None  # RenderEngineConfig instance (if 'template', otherwise None)
     target_name: str = "package.toml"  # 'drift_package.toml' or 'package.toml'
 
 
 def get_package_config_file_info(
-    package_dir: str,
+    package_dir: Path,
     workspace_config: "WorkspaceConfig"
 ) -> Optional[PackageConfigFileInfo]:
     """Finds the package config file (or template) in the given package directory.
@@ -139,11 +140,10 @@ def get_package_config_file_info(
     - engine: RenderEngineConfig instance (if 'template', otherwise None)
     - target_name: 'drift_package.toml' or 'package.toml' (PACKAGE_CONFIG_FILE_NAMES)
     """
-
     # 1. drift_package.toml and package.toml
     for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
-        p = os.path.join(package_dir, filename)
-        if os.path.isfile(p):
+        p = package_dir / filename
+        if p.is_file():
             return PackageConfigFileInfo(type="static", path=p, engine=None,
                                          target_name=filename)
 
@@ -154,8 +154,8 @@ def get_package_config_file_info(
             continue
         for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
             template_filename = filename.replace(".toml", f".{suffix}.toml")
-            p = os.path.join(package_dir, template_filename)
-            if os.path.isfile(p):
+            p = package_dir / template_filename
+            if p.is_file():
                 return PackageConfigFileInfo(type="template", path=p, engine=engine,
                                              target_name=filename)
 
@@ -163,7 +163,7 @@ def get_package_config_file_info(
 
 
 def load_package_config_from_dir(
-    package_dir: str,
+    package_dir: Path,
     package_name: str,
     workspace_config: Optional["WorkspaceConfig"] = None
 ) -> PackageConfig:
@@ -188,25 +188,19 @@ def load_package_config_from_dir(
             raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
 
         # Determine output path: render/<package_name>/drift_package.toml
-        render_dir = workspace_config.render_directory
-        output_file_path = os.path.join(
-            workspace_config.drift_root_path,
-            render_dir,
-            package_name,
-            PACKAGE_CONFIG_FILE_NAME
-        )
+        output_file_path = workspace_config.render_path / package_name / PACKAGE_CONFIG_FILE_NAME
 
         # Perform rendering using standard render function
         from .render_core import render_template_to_file
         render_template_to_file(
             engine_config=engine,
-            drift_root=workspace_config.drift_root_path,
+            drift_root=workspace_config.drift_root,
             template_file_path=info.path,
             output_file_path=output_file_path
         )
 
         # Load from the rendered path
         config = load_package_config_static(output_file_path, default_name=package_name)
-        config.config_template_path = os.path.abspath(info.path)
-        config.config_rendered_path = os.path.abspath(output_file_path)
+        config.config_template_path = info.path.resolve()
+        config.config_rendered_path = output_file_path.resolve()
         return config

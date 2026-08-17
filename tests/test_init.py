@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import subprocess
 from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from drift.check_repo import (
@@ -23,7 +24,7 @@ from drift.cli.argparse_backend import run_argparse_cli
 class TestInitWorkspace(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = os.path.abspath(self.temp_dir.name)
+        self.drift_root = Path(self.temp_dir.name).resolve()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -89,7 +90,7 @@ class TestInitWorkspace(unittest.TestCase):
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
         # Create a sub-directory and try initializing inside it
-        sub_dir = os.path.join(self.drift_root, "some", "subdir")
+        sub_dir = self.drift_root / "some" / "subdir"
         os.makedirs(sub_dir, exist_ok=True)
 
         init_drift_workspace(sub_dir)
@@ -207,7 +208,7 @@ class TestInitWorkspace(unittest.TestCase):
         sys.stdout = stdout
 
         try:
-            main(["-C", self.drift_root, "init"])
+            main(["-C", str(self.drift_root), "init"])
         finally:
             sys.stdout = original_stdout
 
@@ -226,7 +227,7 @@ class TestInitWorkspace(unittest.TestCase):
         sys.stdout = stdout
 
         try:
-            run_argparse_cli(["-C", self.drift_root, "init"])
+            run_argparse_cli(["-C", str(self.drift_root), "init"])
         finally:
             sys.stdout = original_stdout
 
@@ -240,14 +241,14 @@ class TestInitWorkspace(unittest.TestCase):
 
     def test_cli_init_typer_with_force(self) -> None:
         """Verifies that typer_backend CLI successfully initializes with --force."""
-        main(["-C", self.drift_root, "init"])
+        main(["-C", str(self.drift_root), "init"])
         
         stdout = StringIO()
         original_stdout = sys.stdout
         sys.stdout = stdout
 
         try:
-            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", str(self.drift_root), "init", "--force"])
         finally:
             sys.stdout = original_stdout
 
@@ -259,7 +260,7 @@ class TestInitWorkspace(unittest.TestCase):
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
         # Create a sub-directory
-        sub_dir = os.path.join(self.drift_root, "nested_dir")
+        sub_dir = self.drift_root / "nested_dir"
         os.makedirs(sub_dir, exist_ok=True)
 
         # Initialize with no_git_root=True

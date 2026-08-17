@@ -1,5 +1,7 @@
-import os
+"""Dependency and cyclic rendering engine checks using pathlib."""
+
 import logging
+from pathlib import Path
 from typing import Mapping, Dict, List, Optional
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 from .render_core import render_template_to_file
@@ -23,7 +25,7 @@ def find_engine_for_file(filename: str, engines: List[RenderEngineConfig]) -> Op
 
 def strip_engine_suffix(filename: str, suffix: str) -> str:
     """Strips the engine suffix segment from the filename, replacing only the last occurrence (legacy wrapper)."""
-    temp_config = RenderEngineConfig(name="temp", input_file="", suffix=suffix, render_command="")
+    temp_config = RenderEngineConfig(name="temp", input_file=Path(""), suffix=suffix, render_command="")
     return temp_config.strip_suffix(filename)
 
 
@@ -34,7 +36,7 @@ def resolve_dependencies(engines: List[RenderEngineConfig]) -> Dict[str, Optiona
     """
     dependency_map: Dict[str, Optional[str]] = {}
     for engine in engines:
-        dep_engine = find_engine_for_file(engine.input_file, engines)
+        dep_engine = find_engine_for_file(str(engine.input_file), engines)
         # If dep_engine is the same as engine, it means the input file is static and not rendered by any other engine
         if dep_engine and dep_engine.name != engine.name:
             dependency_map[engine.name] = dep_engine.name
@@ -80,14 +82,18 @@ def check_multi_level_dependencies(dependency_map: Mapping[str, Optional[str]]) 
                 )
 
 
-def resolve_static_input_file(input_file: str, drift_root: str, engine_name: str) -> str:
+def resolve_static_input_file(
+    input_file: Path,
+    drift_root: Path,
+    engine_name: str
+) -> Path:
     """Resolves and validates a static input file path (handling both absolute and config-relative paths)."""
-    if os.path.isabs(input_file):
+    if input_file.is_absolute():
         path = input_file
     else:
-        path = os.path.join(drift_root, CONFIG_DIR_NAME, input_file)
+        path = drift_root / CONFIG_DIR_NAME / input_file
 
-    if not os.path.exists(path):
+    if not path.exists():
         raise FileNotFoundError(
             f"Input file for render engine '{engine_name}' not found: {path}"
         )
@@ -96,7 +102,7 @@ def resolve_static_input_file(input_file: str, drift_root: str, engine_name: str
 
 def render_input_templates(
     engines: List[RenderEngineConfig],
-    drift_root: str,
+    drift_root: Path,
     workspace_config: Optional[WorkspaceConfig] = None
 ) -> None:
     """Resolves engine input dependencies, checks for cycles and multi-level dependency chains,
@@ -125,9 +131,9 @@ def render_input_templates(
     # 4. Render templates using the dependency map directly
     engines_by_name = {e.name: e for e in engines}
     render_dir = workspace_config.render_directory if workspace_config else "render"
-    memo: Dict[str, str] = {}
+    memo: Dict[str, Path] = {}
 
-    def get_or_render_input_file(engine: RenderEngineConfig) -> str:
+    def get_or_render_input_file(engine: RenderEngineConfig) -> Path:
         if engine.name in memo:
             return memo[engine.name]
 
@@ -138,19 +144,20 @@ def render_input_templates(
             dep_input_file = resolve_static_input_file(dep_engine.input_file, drift_root, dep_engine.name)
 
             # Formulate template file path (supporting both absolute and config-relative paths)
-            if os.path.isabs(engine.input_file):
-                template_file_path = engine.input_file
+            p_engine_input = engine.input_file
+            if p_engine_input.is_absolute():
+                template_file_path = p_engine_input
             else:
-                template_file_path = os.path.join(drift_root, CONFIG_DIR_NAME, engine.input_file)
+                template_file_path = drift_root / CONFIG_DIR_NAME / p_engine_input
 
-            if not os.path.exists(template_file_path):
+            if not template_file_path.exists():
                 raise FileNotFoundError(
                     f"Input template file for render engine '{engine.name}' not found: {template_file_path}"
                 )
 
-            output_filename = dep_engine.strip_suffix(os.path.basename(engine.input_file))
+            output_filename = dep_engine.strip_suffix(template_file_path.name)
             # The 'render' string is read dynamically from the workspace_config if provided
-            output_file_path = os.path.join(drift_root, render_dir, CONFIG_DIR_NAME, output_filename)
+            output_file_path = drift_root / render_dir / CONFIG_DIR_NAME / output_filename
 
             # Use logger.info instead of print
             logger.info(f"Rendering input for {engine.name} using {dep_name}: {template_file_path} >> {output_file_path}")

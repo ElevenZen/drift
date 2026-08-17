@@ -3,6 +3,7 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from pathlib import Path
 from unittest.mock import patch
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
@@ -20,26 +21,26 @@ from drift.install_repo import (
 class TestInstallRepo(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = os.path.abspath(self.temp_dir.name)
+        self.drift_root = Path(self.temp_dir.name).resolve()
 
         # Create workspace structures
-        self.source_dir = os.path.join(self.drift_root, "src")
-        self.render_dir = os.path.join(self.drift_root, "render")
-        self.install_dir = os.path.join(self.drift_root, "install")
-        self.backup_dir = os.path.join(self.drift_root, "backup")
-        self.system_target_dir = os.path.join(self.drift_root, "system_home")
+        self.source_dir = self.drift_root / "src"
+        self.render_dir = self.drift_root / "render"
+        self.install_dir = self.drift_root / "install"
+        self.backup_dir = self.drift_root / "backup"
+        self.system_target_dir = self.drift_root / "system_home"
 
-        os.makedirs(self.source_dir, exist_ok=True)
-        os.makedirs(self.render_dir, exist_ok=True)
-        os.makedirs(self.install_dir, exist_ok=True)
-        os.makedirs(self.backup_dir, exist_ok=True)
-        os.makedirs(self.system_target_dir, exist_ok=True)
+        self.source_dir.mkdir(parents=True, exist_ok=True)
+        self.render_dir.mkdir(parents=True, exist_ok=True)
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.system_target_dir.mkdir(parents=True, exist_ok=True)
 
         self.workspace_config = WorkspaceConfig(
-            source_directory="src",
-            render_directory="render",
-            install_directory="install",
-            backup_directory="backup",
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
             packages_enable={
                 "pkg_stow": True,
                 "pkg_copy": True,
@@ -54,7 +55,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_state_registry_load_and_save(self) -> None:
         """Verifies StateRegistry manages state.toml transitions correctly."""
-        state_file = os.path.join(self.install_dir, "state.toml")
+        state_file = self.install_dir / "state.toml"
         
         # Test loading missing registry
         registry = load_state_registry(state_file)
@@ -85,21 +86,21 @@ class TestInstallRepo(unittest.TestCase):
     def test_resolve_system_target(self) -> None:
         """Verifies resolves system targets correctly, translating dot- prefixes to dot."""
         # Simple file resolution
-        resolved = resolve_system_target("dot-bashrc", self.system_target_dir)
-        self.assertEqual(resolved, os.path.join(self.system_target_dir, ".bashrc"))
+        resolved = resolve_system_target(Path("dot-bashrc"), self.system_target_dir)
+        self.assertEqual(resolved, self.system_target_dir / ".bashrc")
 
         # Nested folder and file resolution
-        resolved = resolve_system_target("dot-config/nvim/dot-init.lua", self.system_target_dir)
-        self.assertEqual(resolved, os.path.join(self.system_target_dir, ".config", "nvim", ".init.lua"))
+        resolved = resolve_system_target(Path("dot-config/nvim/dot-init.lua"), self.system_target_dir)
+        self.assertEqual(resolved, self.system_target_dir / ".config" / "nvim" / ".init.lua")
 
         # Non-prefixed parts remain untouched
-        resolved = resolve_system_target("regular_dir/regular_file.txt", self.system_target_dir)
-        self.assertEqual(resolved, os.path.join(self.system_target_dir, "regular_dir", "regular_file.txt"))
+        resolved = resolve_system_target(Path("regular_dir/regular_file.txt"), self.system_target_dir)
+        self.assertEqual(resolved, self.system_target_dir / "regular_dir" / "regular_file.txt")
 
     def test_directory_writability_check(self) -> None:
         """Tests writability check helper logic."""
         # Nonexistent nested path with writable base directory should succeed
-        ensure_directory_writable(os.path.join(self.system_target_dir, "nonexistent", "nested"), sudo=False)
+        ensure_directory_writable(self.system_target_dir / "nonexistent" / "nested", sudo=False)
         
         # Read-only path (if it exists) should raise PermissionError, but we skip system-level permissions testing in normal environments
         # We can mock os.access to return False
@@ -120,22 +121,22 @@ class TestInstallRepo(unittest.TestCase):
         )
         
         # Mock system target nvim config
-        nvim_target_dir = os.path.join(self.system_target_dir, ".config", "nvim")
+        nvim_target_dir = self.system_target_dir / ".config" / "nvim"
         os.makedirs(os.path.dirname(nvim_target_dir), exist_ok=True)
         
         # Make ~/.config/nvim a symlink to install/pkg_stow/dot-config/nvim/
-        install_nvim_dir = os.path.join(self.install_dir, "pkg_stow", "dot-config", "nvim")
+        install_nvim_dir = self.install_dir / "pkg_stow" / "dot-config" / "nvim"
         os.makedirs(install_nvim_dir, exist_ok=True)
         
         os.symlink(install_nvim_dir, nvim_target_dir)
 
         # Check if individual subfiles of nvim are recognized as having symlinked parents
-        subfile_target = os.path.join(nvim_target_dir, "init.lua")
-        self.assertTrue(is_stow_linked_parent(subfile_target, self.install_dir))
+        subfile_target = nvim_target_dir / "init.lua"
+        self.assertTrue(is_stow_linked_parent(subfile_target, self.drift_root))
 
         # Check a regular file which doesn't have symlinked parent
-        regular_target = os.path.join(self.system_target_dir, ".bashrc")
-        self.assertFalse(is_stow_linked_parent(regular_target, self.install_dir))
+        regular_target = self.system_target_dir / ".bashrc"
+        self.assertFalse(is_stow_linked_parent(regular_target, self.drift_root))
 
     def test_install_stow_incremental_deployment(self) -> None:
         """Verifies stow incremental file-by-file manual symlinking deployment."""
@@ -158,7 +159,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=["dot-bashrc"])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])])
 
         # Verify symlink is created
         target_file = os.path.join(self.system_target_dir, ".bashrc")
@@ -168,7 +169,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(abs_link_target, os.path.join(pkg_install_dir, "dot-bashrc"))
 
         # Verify state.toml transition
-        state_file = os.path.join(self.install_dir, "state.toml")
+        state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg), "installed")
 
@@ -197,7 +198,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=["dot-bashrc"])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])])
 
         # Collision file should be backed up under backup/pkg_stow/overwritten/dot-bashrc
         backup_file = os.path.join(self.backup_dir, pkg, "overwritten", "dot-bashrc")
@@ -246,7 +247,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run first-time deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=["test.txt"])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("test.txt")])])
 
         # Target file is copied and pre-existing file backed up
         self.assertTrue(os.path.isfile(target_file))
@@ -278,7 +279,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run update deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, modified_files=["test.txt"])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, modified_files=[Path("test.txt")])])
 
         # Target file should be directly overwritten
         with open(target_file, "r", encoding="utf-8") as f:
@@ -362,7 +363,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            package_changes=[PackageStageChanges(package_name=pkg, added_files=["nested_app/config.json"])]
+            package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("nested_app/config.json")])]
         )
 
         # 1. Parent symlink should be removed and rebuilt as a physical directory

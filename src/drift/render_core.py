@@ -1,6 +1,8 @@
-import os
+"""Core rendering engine template compiler functions using pathlib."""
+
 import logging
 import subprocess
+from pathlib import Path
 from typing import Optional
 
 from .workspace_config import RenderEngineConfig
@@ -8,14 +10,15 @@ from .constants import CONFIG_DIR_NAME
 
 logger = logging.getLogger(__name__)
 
+
 def resolve_render_template_args(
     engine_config: RenderEngineConfig,
-    engine_config_input_relative_to: str,
-    template_file_path: str,
-    input_file_path: Optional[str] = None
+    engine_config_input_relative_to: Path,
+    template_file_path: Path,
+    input_file_path: Optional[Path] = None
 ) -> str:
-    """ Checks the validity of the arguments for rendering a template and resolves the input file path. """
-    if not os.path.exists(template_file_path):
+    """Checks the validity of the arguments for rendering a template and resolves the input file path."""
+    if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
 
     # %i and %s placeholders must occur in the command string, otherwise raise an error
@@ -24,35 +27,36 @@ def resolve_render_template_args(
     if "%s" not in engine_config.render_command:
         raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
-    resolved_input_file: Optional[str] = input_file_path
+    resolved_input_file = input_file_path
     if not resolved_input_file:
         # Resolve input file if not explicitly provided
-        if not engine_config.input_file:
-            raise ValueError(
-                    f"Render engine '{engine_config.name}' requires an input file");
-        if os.path.isabs(engine_config.input_file):
+        if not engine_config.input_file or str(engine_config.input_file) in ("", "."):
+            raise ValueError(f"Render engine '{engine_config.name}' requires an input file")
+            
+        p_engine_input = engine_config.input_file
+        if p_engine_input.is_absolute():
             # 1. Try directly as absolute path
-            if not os.path.exists(engine_config.input_file):
+            if not p_engine_input.exists():
                 raise FileNotFoundError(f"Input file specified in engine config does not exist: {engine_config.input_file}")
-            resolved_input_file = engine_config.input_file
+            resolved_input_file = p_engine_input
         else:
             # 2. Try relative path
-            config_path = os.path.join(engine_config_input_relative_to, engine_config.input_file)
-            if not os.path.exists(config_path):
-                raise FileNotFoundError( f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}")
+            config_path = engine_config_input_relative_to / p_engine_input
+            if not config_path.exists():
+                raise FileNotFoundError(f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}")
             resolved_input_file = config_path
 
-    if not os.path.exists(resolved_input_file):
+    if not resolved_input_file.exists():
         raise FileNotFoundError(f"Resolved input file does not exist: {resolved_input_file}")
 
-    return resolved_input_file
+    return str(resolved_input_file)
 
 
 def render_template(
     engine_config: RenderEngineConfig,
-    drift_root: str,
-    template_file_path: str,
-    input_file_path: Optional[str] = None
+    drift_root: Path,
+    template_file_path: Path,
+    input_file_path: Optional[Path] = None
 ) -> str:
     """Renders a template file to a string using a specified render engine configuration.
 
@@ -61,13 +65,9 @@ def render_template(
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
-        drift_root: The root directory of the drift workspace, should be absolute path, used to resolve relative paths.
+        drift_root: The root directory of the drift workspace, used to resolve relative paths.
         template_file_path: The physical path to the template file to render.
         input_file_path: Optional explicit path to the engine's input file.
-                         It can be absolute or relative to the current working directory.
-                         If not provided, the function resolves it based on
-                         engine_config.input_file relative to the standard workspace structure.
-                         This argument is for dynamic input file.
 
     Returns:
         The rendered template content as a string.
@@ -78,13 +78,14 @@ def render_template(
         RuntimeError: If the render subprocess fails.
     """
     resolved_input_file = resolve_render_template_args(
-            engine_config=engine_config,
-            engine_config_input_relative_to=os.path.join(drift_root, CONFIG_DIR_NAME),
-            template_file_path=template_file_path,
-            input_file_path=input_file_path)
+        engine_config=engine_config,
+        engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
+        template_file_path=template_file_path,
+        input_file_path=input_file_path
+    )
     cmd = engine_config.render_command
     cmd = cmd.replace("%i", resolved_input_file)
-    cmd = cmd.replace("%s", template_file_path)
+    cmd = cmd.replace("%s", str(template_file_path))
 
     logger.debug(f"Executing render command: {cmd}")
 
@@ -108,10 +109,10 @@ def render_template(
 
 def render_template_to_file(
     engine_config: RenderEngineConfig,
-    drift_root: str,
-    template_file_path: str,
-    output_file_path: str,
-    input_file_path: Optional[str] = None
+    drift_root: Path,
+    template_file_path: Path,
+    output_file_path: Path,
+    input_file_path: Optional[Path] = None
 ) -> None:
     """Renders a template file and writes the output directly to the specified file path.
 
@@ -119,7 +120,7 @@ def render_template_to_file(
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
-        drift_root: The root directory of the drift workspace, should be absolute path, used to resolve relative paths.
+        drift_root: The root directory of the drift workspace, used to resolve relative paths.
         template_file_path: The physical path to the template file to render.
         output_file_path: The path where the rendered content will be written.
         input_file_path: Optional explicit path to the engine's input file.
@@ -134,9 +135,5 @@ def render_template_to_file(
         input_file_path=input_file_path
     )
 
-    parent_dir = os.path.dirname(output_file_path)
-    if parent_dir:
-        os.makedirs(parent_dir, exist_ok=True)
-
-    with open(output_file_path, "w", encoding="utf-8") as f:
-        f.write(rendered_content)
+    output_file_path.parent.mkdir(parents=True, exist_ok=True)
+    output_file_path.write_text(rendered_content, encoding="utf-8")

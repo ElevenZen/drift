@@ -1,9 +1,9 @@
-"""Handles drift ignore filtering based on GNU Stow matching logic."""
+"""Handles drift ignore filtering based on GNU Stow matching logic using pathlib."""
 
-import os
 import re
 import logging
-from typing import List, Optional
+from pathlib import Path
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -39,30 +39,30 @@ class DriftIgnore:
         return "".join(result).strip()
 
     @classmethod
-    def load_from_dir(cls, render_pkg_dir: str) -> "DriftIgnore":
+    def load_from_dir(cls, render_pkg_dir: Path) -> "DriftIgnore":
         """Loads ignore PCRE regex patterns from .drift_ignore inside render_pkg_dir."""
-        ignore_path = os.path.join(render_pkg_dir, ".drift_ignore")
-        if not os.path.exists(ignore_path) or not os.path.isfile(ignore_path):
+        ignore_path = render_pkg_dir / ".drift_ignore"
+        if not ignore_path.exists() or not ignore_path.is_file():
             return cls([])
         patterns = []
-        with open(ignore_path, "r", encoding="utf-8") as f:
+        with ignore_path.open("r", encoding="utf-8") as f:
             for line in f:
                 line_stripped = cls.strip_comments(line)
                 if line_stripped:
                     patterns.append(line_stripped)
         return cls(patterns)
 
-    def match_path(self, rel_path: str) -> bool:
+    def match_path(self, rel_path: Path) -> bool:
         """Implements GNU Stow's ignore matching algorithm on a relative path."""
         # Special exception: always ignore ignore-related files and config files
         from .constants import IGNORED_FILENAMES
-        filename = os.path.basename(rel_path)
+        filename = rel_path.name
         if filename in IGNORED_FILENAMES:
             return True
 
-        normalized_rel_path = rel_path.replace(os.sep, "/")
+        normalized_rel_path = rel_path.as_posix()
         path_with_slash = "/" + normalized_rel_path
-        basename = os.path.basename(normalized_rel_path)
+        basename = rel_path.name
 
         # Match Step 1: Check patterns containing '/' against path_with_slash
         for pattern in self.set_with_slash:
