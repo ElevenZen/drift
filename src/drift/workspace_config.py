@@ -71,7 +71,7 @@ class WorkspaceConfig:
         self.render_directory = Path(self.render_directory)
         self.install_directory = Path(self.install_directory)
         self.backup_directory = Path(self.backup_directory)
-        self.default_target_directory = Path(self.default_target_directory)
+        self.default_target_directory = Path(self.default_target_directory).expanduser()
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -87,6 +87,8 @@ class WorkspaceConfig:
             raise ValueError("backup_directory must be a non-empty path.")
         if not isinstance(self.default_target_directory, Path) or str(self.default_target_directory) == ".":
             raise ValueError("default_target_directory must be a non-empty path.")
+        if not self.default_target_directory.is_absolute():
+            raise ValueError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
         if not isinstance(self.packages_enable, dict):
             raise TypeError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
@@ -170,10 +172,28 @@ class WorkspaceConfig:
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
+        # Warning for unknown top-level sections
+        known_top_sections = {"workspace", "packages", "render"}
+        for key in data:
+            if key not in known_top_sections:
+                logger.warning(f"Unknown top-level config section: '{key}'")
+
         if "workspace" not in data:
             raise ValueError("Missing '[workspace]' section in workspace configuration.")
             
         workspace_data = data.get("workspace", {})
+        # Warning for unknown workspace options
+        known_workspace_keys = {
+            "source_directory",
+            "render_directory",
+            "install_directory",
+            "backup_directory",
+            "default_target_directory"
+        }
+        for key in workspace_data:
+            if key not in known_workspace_keys:
+                logger.warning(f"Unknown workspace option: '{key}'")
+
         packages_data = data.get("packages", {})
         
         # Symmetrically support both flat [packages] and nested [packages.enable] schemas
@@ -201,8 +221,12 @@ class WorkspaceConfig:
         # Parse render engines configurations under [render.*]
         render_data = data.get("render", {})
         render_engine_config = {}
+        known_render_keys = {"input_file", "suffix", "render_command"}
         for name, config_dict in render_data.items():
             if isinstance(config_dict, dict):
+                for key in config_dict:
+                    if key not in known_render_keys:
+                        logger.warning(f"Unknown option under render.{name}: '{key}'")
                 render_engine_config[name] = RenderEngineConfig(
                     name=name,
                     input_file=Path(config_dict.get("input_file", "")),

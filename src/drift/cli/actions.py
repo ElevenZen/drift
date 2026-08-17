@@ -68,27 +68,9 @@ def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, f
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
-    # Determine packages to redeploy
-    if package_names:
-        packages_to_redeploy = []
-        discovered = workspace_config.get_package_names_from_install_dir()
-        for pkg in package_names:
-            if pkg in discovered or force:
-                packages_to_redeploy.append(pkg)
-            else:
-                raise ValueError(f"Target package '{pkg}' was not discovered in install directory '{workspace_config.install_directory}'. "
-                                 f"Use --force to force {pkg} deployment.")
-    else:
-        # Redeploy all active packages currently inside install/ State Database
-        packages_to_redeploy = workspace_config.get_package_names_from_install_dir()
-
     run_primitive_5_install_deployment(
         workspace_config=workspace_config,
-        packages_to_redeploy=packages_to_redeploy,
+        packages_to_redeploy=package_names,
         resolve_symlinks=True,
         force=force,
         package_changes=None

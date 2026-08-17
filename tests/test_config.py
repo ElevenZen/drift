@@ -140,7 +140,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.render_directory, Path("render"))
         self.assertEqual(config.install_directory, Path("install"))
         self.assertEqual(config.backup_directory, Path("backup"))
-        self.assertEqual(config.default_target_directory, Path("~"))
+        self.assertEqual(config.default_target_directory, Path("~").expanduser())
         self.assertEqual(config.packages, {})
 
     def test_workspace_config_from_dict(self) -> None:
@@ -200,6 +200,66 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", install_method="invalid").validate()
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
+
+    def test_workspace_config_absolute_target_dir(self) -> None:
+        """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
+        # Using an absolute directory is valid
+        WorkspaceConfig(default_target_directory=Path("/absolute/path")).validate()
+        
+        # Using a relative directory raises ValueError
+        with self.assertRaises(ValueError) as ctx:
+            WorkspaceConfig(default_target_directory=Path("relative/path")).validate()
+        self.assertIn("default_target_directory must be an absolute path", str(ctx.exception))
+
+    def test_unknown_option_warnings(self) -> None:
+        """Verifies that unknown configuration options and sections trigger warnings."""
+        from unittest.mock import patch
+
+        # 1. Workspace unknown option warnings
+        workspace_data_with_warnings = {
+            "workspace": {
+                "render_directory": "custom_render",
+                "unknown_workspace_opt": "random_val"
+            },
+            "unknown_top_section": {
+                "foo": "bar"
+            },
+            "render": {
+                "mustache": {
+                    "input_file": "input.json",
+                    "suffix": "mustache",
+                    "render_command": "mustache %i %s",
+                    "unknown_render_opt": "blah"
+                }
+            }
+        }
+        
+        with patch("drift.workspace_config.logger.warning") as mock_warn:
+            WorkspaceConfig.from_dict(workspace_data_with_warnings)
+            
+            # Extract actual warning calls
+            warn_messages = [call[0][0] for call in mock_warn.call_args_list]
+            self.assertTrue(any("Unknown top-level config section: 'unknown_top_section'" in msg for msg in warn_messages))
+            self.assertTrue(any("Unknown workspace option: 'unknown_workspace_opt'" in msg for msg in warn_messages))
+            self.assertTrue(any("Unknown option under render.mustache: 'unknown_render_opt'" in msg for msg in warn_messages))
+
+        # 2. PackageConfig unknown option warnings
+        package_data_with_warnings = {
+            "package": {
+                "name": "my_pkg",
+                "unknown_pkg_opt": "something"
+            },
+            "another_unknown_top_section": {
+                "baz": "qux"
+            }
+        }
+
+        with patch("drift.package_config.logger.warning") as mock_package_warn:
+            PackageConfig.from_dict(package_data_with_warnings)
+            
+            package_warn_messages = [call[0][0] for call in mock_package_warn.call_args_list]
+            self.assertTrue(any("Unknown top-level package config section: 'another_unknown_top_section'" in msg for msg in package_warn_messages))
+            self.assertTrue(any("Unknown package option: 'unknown_pkg_opt'" in msg for msg in package_warn_messages))
 
 
 class TestConfigLoaders(unittest.TestCase):

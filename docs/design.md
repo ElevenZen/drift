@@ -278,12 +278,15 @@ To safely determine whether a package should execute its `on_install` or `on_upd
     4.  If the package is **already listed** with state `"deploying"`, it means previous deployment ended in errors. The system should abort current deployment and tells user to call rollback manually.
 
 ### B. Physical Conflict Prevention (Collision Guard)
-To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces two safety rules:
+To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces three safety rules:
 1.  **Stow Method Guard (Every Deploy)**:
     *   If a file in `install/<package>/<path>` is slated to be linked to `~/<path>` via `stow`, and `~/<path>` already exists on the system as a **regular physical file** (not a symlink pointing into `install/`), the system must halt and move the regular file to `backup/<package>/overwritten/<path>` before creating the link.
 2.  **Copy Method Guard (First-Time Deploy Only)**:
     *   If a package is being deployed via `copy` for the **very first time** (i.e., not registered in `install/state.toml`), and a physical file already exists at the `target_directory/<path>` on the host, the system must backup the existing target file to `backup/<package>/overwritten/<path>` before copying the new one.
     *   For subsequent updates of `copy` packages, the database file simply overwrites the target file, assuming previous state synchronization has already accounted for drift.
+3.  **Ignored Files as Delete Instructions**:
+    *   If a file inside the staged package directory (`install/<package>/<path>`) matches the package's `.drift_ignore` patterns, it acts as a dynamic **delete instruction** for the system target.
+    *   During collision guard execution, if the corresponding file/link exists at `target_directory/<path>` on the active host system, it is safely backed up to `backup/<package>/deleted_files/<path>` (preserving nested directory paths, not under `overwritten`), and then removed from the active system.
 
 ### C. Incremental vs. Full Deployment Strategies
 To minimize system disruption and application reloads, deployment is executed under two distinct strategies:

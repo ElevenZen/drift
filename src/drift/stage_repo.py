@@ -1,5 +1,6 @@
 """Feature implementation for staging render sandbox into install state database using pathlib."""
 
+import datetime
 import shutil
 import logging
 from pathlib import Path
@@ -26,7 +27,7 @@ class PackageStageChanges:
     deleted_files: List[Path] = field(default_factory=list)
 
 
-def load_active_packages(
+def load_active_render_packages(
     discovered: List[str],
     target_pkgs: Optional[Union[str, List[str]]],
     workspace_config: WorkspaceConfig,
@@ -34,35 +35,35 @@ def load_active_packages(
 ) -> List[str]:
     """Initializes active packages for staging.
 
+    target_pkgs can be a single package name (str) or a list of package names (List[str]).
+    Empty list or None indicates all discovered packages should be processed.
+
     Raises:
         ValueError if any target package is not discovered (unless force is True).
     """
-    if target_pkgs is not None:
-        if isinstance(target_pkgs, str):
-            target_pkgs = [target_pkgs]
-            
-        active_packages = []
-        for pkg in target_pkgs:
-            if pkg in discovered or force:
-                active_packages.append(pkg)
-            else:
-                raise ValueError(
-                    f"Target package '{pkg}' was not discovered in render directory '{workspace_config.render_directory}'. "
-                    "Use --force flag to force target_pkg processing."
-                )
-        return active_packages
+    if not target_pkgs:
+        return [pkg for pkg in discovered if workspace_config.is_package_enabled(pkg)]
 
+    if isinstance(target_pkgs, str):
+        target_pkgs = [target_pkgs]
+    # filter input target packages to only those that are discovered or force is True
+    # otherwise raise an error for missing packages
     active_packages = []
-    for pkg in discovered:
-        if workspace_config.is_package_enabled(pkg):
+    for pkg in target_pkgs:
+        if pkg in discovered or force:
             active_packages.append(pkg)
+        else:
+            raise ValueError(
+                f"Target package '{pkg}' was not discovered in render directory '{workspace_config.render_directory}'. "
+                "Use --force flag to force target_pkg processing."
+            )
     return active_packages
 
 
-def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Path) -> None:
-    """Copies render's .drift_ignore to install's .stow-local-ignore,
+def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[Path]) -> None:
+    """Copies render's .drift_ignore to install's .stow-local-ignore (if present),
 
-    and appends '^/.drift_ignore' to it so Stow ignores it during stowing.
+    and appends '^/.drift_ignore' and '^/drift_package.toml' to it so Stow ignores them during stowing.
     """
     stow_ignore_path = install_pkg_dir / ".stow-local-ignore"
     
@@ -74,21 +75,30 @@ def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Path) -> 
             stow_ignore_path.unlink()
             
     install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(render_ignore_path, stow_ignore_path)
+    if render_ignore_path and render_ignore_path.is_file():
+        shutil.copy2(render_ignore_path, stow_ignore_path)
+    else:
+        stow_ignore_path.write_text("", encoding="utf-8")
     
-    # Read and append "^/.drift_ignore" to .stow-local-ignore
-    content = ""
-    if stow_ignore_path.exists():
-        content = stow_ignore_path.read_text(encoding="utf-8")
+    # Read and append patterns to .stow-local-ignore
+    content = stow_ignore_path.read_text(encoding="utf-8")
             
     # Check lines to prevent substring false positives
     lines = [line.strip() for line in content.splitlines()]
-    if "^/.drift_ignore" not in lines:
+    
+    append_patterns = ["^/.drift_ignore", f"^/{PACKAGE_CONFIG_FILE_NAME}"]
+    to_append = []
+    for pattern in append_patterns:
+        if pattern not in lines:
+            to_append.append(pattern)
+            
+    if to_append:
         with stow_ignore_path.open("a", encoding="utf-8") as f:
             if content and not content.endswith("\n"):
                 f.write("\n")
-            f.write("^/.drift_ignore\n")
-    logger.info(f"Created Stow ignore copy and appended '^/.drift_ignore' at {stow_ignore_path}")
+            for pattern in to_append:
+                f.write(f"{pattern}\n")
+    logger.info(f"Created/updated Stow ignore file at {stow_ignore_path} with patterns: {append_patterns}")
 
 
 def process_package_deletions(
@@ -140,6 +150,9 @@ def copy_ignore_and_config_files(install_pkg_dir: Path, render_pkg_dir: Path) ->
         shutil.copy2(render_ignore, install_ignore)
         # Create physical .stow-local-ignore and append exclusion pattern
         create_stow_ignore_file(install_pkg_dir, render_ignore)
+    else:
+        # Create stow-local-ignore even if no .drift_ignore exists to ignore drift_package.toml
+        create_stow_ignore_file(install_pkg_dir, None)
 
     # 2. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
     render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -234,7 +247,7 @@ def run_primitive_4_stage_render_to_install(
     discovered = workspace_config.get_package_names_from_render_dir()
     
     # Load active packages
-    active_packages = load_active_packages(
+    active_packages = load_active_render_packages(
         discovered=discovered,
         target_pkgs=target_pkgs,
         workspace_config=workspace_config,
@@ -310,7 +323,6 @@ def run_primitive_4_stage_render_to_install(
     # Set state of packages to "installed" after successful staging
     for pkg in pkg_metadata.keys():
         metadata = pkg_metadata[pkg]
-        import datetime
         now_str = datetime.datetime.now().isoformat()
         state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
     save_state_registry(state_file, state_registry)

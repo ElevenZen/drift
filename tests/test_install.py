@@ -382,6 +382,144 @@ class TestInstallRepo(unittest.TestCase):
             os.path.abspath(os.path.join(nested_src_dir, "config.json"))
         )
 
+    def test_load_active_install_packages(self) -> None:
+        """Verifies that load_active_install_packages correctly resolves packages for deployment."""
+        from drift.install_repo import load_active_install_packages
+        
+        discovered = ["pkg_a", "pkg_b"]
+        
+        # 1. No package list but they are disabled -> returns []
+        res = load_active_install_packages(discovered, None, self.workspace_config)
+        self.assertEqual(res, [])
+
+        # 2. Enable them by setting packages_enable_default = True
+        self.workspace_config.packages_enable_default = True
+        
+        # Now no package list fallback to discovered (all enabled)
+        res = load_active_install_packages(discovered, None, self.workspace_config)
+        self.assertEqual(res, ["pkg_a", "pkg_b"])
+        
+        # 3. Empty package list fallback to discovered (all enabled)
+        res = load_active_install_packages(discovered, [], self.workspace_config)
+        self.assertEqual(res, ["pkg_a", "pkg_b"])
+        
+        # 4. Explicit list with valid packages (even if some might be disabled, explicit selection is always allowed)
+        self.workspace_config.packages_enable_default = False
+        res = load_active_install_packages(discovered, ["pkg_a"], self.workspace_config)
+        self.assertEqual(res, ["pkg_a"])
+        
+        # 5. Explicit list with single package string
+        res = load_active_install_packages(discovered, "pkg_b", self.workspace_config)
+        self.assertEqual(res, ["pkg_b"])
+
+        # 6. Invalid package (raises ValueError)
+        with self.assertRaises(ValueError):
+            load_active_install_packages(discovered, ["invalid_pkg"], self.workspace_config)
+
+        # 7. Invalid package but with force (allowed)
+        res = load_active_install_packages(discovered, ["invalid_pkg"], self.workspace_config, force=True)
+        self.assertEqual(res, ["invalid_pkg"])
+
+    @patch("drift.install_repo.ensure_dir_exists_with_sudo")
+    @patch("subprocess.run")
+    def test_run_stow_deployment(self, mock_run, mock_ensure_dir) -> None:
+        """Verifies that run_stow_deployment builds the correct stow command, ensures target exists, and runs it."""
+        from drift.install_repo import run_stow_deployment
+        
+        # 1. Test standard stow command without sudo
+        run_stow_deployment(
+            install_base=Path("/install"),
+            target_dir=Path("/target"),
+            pkg="pkg_a",
+            sudo=False,
+            stow_sufficient=True
+        )
+        
+        mock_ensure_dir.assert_called_once_with(Path("/target"), False)
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        self.assertEqual(
+            args[0],
+            ["stow", "--no-folding", "--dotfiles", "-d", "/install", "-t", "/target", "pkg_a"]
+        )
+        self.assertEqual(kwargs.get("cwd"), "/install")
+        
+        # 2. Test stow command with sudo
+        mock_run.reset_mock()
+        mock_ensure_dir.reset_mock()
+        run_stow_deployment(
+            install_base=Path("/install"),
+            target_dir=Path("/target"),
+            pkg="pkg_a",
+            sudo=True,
+            stow_sufficient=True
+        )
+        mock_ensure_dir.assert_called_once_with(Path("/target"), True)
+        mock_run.assert_called_once()
+        args, kwargs = mock_run.call_args
+        self.assertEqual(
+            args[0],
+            ["sudo", "stow", "--no-folding", "--dotfiles", "-d", "/install", "-t", "/target", "pkg_a"]
+        )
+        
+        # 3. Test stow command when version is insufficient
+        with self.assertRaises(RuntimeError) as ctx:
+            run_stow_deployment(
+                install_base=Path("/install"),
+                target_dir=Path("/target"),
+                pkg="pkg_a",
+                sudo=False,
+                stow_sufficient=False
+            )
+        self.assertIn("insufficient", str(ctx.exception))
+
+    def test_collision_guard_ignored_file_deletion(self) -> None:
+        """Verifies that if a staged file matches .drift_ignore, the collision guard backs it up to deleted_files/ and removes it from the host system."""
+        # 1. Create a package in install/ State Database
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # Add physical file under install/pkg_stow, e.g., ignored_file.txt
+        with open(os.path.join(pkg_install_dir, "ignored_file.txt"), "w", encoding="utf-8") as f:
+            f.write("should be deleted")
+
+        # Write .drift_ignore to install/pkg_stow telling it to ignore ignored_file.txt
+        with open(os.path.join(pkg_install_dir, ".drift_ignore"), "w", encoding="utf-8") as f:
+            f.write("ignored_file.txt\n")
+
+        # Create that file at system target (simulating it was previously deployed or exists there)
+        system_file = self.system_target_dir / "ignored_file.txt"
+        with open(system_file, "w", encoding="utf-8") as f:
+            f.write("pre-existing on target")
+
+        # Create stow-local-ignore inside install/pkg_stow (simulating staging done)
+        stow_ignore_path = pkg_install_dir / ".stow-local-ignore"
+        with open(stow_ignore_path, "w", encoding="utf-8") as f:
+            f.write("^/ignored_file.txt\n")
+
+        # Execute deployment
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # 1. The ignored_file.txt should be deleted from self.system_target_dir
+        self.assertFalse(system_file.exists())
+
+        # 2. It should be backed up under backup/pkg_stow/deleted_files (preserving structure)
+        backup_deleted = self.backup_dir / pkg / "deleted_files" / "ignored_file.txt"
+        self.assertTrue(backup_deleted.exists())
+        with open(backup_deleted, "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertEqual(content, "pre-existing on target")
+
 
 if __name__ == "__main__":
     unittest.main()

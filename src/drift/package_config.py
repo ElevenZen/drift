@@ -1,5 +1,6 @@
 """Package-specific configuration loading and metadata parsing using pathlib."""
 
+import logging
 from pathlib import Path
 from typing import List, Optional
 from .toml_parser import parse_toml
@@ -8,6 +9,8 @@ from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 
 from dataclasses import dataclass, field
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -59,11 +62,33 @@ class PackageConfig:
     @classmethod
     def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary."""
+        # Warning for unknown top-level sections
+        known_top_sections = {"package"}
+        for key in data:
+            if key not in known_top_sections:
+                logger.warning(f"Unknown top-level package config section: '{key}'")
+
         package_data = data.get("package", {})
         
         name = package_data.get("name", default_name)
         if not name:
             raise ValueError("Package configuration is missing the required 'name' field.")
+
+        # Warning for unknown package options
+        known_package_keys = {
+            "name",
+            "enable_render",
+            "enable_install",
+            "install_method",
+            "target_directory",
+            "sudo",
+            "fully_controlled_dirs",
+            "on_install",
+            "on_update"
+        }
+        for key in package_data:
+            if key not in known_package_keys:
+                logger.warning(f"Unknown package option: '{key}'")
             
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):

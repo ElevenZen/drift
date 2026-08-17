@@ -6,7 +6,7 @@ import logging
 import subprocess
 import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_package_config_static
@@ -402,8 +402,24 @@ def run_collision_guard(
     
     relative_files = tree_relative_files(install_pkg_dir)
     for rel_file in relative_files:
-        if rel_file.name in IGNORED_FILENAMES or ignore_handler.match_path(rel_file):
+        if rel_file.name in IGNORED_FILENAMES:
             continue
+            
+        if ignore_handler.match_path(rel_file):
+            # The ignore file is acting as delete instruction for the system target.
+            system_target = resolve_system_target(rel_file, target_dir)
+            if system_target.exists() or system_target.is_symlink():
+                backup_path = workspace_config.backup_path / pkg / "deleted_files" / rel_file
+                logger.info(f"[CLEANUP] Ignored file '{rel_file}' exists at system target. Backing up and deleting.")
+                backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+                # Ensure the system target itself is removed (if it was a symlink and we resolved symlinks, the symlink is still there)
+                if system_target.exists() or system_target.is_symlink():
+                    cmd_rm = ["rm", "-rf" if system_target.is_dir() and not system_target.is_symlink() else "-f", str(system_target)]
+                    if metadata.sudo:
+                        cmd_rm.insert(0, "sudo")
+                    subprocess.run(cmd_rm, check=True, capture_output=True)
+            continue
+            
         run_single_file_collision_guard(
             rel_file=rel_file,
             pkg=pkg,
@@ -419,10 +435,12 @@ def run_collision_guard(
 def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool, stow_sufficient: bool) -> None:
     """Invokes GNU Stow for package deployment."""
     if stow_sufficient:
+        ensure_dir_exists_with_sudo(target_dir, sudo)
         stow_cmd = [
             "stow",
             "--no-folding",
             "--dotfiles",
+            "-d", str(install_base),
             "-t", str(target_dir),
             pkg
         ]
@@ -596,9 +614,41 @@ def deploy_package(
     logger.info(f"Deployment of package '{pkg}' completed successfully")
 
 
+def load_active_install_packages(
+    discovered: List[str],
+    target_pkgs: Optional[Union[str, List[str]]],
+    workspace_config: WorkspaceConfig,
+    force: bool = False
+) -> List[str]:
+    """Initializes active packages for installation / deployment from the install/ state database.
+
+    Raises:
+        ValueError if any target package is not discovered (unless force is True).
+    """
+    if not target_pkgs:
+        # Fallback: redeploy all active packages currently inside install/ that are enabled in workspace config
+        return [pkg for pkg in discovered if workspace_config.is_package_enabled(pkg)]
+
+    if isinstance(target_pkgs, str):
+        target_pkgs = [target_pkgs]
+    # filter input target packages to only those that are discovered or force is True
+    # otherwise raise an error for missing packages
+    active_packages = []
+    for pkg in target_pkgs:
+        if pkg in discovered or force:
+            active_packages.append(pkg)
+        else:
+            raise ValueError(
+                f"Target package '{pkg}' was not discovered in install directory '{workspace_config.install_directory}'. "
+                f"Use --force to force {pkg} deployment."
+            )
+    return active_packages
+
+
+
 def run_primitive_5_install_deployment(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: List[str],
+    packages_to_redeploy: Optional[Union[str, List[str]]] = None,
     resolve_symlinks: bool = True,
     force: bool = False,
     package_changes: Optional[List[PackageStageChanges]] = None
@@ -609,7 +659,15 @@ def run_primitive_5_install_deployment(
     
     state_registry = load_state_registry(state_file)
     
-    for pkg in packages_to_redeploy:
+    discovered = workspace_config.get_package_names_from_install_dir()
+    resolved_packages = load_active_install_packages(
+        discovered=discovered,
+        target_pkgs=packages_to_redeploy,
+        workspace_config=workspace_config,
+        force=force
+    )
+    
+    for pkg in resolved_packages:
         pkg_change = None
         # find corresponding PackageStageChanges for this package if provided
         if package_changes:

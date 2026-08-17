@@ -246,13 +246,42 @@ class TestStageRepo(unittest.TestCase):
         # Check .drift_ignore was copied to install
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", ".drift_ignore")))
 
-        # Check .stow-local-ignore file was created and contains ^/.drift_ignore
+        # Check .stow-local-ignore file was created and contains ^/.drift_ignore and ^/drift_package.toml
         stow_ignore_path = os.path.join(self.install_dir, "pkg_ignored", ".stow-local-ignore")
         self.assertTrue(os.path.isfile(stow_ignore_path))
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
         self.assertIn("^/.drift_ignore", stow_content)
+        self.assertIn("^/drift_package.toml", stow_content)
+
+    def test_stow_local_ignore_without_drift_ignore(self) -> None:
+        """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created to ignore drift_package.toml."""
+        from drift.render_package import render_package
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+
+        # Create a package src without .drift_ignore
+        pkg_no_ignore_src = os.path.join(self.source_dir, "pkg_no_ignore")
+        os.makedirs(pkg_no_ignore_src, exist_ok=True)
+        with open(os.path.join(pkg_no_ignore_src, "config.txt"), "w") as f:
+            f.write("some config")
+        with open(os.path.join(pkg_no_ignore_src, PACKAGE_CONFIG_FILE_NAME), "w") as f:
+            f.write("[package]\nname = 'pkg_no_ignore'\n")
+
+        self.workspace_config.packages_enable = {"pkg_no_ignore": True}
+
+        # Render and stage
+        render_package(self.workspace_config, Path(pkg_no_ignore_src))
+        run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_no_ignore")
+
+        # Verify .stow-local-ignore was created in install folder
+        stow_ignore_path = os.path.join(self.install_dir, "pkg_no_ignore", ".stow-local-ignore")
+        self.assertTrue(os.path.isfile(stow_ignore_path))
+        with open(stow_ignore_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        
+        self.assertIn("^/drift_package.toml", content)
+        self.assertIn("^/.drift_ignore", content)
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
@@ -387,6 +416,22 @@ class TestStageRepo(unittest.TestCase):
         )
         changes = run_primitive_4_stage_render_to_install(empty_config)
         self.assertEqual(changes, [])
+
+    def test_stage_empty_target_pkgs_fallback(self) -> None:
+        """Verifies that run_primitive_4_stage_render_to_install falls back to all enabled packages when target_pkgs is empty list []."""
+        # Create a package dir inside render/
+        pkg_a_render = os.path.join(self.render_dir, "pkg_a")
+        os.makedirs(pkg_a_render, exist_ok=True)
+        with open(os.path.join(pkg_a_render, "file1.txt"), "w") as f:
+            f.write("content")
+        
+        # Configure workspace to enable pkg_a
+        self.workspace_config.packages_enable = {"pkg_a": True}
+        
+        # Call with target_pkgs as empty list []
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, target_pkgs=[])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].package_name, "pkg_a")
 
     def test_stage_newly_ignored_file_gets_pruned_and_backed_up(self) -> None:
         """Verifies that if a tracked file in install/ becomes ignored, it gets pruned and backed up."""
