@@ -276,13 +276,26 @@ class TestDependencyResolver(unittest.TestCase):
         self.assertIsNone(find_engine_for_file("static.json", engines))
 
     def test_strip_engine_suffix(self) -> None:
+        # 1. Test legacy strip_engine_suffix wrapper
         self.assertEqual(strip_engine_suffix("mustache.envst.json", "envst"), "mustache.json")
         self.assertEqual(strip_engine_suffix("settings.mustache.json", "mustache"), "settings.json")
         self.assertEqual(strip_engine_suffix("mustache.envst", "envst"), "mustache")
         self.assertEqual(strip_engine_suffix("no_suffix.json", "envst"), "no_suffix.json")
-        # Verify it only replaces the LAST occurrence of ".{suffix}."
         self.assertEqual(
             strip_engine_suffix("file.envst.extra.envst.json", "envst"),
+            "file.envst.extra.json"
+        )
+
+        # 2. Test new member method RenderEngineConfig.strip_suffix
+        envst_engine = RenderEngineConfig(name="envsubst", input_file="", suffix="envst", render_command="")
+        mustache_engine = RenderEngineConfig(name="mustache", input_file="", suffix="mustache", render_command="")
+        
+        self.assertEqual(envst_engine.strip_suffix("mustache.envst.json"), "mustache.json")
+        self.assertEqual(mustache_engine.strip_suffix("settings.mustache.json"), "settings.json")
+        self.assertEqual(envst_engine.strip_suffix("mustache.envst"), "mustache")
+        self.assertEqual(envst_engine.strip_suffix("no_suffix.json"), "no_suffix.json")
+        self.assertEqual(
+            envst_engine.strip_suffix("file.envst.extra.envst.json"),
             "file.envst.extra.json"
         )
 

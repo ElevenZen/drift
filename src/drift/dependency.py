@@ -22,16 +22,9 @@ def find_engine_for_file(filename: str, engines: List[RenderEngineConfig]) -> Op
 
 
 def strip_engine_suffix(filename: str, suffix: str) -> str:
-    """Strips the engine suffix segment from the filename, replacing only the last occurrence."""
-    if filename.endswith(f".{suffix}"):
-        return filename[:-len(f".{suffix}")]
-    
-    pattern = f".{suffix}."
-    idx = filename.rfind(pattern)
-    if idx != -1:
-        # Replaces only the last occurrence of the pattern with "."
-        return filename[:idx] + "." + filename[idx + len(pattern):]
-    return filename
+    """Strips the engine suffix segment from the filename, replacing only the last occurrence (legacy wrapper)."""
+    temp_config = RenderEngineConfig(name="temp", input_file="", suffix=suffix, render_command="")
+    return temp_config.strip_suffix(filename)
 
 
 def resolve_dependencies(engines: List[RenderEngineConfig]) -> Dict[str, Optional[str]]:
@@ -155,7 +148,7 @@ def render_input_templates(
                     f"Input template file for render engine '{engine.name}' not found: {template_file_path}"
                 )
 
-            output_filename = strip_engine_suffix(os.path.basename(engine.input_file), dep_engine.suffix)
+            output_filename = dep_engine.strip_suffix(os.path.basename(engine.input_file))
             # The 'render' string is read dynamically from the workspace_config if provided
             output_file_path = os.path.join(drift_root, render_dir, CONFIG_DIR_NAME, output_filename)
 

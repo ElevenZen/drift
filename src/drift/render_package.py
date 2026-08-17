@@ -4,12 +4,12 @@ import logging
 from typing import List, Optional
 
 from .constants import PACKAGE_CONFIG_FILE_NAME
-from .workspace_config import WorkspaceConfig
+from .workspace_config import WorkspaceConfig, RenderEngineConfig
 from .package_config import (
     load_package_config_from_dir,
     PackageConfig,
 )
-from .dependency import find_engine_for_file, strip_engine_suffix
+from .dependency import find_engine_for_file
 from .render_core import render_template_to_file
 
 logger = logging.getLogger(__name__)
@@ -37,8 +37,13 @@ def is_package_config_file(file_path: str, template_path: Optional[str]) -> bool
 
 
 def copy_static_package_config(render_pkg_dir: str, pkg_config: PackageConfig) -> None:
-    """Copies the package config file to the render package folder if it is static."""
+    """
+    Copies the package config file to the render package folder only if it is static.
+    The output file will be named 'drift_package.toml' in the render package folder, regardless of the source template name.
+    """
     src_path = pkg_config.config_template_path
+    if not pkg_config.is_static():
+        raise ValueError(f"Package config is not static: {pkg_config.name}")
     if not src_path or not os.path.isfile(src_path):
         raise FileNotFoundError(f"Package config file not found: {src_path}")
     dest_path = os.path.join(render_pkg_dir, PACKAGE_CONFIG_FILE_NAME)
@@ -53,13 +58,18 @@ def render_or_copy_file(
     render_pkg_dir: str,
     workspace_config: WorkspaceConfig
 ) -> None:
-    """Renders a single file using a matched engine, or copies it if no engine matches."""
+    """
+    Renders a single file using a matched engine, or copies it if no engine matches.
+    Symlink template files will be resolved to its content in most render engines.
+    Symlink static files will be resolved to the actual file content in copying.
+    Rendered files will have the engine suffix stripped in the output path.
+    """
     relative_path = os.path.relpath(file_path, package_dir)
     engines = list(workspace_config.render_engine_configs.values())
-    engine = find_engine_for_file(relative_path, engines)
+    engine: Optional[RenderEngineConfig] = find_engine_for_file(relative_path, engines)
 
     if engine:
-        stripped_relative_path = strip_engine_suffix(relative_path, engine.suffix)
+        stripped_relative_path = engine.strip_suffix(relative_path)
         dest_path = os.path.join(render_pkg_dir, stripped_relative_path)
         logger.info(f"Rendering template '{relative_path}' using engine '{engine.name}' to '{dest_path}'")
         render_template_to_file(

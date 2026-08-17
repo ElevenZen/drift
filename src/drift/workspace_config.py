@@ -30,6 +30,19 @@ class RenderEngineConfig:
         if not self.render_command or not isinstance(self.render_command, str):
             raise ValueError("render_command must be a non-empty string.")
 
+    def strip_suffix(self, filename: str) -> str:
+        """Strips the engine suffix segment from the filename, replacing only the last occurrence."""
+        suffix = self.suffix
+        if filename.endswith(f".{suffix}"):
+            return filename[:-len(f".{suffix}")]
+        
+        pattern = f".{suffix}."
+        idx = filename.rfind(pattern)
+        if idx != -1:
+            # Replaces only the last occurrence of the pattern with "."
+            return filename[:idx] + "." + filename[idx + len(pattern):]
+        return filename
+
 
 @dataclass
 class WorkspaceConfig:
