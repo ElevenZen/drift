@@ -132,8 +132,8 @@ def create_symlink_manually_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
 def copy_file_contents_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
     """Copies a physical file from src to dst, with sudo if requested."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
+    # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
     remove_file_or_dir_with_sudo(dst, sudo)
-        
     cmd = ["cp", str(src), str(dst)]
     if sudo:
         cmd.insert(0, "sudo")
@@ -164,6 +164,7 @@ def copy_or_move_file(
     subprocess.run(cmd, check=True, capture_output=True)
     
     if sudo:
+        # Attempt to chown the backup to the current process owner if sudo was used, to avoid permission issues later.
         try:
             uid = os.getuid()
             gid = os.getgid()
@@ -463,6 +464,24 @@ def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bo
         raise RuntimeError("Stow version is insufficient (< 2.4.1) or not installed.")
 
 
+def get_relative_path(from_dir: Path, to_path: Path) -> Path:
+    """Computes the relative path from from_dir to to_path using only Path objects."""
+    abs_from = from_dir.resolve()
+    abs_to = to_path.resolve()
+    
+    from_parts = abs_from.parts
+    to_parts = abs_to.parts
+    
+    common_idx = 0
+    while common_idx < len(from_parts) and common_idx < len(to_parts) and from_parts[common_idx] == to_parts[common_idx]:
+        common_idx += 1
+        
+    ups = [".."] * (len(from_parts) - common_idx)
+    downs = list(to_parts[common_idx:])
+    
+    return Path(*ups).joinpath(*downs)
+
+
 def deploy_single_stow_file(
     rel_file: Path,
     install_pkg_dir: Path,
@@ -472,7 +491,8 @@ def deploy_single_stow_file(
     """Helper to deploy a single file using Stow method."""
     src_file = install_pkg_dir / rel_file
     system_target = resolve_system_target(rel_file, target_dir)
-    create_symlink_manually_with_sudo(src_file, system_target, sudo)
+    relative_target = get_relative_path(system_target.parent, src_file)
+    create_symlink_manually_with_sudo(relative_target, system_target, sudo)
 
 
 def deploy_single_copy_file(
@@ -522,13 +542,23 @@ def reconcile_orphaned_files(
             remove_file_or_dir_with_sudo(system_target, metadata.sudo)
 
 
+def get_package_deployable_files(install_pkg_dir: Path, ignore_handler: DriftIgnore) -> List[Path]:
+    """Returns a list of relative Path objects for all deployable files in a package."""
+    deployable = []
+    for rel_file in tree_relative_files(install_pkg_dir):
+        if rel_file.name in IGNORED_FILENAMES or ignore_handler.match_path(rel_file):
+            continue
+        deployable.append(rel_file)
+    return deployable
+
+
 def run_full_file_delivery(
     pkg: str,
     install_base: Path,
     install_pkg_dir: Path,
     target_dir: Path,
     metadata: PackageConfig,
-    ignore_handler: DriftIgnore,
+    deployable_files: List[Path],
     stow_sufficient: bool
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
@@ -540,10 +570,7 @@ def run_full_file_delivery(
             run_stow_deployment(install_base, target_dir, pkg, metadata.sudo, stow_sufficient)
             return
         logger.warning("GNU Stow version is insufficient (< 2.4.1) or not installed. Falling back to manual symlinking.")
-        relative_files = tree_relative_files(install_pkg_dir)
-        for rel_file in relative_files:
-            if rel_file.name in IGNORED_FILENAMES or ignore_handler.match_path(rel_file):
-                continue
+        for rel_file in deployable_files:
             deploy_single_stow_file(
                 rel_file=rel_file,
                 install_pkg_dir=install_pkg_dir,
@@ -581,7 +608,7 @@ def run_incremental_file_delivery(
             )
 
 
-def deploy_package(
+def deploy_package_impl(
     workspace_config: WorkspaceConfig,
     pkg: str,
     state_registry: StateRegistry,
@@ -636,11 +663,7 @@ def deploy_package(
     full_redeploy = (package_changes is None)
     
     # Calculate current desired files list
-    current_files = []
-    for rel_file in tree_relative_files(install_pkg_dir):
-        if rel_file.name in IGNORED_FILENAMES or ignore_handler.match_path(rel_file):
-            continue
-        current_files.append(rel_file)
+    current_files = get_package_deployable_files(install_pkg_dir, ignore_handler)
         
     if full_redeploy:
         reconcile_orphaned_files(
@@ -664,7 +687,7 @@ def deploy_package(
             install_pkg_dir=install_pkg_dir,
             target_dir=target_dir,
             metadata=metadata,
-            ignore_handler=ignore_handler,
+            deployable_files=current_files,
             stow_sufficient=stow_sufficient
         )
     else:
@@ -703,6 +726,42 @@ def deploy_package(
     save_state_registry(state_file, state_registry)
 
     logger.info(f"Deployment of package '{pkg}' completed successfully")
+
+
+def deploy_package(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    state_registry: StateRegistry,
+    state_file: Path,
+    resolve_symlinks: bool,
+    force: bool,
+    package_changes: Optional[PackageStageChanges] = None
+) -> None:
+    """Core function to deploy a single package configuration with subcommand error output reporting."""
+    try:
+        deploy_package_impl(
+            workspace_config=workspace_config,
+            pkg=pkg,
+            state_registry=state_registry,
+            state_file=state_file,
+            resolve_symlinks=resolve_symlinks,
+            force=force,
+            package_changes=package_changes
+        )
+    except subprocess.CalledProcessError as e:
+        stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+        stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+        err_msg = (
+            f"Subcommand failed during package '{pkg}' deployment.\n"
+            f"Command: {' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
+            f"Exit Code: {e.returncode}"
+        )
+        if stderr_str.strip():
+            err_msg += f"\nStderr:\n{stderr_str.strip()}"
+        if stdout_str.strip():
+            err_msg += f"\nStdout:\n{stdout_str.strip()}"
+        logger.error(err_msg)
+        raise RuntimeError(err_msg) from e
 
 
 def load_active_install_packages(
