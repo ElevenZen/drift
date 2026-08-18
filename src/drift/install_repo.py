@@ -70,7 +70,7 @@ def is_stow_version_sufficient(version: str) -> bool:
 
 
 def get_symlinked_parent(system_target: Path, drift_root: Path) -> Optional[Path]:
-    """Returns the symlinked parent directory of system_target if it is a symlink pointing into drift_root."""
+    """Returns the unresolved symlinked parent directory of system_target if it is a symlink pointing into drift_root."""
     parent_dir = system_target.parent
     home_dir = Path.home()
     abs_drift_root = drift_root.resolve()
@@ -296,7 +296,10 @@ def handle_symlinked_parent_error(
     sudo: bool,
     resolve_symlinks: bool = True
 ) -> None:
-    """Treated as an error, backups the symlinked parent folder, removes it, and recreates it as a physical folder.
+    """
+    System_target is the installation target for one file.
+    If any parent directory of system_target is a symlink pointing into drift_root, this is treated as an error.
+    Backups the symlinked parent folder, removes it, and recreates it as a physical folder.
 
     Raises severe error if parent symlink lies outside package's own target directory.
     """
@@ -304,12 +307,15 @@ def handle_symlinked_parent_error(
     if not parent_symlink:
         return
         
-    # Enforce severe safety guard: only allow automatic repair if parent_symlink lies inside target_dir
+    # Enforce severe safety guard: only allow automatic repair if parent_symlink lies inside target_dir. This prevents accidental deletion of unrelated system paths.
+    # We don't care where thse symlink points to, we only care that the symlink itself is inside the package's target directory.
+    # parent_symlink is a prefix of system_target, target_dir is also a prefix of system_target,
+    # so we can check if parent_symlink is relative to target_dir.
     abs_parent = parent_symlink.absolute()
-    abs_target = target_dir.resolve()
+    abs_target = target_dir.absolute()
     if not _is_relative_to(abs_parent, abs_target):
         raise RuntimeError(
-            f"Safety Abort: Parent directory '{parent_symlink}' is a symlink pointing into "
+            f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}' is a symlink pointing into "
             f"drift workspace root '{workspace_config.drift_root}', but lies outside "
             f"the package target directory '{target_dir}'. Resolving this automatically is "
             f"unsafe and could permanently delete unrelated system paths. Please resolve manually."
@@ -626,6 +632,21 @@ def deploy_package_impl(
         return
         
     target_dir = metadata.target_directory or workspace_config.default_target_path
+    # target dir should be absolute.
+    assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
+    
+    # Safety Check: Target directory cannot be inside or equal to drift_root.
+    # We want to prevent accidental drift_root nesting in config files.
+    # Just a naming safety check, not a symlink resolution check,
+    # because symlink tools may create symlinked install target dir that points into drift_root,
+    # and the linked parent check will catch that later.
+    abs_target = target_dir.absolute()
+    abs_drift_root = workspace_config.drift_root.absolute()
+    if abs_target == abs_drift_root or _is_relative_to(abs_target, abs_drift_root):
+        raise ValueError(
+            f"Safety Abort: The target directory written in config '{target_dir}' "
+            f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
+        )
     
     # Check target folder writability
     ensure_directory_writable(target_dir, metadata.sudo)

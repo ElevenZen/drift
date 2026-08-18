@@ -16,7 +16,8 @@ class TestCLI(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = self.temp_dir.name
+        self.drift_root = os.path.join(self.temp_dir.name, "drift_workspace")
+        os.makedirs(self.drift_root, exist_ok=True)
 
         # Initialize Git in the temporary directory
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
@@ -207,9 +208,9 @@ class TestCLI(unittest.TestCase):
 
     def test_cli_apply(self) -> None:
         """Verifies that running 'apply' deploys files to target directories."""
-        # Write a package.toml with target_directory
+        # Write a package.toml with target_directory outside drift_root
         pkg_path = os.path.join(self.src_dir, "pkg_a")
-        target_dir = os.path.join(self.drift_root, "system_home")
+        target_dir = os.path.join(self.temp_dir.name, "system_home")
         os.makedirs(target_dir, exist_ok=True)
         with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
             f.write(f"""

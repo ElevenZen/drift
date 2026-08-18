@@ -21,14 +21,15 @@ from drift.install_repo import (
 class TestInstallRepo(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = Path(self.temp_dir.name).resolve()
+        temp_root = Path(self.temp_dir.name).resolve()
+        self.drift_root = temp_root / "drift_workspace"
+        self.system_target_dir = temp_root / "system_home"
 
         # Create workspace structures
         self.source_dir = self.drift_root / "src"
         self.render_dir = self.drift_root / "render"
         self.install_dir = self.drift_root / "install"
         self.backup_dir = self.drift_root / "backup"
-        self.system_target_dir = self.drift_root / "system_home"
 
         self.source_dir.mkdir(parents=True, exist_ok=True)
         self.render_dir.mkdir(parents=True, exist_ok=True)
@@ -715,6 +716,41 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(backup_external_broken.readlink(), nonexistent_external_file)
         # And it should be replaced by the newly stowed symlink pointing to pkg_install_dir:
         self.assertTrue(system_external_broken.is_symlink())
+
+    def test_install_target_cannot_be_inside_drift_root(self) -> None:
+        """Verifies that the installation deployment raises ValueError if the target directory is inside or equal to drift_root."""
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup config with target_directory equal to drift_root
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.drift_root}"
+            """)
+
+        # Execute deployment and assert ValueError
+        with self.assertRaises(ValueError) as ctx:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
+
+        # 2. Setup config with target_directory INSIDE drift_root (e.g. self.drift_root / "polluted_dir")
+        polluted_dir = self.drift_root / "polluted_dir"
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{polluted_dir}"
+            """)
+
+        # Execute deployment and assert ValueError
+        with self.assertRaises(ValueError) as ctx:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
 
 if __name__ == "__main__":
