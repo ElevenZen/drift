@@ -392,16 +392,6 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse((limit / "parent").exists())
         self.assertTrue(limit.exists())
 
-    def test_stage_force_flag_not_discovered(self) -> None:
-        """Verifies that staging a non-discovered package raises ValueError unless force is enabled."""
-        with self.assertRaises(ValueError):
-            run_primitive_4_stage_render_to_install(self.workspace_config, "nonexistent_package", force=False)
-            
-        # With force=True, it should proceed (but raise RuntimeError because RENDER folder doesn't exist for it, unless skipped)
-        with self.assertRaises(RuntimeError) as cm:
-            run_primitive_4_stage_render_to_install(self.workspace_config, "nonexistent_package", force=True)
-        self.assertIn("Render sandbox directory for package 'nonexistent_package' does not exist", str(cm.exception))
-
     def test_stage_active_packages_empty_early_exit(self) -> None:
         """Verifies that stage returns early if there are no active packages."""
         # Create config with no enabled packages
@@ -461,9 +451,9 @@ class TestStageRepo(unittest.TestCase):
         backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
         self.assertTrue(os.path.isfile(backup_file))
 
-    def test_backup_and_delete_file_utility(self) -> None:
-        """Tests backup_and_delete_file utility function."""
-        from drift.file_utils import backup_and_delete_file
+    def test_backup_and_delete_one_file_utility(self) -> None:
+        """Tests backup_and_delete_one_file utility function."""
+        from drift.file_utils import backup_and_delete_one_file
         util_dir = self.drift_root / "util_backup_delete"
         util_dir.mkdir(parents=True, exist_ok=True)
         
@@ -477,7 +467,7 @@ class TestStageRepo(unittest.TestCase):
         with open(file_path, "w") as f:
             f.write("hello backup")
             
-        backup_and_delete_file(file_path, backup_path, limit_dir=limit_dir)
+        backup_and_delete_one_file(file_path, backup_path, limit_dir=limit_dir)
         
         # Verify file is deleted
         self.assertFalse(file_path.exists())

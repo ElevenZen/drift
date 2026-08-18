@@ -30,7 +30,7 @@ def execute_render(drift_root: Path, package_names: Optional[List[str]] = None) 
         package_names = [package_names]
 
     from ..render_package import run_primitive_2_render_packages
-    run_primitive_2_render_packages(workspace_config, package_names=package_names)
+    run_primitive_2_render_packages(workspace_config, target_pkgs=package_names)
 
 
 def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False) -> None:
@@ -85,7 +85,7 @@ def execute_render_commit(drift_root: Path, message: str, package_names: Optiona
     if isinstance(package_names, str):
         package_names = [package_names]
 
-    run_primitive_3_commit_render_repo(workspace_config, commit_message=message, package_names=package_names)
+    run_primitive_3_commit_render_repo(workspace_config, commit_message=message, target_pkgs=package_names)
 
 
 def execute_install_commit(drift_root: Path, message: str, package_names: Optional[List[str]] = None) -> None:
@@ -99,4 +99,4 @@ def execute_install_commit(drift_root: Path, message: str, package_names: Option
     if isinstance(package_names, str):
         package_names = [package_names]
 
-    run_primitive_6_commit_install_repo(workspace_config, commit_message=message, package_names=package_names)
+    run_primitive_6_commit_install_repo(workspace_config, commit_message=message, target_pkgs=package_names)

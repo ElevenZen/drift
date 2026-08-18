@@ -16,8 +16,10 @@ from .render_core import (
 )
 from .render_package import (
     render_package,
-    render_all_packages,
     run_primitive_3_commit_render_repo,
+)
+from .reverse_sync import (
+    run_primitive_1_reverse_sync,
 )
 from .init_repo import (
     init_drift_workspace,

@@ -27,6 +27,7 @@ class PackageConfig:
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     on_install: Optional[str] = None
     on_update: Optional[str] = None
+    hook_timeout: int = 120
 
     def __post_init__(self) -> None:
         """Handles path expansion on load/initialization."""
@@ -58,6 +59,18 @@ class PackageConfig:
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
+        if not isinstance(self.hook_timeout, int):
+            raise TypeError(f"hook_timeout must be an integer for package '{self.name}'.")
+        if self.hook_timeout <= 0:
+            raise ValueError(f"hook_timeout must be a positive integer for package '{self.name}'.")
+
+    def is_package_config_file(self, file_path: Path) -> bool:
+        """Checks if the given file path is the package config file or its template."""
+        is_template = (self.config_template_path is not None
+                       and file_path.resolve() == self.config_template_path.resolve())
+        is_rendered = (self.config_rendered_path is not None
+                       and file_path.resolve() == self.config_rendered_path.resolve())
+        return is_template or is_rendered
 
     @classmethod
     def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
@@ -84,7 +97,8 @@ class PackageConfig:
             "sudo",
             "fully_controlled_dirs",
             "on_install",
-            "on_update"
+            "on_update",
+            "hook_timeout"
         }
         for key in package_data:
             if key not in known_package_keys:
@@ -101,6 +115,10 @@ class PackageConfig:
         if target_dir:
             target_dir = Path(target_dir).expanduser()
             
+        raw_timeout = package_data.get("hook_timeout", 120)
+        if isinstance(raw_timeout, str) and raw_timeout.isdigit():
+            raw_timeout = int(raw_timeout)
+
         config = cls(
             name=str(name),
             enable_render=bool(package_data.get("enable_render", True)),
@@ -110,7 +128,8 @@ class PackageConfig:
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
             on_install=package_data.get("on_install"),
-            on_update=package_data.get("on_update")
+            on_update=package_data.get("on_update"),
+            hook_timeout=raw_timeout
         )
         config.validate()
         return config

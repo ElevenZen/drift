@@ -498,6 +498,9 @@ on_install = "post-install.bash"
 # Run after any update/deployment of the package is executed
 on_update = "post-update.bash"
 
+# Timeout in seconds for lifecycle hook script executions (Default: 120)
+hook_timeout = 120
+
 ```
 
 If the package config toml file is not present, and one of the follwing things happened:  

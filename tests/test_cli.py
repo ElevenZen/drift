@@ -125,7 +125,8 @@ class TestCLI(unittest.TestCase):
             sys.stderr = original_stderr
 
         self.assertIn("❌ [ERROR]", stderr.getvalue())
-        self.assertIn("Package directory does not exist", stderr.getvalue())
+        self.assertIn("packages not found", stderr.getvalue())
+        self.assertIn("nonexistent_pkg", stderr.getvalue())
 
     def test_argparse_backend_explicitly(self) -> None:
         """Explicitly tests the argparse CLI backend fallback."""

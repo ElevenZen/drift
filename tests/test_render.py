@@ -607,7 +607,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertFalse((render_pkg_dir / "package.envst.toml").exists())
 
     def test_render_all_packages(self) -> None:
-        from drift.render_package import render_all_packages
+        from drift.render_package import run_primitive_2_render_packages
         from drift.workspace_config import WorkspaceConfig
 
         drift_root = self.drift_root
@@ -640,8 +640,8 @@ class TestRenderPackage(unittest.TestCase):
             with open(pkg_dir / "file.txt", "w", encoding="utf-8") as f:
                 f.write(f"Content for {pkg_name}")
 
-        # Run render_all_packages
-        render_all_packages(workspace_config)
+        # Run run_primitive_2_render_packages
+        run_primitive_2_render_packages(workspace_config)
 
         # Verify pkg_a is rendered
         self.assertTrue((drift_root / "render" / "pkg_a" / "file.txt").is_file())

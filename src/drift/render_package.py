@@ -13,6 +13,7 @@ from .package_config import (
 )
 from .dependency import find_engine_for_file
 from .render_core import render_template_to_file
+from .file_utils import tree_relative_files
 
 logger = logging.getLogger(__name__)
 
@@ -25,13 +26,6 @@ def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: st
             shutil.rmtree(render_pkg_dir)
         else:
             render_pkg_dir.unlink()
-
-
-def is_package_config_file(file_path: Path, template_path: Optional[Path]) -> bool:
-    """Checks if the given file path is the package config file or its template."""
-    if not template_path:
-        return False
-    return file_path.resolve() == template_path.resolve()
 
 
 def copy_static_package_config(render_pkg_dir: Path, pkg_config: PackageConfig) -> None:
@@ -103,7 +97,6 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
         copy_static_package_config(render_pkg_dir, pkg_config)
 
     # Misspelled .driftignore warning and copy logic
-    warned_misspelled = False
     misspelled_path = package_dir / ".driftignore"
     correct_path = package_dir / ".drift_ignore"
     if misspelled_path.is_file() and not correct_path.is_file():
@@ -111,71 +104,54 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
             f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
             "Please rename it to '.drift_ignore'."
         )
-        warned_misspelled = True
         dest_correct = render_pkg_dir / ".drift_ignore"
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(misspelled_path, dest_correct)
 
     # 3. Recursively process all other files inside the package directory
-    import os
-    for root, _, files in os.walk(package_dir):
-        for file in files:
-            file_path = Path(root) / file
+    files = tree_relative_files(package_dir)
+    for file in files:
+        file_path = package_dir / file
 
-            # Skip if the file is the package config file or its template itself
-            if is_package_config_file(file_path, pkg_config.config_template_path):
-                continue
+        # Skip if the file is the package config file or its template itself
+        if pkg_config.is_package_config_file(file_path):
+            continue
 
-            if file == ".driftignore":
-                if not warned_misspelled:
-                    logger.warning(
-                        f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
-                        "Please rename it to '.drift_ignore'."
-                    )
-                    warned_misspelled = True
-                continue
+        if file == Path(".driftignore"):
+            continue
 
-            render_or_copy_file(
-                file_path=file_path,
-                package_dir=package_dir,
-                render_pkg_dir=render_pkg_dir,
-                workspace_config=workspace_config
-            )
+        if ((file.name == ".driftignore" or file.name == ".drift_ignore")
+                and file.parent != Path(".")):
+            raise ValueError(f"Ignore files '.drift_ignore' must be located at the root of the package directory. ")
+
+        render_or_copy_file(
+            file_path=file_path,
+            package_dir=package_dir,
+            render_pkg_dir=render_pkg_dir,
+            workspace_config=workspace_config
+        )
 
 
-def render_all_packages(workspace_config: WorkspaceConfig) -> None:
-    """Renders all enabled packages discovered in the workspace config's source directory."""
-    discovered = workspace_config.get_package_names_from_source_dir()
-    for package_name in discovered:
-        if workspace_config.is_package_enabled(package_name):
-            package_dir = workspace_config.source_path / package_name
-            logger.info(f"Rendering enabled package '{package_name}'...")
-            render_package(workspace_config, package_dir)
-        else:
-            logger.debug(f"Skipping disabled package '{package_name}'.")
-
-
-def run_primitive_2_render_packages(workspace_config: WorkspaceConfig, package_names: Optional[List[str]] = None) -> None:
+def run_primitive_2_render_packages(
+        workspace_config: WorkspaceConfig,
+        target_pkgs: Optional[List[str]] = None) -> None:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    if package_names:
-        for pkg in package_names:
-            package_dir = workspace_config.source_path / pkg
-            if not package_dir.exists():
-                raise FileNotFoundError(f"Package directory does not exist: {package_dir}")
-            logger.info(f"Rendering package '{pkg}'...")
-            render_package(workspace_config, package_dir)
-    else:
-        render_all_packages(workspace_config)
+    candidates = workspace_config.get_package_names_from_source_dir()
+    active_packages = workspace_config.get_packages(
+            candidates, target_pkgs, custom_dir=workspace_config.source_path)
+    for package_name in active_packages:
+        package_dir = workspace_config.source_path / package_name
+        render_package(workspace_config, package_dir)
 
 
 def run_primitive_3_commit_render_repo(
     workspace_config: WorkspaceConfig,
     commit_message: str,
-    package_names: Optional[List[str]] = None
+    target_pkgs: Optional[List[str]] = None
 ) -> None:
     """Stages and commits changes inside the render sandbox Git repository (Primitive 3).
 
-    If package_names is specified, only those packages' subdirectories are staged and committed.
+    If target_pkgs is specified, only those packages' subdirectories are staged and committed.
     If there are no changes to commit, it returns gracefully without raising an error.
     """
     import subprocess
@@ -185,9 +161,9 @@ def run_primitive_3_commit_render_repo(
         raise FileNotFoundError(f"Render directory does not exist: {render_dir}")
 
     # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
-    if package_names:
+    if target_pkgs:
         add_cmd = ["git", "-C", str(render_dir), "add"]
-        for pkg in package_names:
+        for pkg in target_pkgs:
             add_cmd.append(f"{pkg}/")
     else:
         add_cmd = ["git", "-C", str(render_dir), "add", "-A"]
@@ -204,9 +180,9 @@ def run_primitive_3_commit_render_repo(
         raise RuntimeError(f"Failed to stage changes in render repo: {e.stderr}") from e
 
     # 2. Check if there are staged changes to commit (scoped to package folders if provided)
-    if package_names:
+    if target_pkgs:
         status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]
-        for pkg in package_names:
+        for pkg in target_pkgs:
             status_cmd.append(f"{pkg}/")
     else:
         status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]

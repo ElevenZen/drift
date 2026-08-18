@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_static, PackageConfig
-from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_file
+from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_one_file
 from .ignore import DriftIgnore
 from .check_repo import has_uncommitted_modifications
 from .state_registry import load_state_registry, save_state_registry
@@ -25,39 +25,6 @@ class PackageStageChanges:
     added_files: List[Path] = field(default_factory=list)
     modified_files: List[Path] = field(default_factory=list)
     deleted_files: List[Path] = field(default_factory=list)
-
-
-def load_active_render_packages(
-    discovered: List[str],
-    target_pkgs: Optional[Union[str, List[str]]],
-    workspace_config: WorkspaceConfig,
-    force: bool = False
-) -> List[str]:
-    """Initializes active packages for staging.
-
-    target_pkgs can be a single package name (str) or a list of package names (List[str]).
-    Empty list or None indicates all discovered packages should be processed.
-
-    Raises:
-        ValueError if any target package is not discovered (unless force is True).
-    """
-    if not target_pkgs:
-        return [pkg for pkg in discovered if workspace_config.is_package_enabled(pkg)]
-
-    if isinstance(target_pkgs, str):
-        target_pkgs = [target_pkgs]
-    # filter input target packages to only those that are discovered or force is True
-    # otherwise raise an error for missing packages
-    active_packages = []
-    for pkg in target_pkgs:
-        if pkg in discovered or force:
-            active_packages.append(pkg)
-        else:
-            raise ValueError(
-                f"Target package '{pkg}' was not discovered in render directory '{workspace_config.render_directory}'. "
-                "Use --force flag to force target_pkg processing."
-            )
-    return active_packages
 
 
 def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[Path]) -> None:
@@ -136,7 +103,7 @@ def process_package_deletions(
                 install_file = install_pkg_dir / rel_file
                 backup_file = backup_dir / rel_file
                 logger.info(f"Moving deleted file to backup: {backup_file}")
-                backup_and_delete_file(install_file, backup_file, limit_dir=install_pkg_dir)
+                backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
                 changes.deleted_files.append(rel_file)
 
 
@@ -244,14 +211,13 @@ def run_primitive_4_stage_render_to_install(
     Returns:
         A list of PackageStageChanges objects representing package changes.
     """
-    discovered = workspace_config.get_package_names_from_render_dir()
-    
+    if isinstance(target_pkgs, str):
+        target_pkgs = [target_pkgs]
+
     # Load active packages
-    active_packages = load_active_render_packages(
-        discovered=discovered,
-        target_pkgs=target_pkgs,
-        workspace_config=workspace_config,
-        force=force
+    active_packages = workspace_config.get_discovered_packages(
+        custom_dir=workspace_config.render_path,
+        target_pkgs=target_pkgs
     )
 
     # If active_packages is empty, we should just return empty lists and not proceed further.

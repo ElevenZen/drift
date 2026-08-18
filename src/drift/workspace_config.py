@@ -6,9 +6,9 @@ import tempfile
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from .constants import in_test_mode
+from .constants import in_test_mode, PACKAGE_CONFIG_FILE_NAME
 from .toml_parser import parse_toml
 
 logger = logging.getLogger(__name__)
@@ -145,29 +145,59 @@ class WorkspaceConfig:
         if not custom_dir.exists() or not custom_dir.is_dir():
             return []
 
-        packages = []
-        for entry in custom_dir.iterdir():
-            if entry.is_dir() and entry.name != '.git':
-                packages.append(entry.name)
+        packages = [d.name for d in custom_dir.iterdir()
+                    if d.is_dir() and d.name != '.git']
+        return sorted(packages)
+
+    @classmethod
+    def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:
+        if not custom_dir.exists() or not custom_dir.is_dir():
+            return []
+
+        packages = [d.name for d in custom_dir.iterdir()
+                    if d.is_dir()
+                    and d.name != '.git'
+                    and (d / PACKAGE_CONFIG_FILE_NAME).exists()]
         return sorted(packages)
 
     def get_package_names_from_source_dir(self) -> List[str]:
         """Finds all potential package subdirectory names within the source directory."""
         return WorkspaceConfig.get_package_names_from_dir(self.source_path)
 
-    def get_package_names_from_render_dir(self) -> List[str]:
-        """Finds all potential package subdirectory names within the render directory."""
-        return WorkspaceConfig.get_package_names_from_dir(self.render_path)
-
-    def get_package_names_from_install_dir(self) -> List[str]:
-        """Finds all potential package subdirectory names within the install directory."""
-        return WorkspaceConfig.get_package_names_from_dir(self.install_path)
-
     def is_package_enabled(self, package_name: str) -> bool:
         """Checks if a package is enabled based on WorkspaceConfig packages list or packages_enable_default."""
         if package_name in self.packages_enable:
             return self.packages_enable[package_name]
         return self.packages_enable_default
+
+    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Optional[List[str]]):
+        """
+        Discovers packages in the given directory, filtering by target packages if provided.
+        Discovered packages are those that have a package config file with name PACKAGE_CONFIG_FILE_NAME. 
+        If target_pkgs is None or empty, all discovered packages that are enabled in the workspace config are returned.
+        Otherwise, only the target packages that are discovered are returned, regardless of whether they are enabled or not.
+        Raises ValueError if any target package is not found in the directory.
+        """
+        discovered = self.get_package_names_with_config_file_from_dir(custom_dir)
+        return self.get_packages(discovered, target_pkgs, custom_dir)
+
+    def get_packages(self, discovered: List[str],
+                     target_pkgs: Optional[List[str]] = None,
+                     custom_dir: Optional[Path] = None) -> List[str]:
+        if not target_pkgs:
+            # Fallback: redeploy all discovered packages currently inside install/ that are enabled in workspace config
+            return [pkg for pkg in discovered if self.is_package_enabled(pkg)]
+
+        remaining_packages = [x for x in target_pkgs if x not in discovered]
+        if remaining_packages:
+            if custom_dir:
+                raise ValueError(f"Given target packages not found in directory '{custom_dir}': {remaining_packages}")
+            else:
+                raise ValueError(f"Given target packages not found: {remaining_packages}")
+
+        # filter input target packages to only those that are discovered
+        # otherwise raise an error for missing packages
+        return [x for x in target_pkgs if x in discovered]
 
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":

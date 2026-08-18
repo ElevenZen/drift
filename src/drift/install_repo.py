@@ -14,43 +14,28 @@ from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .stage_repo import PackageStageChanges
-from .file_utils import tree_relative_files, _is_relative_to
+from .file_utils import (
+        resolve_system_target,
+        backup_file_or_dir_external,
+        copy_file_contents_with_sudo,
+        create_symlink_manually_with_sudo,
+        get_relative_path,
+        get_symlinked_parent,
+        ensure_directory_writable,
+        ensure_dir_exists_with_sudo,
+        remove_file_or_dir_with_sudo,
+        tree_relative_files,
+        is_relative_to,
+        run_command,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def ensure_directory_writable(path: Path, sudo: bool) -> None:
-    """Checks if a directory path (or its closest existing parent) is writable."""
-    if sudo:
-        return  # With sudo, we assume target is writable or handled by elevation
-    curr = path.resolve()
-    while curr:
-        if curr.exists():
-            if os.access(curr, os.W_OK):
-                return
-            else:
-                raise PermissionError(
-                    f"Directory '{curr}' is not writable. "
-                    "Please check permissions or configure sudo for this package."
-                )
-        parent = curr.parent
-        if parent == curr:
-            break
-        curr = parent
-    raise PermissionError(f"Target directory path '{path}' is invalid or inaccessible.")
-
-
-def resolve_system_target(relative_path: Path, target_dir: Path) -> Path:
-    """Resolves relative file path in install/ folder to system target path, applying dot prefix conversion."""
-    target_path = target_dir.expanduser()
-    translated_parts = ["." + p[4:] if p.startswith("dot-") else p for p in relative_path.parts]
-    return target_path.joinpath(*translated_parts)
 
 
 def get_stow_version() -> Optional[str]:
     """Retrieves the installed GNU Stow version string if available."""
     try:
-        res = subprocess.run(["stow", "--version"], capture_output=True, text=True, check=True)
+        res = run_command(["stow", "--version"], text=True)
         # stow (GNU Stow) version 2.3.1 or 2.4.1
         m = re.search(r"(\d+\.\d+(?:\.\d+)?)", res.stdout)
         if m:
@@ -69,189 +54,6 @@ def is_stow_version_sufficient(version: str) -> bool:
         return False
 
 
-def get_symlinked_parent(system_target: Path, drift_root: Path) -> Optional[Path]:
-    """Returns the unresolved symlinked parent directory of system_target if it is a symlink pointing into drift_root."""
-    parent_dir = system_target.parent
-    home_dir = Path.home()
-    abs_drift_root = drift_root.resolve()
-    while parent_dir and parent_dir != Path("/") and parent_dir != home_dir:
-        if parent_dir.is_symlink():
-            try:
-                link_str = parent_dir.readlink()
-                abs_link_target = (parent_dir.parent / link_str).resolve()
-                
-                if _is_relative_to(abs_link_target, abs_drift_root):
-                    return parent_dir
-            except Exception:
-                # because it's a parent dir, very unlikely to fail the resolve process,
-                # but if it does, we ignore and continue up the tree
-                pass
-        # iterate up the directory tree
-        parent = parent_dir.parent
-        if parent == parent_dir:
-            break
-        parent_dir = parent
-    return None
-
-
-def is_stow_linked_parent(system_target: Path, drift_root: Path) -> bool:
-    """Repo Pollution And Infinite Loop Protection: checks if any parent directory of system_target is a symlink into drift_root."""
-    return get_symlinked_parent(system_target, drift_root) is not None
-
-
-def ensure_dir_exists_with_sudo(path: Path, sudo: bool) -> None:
-    """Ensures directory exists, creating with sudo if requested."""
-    if path.exists():
-        return
-    if sudo:
-        subprocess.run(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
-    else:
-        path.mkdir(parents=True, exist_ok=True)
-
-
-def remove_file_or_dir_with_sudo(path: Path, sudo: bool) -> None:
-    """Safely removes a file, symlink, or directory using sudo if requested."""
-    if path.exists() or path.is_symlink():
-        cmd_rm = ["rm", "-rf" if path.is_dir() and not path.is_symlink() else "-f", str(path)]
-        if sudo:
-            cmd_rm.insert(0, "sudo")
-        subprocess.run(cmd_rm, check=True, capture_output=True)
-
-
-def create_symlink_manually_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
-    """Creates a symlink from src to dst manually, cleaning up existing file/link with sudo if requested."""
-    ensure_dir_exists_with_sudo(dst.parent, sudo)
-    remove_file_or_dir_with_sudo(dst, sudo)
-        
-    cmd = ["ln", "-s", str(src), str(dst)]
-    if sudo:
-        cmd.insert(0, "sudo")
-    subprocess.run(cmd, check=True, capture_output=True)
-
-
-def copy_file_contents_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
-    """Copies a physical file from src to dst, with sudo if requested."""
-    ensure_dir_exists_with_sudo(dst.parent, sudo)
-    # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
-    remove_file_or_dir_with_sudo(dst, sudo)
-    cmd = ["cp", str(src), str(dst)]
-    if sudo:
-        cmd.insert(0, "sudo")
-    subprocess.run(cmd, check=True, capture_output=True)
-
-
-def copy_or_move_file(
-    src: Path,
-    dst: Path,
-    sudo: bool,
-    move: bool = False,
-    resolve_symlinks: bool = True
-) -> None:
-    """Backs up or copies file/directory, using sudo if requested and resolving symlinks recursively if resolve_symlinks is True."""
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    
-    if move and not resolve_symlinks:
-        cmd = ["mv", str(src), str(dst)]
-    else:
-        if src.is_dir():
-            cmd = ["cp", "-RP" if not resolve_symlinks else "-RL", str(src), str(dst)]
-        else:
-            cmd = ["cp", "-P" if not resolve_symlinks else "-L", str(src), str(dst)]
-            
-    if sudo:
-        cmd.insert(0, "sudo")
-        
-    subprocess.run(cmd, check=True, capture_output=True)
-    
-    if sudo:
-        # Attempt to chown the backup to the current process owner if sudo was used, to avoid permission issues later.
-        try:
-            uid = os.getuid()
-            gid = os.getgid()
-            if uid is not None and gid is not None:
-                chown_cmd = ["sudo", "chown", "-R", f"{uid}:{gid}", str(dst)]
-                subprocess.run(chown_cmd, check=True, capture_output=True)
-        except Exception as e:
-            logger.warning(f"Failed to chown backup to process owner: {e}")
-            
-    if move:
-        del_cmd = ["rm", "-rf", str(src)]
-        if sudo:
-            del_cmd.insert(0, "sudo")
-        subprocess.run(del_cmd, check=True, capture_output=True)
-
-
-def backup_file_or_dir(src: Path, backup_dest: Path, sudo: bool, resolve_symlinks: bool = True) -> None:
-    """Recursively backs up target src to backup_dest, resolving symlinks if resolve_symlinks is True."""
-    if not src.exists() and not src.is_symlink():
-        return
-        
-    if src.is_symlink():
-        if not resolve_symlinks:
-            copy_or_move_file(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-            return
-        # Try to resolve and backup the content, if failed, fallback to backup the link.
-        try:
-            real_target = src.resolve()
-            if not real_target.exists():
-                copy_or_move_file(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-                return
-            backup_file_or_dir(real_target, backup_dest, sudo, resolve_symlinks=True)
-            # Delete the symlink itself to clear the path
-            remove_file_or_dir_with_sudo(src, sudo)
-        except Exception:
-            copy_or_move_file(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-        return
-
-    elif src.is_dir():
-        if resolve_symlinks:
-            backup_dest.mkdir(parents=True, exist_ok=True)
-            for item in src.iterdir():
-                backup_file_or_dir(item, backup_dest / item.name, sudo, resolve_symlinks=True)
-            # Remove original dir
-            del_cmd = ["rm", "-rf", str(src)]
-            if sudo:
-                del_cmd.insert(0, "sudo")
-            subprocess.run(del_cmd, check=True, capture_output=True)
-        else:
-            copy_or_move_file(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-        return
-
-    else:
-        # then it's a normal file.
-        copy_or_move_file(src, backup_dest, sudo, move=True, resolve_symlinks=resolve_symlinks)
-        return
-
-
-def run_full_copy_deployment(src_pkg_dir: Path, target_dir: Path, sudo: bool) -> None:
-    """Runs high-level copying deployment using rsync if available, otherwise cp -r."""
-    ensure_dir_exists_with_sudo(target_dir, sudo)
-    
-    rsync_cmd = ["rsync", "-av", str(src_pkg_dir) + "/", str(target_dir) + "/"]
-    if sudo:
-        rsync_cmd.insert(0, "sudo")
-        
-    try:
-        subprocess.run(rsync_cmd, check=True, capture_output=True)
-        logger.info("Full copy deployment succeeded via rsync.")
-        return
-    except Exception as e:
-        logger.warning(f"rsync failed or not available, falling back to cp: {e}")
-        
-    # cp -r fallback
-    cp_cmd = ["cp", "-R", str(src_pkg_dir) + "/.", str(target_dir) + "/"]
-    if sudo:
-        cp_cmd.insert(0, "sudo")
-    subprocess.run(cp_cmd, check=True, capture_output=True)
-    
-    # Prune config and stow metadata files
-    for filename in IGNORED_FILENAMES:
-        dest_ignored = target_dir / filename
-        if not dest_ignored.exists():
-            continue
-        remove_file_or_dir_with_sudo(dest_ignored, sudo)
-
-
 def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     """Loads package configuration strictly from the install/ base directory."""
     install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME
@@ -264,7 +66,11 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
 
 
 def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageConfig, workspace_config: WorkspaceConfig) -> None:
-    """Executes a package lifecycle hook script if specified and found."""
+    """Executes a package lifecycle hook script if specified and found.
+
+    The working directory for the hook is set to the package's active target directory.
+    If the hook execution fails or times out, detailed output logs are printed and a RuntimeError is raised.
+    """
     hook_file = getattr(metadata, hook_name, None)
     if not hook_file:
         return
@@ -279,17 +85,54 @@ def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageCo
     except Exception:
         pass
         
-    logger.info(f"Triggering lifecycle hook '{hook_name}' for package '{pkg}': {hook_path}")
+    target_dir = metadata.target_directory or workspace_config.default_target_path
+    assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
+
+    logger.info(f"Triggering lifecycle hook '{hook_name}' for package '{pkg}': {hook_path} (CWD: {target_dir})")
     
     cmd = [str(hook_path)]
     if metadata.sudo:
         cmd.insert(0, "sudo")
         
-    subprocess.run(cmd, check=True, cwd=str(hook_path.parent))
+    timeout_seconds = metadata.hook_timeout
+    try:
+        run_command(
+            cmd,
+            cwd=str(target_dir),
+            text=True,
+            timeout=timeout_seconds
+        )
+    except subprocess.TimeoutExpired as e:
+        stdout_str = e.stdout or ""
+        stderr_str = e.stderr or ""
+        err_msg = (
+            f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
+            f"Command: {' '.join(cmd)}\n"
+        )
+        if stdout_str.strip():
+            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
+        if stderr_str.strip():
+            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
+        logger.error(err_msg)
+        raise RuntimeError(err_msg) from e
+    except subprocess.CalledProcessError as e:
+        stdout_str = e.stdout or ""
+        stderr_str = e.stderr or ""
+        err_msg = (
+            f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
+            f"Command: {' '.join(cmd)}\n"
+        )
+        if stdout_str.strip():
+            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
+        if stderr_str.strip():
+            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
+        logger.error(err_msg)
+        raise RuntimeError(err_msg) from e
 
 
 def handle_symlinked_parent_error(
     system_target: Path,
+    parent_symlink: Path,
     pkg: str,
     target_dir: Path,
     workspace_config: WorkspaceConfig,
@@ -303,7 +146,6 @@ def handle_symlinked_parent_error(
 
     Raises severe error if parent symlink lies outside package's own target directory.
     """
-    parent_symlink = get_symlinked_parent(system_target, workspace_config.drift_root)
     if not parent_symlink:
         return
         
@@ -313,7 +155,7 @@ def handle_symlinked_parent_error(
     # so we can check if parent_symlink is relative to target_dir.
     abs_parent = parent_symlink.absolute()
     abs_target = target_dir.absolute()
-    if not _is_relative_to(abs_parent, abs_target):
+    if not is_relative_to(abs_parent, abs_target):
         raise RuntimeError(
             f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}' is a symlink pointing into "
             f"drift workspace root '{workspace_config.drift_root}', but lies outside "
@@ -328,7 +170,7 @@ def handle_symlinked_parent_error(
         f"[RECOVERY] Symlinked parent directory error. "
         f"Backing up parent symlink '{parent_symlink}' to '{backup_path}'..."
     )
-    backup_file_or_dir(parent_symlink, backup_path, sudo, resolve_symlinks=resolve_symlinks)
+    backup_file_or_dir_external(parent_symlink, backup_path, sudo, resolve_symlinks=resolve_symlinks)
     
     # Remove parent symlink
     remove_file_or_dir_with_sudo(parent_symlink, sudo)
@@ -350,10 +192,12 @@ def run_single_file_collision_guard(
     """Collision guard logic for a single configuration file."""
     system_target = resolve_system_target(rel_file, target_dir)
     
-    # Check for symlinked parent directories inside workspace_config.drift_root and handle them as errors
-    if is_stow_linked_parent(system_target, workspace_config.drift_root):
+    # Repo Pollution And Infinite Loop Protection: checks if any parent directory of system_target is a symlink into drift_root.
+    parent_symlink = get_symlinked_parent(system_target.parent, workspace_config.drift_root)
+    if parent_symlink:
         handle_symlinked_parent_error(
             system_target=system_target,
+            parent_symlink= parent_symlink,
             pkg=pkg,
             target_dir=target_dir,
             workspace_config=workspace_config,
@@ -370,16 +214,16 @@ def run_single_file_collision_guard(
     if metadata.install_method == "stow":
         if system_target.is_symlink():
             try:
-                # do not resolve link here, it may be broken, backup_file_or_dir() will resolve it properly.
+                # do not resolve link here, it may be broken, backup_file_or_dir_external() will resolve it properly.
                 link_str = system_target.readlink()
                 abs_link_target = system_target.parent / link_str
                 normalized_target = Path(os.path.normpath(abs_link_target.absolute()))
                 
-                if _is_relative_to(normalized_target, pkg_install_dir.resolve()):
+                if is_relative_to(normalized_target, pkg_install_dir.resolve()):
                     # Skip backup if symlink already points to the SAME package's install path
                     return
                 drift_root_abs = workspace_config.drift_root.resolve()
-                if _is_relative_to(normalized_target, drift_root_abs):
+                if is_relative_to(normalized_target, drift_root_abs):
                     # It points into drift_root but to a different path (e.g. dangling, or other package).
                     # Delete without backup to clear the collision.
                     logger.info(f"Removing internal/dangling drift-root symlink '{system_target}' without backup.")
@@ -391,19 +235,19 @@ def run_single_file_collision_guard(
                 # If we fail to resolve/analyze, we treat it as an external collision and backup the symlink itself.
                 logger.warning(f"Failed to analyze symlink target of '{system_target}': {e}. Backing up symlink itself.")
                 backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-                backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=False)
+                backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=False)
                 return
 
         backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
         logger.warning(f"[COLLISION GUARD] Stow conflict at '{system_target}'. Backing up...")
-        backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+        backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
         return
         
     # Condition 2: Copy Mode - copy conflict on very first installation of this package
     elif metadata.install_method == "copy" and is_first_time:
         backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
         logger.warning(f"[COLLISION GUARD] Copy conflict at '{system_target}' (first install). Backing up...")
-        backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+        backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
         return
 
 
@@ -431,7 +275,7 @@ def run_collision_guard(
             if system_target.exists() or system_target.is_symlink():
                 backup_path = workspace_config.backup_path / pkg / "deleted_files" / rel_file
                 logger.info(f"[CLEANUP] Ignored file '{rel_file}' exists at system target. Backing up and deleting.")
-                backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+                backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
                 # Ensure the system target itself is removed (if it was a symlink and we resolved symlinks, the symlink is still there)
                 remove_file_or_dir_with_sudo(system_target, metadata.sudo)
             continue
@@ -448,6 +292,37 @@ def run_collision_guard(
         )
 
 
+def run_full_copy_deployment(src_pkg_dir: Path, target_dir: Path, sudo: bool) -> None:
+    """Runs high-level copying deployment using rsync if available, otherwise cp -r."""
+    ensure_dir_exists_with_sudo(target_dir, sudo)
+    
+    rsync_cmd = ["rsync", "-av", str(src_pkg_dir) + "/", str(target_dir) + "/"]
+    if sudo:
+        rsync_cmd.insert(0, "sudo")
+        
+    try:
+        logger.info(f"Attempting full copy deployment via rsync: {' '.join(rsync_cmd)}")
+        run_command(rsync_cmd)
+        logger.info("Full copy deployment succeeded via rsync.")
+        return
+    except Exception as e:
+        logger.warning(f"rsync failed or not available, falling back to cp: {e}")
+        
+    # cp -r fallback
+    cp_cmd = ["cp", "-R", str(src_pkg_dir) + "/.", str(target_dir) + "/"]
+    if sudo:
+        cp_cmd.insert(0, "sudo")
+    logger.info(f"Attempting full copy deployment via cp: {' '.join(cp_cmd)}")
+    run_command(cp_cmd)
+    
+    # Prune config and stow metadata files
+    for filename in IGNORED_FILENAMES:
+        dest_ignored = target_dir / filename
+        if not dest_ignored.exists():
+            continue
+        remove_file_or_dir_with_sudo(dest_ignored, sudo)
+
+
 def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool, stow_sufficient: bool) -> None:
     """Invokes GNU Stow for package deployment."""
     if stow_sufficient:
@@ -462,30 +337,11 @@ def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bo
         ]
         if sudo:
             stow_cmd.insert(0, "sudo")
-        # print out the command to run
-        logger.info(" ".join(stow_cmd))
-        subprocess.run(stow_cmd, check=True, cwd=str(install_base), capture_output=True)
+        logger.info(f"Attempting full deployment via GNU Stow: {' '.join(stow_cmd)}")
+        run_command(stow_cmd, cwd=str(install_base))
         logger.info(f"Full deployment succeeded via GNU Stow for package '{pkg}'.")
     else:
         raise RuntimeError("Stow version is insufficient (< 2.4.1) or not installed.")
-
-
-def get_relative_path(from_dir: Path, to_path: Path) -> Path:
-    """Computes the relative path from from_dir to to_path using only Path objects."""
-    abs_from = from_dir.resolve()
-    abs_to = to_path.resolve()
-    
-    from_parts = abs_from.parts
-    to_parts = abs_to.parts
-    
-    common_idx = 0
-    while common_idx < len(from_parts) and common_idx < len(to_parts) and from_parts[common_idx] == to_parts[common_idx]:
-        common_idx += 1
-        
-    ups = [".."] * (len(from_parts) - common_idx)
-    downs = list(to_parts[common_idx:])
-    
-    return Path(*ups).joinpath(*downs)
 
 
 def deploy_single_stow_file(
@@ -543,19 +399,9 @@ def reconcile_orphaned_files(
         if system_target.exists() or system_target.is_symlink():
             backup_path = workspace_config.backup_path / pkg / "deleted_files" / orphaned
             logger.info(f"[PRUNE] Orphaned file '{orphaned}' is no longer in install/. Backing up and deleting.")
-            backup_file_or_dir(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+            backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
             # Ensure the system target itself is removed
             remove_file_or_dir_with_sudo(system_target, metadata.sudo)
-
-
-def get_package_deployable_files(install_pkg_dir: Path, ignore_handler: DriftIgnore) -> List[Path]:
-    """Returns a list of relative Path objects for all deployable files in a package."""
-    deployable = []
-    for rel_file in tree_relative_files(install_pkg_dir):
-        if rel_file.name in IGNORED_FILENAMES or ignore_handler.match_path(rel_file):
-            continue
-        deployable.append(rel_file)
-    return deployable
 
 
 def run_full_file_delivery(
@@ -642,7 +488,7 @@ def deploy_package_impl(
     # and the linked parent check will catch that later.
     abs_target = target_dir.absolute()
     abs_drift_root = workspace_config.drift_root.absolute()
-    if abs_target == abs_drift_root or _is_relative_to(abs_target, abs_drift_root):
+    if abs_target == abs_drift_root or is_relative_to(abs_target, abs_drift_root):
         raise ValueError(
             f"Safety Abort: The target directory written in config '{target_dir}' "
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
@@ -684,7 +530,7 @@ def deploy_package_impl(
     full_redeploy = (package_changes is None)
     
     # Calculate current desired files list
-    current_files = get_package_deployable_files(install_pkg_dir, ignore_handler)
+    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
         
     if full_redeploy:
         reconcile_orphaned_files(
@@ -785,40 +631,9 @@ def deploy_package(
         raise RuntimeError(err_msg) from e
 
 
-def load_active_install_packages(
-    discovered: List[str],
-    target_pkgs: Optional[Union[str, List[str]]],
-    workspace_config: WorkspaceConfig,
-    force: bool = False
-) -> List[str]:
-    """Initializes active packages for installation / deployment from the install/ state database.
-
-    Raises:
-        ValueError if any target package is not discovered (unless force is True).
-    """
-    if not target_pkgs:
-        # Fallback: redeploy all active packages currently inside install/ that are enabled in workspace config
-        return [pkg for pkg in discovered if workspace_config.is_package_enabled(pkg)]
-
-    if isinstance(target_pkgs, str):
-        target_pkgs = [target_pkgs]
-    # filter input target packages to only those that are discovered or force is True
-    # otherwise raise an error for missing packages
-    active_packages = []
-    for pkg in target_pkgs:
-        if pkg in discovered or force:
-            active_packages.append(pkg)
-        else:
-            raise ValueError(
-                f"Target package '{pkg}' was not discovered in install directory '{workspace_config.install_directory}'. "
-                f"Use --force to force {pkg} deployment."
-            )
-    return active_packages
-
-
 def run_primitive_5_install_deployment(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: Optional[Union[str, List[str]]] = None,
+    packages_to_redeploy: Optional[List[str]] = None,
     resolve_symlinks: bool = True,
     force: bool = False,
     package_changes: Optional[List[PackageStageChanges]] = None
@@ -829,21 +644,17 @@ def run_primitive_5_install_deployment(
     
     state_registry = load_state_registry(state_file)
     
-    discovered = workspace_config.get_package_names_from_install_dir()
-    resolved_packages = load_active_install_packages(
-        discovered=discovered,
+    discovered_packages = workspace_config.get_discovered_packages(
+        custom_dir=workspace_config.install_path,
         target_pkgs=packages_to_redeploy,
-        workspace_config=workspace_config,
-        force=force
     )
     
-    for pkg in resolved_packages:
+    for pkg in discovered_packages:
         # find corresponding PackageStageChanges for this package if provided
         if package_changes:
             pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
         else:
             pkg_change = None
-                    
         deploy_package(
             workspace_config=workspace_config,
             pkg=pkg,
@@ -858,11 +669,11 @@ def run_primitive_5_install_deployment(
 def run_primitive_6_commit_install_repo(
     workspace_config: WorkspaceConfig,
     commit_message: str,
-    package_names: Optional[List[str]] = None
+    target_pkgs: Optional[List[str]] = None
 ) -> None:
     """Stages and commits changes inside the install/ state Git repository (Primitive 6).
 
-    If package_names is specified, only those packages' subdirectories are staged and committed.
+    If target_pkgs is specified, only those packages' subdirectories are staged and committed.
     If there are no changes to commit, it returns gracefully without raising an error.
     """
     install_dir = workspace_config.install_path
@@ -870,38 +681,34 @@ def run_primitive_6_commit_install_repo(
         raise FileNotFoundError(f"Install directory does not exist: {install_dir}")
 
     # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
-    if package_names:
+    if target_pkgs:
         add_cmd = ["git", "-C", str(install_dir), "add"]
-        for pkg in package_names:
+        for pkg in target_pkgs:
             add_cmd.append(f"{pkg}/")
     else:
         add_cmd = ["git", "-C", str(install_dir), "add", "-A"]
 
     try:
-        subprocess.run(
+        run_command(
             add_cmd,
-            capture_output=True,
-            text=True,
-            check=True
+            text=True
         )
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to stage changes in install repo. Stderr: {e.stderr}")
         raise RuntimeError(f"Failed to stage changes in install repo: {e.stderr}") from e
 
     # 2. Check if there are staged changes to commit (scoped to package folders if provided)
-    if package_names:
+    if target_pkgs:
         status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
-        for pkg in package_names:
+        for pkg in target_pkgs:
             status_cmd.append(f"{pkg}/")
     else:
         status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
 
     try:
-        status_res = subprocess.run(
+        status_res = run_command(
             status_cmd,
-            capture_output=True,
-            text=True,
-            check=True
+            text=True
         )
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to check git status in install repo. Stderr: {e.stderr}")
@@ -913,11 +720,9 @@ def run_primitive_6_commit_install_repo(
 
     # 3. Perform git commit with the given commit message
     try:
-        subprocess.run(
+        run_command(
             ["git", "-C", str(install_dir), "commit", "-m", commit_message],
-            capture_output=True,
-            text=True,
-            check=True
+            text=True
         )
         logger.info(f"Committed install repo changes with message: '{commit_message}'")
     except subprocess.CalledProcessError as e:

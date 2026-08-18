@@ -9,12 +9,19 @@ from unittest.mock import patch
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
-from drift.state_registry import load_state_registry, save_state_registry, StateRegistry, PackageState
+from drift.state_registry import (
+        load_state_registry,
+        save_state_registry,
+        StateRegistry,
+        PackageState
+)
 from drift.install_repo import (
-    resolve_system_target,
-    is_stow_linked_parent,
-    run_primitive_5_install_deployment,
-    ensure_directory_writable,
+        resolve_system_target,
+        run_primitive_5_install_deployment,
+)
+from drift.file_utils import (
+        ensure_dir_exists_with_sudo,
+        ensure_directory_writable,
 )
 
 
@@ -112,47 +119,6 @@ class TestInstallRepo(unittest.TestCase):
         # Non-prefixed parts remain untouched
         resolved = resolve_system_target(Path("regular_dir/regular_file.txt"), self.system_target_dir)
         self.assertEqual(resolved, self.system_target_dir / "regular_dir" / "regular_file.txt")
-
-    def test_directory_writability_check(self) -> None:
-        """Tests writability check helper logic."""
-        # Nonexistent nested path with writable base directory should succeed
-        ensure_directory_writable(self.system_target_dir / "nonexistent" / "nested", sudo=False)
-        
-        # Read-only path (if it exists) should raise PermissionError, but we skip system-level permissions testing in normal environments
-        # We can mock os.access to return False
-        with patch("os.access", return_value=False):
-            with self.assertRaises(PermissionError):
-                ensure_directory_writable(self.system_target_dir, sudo=False)
-                
-        # Sudo elevation should bypass check
-        with patch("os.access", return_value=False):
-            ensure_directory_writable(self.system_target_dir, sudo=True)
-
-    def test_infinite_loop_protection(self) -> None:
-        """Verifies incremental stow skips individual links if parent directory is already symlinked to install/."""
-        metadata = PackageConfig(
-            name="pkg_stow",
-            target_directory=self.system_target_dir,
-            install_method="stow"
-        )
-        
-        # Mock system target nvim config
-        nvim_target_dir = self.system_target_dir / ".config" / "nvim"
-        os.makedirs(os.path.dirname(nvim_target_dir), exist_ok=True)
-        
-        # Make ~/.config/nvim a symlink to install/pkg_stow/dot-config/nvim/
-        install_nvim_dir = self.install_dir / "pkg_stow" / "dot-config" / "nvim"
-        os.makedirs(install_nvim_dir, exist_ok=True)
-        
-        os.symlink(install_nvim_dir, nvim_target_dir)
-
-        # Check if individual subfiles of nvim are recognized as having symlinked parents
-        subfile_target = nvim_target_dir / "init.lua"
-        self.assertTrue(is_stow_linked_parent(subfile_target, self.drift_root))
-
-        # Check a regular file which doesn't have symlinked parent
-        regular_target = self.system_target_dir / ".bashrc"
-        self.assertFalse(is_stow_linked_parent(regular_target, self.drift_root))
 
     def test_install_stow_incremental_deployment(self) -> None:
         """Verifies stow incremental file-by-file manual symlinking deployment."""
@@ -275,8 +241,8 @@ class TestInstallRepo(unittest.TestCase):
         with open(backup_file, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "colliding user file")
 
-        # on_install hook ran (check file created in src/pkg_copy/)
-        hook_marker = os.path.join(pkg_install_dir, "hook_ran.txt")
+        # on_install hook ran (check file created in target_dir)
+        hook_marker = os.path.join(self.system_target_dir, "hook_ran.txt")
         self.assertTrue(os.path.isfile(hook_marker))
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook installed")
@@ -305,6 +271,53 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(os.path.isfile(hook_marker))
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook updated")
+
+    def test_lifecycle_hook_failure_and_timeout(self) -> None:
+        """Verifies trigger_package_lifecycle_hook handles failures and timeouts with detailed logging and RuntimeError."""
+        from unittest.mock import patch
+        import subprocess
+        from drift.install_repo import trigger_package_lifecycle_hook
+        
+        pkg = "pkg_copy"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        config = PackageConfig(
+            name=pkg,
+            target_directory=Path(self.system_target_dir),
+            on_install="on-install.sh"
+        )
+        
+        # Write dummy hook script so hook_path.exists() is True
+        hook_path = os.path.join(pkg_install_dir, "on-install.sh")
+        with open(hook_path, "w", encoding="utf-8") as f:
+            f.write("# dummy")
+
+        # 1. Test CalledProcessError
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(
+                returncode=5,
+                cmd=["dummy.sh"],
+                output="Some normal output",
+                stderr="Some severe error output"
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                trigger_package_lifecycle_hook(pkg, "on_install", config, self.workspace_config)
+            self.assertIn("failed with exit code 5", str(ctx.exception))
+            self.assertIn("Some severe error output", str(ctx.exception))
+
+        # 2. Test TimeoutExpired
+        with patch("subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.TimeoutExpired(
+                cmd=["dummy.sh"],
+                timeout=120,
+                output="Standard timeout output",
+                stderr="Standard timeout stderr"
+            )
+            with self.assertRaises(RuntimeError) as ctx:
+                trigger_package_lifecycle_hook(pkg, "on_install", config, self.workspace_config)
+            self.assertIn("timed out after 120 seconds", str(ctx.exception))
+            self.assertIn("Standard timeout stderr", str(ctx.exception))
 
     def test_symlinked_parent_safety_abort(self) -> None:
         """Verifies that a symlinked parent directory outside the package's target_dir raises a RuntimeError to prevent deleting/recreating unrelated system folders."""
@@ -397,44 +410,6 @@ class TestInstallRepo(unittest.TestCase):
             os.path.abspath(os.path.join(os.path.dirname(deployed_file), os.readlink(deployed_file))),
             os.path.abspath(os.path.join(nested_src_dir, "config.json"))
         )
-
-    def test_load_active_install_packages(self) -> None:
-        """Verifies that load_active_install_packages correctly resolves packages for deployment."""
-        from drift.install_repo import load_active_install_packages
-        
-        discovered = ["pkg_a", "pkg_b"]
-        
-        # 1. No package list but they are disabled -> returns []
-        res = load_active_install_packages(discovered, None, self.workspace_config)
-        self.assertEqual(res, [])
-
-        # 2. Enable them by setting packages_enable_default = True
-        self.workspace_config.packages_enable_default = True
-        
-        # Now no package list fallback to discovered (all enabled)
-        res = load_active_install_packages(discovered, None, self.workspace_config)
-        self.assertEqual(res, ["pkg_a", "pkg_b"])
-        
-        # 3. Empty package list fallback to discovered (all enabled)
-        res = load_active_install_packages(discovered, [], self.workspace_config)
-        self.assertEqual(res, ["pkg_a", "pkg_b"])
-        
-        # 4. Explicit list with valid packages (even if some might be disabled, explicit selection is always allowed)
-        self.workspace_config.packages_enable_default = False
-        res = load_active_install_packages(discovered, ["pkg_a"], self.workspace_config)
-        self.assertEqual(res, ["pkg_a"])
-        
-        # 5. Explicit list with single package string
-        res = load_active_install_packages(discovered, "pkg_b", self.workspace_config)
-        self.assertEqual(res, ["pkg_b"])
-
-        # 6. Invalid package (raises ValueError)
-        with self.assertRaises(ValueError):
-            load_active_install_packages(discovered, ["invalid_pkg"], self.workspace_config)
-
-        # 7. Invalid package but with force (allowed)
-        res = load_active_install_packages(discovered, ["invalid_pkg"], self.workspace_config, force=True)
-        self.assertEqual(res, ["invalid_pkg"])
 
     @patch("drift.install_repo.ensure_dir_exists_with_sudo")
     @patch("subprocess.run")

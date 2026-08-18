@@ -176,11 +176,23 @@ class TestConfigClasses(unittest.TestCase):
         data = {
             "package": {
                 "name": "my_pkg",
-                "install_method": "stow"
+                "install_method": "stow",
+                "hook_timeout": 60
             }
         }
         config = PackageConfig.from_dict(data, default_name="fallback_name")
         self.assertEqual(config.name, "my_pkg")
+        self.assertEqual(config.hook_timeout, 60)
+
+        # Test string casting for hook_timeout
+        data_str_timeout = {
+            "package": {
+                "name": "my_pkg",
+                "hook_timeout": "45"
+            }
+        }
+        config_str = PackageConfig.from_dict(data_str_timeout)
+        self.assertEqual(config_str.hook_timeout, 45)
 
         data_no_name = {
             "package": {
@@ -189,6 +201,7 @@ class TestConfigClasses(unittest.TestCase):
         }
         config = PackageConfig.from_dict(data_no_name, default_name="fallback_name")
         self.assertEqual(config.name, "fallback_name")
+        self.assertEqual(config.hook_timeout, 120)  # Default value
 
         with self.assertRaises(ValueError):
             PackageConfig.from_dict(data_no_name)
@@ -200,6 +213,62 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", install_method="invalid").validate()
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
+        with self.assertRaises(TypeError):
+            PackageConfig(name="foo", hook_timeout="not_an_int").validate() # type: ignore
+        with self.assertRaises(ValueError):
+            PackageConfig(name="foo", hook_timeout=0).validate()
+        with self.assertRaises(ValueError):
+            PackageConfig(name="foo", hook_timeout=-10).validate()
+
+    def test_is_package_config_file(self) -> None:
+        """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""
+        config = PackageConfig(
+            name="my_pkg",
+            config_template_path=Path("/src/my_pkg/package.toml"),
+            config_rendered_path=Path("/render/my_pkg/package.toml")
+        )
+        self.assertTrue(config.is_package_config_file(Path("/src/my_pkg/package.toml")))
+        self.assertTrue(config.is_package_config_file(Path("/render/my_pkg/package.toml")))
+        self.assertFalse(config.is_package_config_file(Path("/other/file.toml")))
+
+        # Test when paths are None
+        empty_config = PackageConfig(name="empty")
+        self.assertFalse(empty_config.is_package_config_file(Path("/src/my_pkg/package.toml")))
+
+    def test_get_discovered_packages(self) -> None:
+        """Verifies WorkspaceConfig.get_discovered_packages discovers, validates, and filters packages correctly."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_path = Path(temp_dir).resolve()
+            
+            # Create directories
+            pkg_a_dir = root_path / "pkg_a"
+            pkg_a_dir.mkdir()
+            (pkg_a_dir / "drift_package.toml").touch()
+
+            pkg_b_dir = root_path / "pkg_b"
+            pkg_b_dir.mkdir()
+            (pkg_b_dir / "drift_package.toml").touch()
+
+            # pkg_c has no config file, should not be discovered
+            pkg_c_dir = root_path / "pkg_c"
+            pkg_c_dir.mkdir()
+
+            config = WorkspaceConfig(
+                packages_enable={"pkg_a": True, "pkg_b": False},
+                packages_enable_default=False
+            )
+
+            # 1. No target_pkgs - should return only enabled discovered packages (pkg_a)
+            discovered = config.get_discovered_packages(root_path, target_pkgs=None)
+            self.assertEqual(discovered, ["pkg_a"])
+
+            # 2. Target packages explicitly specified (even disabled pkg_b is returned)
+            discovered_targets = config.get_discovered_packages(root_path, target_pkgs=["pkg_a", "pkg_b"])
+            self.assertEqual(discovered_targets, ["pkg_a", "pkg_b"])
+
+            # 3. Missing target package (raises ValueError)
+            with self.assertRaises(ValueError):
+                config.get_discovered_packages(root_path, target_pkgs=["pkg_a", "pkg_c"])
 
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
@@ -341,7 +410,7 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Create WorkspaceConfig
         workspace_config = WorkspaceConfig(drift_root_path=self.drift_root)
-        engine = RenderEngineConfig(name="envsubst", input_file="env.sh", suffix="envst", render_command="cmd")
+        engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
         workspace_config.render_engine_config = {"envsubst": engine}
 
         # 1. No files exist - should return None
@@ -452,14 +521,14 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         from drift.workspace_config import RenderEngineConfig
         config = RenderEngineConfig(
             name="envsubst",
-            input_file="envsubst.bash",
+            input_file=Path("envsubst.bash"),
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
         config.validate()
 
         with self.assertRaises(ValueError):
-            RenderEngineConfig(name="", input_file="a", suffix="b", render_command="c").validate()
+            RenderEngineConfig(name="", input_file=Path("a"), suffix="b", render_command="c").validate()
 
     def test_workspace_config_with_render_engines(self) -> None:
         from drift.workspace_config import WorkspaceConfig
@@ -506,7 +575,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml
         toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME))
-        config = load_workspace_config(toml_path)
+        config = load_workspace_config(Path(toml_path))
 
         self.assertEqual(config.drift_root_path, Path(self.temp_dir.name).resolve())
         self.assertEqual(config.render_directory, Path("templated_render"))
@@ -523,12 +592,6 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             os.makedirs(os.path.join(root_path, "src", "pkg_src_a"), exist_ok=True)
             os.makedirs(os.path.join(root_path, "src", "pkg_src_b"), exist_ok=True)
             
-            os.makedirs(os.path.join(root_path, "render", "pkg_render_a"), exist_ok=True)
-            os.makedirs(os.path.join(root_path, "render", ".git"), exist_ok=True) # should be skipped
-            
-            os.makedirs(os.path.join(root_path, "install", "pkg_install_a"), exist_ok=True)
-            os.makedirs(os.path.join(root_path, "install", ".git"), exist_ok=True) # should be skipped
-
             config = WorkspaceConfig(
                 drift_root_path=Path(root_path),
                 source_directory=Path("src"),
@@ -538,12 +601,6 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
             # Test source dir discovery
             self.assertEqual(config.get_package_names_from_source_dir(), ["pkg_src_a", "pkg_src_b"])
-
-            # Test render dir discovery
-            self.assertEqual(config.get_package_names_from_render_dir(), ["pkg_render_a"])
-
-            # Test install dir discovery
-            self.assertEqual(config.get_package_names_from_install_dir(), ["pkg_install_a"])
 
             # Test is_package_enabled
             config.packages_enable = {"pkg_src_a": True, "pkg_src_b": False}
@@ -556,6 +613,23 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertTrue(config.is_package_enabled("pkg_unlisted"))
         finally:
             temp_root.cleanup()
+
+    def test_render_engine_strip_suffix(self) -> None:
+        """Verifies RenderEngineConfig.strip_suffix strips engine suffix segment correctly from the filename."""
+        from drift.workspace_config import RenderEngineConfig
+        engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"),
+            suffix="envst",
+            render_command="cmd"
+        )
+        # Ends with .envst
+        self.assertEqual(engine.strip_suffix("dot-bashrc.envst"), "dot-bashrc")
+        # In the middle (replaces only the last occurrence)
+        self.assertEqual(engine.strip_suffix("all_proxy.envst.conf"), "all_proxy.conf")
+        self.assertEqual(engine.strip_suffix("file.envst.envst.txt"), "file.envst.txt")
+        # Non-matching remains unchanged
+        self.assertEqual(engine.strip_suffix("normal_file.conf"), "normal_file.conf")
 
 
 if __name__ == "__main__":
