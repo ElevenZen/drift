@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List
 
 from .constants import IGNORED_FILENAMES
-from .file_utils import tree_relative_files
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +54,10 @@ class DriftIgnore:
                     patterns.append(line_stripped)
         return cls(patterns)
 
+
     def filter_deployable_files(self, install_pkg_dir: Path) -> List[Path]:
         """Returns a list of relative Path objects for all deployable files in a package."""
+        from .file_utils import tree_relative_files
         return [ rel_file for rel_file in tree_relative_files(install_pkg_dir)
                 if rel_file.name not in IGNORED_FILENAMES
                     and not self.match_path(rel_file) ]
@@ -65,7 +66,6 @@ class DriftIgnore:
     def match_path(self, rel_path: Path) -> bool:
         """Implements GNU Stow's ignore matching algorithm on a relative path."""
         # Special exception: always ignore ignore-related files and config files
-        from .constants import IGNORED_FILENAMES
         filename = rel_path.name
         if filename in IGNORED_FILENAMES:
             return True

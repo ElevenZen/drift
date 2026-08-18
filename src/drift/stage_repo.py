@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_static, PackageConfig
-from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_one_file
+from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
+from .folder_diff import compare_folders
 from .ignore import DriftIgnore
 from .check_repo import has_uncommitted_modifications
 from .state_registry import load_state_registry, save_state_registry
@@ -25,6 +26,37 @@ class PackageStageChanges:
     added_files: List[Path] = field(default_factory=list)
     modified_files: List[Path] = field(default_factory=list)
     deleted_files: List[Path] = field(default_factory=list)
+
+
+def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
+    install_pkg_dir = install_base / pkg
+    if not install_pkg_dir.is_dir():
+        return
+    if has_uncommitted_modifications(install_base, install_pkg_dir):
+        raise RuntimeError(
+            f"Package '{pkg}' in install directory has uncommitted local modifications. "
+            "Please commit or stash your changes before staging, or use --force flag to bypass this check."
+        )
+
+
+def load_config_from_render(render_base: Path, pkg: str, force: bool = False) -> PackageConfig:
+    pkg_render_dir = render_base / pkg
+    try:
+        # the drift_package.toml should exist as a static package config.
+        config_file = pkg_render_dir / PACKAGE_CONFIG_FILE_NAME
+        if not config_file.exists():
+            raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
+        else:
+            metadata = load_package_config_static(config_file, default_name=pkg)
+        return metadata
+    except Exception as e:
+        if not force:
+            raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
+        logger.warning(f"Skipping package '{pkg}' during staging as config loading failed (force enabled): {e}")
+        metadata = PackageConfig(pkg)
+        metadata.enable_render = True
+        metadata.enable_install = True
+        return metadata
 
 
 def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[Path]) -> None:
@@ -68,43 +100,69 @@ def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[
     logger.info(f"Created/updated Stow ignore file at {stow_ignore_path} with patterns: {append_patterns}")
 
 
-def process_package_deletions(
+def process_package_changes(
     pkg: str,
     install_base: Path,
     render_base: Path,
     backup_base: Path,
     changes: PackageStageChanges
 ) -> None:
-    """Processes deletions for a single package (present in install/ but missing in render/)."""
+    """Processes deletions, additions, and modifications for a single package using FolderDiff."""
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
     backup_dir = backup_base / pkg / "deleted_files"
 
-    # Load ignore patterns from RENDER directory only.
+    if not render_pkg_dir.exists():
+        raise RuntimeError(f"Render sandbox directory for package '{pkg}' does not exist. Please render first.")
+
     ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
 
-    if install_pkg_dir.exists() and install_pkg_dir.is_dir():
-        relative_install_files = tree_relative_files(install_pkg_dir)
-        for rel_file in relative_install_files:
-            # Skip if it is an internal system metadata file, or it will be matched in ignore_handler.
-            if rel_file.name in IGNORED_FILENAMES:
-                continue
+    # Use compare_folders to plan all package staging modifications!
+    diff = compare_folders(
+            src_dir=render_pkg_dir,
+            dst_dir=install_pkg_dir,
+            ignore_handler=ignore_handler,
+            resolve_symlinks=True)
 
-            # Check if it should be deleted (either because it is ignored under .drift_ignore now, OR missing in render/)
-            is_deleted = False
-            if ignore_handler.match_path(rel_file):
-                is_deleted = True
-            else:
-                render_file = render_pkg_dir / rel_file
-                if not render_file.exists():
-                    is_deleted = True
-            
-            if is_deleted:
-                install_file = install_pkg_dir / rel_file
-                backup_file = backup_dir / rel_file
-                logger.info(f"Moving deleted file to backup: {backup_file}")
-                backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
-                changes.deleted_files.append(rel_file)
+    # A. Process Deletions
+    for rel_file in diff.deleted:
+        if rel_file.name in IGNORED_FILENAMES:
+            continue
+        install_file = install_pkg_dir / rel_file
+        if install_file.is_dir() and not install_file.is_symlink():
+            remove_file_or_dir(install_file)
+            continue
+        backup_file = backup_dir / rel_file
+        logger.info(f"Moving deleted file to backup: {backup_file}")
+        backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
+        changes.deleted_files.append(rel_file)
+
+    # B. Process Additions
+    for rel_file in diff.added:
+        src = render_pkg_dir / rel_file
+        dst = install_pkg_dir / rel_file
+        if src.is_dir() and not src.is_symlink():
+            dst.mkdir(parents=True, exist_ok=True)
+            continue
+        logger.info(f"Adding new file: {pkg}/{rel_file}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        changes.added_files.append(rel_file)
+
+    # C. Process Modifications
+    for rel_file in diff.modified:
+        src = render_pkg_dir / rel_file
+        dst = install_pkg_dir / rel_file
+        if src.is_dir() and not src.is_symlink():
+            dst.mkdir(parents=True, exist_ok=True)
+            continue
+        logger.info(f"Modifying file: {pkg}/{rel_file}")
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+        changes.modified_files.append(rel_file)
+
+    # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
+    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)
 
 
 def copy_ignore_and_config_files(install_pkg_dir: Path, render_pkg_dir: Path) -> None:
@@ -129,76 +187,6 @@ def copy_ignore_and_config_files(install_pkg_dir: Path, render_pkg_dir: Path) ->
     install_config = install_pkg_dir / PACKAGE_CONFIG_FILE_NAME
     install_pkg_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy2(render_config, install_config)
-
-
-def process_package_additions_modifications(
-    pkg: str,
-    install_base: Path,
-    render_base: Path,
-    changes: PackageStageChanges
-) -> None:
-    """Processes additions and modifications for a single package (present in render/ but missing/different in install/)."""
-    install_pkg_dir = install_base / pkg
-    render_pkg_dir = render_base / pkg
-    
-    # If the render directory doesn't exist, raise an Error because the package has no render output
-    if not render_pkg_dir.exists():
-        raise RuntimeError(f"Render sandbox directory for package '{pkg}' does not exist. Please render first.")
-
-    ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
-
-    if render_pkg_dir.exists() and render_pkg_dir.is_dir():
-        relative_render_files = tree_relative_files(render_pkg_dir)
-        for rel_file in relative_render_files:
-            if ignore_handler.match_path(rel_file):
-                continue
-            
-            src = render_pkg_dir / rel_file
-            dst = install_pkg_dir / rel_file
-            
-            if not dst.exists():
-                logger.info(f"Adding new file: {pkg}/{rel_file}")
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                changes.added_files.append(rel_file)
-            elif file_contents_differ(src, dst):
-                logger.info(f"Modifying file: {pkg}/{rel_file}")
-                shutil.copy2(src, dst)
-                changes.modified_files.append(rel_file)
-
-    # Extract copying and configuring internal files to a separate function
-    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)
-
-
-def load_config_from_render(render_base: Path, pkg: str, force: bool = False) -> PackageConfig:
-    pkg_render_dir = render_base / pkg
-    try:
-        # the drift_package.toml should exist as a static package config.
-        config_file = pkg_render_dir / PACKAGE_CONFIG_FILE_NAME
-        if not config_file.exists():
-            raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
-        else:
-            metadata = load_package_config_static(config_file, default_name=pkg)
-        return metadata
-    except Exception as e:
-        if not force:
-            raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
-        logger.warning(f"Skipping package '{pkg}' during staging as config loading failed (force enabled): {e}")
-        metadata = PackageConfig(pkg)
-        metadata.enable_render = True
-        metadata.enable_install = True
-        return metadata
-
-
-def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
-    install_pkg_dir = install_base / pkg
-    if not install_pkg_dir.is_dir():
-        return
-    if has_uncommitted_modifications(install_base, install_pkg_dir):
-        raise RuntimeError(
-            f"Package '{pkg}' in install directory has uncommitted local modifications. "
-            "Please commit or stash your changes before staging, or use --force flag to bypass this check."
-        )
 
 
 def run_primitive_4_stage_render_to_install(
@@ -260,22 +248,13 @@ def run_primitive_4_stage_render_to_install(
 
     pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
 
-    # 2. Process Deletions
+    # 2. Process deletions, additions, and modifications in a single unified step
     for pkg, metadata in pkg_metadata.items():
-        process_package_deletions(
+        process_package_changes(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
             backup_base=backup_base,
-            changes=pkg_changes[pkg]
-        )
-
-    # 3. Process Additions and Modifications
-    for pkg, metadata in pkg_metadata.items():
-        process_package_additions_modifications(
-            pkg=pkg,
-            install_base=install_base,
-            render_base=render_base,
             changes=pkg_changes[pkg]
         )
 

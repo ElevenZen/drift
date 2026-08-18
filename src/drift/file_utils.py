@@ -349,61 +349,49 @@ def sync_broken_symlink(src: Path, dst: Path) -> None:
         logger.warning(f"Failed to copy broken symlink '{src}': {e}")
 
 
-def reverse_sync_file_or_dir(src: Path, dst: Path) -> None:
+def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional['DriftIgnore'] = None) -> None:
     """
     Performs reverse sync for a single file, directory, or link from src (typically on the system)
     back to dst (typically in the local install state database).
-
-    Handles deletion, directories, broken/valid symlinks, and normal physical files.
     """
-    # 1. Check for deletion of src
-    if not src.exists() and not src.is_symlink():
-        if not dst.exists():
-            return
-        logger.info(f"System Deletion: '{src}' is missing. Deleting counterpart '{dst}' from install/...")
-        remove_file_or_dir(dst)
-        return
+    from .folder_diff import compare_folders
+    from .constants import IGNORED_FILENAMES
 
-    # 2. Check if src is a directory
-    if src.is_dir() and not src.is_symlink():
-        logger.info(f"System Directory Sync: '{src}' is a directory. Pulling recursively back to '{dst}'...")
-        remove_file_or_dir(dst)
-        dst.mkdir(parents=True, exist_ok=True)
-        # recursive call for each child instead of blindly copying the entire
-        # directory, avoid broken symlinks.
-        for child in src.iterdir():
-            reverse_sync_file_or_dir(child, dst / child.name)
-        return
+    diff = compare_folders(src, dst, ignore_handler=ignore_handler, resolve_symlinks=True)
+    
+    # Process deletions
+    for rel_file in diff.deleted:
+        if rel_file.name in IGNORED_FILENAMES:
+            continue
+        target_dst = dst / rel_file if rel_file != Path("") else dst
+        logger.info(f"System Deletion: '{src / rel_file if rel_file != Path('') else src}' is missing. Deleting counterpart '{target_dst}' from install/...")
+        remove_file_or_dir(target_dst)
 
-    # 3. Check for normal physical files
-    if src.is_file() and not src.is_symlink():
-        if not file_contents_differ(src, dst):
-            return
-        logger.info(f"System Modification: '{src}' has drifted. Reverse-copying back to install/...")
-        remove_file_or_dir(dst)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
-        return
+    # Process additions and modifications
+    for rel_file in diff.added + diff.modified:
+        if rel_file.name in IGNORED_FILENAMES:
+            continue
+        target_src = src / rel_file if rel_file != Path("") else src
+        target_dst = dst / rel_file if rel_file != Path("") else dst
 
-    # 4. Check for symlinks
-    if src.is_symlink():
-        # Check if broken link
-        try:
-            real_target = src.resolve()
-            if not real_target.exists():
-                sync_broken_symlink(src, dst)
-                return
-        except Exception:
-            sync_broken_symlink(src, dst)
-            return
+        if target_src.is_dir() and not target_src.is_symlink():
+            target_dst.mkdir(parents=True, exist_ok=True)
+            continue
 
-        # For valid symlinks, check if the resolved target differs from dst
-        try:
-            if real_target.resolve() != dst.resolve():
-                logger.info(f"Replaced/Modified Link Sync: Symlink '{src}' points to '{real_target}'. Recursively syncing...")
-                reverse_sync_file_or_dir(real_target, dst)
-        except Exception as e:
-            logger.warning(f"Failed to compare/process symlink '{src}' for reverse sync: {e}")
-        return
+        is_broken = False
+        if target_src.is_symlink():
+            try:
+                if not target_src.resolve().exists():
+                    is_broken = True
+            except Exception:
+                is_broken = True
+
+        if is_broken:
+            sync_broken_symlink(target_src, target_dst)
+        else:
+            logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
+            remove_file_or_dir(target_dst)
+            target_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target_src, target_dst)
 
 

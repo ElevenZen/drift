@@ -46,7 +46,7 @@ def reverse_sync_fcd_dir(
 
     # If the FCD target is not a directory (is a file or a broken link), sync it back
     if not target_sub_dir.is_dir():
-        reverse_sync_file_or_dir(target_sub_dir, local_install_file)
+        reverse_sync_file_or_dir(target_sub_dir, local_install_file, ignore_handler=ignore_handler)
         return
 
     # If it is a directory, process its children recursively
@@ -63,7 +63,7 @@ def reverse_sync_fcd_dir(
                 continue
 
             child_local_install_file = install_pkg_dir / child_local_rel_path
-            reverse_sync_file_or_dir(child_system_file, child_local_install_file)
+            reverse_sync_file_or_dir(child_system_file, child_local_install_file, ignore_handler=ignore_handler)
 
 
 def reverse_sync_package(pkg: str, install_base: Path, workspace_config: WorkspaceConfig) -> None:
@@ -94,7 +94,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     for relative_path in deployable_files:
         system_target = resolve_system_target(relative_path, target_dir_path)
         local_install_file = install_pkg_dir / relative_path
-        reverse_sync_file_or_dir(system_target, local_install_file)
+        reverse_sync_file_or_dir(system_target, local_install_file, ignore_handler=ignore_handler)
 
     # B. Audit Fully-Controlled Directory subfolders for wild/untracked files
     for fcd_rel_path in metadata.fully_controlled_dirs:
