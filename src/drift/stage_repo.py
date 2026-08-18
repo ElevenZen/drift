@@ -238,12 +238,21 @@ def run_primitive_4_stage_render_to_install(
 
     logger.info(f"Staging the following packages from render/ to install/: {list(pkg_metadata.keys())}")
 
-    # Set state of packages to "deploying" before staging to prevent partial staging issues
+    # Set state of packages to "staging" before staging to prevent partial staging issues
     state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)
     for pkg in pkg_metadata.keys():
         metadata = pkg_metadata[pkg]
-        state_registry.set_package_state(pkg, "deploying", install_method=metadata.install_method)
+        
+        current_state = state_registry.get_package_state(pkg)
+        if not force and current_state in ("staging", "deploying"):
+            raise RuntimeError(
+                f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
+                f"indicating a previous operation failed midway. "
+                f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
+            )
+            
+        state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
     save_state_registry(state_file, state_registry)
 
     pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
@@ -265,11 +274,9 @@ def run_primitive_4_stage_render_to_install(
     for pkg_change in pkg_changes_with_actual_changes:
         logger.info(f"Package '{pkg_change.package_name}': Added: {len(pkg_change.added_files)}, Modified: {len(pkg_change.modified_files)}, Deleted: {len(pkg_change.deleted_files)}")
 
-    # Set state of packages to "installed" after successful staging
+    # Set state of packages to "staged" after successful staging
     for pkg in pkg_metadata.keys():
-        metadata = pkg_metadata[pkg]
-        now_str = datetime.datetime.now().isoformat()
-        state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
+        state_registry.set_package_state(pkg, "staged")
     save_state_registry(state_file, state_registry)
 
     # Return only the packages that have actual changes

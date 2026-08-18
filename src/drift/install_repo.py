@@ -65,10 +65,17 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
 
 
-def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageConfig, workspace_config: WorkspaceConfig) -> None:
+def trigger_package_lifecycle_hook(
+    pkg: str,
+    hook_name: str,
+    metadata: PackageConfig,
+    workspace_config: WorkspaceConfig,
+    cwd_override: Optional[Path] = None
+) -> None:
     """Executes a package lifecycle hook script if specified and found.
 
-    The working directory for the hook is set to the package's active target directory.
+    The working directory defaults to the package's active target directory,
+    but can be overridden (e.g. to install/pkg or render/pkg folders).
     If the hook execution fails or times out, detailed output logs are printed and a RuntimeError is raised.
     """
     hook_file = getattr(metadata, hook_name, None)
@@ -76,6 +83,10 @@ def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageCo
         return
         
     hook_path = workspace_config.install_path / pkg / hook_file
+    if not hook_path.exists():
+        # Fallback to render_path if not in install_path (for post_render)
+        hook_path = workspace_config.render_path / pkg / hook_file
+        
     if not hook_path.exists():
         logger.warning(f"Lifecycle hook file specified but not found: {hook_path}")
         return
@@ -85,7 +96,7 @@ def trigger_package_lifecycle_hook(pkg: str, hook_name: str, metadata: PackageCo
     except Exception:
         pass
         
-    target_dir = metadata.target_directory or workspace_config.default_target_path
+    target_dir = cwd_override or metadata.target_directory or workspace_config.default_target_path
     assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
 
     logger.info(f"Triggering lifecycle hook '{hook_name}' for package '{pkg}': {hook_path} (CWD: {target_dir})")
@@ -519,6 +530,13 @@ def deploy_package_impl(
     
     # Check if first time before setting state to deploying
     current_state = state_registry.get_package_state(pkg)
+    if not force and current_state in ("staging", "deploying"):
+        raise RuntimeError(
+            f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
+            f"indicating a previous operation failed midway. "
+            f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
+        )
+    
     is_first_time = (current_state is None)
     
     # Set package state to "deploying" before actual deployment
@@ -564,6 +582,12 @@ def deploy_package_impl(
             resolve_symlinks=resolve_symlinks
         )
     
+    # 3. Lifecycle Hooks & State registry update
+    if is_first_time:
+        trigger_package_lifecycle_hook(pkg, "pre_install", metadata, workspace_config, cwd_override=install_pkg_dir)
+    else:
+        trigger_package_lifecycle_hook(pkg, "pre_update", metadata, workspace_config, cwd_override=install_pkg_dir)
+
     # 2. Physical Deployment Execution
     stow_version = get_stow_version() if metadata.install_method == "stow" else None
     stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
@@ -590,11 +614,11 @@ def deploy_package_impl(
     logger.info(f"File delivery of package '{pkg}' completed with method '{metadata.install_method}'.")
     logger.info(f"Updating state registry and triggering lifecycle hooks...")
     
-    # 3. Lifecycle Hooks & State registry update
+    # Post Hooks
     if is_first_time:
-        trigger_package_lifecycle_hook(pkg, "on_install", metadata, workspace_config)
+        trigger_package_lifecycle_hook(pkg, "post_install", metadata, workspace_config)
     else:
-        trigger_package_lifecycle_hook(pkg, "on_update", metadata, workspace_config)
+        trigger_package_lifecycle_hook(pkg, "post_update", metadata, workspace_config)
         
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)

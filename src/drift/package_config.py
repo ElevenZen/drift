@@ -25,8 +25,11 @@ class PackageConfig:
     target_directory: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
-    on_install: Optional[str] = None
-    on_update: Optional[str] = None
+    pre_install: Optional[str] = None
+    post_install: Optional[str] = None
+    pre_update: Optional[str] = None
+    post_update: Optional[str] = None
+    post_render: Optional[str] = None
     hook_timeout: int = 120
 
     def __post_init__(self) -> None:
@@ -96,8 +99,13 @@ class PackageConfig:
             "target_directory",
             "sudo",
             "fully_controlled_dirs",
-            "on_install",
-            "on_update",
+            "on_install",  # backward compatibility
+            "on_update",   # backward compatibility
+            "pre_install",
+            "post_install",
+            "pre_update",
+            "post_update",
+            "post_render",
             "hook_timeout"
         }
         for key in package_data:
@@ -119,6 +127,10 @@ class PackageConfig:
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
             raw_timeout = int(raw_timeout)
 
+        # Mapping for backward compatibility
+        post_install = package_data.get("post_install") or package_data.get("on_install")
+        post_update = package_data.get("post_update") or package_data.get("on_update")
+
         config = cls(
             name=str(name),
             enable_render=bool(package_data.get("enable_render", True)),
@@ -127,8 +139,11 @@ class PackageConfig:
             target_directory=target_dir,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
-            on_install=package_data.get("on_install"),
-            on_update=package_data.get("on_update"),
+            pre_install=package_data.get("pre_install"),
+            post_install=post_install,
+            pre_update=package_data.get("pre_update"),
+            post_update=post_update,
+            post_render=package_data.get("post_render"),
             hook_timeout=raw_timeout
         )
         config.validate()

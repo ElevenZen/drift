@@ -18,6 +18,24 @@ from .file_utils import tree_relative_files
 logger = logging.getLogger(__name__)
 
 
+def trigger_post_render_hook(pkg_config: PackageConfig, workspace_config: WorkspaceConfig) -> None:
+    """Trigger the post_render hook if it exists."""
+    from .install_repo import trigger_package_lifecycle_hook
+    pkg = pkg_config.name
+    render_pkg_dir = workspace_config.render_path / pkg
+    
+    if not render_pkg_dir.exists():
+        return
+        
+    trigger_package_lifecycle_hook(
+        pkg=pkg,
+        hook_name="post_render",
+        metadata=pkg_config,
+        workspace_config=workspace_config,
+        cwd_override=render_pkg_dir
+    )
+
+
 def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
     """Clears the sandbox package directory inside the render folder to preserve the render/.git repository."""
     render_pkg_dir = workspace_config.render_path / package_name
@@ -130,6 +148,9 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
             render_pkg_dir=render_pkg_dir,
             workspace_config=workspace_config
         )
+
+    # Trigger post_render hook
+    trigger_post_render_hook(pkg_config, workspace_config)
 
 
 def run_primitive_2_render_packages(

@@ -207,8 +207,8 @@ class TestInstallRepo(unittest.TestCase):
             name = "{pkg}"
             install_method = "copy"
             target_directory = "{self.system_target_dir}"
-            on_install = "on-install.sh"
-            on_update = "on-update.sh"
+            post_install = "on-install.sh"
+            post_update = "on-update.sh"
             """)
 
         # Add physical file in install
@@ -221,7 +221,7 @@ class TestInstallRepo(unittest.TestCase):
         with open(os.path.join(pkg_install_dir, "on-update.sh"), "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\necho 'hook updated' > hook_ran.txt\n")
 
-        # Simulation 1: First-Time Deploy (triggers collision guard and on_install)
+        # Simulation 1: First-Time Deploy (triggers collision guard and post_install)
         # Create a pre-existing target file
         target_file = os.path.join(self.system_target_dir, "test.txt")
         with open(target_file, "w", encoding="utf-8") as f:
@@ -241,13 +241,13 @@ class TestInstallRepo(unittest.TestCase):
         with open(backup_file, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "colliding user file")
 
-        # on_install hook ran (check file created in target_dir)
+        # post_install hook ran (check file created in target_dir)
         hook_marker = os.path.join(self.system_target_dir, "hook_ran.txt")
         self.assertTrue(os.path.isfile(hook_marker))
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook installed")
 
-        # Simulation 2: Update/Redeploy (bypasses collision guard, triggers on_update)
+        # Simulation 2: Update/Redeploy (bypasses collision guard, triggers post_update)
         # Modify content in install/
         with open(os.path.join(pkg_install_dir, "test.txt"), "w", encoding="utf-8") as f:
             f.write("updated hello copy")
@@ -267,7 +267,7 @@ class TestInstallRepo(unittest.TestCase):
         with open(target_file, "r", encoding="utf-8") as f:
             self.assertEqual(f.read(), "updated hello copy")
 
-        # on_update hook ran
+        # post_update hook ran
         self.assertTrue(os.path.isfile(hook_marker))
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook updated")
@@ -285,7 +285,7 @@ class TestInstallRepo(unittest.TestCase):
         config = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            on_install="on-install.sh"
+            post_install="on-install.sh"
         )
         
         # Write dummy hook script so hook_path.exists() is True
@@ -302,7 +302,7 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Some severe error output"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_lifecycle_hook(pkg, "on_install", config, self.workspace_config)
+                trigger_package_lifecycle_hook(pkg, "post_install", config, self.workspace_config)
             self.assertIn("failed with exit code 5", str(ctx.exception))
             self.assertIn("Some severe error output", str(ctx.exception))
 
@@ -315,7 +315,7 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Standard timeout stderr"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_lifecycle_hook(pkg, "on_install", config, self.workspace_config)
+                trigger_package_lifecycle_hook(pkg, "post_install", config, self.workspace_config)
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
             self.assertIn("Standard timeout stderr", str(ctx.exception))
 
@@ -827,6 +827,80 @@ class TestInstallRepo(unittest.TestCase):
 
         # 6. Call again on a clean repo (should return gracefully without error)
         run_primitive_6_commit_install_repo(self.workspace_config, "No-op commit")
+
+
+    def test_deploy_failure_leaves_state_as_deploying(self) -> None:
+        """Verifies that if deployment fails midway, the package state remains 'deploying' in state.toml."""
+        pkg = "pkg_fail"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        # Write config with a post_install hook that will fail
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            post_install = "fail.sh"
+            """)
+
+        # Add physical file in install
+        with open(os.path.join(pkg_install_dir, "test.txt"), "w", encoding="utf-8") as f:
+            f.write("hello fail")
+            
+        # Write failing hook script
+        hook_path = os.path.join(pkg_install_dir, "fail.sh")
+        with open(hook_path, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(hook_path, 0o755)
+
+        # Attempt to deploy - should fail due to hook
+        with self.assertRaises(RuntimeError):
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # Check state.toml
+        state_file = os.path.join(self.install_dir, "state.toml")
+        from drift.state_registry import load_state_registry
+        registry = load_state_registry(Path(state_file))
+        self.assertEqual(registry.get_package_state(pkg), "deploying")
+        self.assertTrue(registry.has_deploying_package())
+
+    def test_deploy_aborts_if_already_deploying(self) -> None:
+        """Verifies that deployment aborts if a package is already in 'deploying' state."""
+        pkg = "pkg_deploying"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        # Write config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # Pre-set state to 'deploying'
+        state_file = os.path.join(self.install_dir, "state.toml")
+        from drift.state_registry import load_state_registry, save_state_registry
+        registry = load_state_registry(Path(state_file))
+        registry.set_package_state(pkg, "deploying")
+        save_state_registry(Path(state_file), registry)
+
+        # Attempt to deploy - should abort with Safety Abort
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        
+        self.assertIn("Safety Abort", str(ctx.exception))
+        self.assertIn("currently in 'deploying' state", str(ctx.exception))
+
+        # Attempt with force=True - should proceed (and succeed here)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], force=True)
+        
+        # Verify success after force
+        registry = load_state_registry(Path(state_file))
+        self.assertEqual(registry.get_package_state(pkg), "installed")
 
 
 if __name__ == "__main__":

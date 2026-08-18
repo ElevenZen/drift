@@ -522,6 +522,31 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes[0].package_name, "pkg_a")
         self.assertEqual(changes[0].modified_files, [Path("file1.txt")])
 
+    def test_stage_aborts_if_already_staging(self) -> None:
+        """Verifies that staging aborts if any package is already in 'staging' state."""
+        pkg = "pkg_a"
+        
+        # Pre-set state to 'staging'
+        state_file = self.install_dir / "state.toml"
+        from drift.state_registry import load_state_registry, save_state_registry
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "staging")
+        save_state_registry(state_file, registry)
+
+        # Attempt to stage - should abort with Safety Abort
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_4_stage_render_to_install(self.workspace_config, [pkg])
+        
+        self.assertIn("Safety Abort", str(ctx.exception))
+        self.assertIn("currently in 'staging' state", str(ctx.exception))
+
+        # Attempt with force=True - should proceed (and succeed here)
+        run_primitive_4_stage_render_to_install(self.workspace_config, [pkg], force=True)
+        
+        # Verify state is 'staged' upon success
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_state(pkg), "staged")
+
 
 if __name__ == "__main__":
     unittest.main()

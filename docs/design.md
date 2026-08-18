@@ -66,36 +66,35 @@ The architecture separates configurations into four distinct physical and logica
 
 ### User Interaction Methods & Typical Workflows
 
-This architecture organizes daily developer workflows into three robust, standard patterns, supporting both **bulk operations (all packages)** and **targeted single-package operations**:
+This architecture organizes daily developer workflows into robust patterns, supporting both **bulk operations (all packages)** and **targeted single-package operations** via the `drift` command line tool:
 
 #### Workflow 1: Developing Declarative Changes (The Template Loop)
 You decide to modify your global shell variables or edit a Neovim template.
 1.  **Edit Source**: You modify `src/nvim/dot-config/nvim/init.lua` or edit `config/envsubst.bash`.
-2.  **Verify Evolution (`make diff-A` or `make diff-A package=nvim`)**:
-    *   Renders your edits into the `render/` sandbox and commits them.
+2.  **Verify Evolution (`drift diff --template nvim`)**:
+    *   Renders your edits into the `render/` sandbox.
     *   It prints **Diff A**, showing you exactly how your templates evolved.
-3.  **Dry-Run check (`make diff-C`)**:
-    *   You run `make diff-C` to see exactly what changes will be applied.
-4.  **Deploy (`make deploy`)**:
-    *   You run `make deploy`. Since your live system hasn't drifted, Stage 1 completes with a "Clean Slate" status, and Stage 2 runs to instantly apply your new templates to the active environment.
+3.  **Dry-Run check (`drift diff nvim`)**:
+    *   You see exactly what changes will be applied to the system.
+4.  **Deploy (`drift deploy nvim`)**:
+    *   You run the deployment sequence. Since your live system hasn't drifted, Stage 1 completes with a "Clean Slate" status, and Stage 2 runs to instantly apply your new templates to the active environment.
 
 #### Workflow 2: Auditing GUI & Runtime System Drifts (The Drift Audit)
 A program (like qBittorrent or a terminal theme tool) has rewritten its configuration file in the background, or you modified a file in your home directory directly to test a setting.
-1.  **Audit Drift (`make diff-B` or `make diff-B package=qbittorrent`)**:
-    *   You run `make diff-B` to pull active system drift back into `install/` (targeted to qbittorrent or all packages).
-    *   It prints **Diff B**, showing you exactly what changes the GUI program or your hot-edits introduced.
+1.  **Audit Drift (`drift diff --system qbittorrent`)**:
+    *   Pull active system drift back into `install/` and shows you exactly what changes were introduced.
 2.  **Manual Reconciliation**:
-    *   If you want to **Adopt** these changes: You copy/merge those modifications from `install/` back to your declarative templates under `src/`, then commit them in your main repo.
-    *   If you want to **Dismiss** these changes: You simply run `make deploy`. Stage 1 will detect the drift, abort the deployment, and print the status. You can then commit in the `install/` repo (without changing anything in `src/`) and re-deploy, or force-deploy to overwrite the drift.
+    *   If you want to **Adopt** these changes: You incorporate modifications from `install/` back to your declarative templates under `src/`.
+    *   If you want to **Dismiss** these changes: You simply run `drift deploy`. Stage 1 will detect the drift and abort. You can then force-deploy (`--force`) to overwrite the drift.
 
 #### Workflow 3: Full Recovery (The Rollback Loop)
 A deployment failed midway due to a permission error, or manual system edits corrupted a config directory.
-1.  **Rollback (`make rollback` or `make rollback package=nvim`)**:
+1.  **Rollback (`drift rollback nvim`)**:
     *   Reverts the `install/` database to the last successfully committed deployment commit, then triggers a **Full Package Redeploy**, restoring configurations to a known-clean state.
 
 #### Workflow 4: Uninstallation (The Uninstall Loop)
-You no longer want a package (e.g., `proxychains`) active on this machine.
-1.  **Uninstall (`make uninstall package=proxychains`)**:
+You no longer want a package active on this machine.
+1.  **Uninstall (`drift uninstall proxychains`)**:
     *   Safely removes all symlinks or copied files from the live system.
     *   Restores any original files backed up under `backup/` to their original paths.
     *   Updates the `install/state.toml` to clean the package state.
@@ -104,10 +103,10 @@ You no longer want a package (e.g., `proxychains`) active on this machine.
 
 ## 3. The 8 Core Primitives
 
-All workflows in this dotfiles system are composed of these eight atomic, sequential primitives, each supporting an optional `<package_name>` target:
+All high-level workflows in drift are composed of these eight atomic, sequential primitives:
 
 ```
-                          [ Execution: make deploy ]
+                          [ Execution: drift deploy ]
                                       │
                                       ▼
                       ┌───────────────────────────────┐
@@ -132,119 +131,70 @@ All workflows in this dotfiles system are composed of these eight atomic, sequen
                                                         [ Deploy Success ]
 ```
 
-### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Optional: `<package>`])
-無条件で、現在の系統の有益な設定状態を `install/` Git リポジトリに逆同期（引き込み）します。
+### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Low-level: `drift reverse-sync`])
+Unconditionally pulls the current host configuration state into the `install/` Git repository.
 *   **For `stow` Packages**:
-    *   *Missing Symlink*: If a symlink in the system is deleted, deletes the counterpart inside `install/`. This generates a physical deletion commit (`Delete`) in the database, representing system ground truth.
+    *   *Missing Symlink*: If a symlink in the system is deleted, deletes the counterpart inside `install/`.
     *   *Replaced by Regular File*: If a symlink was replaced by a normal file containing edits, copies that file's contents back into `install/`.
-    *   *Fully-Controlled Directories (FCD)*: Scans configured relative subdirectories for new (untracked) files and copies them back into `install/` to be tracked by Git.
+    *   *Fully-Controlled Directories (FCD)*: Scans subdirectories for new (untracked) files and syncs them back.
 *   **For `copy` Packages**:
-    *   *Modified*: Compares physical active system files with `install/`. If different, reverse-copies system files back into `install/`.
-    *   *Deleted*: If a system file is missing, deletes the counterpart inside `install/`. This generates a physical deletion commit (`Delete`) in the database.
-    *   *FCD*: Scans target subdirectories for untracked files and copies them back to `install/`.
+    *   *Modified*: Compares physical active system files with `install/`. If different, reverse-copies back into `install/`.
+    *   *Deleted*: If a system file is missing, deletes the counterpart inside `install/`.
+    *   *FCD*: Scans target subdirectories for untracked files and copies them back.
 
-### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Optional: `<package>`])
-Clears the sandbox package-by-package (or selectively scopes cleaning) to preserve the `render/.git` repository. Then processes files in `src/` (expanding templates via `envsubst`/`mustache` using config files pointed in `config/drift.toml` such as `config/envsubst.bash`/`config/mustache.json`), and places the results in `render/`. No live system files are altered.
+### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
+Processes files in `src/` (expanding templates via `envsubst`/`mustache`) and places the results in `render/`. No live system files are altered. Triggers the `post_render` hook upon completion.
 
-### Primitive 3: Render Repo Commit [Optional: `<package>`])
-Automatically commits any updates inside the `render/` sandbox Git repository:
-```bash
-git -C render add -A
-git -C render commit -m "Render: Update templates at $(date)"
-```
+### Primitive 3: Render Repo Commit [Low-level: `drift render-commit`]
+Automatically commits any updates inside the `render/` sandbox Git repository.
 
-### Primitive 4: Stage Render to Install [Optional: `<package>`])
-Reconciles the sandbox `render/` folder into the `install/` database. During this step, the engine compares `render/` and `install/`, and **records exactly which files and packages require redeployment** (due to additions, modifications, or deletions).
+### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
+Reconciles the sandbox `render/` folder into the `install/` database. 
+*   **Mechanism**: Computes exactly which files and packages require redeployment.
+*   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
 
-### Primitive 5: Install Repo Deployment [Optional: `<package>`])
+### Primitive 5: Install Repo Deployment [Low-level: `drift apply`]
 Applies changes to the physical active system.
-*   **For `stow` packages**: Executes individual manual symlinks (Incremental) or runs GNU Stow (Full Deploy).
-*   **For `copy` packages**: Copies files to `target_directory` (prefixed with `sudo` if configured).
-*   *Note*: When executed contiguously after Primitive 4, this step only deploys the changed packages (Incremental Deploy). When executed independently, it falls back to redeploying selected package or all active packages (Full Redeploy).
+*   **Collision Guard**: Backs up colliding physical files to `backup/`.
+*   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment.
+*   **State Machine**: Sets the package state to **`"deploying"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
+*   **Stow Mode**: Executes individual manual symlinks (Incremental) or runs GNU Stow (Full Deploy).
+*   **Copy Mode**: Copies files to `target_directory` (prefixed with `sudo` if configured).
 
-### Primitive 6: Install Repo Commit [Optional: `<package>`])
-Locks the deployed configurations into the local state database with an automated commit:
-*   *Bulk Mode*: Stages and commits the entire `install/` repository.
-*   *Targeted Package Mode*: Scopes the stage and commit strictly to the specific package directory and `state.toml` (e.g., `git -C install add install/<package> install/state.toml && git -C install commit`).
+### Primitive 6: Install Repo Commit [Low-level: `drift install-commit`]
+Locks the deployed configurations into the local state database with an automated commit.
 
-### Primitive 7: Uninstall Repo Package (`<package>`)
+### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
 Removes a package from the system:
-1.  **De-stow or Delete**: Unlinks symlinks or deletes physical files belonging to the package.
-2.  **Rollback Collision Guard**: Restores any original host files backed up in `backup/<package>/overwritten/` to their original locations on the system.
-3.  **Update Registry**: Removes the package from `install/` Git repository and from `install/state.toml`.  
-4.  **Auto-Commit**: Automatically commits the database changes inside the `install/` Git repository.
+1.  **De-stow or Delete**: Unlinks symlinks or deletes physical files.
+2.  **Rollback Collision Guard**: Restores original host files backed up in `backup/`.
+3.  **Update Registry**: Removes the package from the state database.
 
-### Primitive 8: Rollback Recovery (Restore Local State Database & Trigger Full Redeploy [Optional: `<package>`])
+### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
 Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure.
-*   **Database Reset**: Performs a hard reset on the local state repository:
-    ```bash
-    git -C install reset --hard HEAD
-    ```
-    This completely cleans any half-written or uncommitted states inside the `install/` tracking directory.
-*   **Full Redeploy**: Triggers a **Full Package Redeploy** (Primitive 5 with `full_redeploy=True`) for the target package or all enabled active packages to rebuild physical symlinks or file copies.
-*   **Operational Mandate & Hazard Warning**: 
-    *   **Strict Midway Use**: This primitive **MUST ONLY** be used when a `deploy` command fails midway (i.e., during template rendering, staging render to install, or during physical file copies/symlinking on the active system). Under these mid-failure conditions, the active system may be left in an inconsistent/broken state, and `install/` lacks the final Stage 2 commit.
-    *   **Hazard of Misuse**: It **MUST NOT** be run under normal circumstances when no deployment failure occurred. Because this primitive bypasses Stage 1's `Reverse Sync`, running it outside of a recovery scenario will discard all local system drifts and runtime changes (the uncommitted state), causing permanent loss of system configuration drift information (system drift tracking).
 
 ---
 
-## 4. User-Facing Operations (CLI Action Mappings)
+## 4. User-Facing Operations (CLI Overview)
 
-By combining these primitives, we expose clean, high-signal commands in the CLI (via the `Makefile`) with zero unintended side effects. If a package is specified (e.g. `package=nvim`), operations are targeted to that package; otherwise, they run in bulk across all enabled packages.
+The `drift` Python command provides a unified interface for all primitives and high-level workflows.
 
-### User CLI Commands Reference
+### High-Level Commands (Planned)
+*   **`drift status [packages...]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
+*   **`drift diff [packages...]`**: Visualizes changes between layers (Diff A, B, or C).
+*   **`drift deploy [packages...]`**: Atomic Two-Stage deployment with safety guards.
+*   **`drift rollback [packages...]`**: Emergency recovery after midway failure.
+*   **`drift uninstall <package>`**: Safely cleans a package from the system.
 
-The following reference table outlines all developer-facing commands available via the CLI/Makefile:
-
-| Command | Target / Scope | Orchestrated Primitives | Description / Purpose |
-| :--- | :--- | :--- | :--- |
-| `make diff-A [package=xxx]` | Scoped package or bulk | `Primitive 2 (Render)` $\rightarrow$ `git -C render diff` | **View Template Evolution**: View template edits since the last deployment, completely isolated from active system drift. |
-| `make status-A [package=xxx]` | Scoped package or bulk | `Primitive 2 (Render)` $\rightarrow$ `git -C render status` | **Check Template Render Status**: Show which rendered template files in the sandbox differ from their tracked history. |
-| `make diff-B [package=xxx]` | Scoped package or bulk | `Primitive 1 (Reverse Sync)` $\rightarrow$ `git -C install diff` | **View Active System Drift**: Show exactly how live system files on the host have drifted or been modified compared to the database. |
-| `make status-B [package=xxx]` | Scoped package or bulk | `Primitive 1 (Reverse Sync)` $\rightarrow$ `git -C install status` | **Check Active System Drift Status**: View the list of files modified/deleted directly on the system since last deployment. |
-| `make diff-C [package=xxx] [stat=true]` | Scoped package or bulk | `Primitive 1 (Reverse Sync)` $\rightarrow$ `Primitive 2 (Render)` $\rightarrow$ `git diff --no-index` | **Dry-Run Pending Deployment Delta**: Direct comparison of the new sandbox templates with the live system files. |
-| `make deploy [package=xxx]` | Scoped package or bulk | **Stage 1 (Sentinel)**: `Primitive 1` <br> **Stage 2 (Sequential)**: `Primitive 2` $\rightarrow$ `3` $\rightarrow$ `4` $\rightarrow$ `5` $\rightarrow$ `6` | **Atomic Safe Deployment**: Safely syncs, compiles, and deploys configurations. Aborts immediately with scoped `Diff B` if system drift is detected. |
-| `make rollback [package=xxx]` | Scoped package or bulk | `Primitive 8 (Rollback)` | **Emergency Rollback Recovery**: Reverts database and system files to the last committed state. **Only run on midway deployment failures.** |
-| `make uninstall package=xxx [force=true]` | Required package target | `Primitive 7 (Uninstall)` | **Package Uninstallation**: Safely unlinks/deletes a package from the system and restores pre-existing backups. |
-
----
-
-### Command Specifications & Operational Policies
-
-#### A. View Template Evolution (`make diff-A [package=xxx]`)
-*   *Orchestration*: `Primitive 2 (Render)` $\rightarrow$ `git -C render diff`
-*   *Purpose*: View template edits after last deployment, isolated from active system drift.
-
-#### B. View Active System Drift (`make diff-B [package=xxx]`)
-*   *Orchestration*: `Primitive 1 (Reverse Sync)` $\rightarrow$ `git -C install diff`
-*   *Purpose*: Show exactly how live configuration files have drifted on this machine compared to the last deployment.
-
-#### C. View Pending Deployment Delta / Dry-Run (`make diff-C [package=xxx]`)
-*   *Orchestration*: `Primitive 1 (Reverse Sync)` $\rightarrow$ `Primitive 2 (Render)` $\rightarrow$ `git diff --no-index install/ render/`
-*   *Purpose*: Direct, absolute dry-run preview before committing deployments.
-
-#### D. Full Configuration Deployment (`make deploy [package=xxx]`)
-This is a strict **Two-Stage** atomic deployment flow:
-*   **Stage 1 (Safety Guard)**:
-    1.  Runs `Primitive 1 (Reverse Sync)` (scoped to target package, or bulk).
-    2.  Check for drifts:
-        *   *Bulk Mode*: Evaluates the entire `install/` repository for changes.
-        *   *Targeted Package Mode*: **Only checks the targeted package directory** (`install/<package>/`) and `install/state.toml` for changes. Unrelated drifts in other package directories are ignored.
-    3.  **If Drift is Detected**: **Aborts immediately**. The script prints the scoped **Diff B** and forces the user to manually review.
-*   **Stage 2 (Sequential Deployment)**:
-    1.  Runs Primitives **2** $\rightarrow$ **3** $\rightarrow$ **4** $\rightarrow$ **5** $\rightarrow$ **6** sequentially (scoped to target package, or bulk).
-    2.  **Fail-Fast Guard & Recovery Hint**: If any step in this sequence fails, the script **halts immediately and leaves the directory structure untouched** to allow easy debugging. Crucially, the failed deployment command **must output a prominent, clear recovery hint** prompting the user to execute `make rollback` to revert the local database and restore the system files.
-
-#### E. Rollback Recovery (`make rollback [package=xxx]`)
-*   *Orchestration*: `Primitive 8 (Rollback)`
-*   *Operational Intent*: This is purely an emergency restoration command.
-*   *Critical Constraints*:
-    *   **Only on Midway Failure**: Must only be executed if a `make deploy` run fails mid-execution (e.g., template expansion error, copy permission error, stow binary crash).
-    *   **Anti-Pattern Warning**: Under healthy, non-failing system conditions, this command **should not be used**, as resetting the local state database without executing Primitive 1 first results in losing the active system's drift tracking information.
-
-#### F. Package Uninstallation (`make uninstall package=xxx [force=true]`)
-*   *Orchestration*: `Primitive 7 (Uninstall)`
-*   *Purpose*: Completely clean a package from the system and update the state database.
+### Low-Level Control Commands
+These commands are for advanced users or CI/CD pipelines to trigger specific primitives:
+*   **`drift init`**: Initialize a new drift workspace.
+*   **`drift render [packages...]`**: Trigger Primitive 2 (Render).
+*   **`drift render-commit [packages...] -m <msg>`**: Trigger Primitive 3 (Commit Render).
+*   **`drift reverse-sync [packages...]`**: Trigger Primitive 1 (System $\rightarrow$ install/).
+*   **`drift stage [packages...]`**: Trigger Primitive 4 (Staging).
+*   **`drift apply [packages...]`**: Trigger Primitive 5 (Physical Deployment).
+*   **`drift install-commit [packages...] -m <msg>`**: Trigger Primitive 6 (Commit install/).
 
 ---
 
@@ -253,8 +203,8 @@ This is a strict **Two-Stage** atomic deployment flow:
 This section defines the core architectural policies required to maintain technical integrity under edge cases and partial execution failures.
 
 ### A. State Registry Database (`install/state.toml`)
-To safely determine whether a package should execute its `on_install` or `on_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.
-*   This registry tracks successful package deployments:
+To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.
+*   This registry tracks package lifecycle states:
     ```toml
     # install/state.toml
     [packages.nvim]
@@ -264,8 +214,7 @@ To safely determine whether a package should execute its `on_install` or `on_upd
     deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
 
     [packages.qbittorrent]
-    state = "installed"
-    last_deployed = "2026-08-16T21:10:51.987654"
+    state = "staged"
     install_method = "copy"
     deployed_files = ["config.ini"]
 
@@ -274,14 +223,23 @@ To safely determine whether a package should execute its `on_install` or `on_upd
     install_method = "stow"
     deployed_files = []
     ```
+*   **Lifecycle States**:
+    - **`"installed"`**: (Stable) The package is fully applied to the host system.
+    - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
+    - **`"staging"`**: (Transient) The package is currently undergoing database synchronization (Primitive 4).
+    - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
+*   **Safety Abort Logic**:
+    When a package enters Primitive 4 or 5, the system checks its current state.
+    - If the state is **`"staging"`** or **`"deploying"`**, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
+    - A package in **`"staged"`** state is allowed to proceed to deployment or be re-staged.
+*   **Hook Classification**:
+    When a package is about to be deployed:
+    1.  The system reads `install/state.toml`.
+    2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** (triggers `pre/post_install`).
+    3.  If the package is **listed** (even as `"staged"` or `"installed"`), it is classified as an **Update/Redeploy** (triggers `pre/post_update`).
 *   **Desired-State Manifest Tracking**:
     To ensure self-healing and robust deletion behavior during standalone executions, retries, or rollbacks without relying on event-driven stages (Primitive 4), the registry tracks the precise relative paths of all successfully deployed files under the `deployed_files` array.
     Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
-*   When a package is about to be deployed:
-    1.  The system reads `install/state.toml`.
-    2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** and the `on_install` hook is triggered upon successful deploy.
-    3.  If the package is **already listed** with state `"installed"`, it is classified as an **Update/Redeploy** and the `on_update` hook is triggered.  
-    4.  If the package is **already listed** with state `"deploying"`, it means previous deployment ended in errors. The system should abort current deployment and tells user to call rollback manually.
 
 ### B. Physical Conflict Prevention (Collision Guard)
 To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces three safety rules:
@@ -491,12 +449,20 @@ fully_controlled_dirs = [
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
 # Executable scripts located inside the package directory.
-# These hook files won't be copied into install directory.
-# Run on first-time installation of the package
-on_install = "post-install.bash"
+# Run before first-time installation (CWD: install/pkg)
+pre_install = "pre-install.bash"
 
-# Run after any update/deployment of the package is executed
-on_update = "post-update.bash"
+# Run after successful first-time installation (CWD: target_directory)
+post_install = "post-install.bash"
+
+# Run before any update/deployment (CWD: install/pkg)
+pre_update = "pre-update.bash"
+
+# Run after any successful update/deployment (CWD: target_directory)
+post_update = "post-update.bash"
+
+# Run after templates are rendered into sandbox (CWD: render/pkg)
+post_render = "post-render.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 hook_timeout = 120
@@ -992,4 +958,4 @@ By implementing this architecture, the user reaps distinct Unix-style benefits:
 1.  **Strict Demarcation of Merges**: Automation is restricted to simple *reverse-syncing state* and *unilateral overwrite deployment*. The human developer remains the sole merge authority. If active system changes (Diff B) are dirty, the user is presented with standard Git outputs and handles the backport to templates manually.
 2.  **No Hand-Crafted State Engine**: By designating `install/` and `render/` as local Git repositories, we avoid writing custom rollback, commit-tracking, and differential history features. Git manages the hard stuff (index, diffs, conflicts).
 3.  **Complete, High-Fidelity backups**: Deleted configurations and overwritten links are never silently purged; they are meticulously structured and swept into `backup/<package>/` with clean console reporting.
-4.  **Extensible Lifecycles**: Adding a new step after installing Nix or NVim is as simple as dropping a standard executable bash script in `src/<package>/post-update.bash`.
+4.  **Extensible Lifecycles**: Adding complex validation or post-deployment logic is as simple as dropping a standard executable bash script in `src/<package>/pre-update.bash` or `post-install.bash`.
