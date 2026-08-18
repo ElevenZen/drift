@@ -22,9 +22,12 @@ def compare_folders(
     resolve_symlinks: bool = True
 ) -> FolderDiff:
     """
-    Recursively compares src_dir against dst_dir.
+    Recursively compares src_dir against dst_dir. 
     Returns a FolderDiff of relative paths for added, modified, and deleted files/symlinks/directories.
     The ignore_handler is used on files from src_dir.
+
+    Natively supports single-file comparison: if src_dir is a file or symlink,
+    it is compared against dst_dir and returned as Path("") in the FolderDiff.
     """
     from .file_utils import file_contents_differ
 

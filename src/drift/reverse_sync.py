@@ -11,8 +11,8 @@ from .file_utils import (
     tree_relative_files,
     resolve_system_target,
     translate_dot_prefixes_reverse,
-    reverse_sync_file_or_dir,
 )
+from .sync_ops import reverse_sync_file_or_dir
 from .install_repo import load_config_for_install
 
 logger = logging.getLogger(__name__)

@@ -319,6 +319,45 @@ class TestInstallRepo(unittest.TestCase):
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
             self.assertIn("Standard timeout stderr", str(ctx.exception))
 
+    def test_install_copy_respects_ignore(self) -> None:
+        """Verifies that 'copy' installation method respects .drift_ignore patterns."""
+        pkg = "pkg_copy_ignore"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        # Write config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # Add files: one to keep, one to ignore
+        with open(os.path.join(pkg_install_dir, "keep.txt"), "w", encoding="utf-8") as f:
+            f.write("should be copied")
+        with open(os.path.join(pkg_install_dir, "ignore_me.txt"), "w", encoding="utf-8") as f:
+            f.write("should be ignored")
+        
+        # Add .drift_ignore
+        with open(os.path.join(pkg_install_dir, ".drift_ignore"), "w", encoding="utf-8") as f:
+            f.write("ignore_me.txt\n")
+
+        # Run full deployment (no package_changes passed)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # Verify results
+        kept_file = os.path.join(self.system_target_dir, "keep.txt")
+        ignored_file = os.path.join(self.system_target_dir, "ignore_me.txt")
+        config_file = os.path.join(self.system_target_dir, PACKAGE_CONFIG_FILE_NAME)
+        ignore_file_on_target = os.path.join(self.system_target_dir, ".drift_ignore")
+
+        self.assertTrue(os.path.isfile(kept_file), "keep.txt should be copied")
+        self.assertFalse(os.path.exists(ignored_file), "ignore_me.txt should be ignored")
+        self.assertFalse(os.path.exists(config_file), "drift_package.toml should not be copied")
+        self.assertFalse(os.path.exists(ignore_file_on_target), ".drift_ignore should not be copied")
+
     def test_symlinked_parent_safety_abort(self) -> None:
         """Verifies that a symlinked parent directory outside the package's target_dir raises a RuntimeError to prevent deleting/recreating unrelated system folders."""
         pkg = "pkg_stow"

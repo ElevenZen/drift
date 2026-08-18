@@ -16,7 +16,6 @@ from .state_registry import load_state_registry, save_state_registry, StateRegis
 from .stage_repo import PackageStageChanges
 from .file_utils import (
         resolve_system_target,
-        backup_file_or_dir_external,
         copy_file_contents_with_sudo,
         create_symlink_manually_with_sudo,
         get_relative_path,
@@ -28,6 +27,7 @@ from .file_utils import (
         is_relative_to,
         run_command,
 )
+from .sync_ops import backup_file_or_dir_external
 
 logger = logging.getLogger(__name__)
 
@@ -292,10 +292,37 @@ def run_collision_guard(
         )
 
 
-def run_full_copy_deployment(src_pkg_dir: Path, target_dir: Path, sudo: bool) -> None:
-    """Runs high-level copying deployment using rsync if available, otherwise cp -r."""
+def run_full_copy_deployment(
+    src_pkg_dir: Path,
+    target_dir: Path,
+    sudo: bool,
+    deployable_files: Optional[List[Path]] = None
+) -> None:
+    """Runs high-level copying deployment using rsync if available, otherwise cp -r.
+    If deployable_files is provided, it uses rsync --files-from or manual loop to respect ignores.
+    """
     ensure_dir_exists_with_sudo(target_dir, sudo)
-    
+
+    if deployable_files is not None:
+        # Optimized path: use rsync --files-from to only copy deployable files.
+        # This automatically respects ignores because deployable_files is already filtered.
+        rsync_cmd = ["rsync", "-av", "--files-from=-", str(src_pkg_dir) + "/", str(target_dir) + "/"]
+        if sudo:
+            rsync_cmd.insert(0, "sudo")
+
+        try:
+            logger.info(f"Attempting full copy deployment via rsync (filtered): {' '.join(rsync_cmd)}")
+            file_list = "\n".join(str(f) for f in deployable_files)
+            run_command(rsync_cmd, input=file_list, text=True)
+            logger.info("Full copy deployment succeeded via rsync.")
+            return
+        except Exception as e:
+            logger.warning(f"Filtered rsync failed or not available, falling back to manual loop: {e}")
+            for rel_file in deployable_files:
+                deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
+            return
+
+    # Fallback/Default path (blind copy)
     rsync_cmd = ["rsync", "-av", str(src_pkg_dir) + "/", str(target_dir) + "/"]
     if sudo:
         rsync_cmd.insert(0, "sudo")
@@ -315,13 +342,6 @@ def run_full_copy_deployment(src_pkg_dir: Path, target_dir: Path, sudo: bool) ->
     logger.info(f"Attempting full copy deployment via cp: {' '.join(cp_cmd)}")
     run_command(cp_cmd)
     
-    # Prune config and stow metadata files
-    for filename in IGNORED_FILENAMES:
-        dest_ignored = target_dir / filename
-        if not dest_ignored.exists():
-            continue
-        remove_file_or_dir_with_sudo(dest_ignored, sudo)
-
 
 def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool, stow_sufficient: bool) -> None:
     """Invokes GNU Stow for package deployment."""
@@ -415,7 +435,7 @@ def run_full_file_delivery(
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
     if metadata.install_method == "copy":
-        run_full_copy_deployment(install_pkg_dir, target_dir, metadata.sudo)
+        run_full_copy_deployment(install_pkg_dir, target_dir, metadata.sudo, deployable_files=deployable_files)
         return
     if metadata.install_method == "stow":
         if stow_sufficient:
@@ -530,6 +550,7 @@ def deploy_package_impl(
     full_redeploy = (package_changes is None)
     
     # Calculate current desired files list
+    # Actually, this filter process is already done in stage_repo phase.
     current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
         
     if full_redeploy:

@@ -168,54 +168,6 @@ def backup_and_delete_one_file(
         rmdir_parents(file_path.parent, limit_dir)
 
 
-def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolve_symlinks: bool = True) -> None:
-    """
-    Recursively backs up target src to backup_dest, resolving symlinks if resolve_symlinks is True.
-    If broken symlinks are encountered, they are backed up as-is without resolving.
-    """
-    if not src.exists() and not src.is_symlink():
-        return
-
-    # Safely remove backup_dest if it already exists, to avoid conflicts.
-    remove_file_or_dir_with_sudo(backup_dest, sudo)
-        
-    if src.is_file() and not src.is_symlink():
-        # then it's a normal file.
-        copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=resolve_symlinks)
-        return
-
-    if src.is_dir():
-        if resolve_symlinks:
-            backup_dest.mkdir(parents=True, exist_ok=True)
-            for item in src.iterdir():
-                backup_file_or_dir_external(item, backup_dest / item.name, sudo, resolve_symlinks=True)
-            # Remove original dir
-            del_cmd = ["rm", "-rf", str(src)]
-            if sudo:
-                del_cmd.insert(0, "sudo")
-            run_command(del_cmd)
-        else:
-            copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-        return
-
-    if src.is_symlink():
-        if not resolve_symlinks:
-            copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-            return
-        # Try to resolve and backup the content, if failed, fallback to backup the link.
-        try:
-            real_target = src.resolve()
-            if not real_target.exists():
-                copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-                return
-            backup_file_or_dir_external(real_target, backup_dest, sudo, resolve_symlinks=True)
-            # Delete the symlink itself to clear the path
-            remove_file_or_dir_with_sudo(src, sudo)
-        except Exception:
-            copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=False)
-        return
-
-
 def copy_or_move_file_or_dir_external(
     src: Path,
     dst: Path,
@@ -347,51 +299,5 @@ def sync_broken_symlink(src: Path, dst: Path) -> None:
             dst.symlink_to(link_val)
     except Exception as e:
         logger.warning(f"Failed to copy broken symlink '{src}': {e}")
-
-
-def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional['DriftIgnore'] = None) -> None:
-    """
-    Performs reverse sync for a single file, directory, or link from src (typically on the system)
-    back to dst (typically in the local install state database).
-    """
-    from .folder_diff import compare_folders
-    from .constants import IGNORED_FILENAMES
-
-    diff = compare_folders(src, dst, ignore_handler=ignore_handler, resolve_symlinks=True)
-    
-    # Process deletions
-    for rel_file in diff.deleted:
-        if rel_file.name in IGNORED_FILENAMES:
-            continue
-        target_dst = dst / rel_file if rel_file != Path("") else dst
-        logger.info(f"System Deletion: '{src / rel_file if rel_file != Path('') else src}' is missing. Deleting counterpart '{target_dst}' from install/...")
-        remove_file_or_dir(target_dst)
-
-    # Process additions and modifications
-    for rel_file in diff.added + diff.modified:
-        if rel_file.name in IGNORED_FILENAMES:
-            continue
-        target_src = src / rel_file if rel_file != Path("") else src
-        target_dst = dst / rel_file if rel_file != Path("") else dst
-
-        if target_src.is_dir() and not target_src.is_symlink():
-            target_dst.mkdir(parents=True, exist_ok=True)
-            continue
-
-        is_broken = False
-        if target_src.is_symlink():
-            try:
-                if not target_src.resolve().exists():
-                    is_broken = True
-            except Exception:
-                is_broken = True
-
-        if is_broken:
-            sync_broken_symlink(target_src, target_dst)
-        else:
-            logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
-            remove_file_or_dir(target_dst)
-            target_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target_src, target_dst)
 
 

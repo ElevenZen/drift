@@ -262,6 +262,47 @@ class TestCLI(unittest.TestCase):
         res = subprocess.run(["git", "log", "-n", "1", "--oneline"], cwd=install_dir, capture_output=True, text=True, check=True)
         self.assertIn("Manual state commit", res.stdout)
 
+    def test_cli_reverse_sync(self) -> None:
+        """Verifies that running 'reverse-sync' synchronizes changes from host back to install/."""
+        # Setup: Render and Stage pkg_a
+        pkg_path = os.path.join(self.src_dir, "pkg_a")
+        target_dir = os.path.join(self.temp_dir.name, "system_home_reverse")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "pkg_a"
+            enable_render = true
+            install_method = "copy"
+            target_directory = "{target_dir}"
+            """)
+
+        main(["-C", self.drift_root, "init", "--force"])
+        main(["-C", self.drift_root, "render", "pkg_a"])
+        main(["-C", self.drift_root, "stage", "pkg_a"])
+        main(["-C", self.drift_root, "apply", "pkg_a"])
+
+        # Simulate host change
+        target_file = os.path.join(target_dir, "file.txt")
+        with open(target_file, "w", encoding="utf-8") as f:
+            f.write("modified on host")
+
+        # Run reverse-sync CLI
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "reverse-sync", "pkg_a"])
+        finally:
+            sys.stdout = original_stdout
+
+        # Verify that pkg_a files in install/ are updated
+        install_file = os.path.join(self.drift_root, "install", "pkg_a", "file.txt")
+        with open(install_file, "r", encoding="utf-8") as f:
+            self.assertEqual(f.read(), "modified on host")
+        self.assertIn_stripped("Successfully reverse-synced package", stdout.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

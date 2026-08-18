@@ -17,15 +17,17 @@ from drift.file_utils import (
     rmdir_parents,
     get_symlinked_parent,
     backup_and_delete_one_file,
-    backup_file_or_dir_external,
     copy_or_move_file_or_dir_external,
     ensure_directory_writable,
     ensure_dir_exists_with_sudo,
     remove_file_or_dir_with_sudo,
     create_symlink_manually_with_sudo,
     copy_file_contents_with_sudo,
-    reverse_sync_file_or_dir,
     sync_broken_symlink,
+)
+from drift.sync_ops import (
+    backup_file_or_dir_external,
+    reverse_sync_file_or_dir,
 )
 
 
