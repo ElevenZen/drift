@@ -853,3 +853,73 @@ def run_primitive_5_install_deployment(
             force=force,
             package_changes=pkg_change
         )
+
+
+def run_primitive_6_commit_install_repo(
+    workspace_config: WorkspaceConfig,
+    commit_message: str,
+    package_names: Optional[List[str]] = None
+) -> None:
+    """Stages and commits changes inside the install/ state Git repository (Primitive 6).
+
+    If package_names is specified, only those packages' subdirectories are staged and committed.
+    If there are no changes to commit, it returns gracefully without raising an error.
+    """
+    install_dir = workspace_config.install_path
+    if not install_dir.exists():
+        raise FileNotFoundError(f"Install directory does not exist: {install_dir}")
+
+    # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
+    if package_names:
+        add_cmd = ["git", "-C", str(install_dir), "add"]
+        for pkg in package_names:
+            add_cmd.append(f"{pkg}/")
+    else:
+        add_cmd = ["git", "-C", str(install_dir), "add", "-A"]
+
+    try:
+        subprocess.run(
+            add_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to stage changes in install repo. Stderr: {e.stderr}")
+        raise RuntimeError(f"Failed to stage changes in install repo: {e.stderr}") from e
+
+    # 2. Check if there are staged changes to commit (scoped to package folders if provided)
+    if package_names:
+        status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
+        for pkg in package_names:
+            status_cmd.append(f"{pkg}/")
+    else:
+        status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
+
+    try:
+        status_res = subprocess.run(
+            status_cmd,
+            capture_output=True,
+            text=True,
+            check=True
+        )
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to check git status in install repo. Stderr: {e.stderr}")
+        raise RuntimeError(f"Failed to check git status in install repo: {e.stderr}") from e
+
+    if not status_res.stdout.strip():
+        logger.info("Nothing to commit, install repository is clean.")
+        return
+
+    # 3. Perform git commit with the given commit message
+    try:
+        subprocess.run(
+            ["git", "-C", str(install_dir), "commit", "-m", commit_message],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        logger.info(f"Committed install repo changes with message: '{commit_message}'")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to commit changes in install repo. Stderr: {e.stderr}")
+        raise RuntimeError(f"Failed to commit changes in install repo: {e.stderr}") from e

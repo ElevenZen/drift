@@ -33,6 +33,7 @@ from .state_registry import (
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
+    run_primitive_6_commit_install_repo,
 )
 from .dependency import (
     find_engine_for_file,

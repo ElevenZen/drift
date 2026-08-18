@@ -86,3 +86,17 @@ def execute_render_commit(drift_root: Path, message: str, package_names: Optiona
         package_names = [package_names]
 
     run_primitive_3_commit_render_repo(workspace_config, commit_message=message, package_names=package_names)
+
+
+def execute_install_commit(drift_root: Path, message: str, package_names: Optional[List[str]] = None) -> None:
+    """Core function to execute committing install repository changes, shared by both CLI backends."""
+    from ..install_repo import run_primitive_6_commit_install_repo
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    # Convert single string to a list for robustness
+    if isinstance(package_names, str):
+        package_names = [package_names]
+
+    run_primitive_6_commit_install_repo(workspace_config, commit_message=message, package_names=package_names)

@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply, execute_install_commit
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -91,6 +91,22 @@ def run_argparse_cli(argv=None) -> None:
         help="Commit message"
     )
 
+    # install-commit subcommand
+    install_commit_parser = subparsers.add_parser(
+        "install-commit",
+        help="Stage and commit install state directory changes"
+    )
+    install_commit_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to commit specifically"
+    )
+    install_commit_parser.add_argument(
+        "-m", "--message",
+        required=True,
+        help="Commit message"
+    )
+
     args = parser.parse_args(argv)
 
     # Resolve literal base directory path
@@ -153,6 +169,17 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_render_commit(drift_root, args.message, args.packages)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "install-commit":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_install_commit(drift_root, args.message, args.packages)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

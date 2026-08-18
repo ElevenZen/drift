@@ -752,6 +752,68 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
+    def test_run_primitive_6_commit_install_repo(self) -> None:
+        """Verifies staging and committing changes within the install state repository (Primitive 6)."""
+        from drift.install_repo import run_primitive_6_commit_install_repo
+        import subprocess
+
+        # 1. Initialize Git repository inside the install directory
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), capture_output=True, check=True)
+
+        # 2. Write a file inside the install directory under a package folder
+        pkg_dir = self.install_dir / "pkg_a"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        test_file_path = pkg_dir / "file.txt"
+        test_file_path.write_text("Hello install", encoding="utf-8")
+
+        # Create another package folder with an uncommitted change
+        pkg_b_dir = self.install_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        pkg_b_file = pkg_b_dir / "file.txt"
+        pkg_b_file.write_text("Hello pkg_b", encoding="utf-8")
+
+        # 3. Commit only pkg_a specifically
+        scoped_msg = "Commit pkg_a in install"
+        run_primitive_6_commit_install_repo(self.workspace_config, scoped_msg, ["pkg_a"])
+
+        # 4. Verify only pkg_a was committed, and pkg_b remains untracked
+        status_res = subprocess.run(
+            ["git", "-C", str(self.install_dir), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        status_output = status_res.stdout.strip()
+        self.assertNotIn("pkg_a/", status_output)
+        self.assertTrue("?? pkg_b/" in status_output or "?? pkg_b/file.txt" in status_output)
+
+        # Verify the commit message of the scoped commit
+        log_res = subprocess.run(
+            ["git", "-C", str(self.install_dir), "log", "-1", "--pretty=%B"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.assertEqual(log_res.stdout.strip(), scoped_msg)
+
+        # 5. Commit remaining changes (pkg_b) unscoped
+        unscoped_msg = "Commit remaining install changes"
+        run_primitive_6_commit_install_repo(self.workspace_config, unscoped_msg)
+
+        # Verify repo is clean now
+        status_clean = subprocess.run(
+            ["git", "-C", str(self.install_dir), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        self.assertEqual(status_clean.stdout.strip(), "")
+
+        # 6. Call again on a clean repo (should return gracefully without error)
+        run_primitive_6_commit_install_repo(self.workspace_config, "No-op commit")
+
 
 if __name__ == "__main__":
     unittest.main()

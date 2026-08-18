@@ -5,7 +5,7 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply
+from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply, execute_install_commit
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -160,6 +160,30 @@ def typer_render_commit(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_render_commit(drift_root, message, packages)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("install-commit")
+def typer_install_commit(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to commit specifically"
+    ),
+    message: str = typer.Option(
+        ...,
+        "-m",
+        "--message",
+        help="Commit message"
+    )
+) -> None:
+    """Stage and commit install state directory changes."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_install_commit(drift_root, message, packages)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

@@ -238,6 +238,29 @@ class TestCLI(unittest.TestCase):
         # Verify that pkg_a files are applied/deployed to system target (simulating system_home)
         self.assertTrue(os.path.islink(os.path.join(target_dir, "file.txt")))
 
+    def test_cli_install_commit(self) -> None:
+        """Verifies that running 'install-commit' commits install state changes."""
+        main(["-C", self.drift_root, "init", "--force"])
+        main(["-C", self.drift_root, "render", "pkg_a"])
+        main(["-C", self.drift_root, "stage", "pkg_a"])
+
+        install_dir = os.path.join(self.drift_root, "install")
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=install_dir, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=install_dir, check=True)
+
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "install-commit", "-m", "Manual state commit", "pkg_a"])
+        finally:
+            sys.stdout = original_stdout
+
+        # Verify commit worked in install repo
+        res = subprocess.run(["git", "log", "-n", "1", "--oneline"], cwd=install_dir, capture_output=True, text=True, check=True)
+        self.assertIn("Manual state commit", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
