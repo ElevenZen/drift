@@ -155,14 +155,27 @@ def render_all_packages(workspace_config: WorkspaceConfig) -> None:
             logger.debug(f"Skipping disabled package '{package_name}'.")
 
 
-def commit_render_repo(
+def run_primitive_2_render_packages(workspace_config: WorkspaceConfig, package_names: Optional[List[str]] = None) -> None:
+    """Renders specific packages (if provided) or all enabled packages in the workspace."""
+    if package_names:
+        for pkg in package_names:
+            package_dir = workspace_config.source_path / pkg
+            if not package_dir.exists():
+                raise FileNotFoundError(f"Package directory does not exist: {package_dir}")
+            logger.info(f"Rendering package '{pkg}'...")
+            render_package(workspace_config, package_dir)
+    else:
+        render_all_packages(workspace_config)
+
+
+def run_primitive_3_commit_render_repo(
     workspace_config: WorkspaceConfig,
     commit_message: str,
-    package_name: Optional[str] = None
+    package_names: Optional[List[str]] = None
 ) -> None:
     """Stages and commits changes inside the render sandbox Git repository (Primitive 3).
 
-    If package_name is specified, only that package's subdirectory is staged and committed.
+    If package_names is specified, only those packages' subdirectories are staged and committed.
     If there are no changes to commit, it returns gracefully without raising an error.
     """
     import subprocess
@@ -171,9 +184,11 @@ def commit_render_repo(
     if not render_dir.exists():
         raise FileNotFoundError(f"Render directory does not exist: {render_dir}")
 
-    # 1. Stage changes (scoped to package folder if provided, otherwise all changes)
-    if package_name:
-        add_cmd = ["git", "-C", str(render_dir), "add", f"{package_name}/"]
+    # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
+    if package_names:
+        add_cmd = ["git", "-C", str(render_dir), "add"]
+        for pkg in package_names:
+            add_cmd.append(f"{pkg}/")
     else:
         add_cmd = ["git", "-C", str(render_dir), "add", "-A"]
 
@@ -188,9 +203,11 @@ def commit_render_repo(
         logger.error(f"Failed to stage changes in render repo. Stderr: {e.stderr}")
         raise RuntimeError(f"Failed to stage changes in render repo: {e.stderr}") from e
 
-    # 2. Check if there are staged changes to commit (scoped to package folder if provided)
-    if package_name:
-        status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain", f"{package_name}/"]
+    # 2. Check if there are staged changes to commit (scoped to package folders if provided)
+    if package_names:
+        status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]
+        for pkg in package_names:
+            status_cmd.append(f"{pkg}/")
     else:
         status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]
 

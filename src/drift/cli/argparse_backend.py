@@ -38,9 +38,9 @@ def run_argparse_cli(argv=None) -> None:
         help="Render templates of a package or all enabled packages"
     )
     render_parser.add_argument(
-        "package",
-        nargs="?",
-        help="Optional package name to render specifically"
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to render specifically"
     )
 
     # stage subcommand
@@ -81,9 +81,9 @@ def run_argparse_cli(argv=None) -> None:
         help="Stage and commit compiled render sandbox changes"
     )
     render_commit_parser.add_argument(
-        "package",
-        nargs="?",
-        help="Optional package name to commit specifically"
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to commit specifically"
     )
     render_commit_parser.add_argument(
         "-m", "--message",
@@ -115,9 +115,9 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_render(drift_root, args.package)
-            if args.package:
-                print(f"✨ Successfully rendered package '{args.package}'!")
+            execute_render(drift_root, args.packages)
+            if args.packages:
+                print(f"✨ Successfully rendered package(s) '{', '.join(args.packages)}'!")
             else:
                 print("✨ Successfully rendered all enabled packages!")
         except Exception as e:
@@ -152,7 +152,7 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_render_commit(drift_root, args.message, args.package)
+            execute_render_commit(drift_root, args.message, args.packages)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

@@ -650,8 +650,8 @@ class TestRenderPackage(unittest.TestCase):
         # Verify pkg_c is rendered (due to default=True)
         self.assertTrue((drift_root / "render" / "pkg_c" / "file.txt").is_file())
 
-    def test_commit_render_repo(self) -> None:
-        from drift.render_package import commit_render_repo
+    def test_run_primitive_3_commit_render_repo(self) -> None:
+        from drift.render_package import run_primitive_3_commit_render_repo
         from drift.workspace_config import WorkspaceConfig
         import subprocess
 
@@ -676,9 +676,9 @@ class TestRenderPackage(unittest.TestCase):
         test_file_path = render_dir / "test.txt"
         test_file_path.write_text("Hello render", encoding="utf-8")
 
-        # 4. Commit using commit_render_repo (unscoped)
+        # 4. Commit using run_primitive_3_commit_render_repo (unscoped)
         msg = "Test dynamic commit message"
-        commit_render_repo(workspace_config, msg)
+        run_primitive_3_commit_render_repo(workspace_config, msg)
 
         # 5. Verify the commit message
         log_res = subprocess.run(
@@ -690,7 +690,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertEqual(log_res.stdout.strip(), msg)
 
         # 6. Run again on a clean repo (should return gracefully without error)
-        commit_render_repo(workspace_config, "Should not commit anything")
+        run_primitive_3_commit_render_repo(workspace_config, "Should not commit anything")
 
         # 7. Test scoped commit to a specific package
         pkg_a_dir = render_dir / "pkg_a"
@@ -705,7 +705,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Commit pkg_a specifically
         scoped_msg = "Commit pkg_a changes"
-        commit_render_repo(workspace_config, scoped_msg, "pkg_a")
+        run_primitive_3_commit_render_repo(workspace_config, scoped_msg, ["pkg_a"])
 
         # Verify only pkg_a was committed
         status_res = subprocess.run(
@@ -728,6 +728,60 @@ class TestRenderPackage(unittest.TestCase):
             check=True
         )
         self.assertEqual(log_scoped.stdout.strip(), scoped_msg)
+
+    def test_render_and_commit_multiple_packages(self) -> None:
+        """Verifies rendering and committing multiple packages specifically."""
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.workspace_config import WorkspaceConfig
+        import subprocess
+
+        drift_root = self.drift_root
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+        )
+
+        # 1. Create package source directories under src/
+        for pkg_name in ("pkg_one", "pkg_two", "pkg_three"):
+            pkg_dir = drift_root / "src" / pkg_name
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+                f.write(f"""
+                [package]
+                name = "{pkg_name}"
+                enable_render = true
+                """)
+            with open(pkg_dir / "file.txt", "w", encoding="utf-8") as f:
+                f.write(f"Content for {pkg_name}")
+
+        # 2. Render only pkg_one and pkg_two specifically
+        run_primitive_2_render_packages(workspace_config, ["pkg_one", "pkg_two"])
+
+        # Verify pkg_one and pkg_two are rendered, but pkg_three is NOT
+        self.assertTrue((drift_root / "render" / "pkg_one" / "file.txt").is_file())
+        self.assertTrue((drift_root / "render" / "pkg_two" / "file.txt").is_file())
+        self.assertFalse((drift_root / "render" / "pkg_three" / "file.txt").exists())
+
+        # 3. Setup git repo in render directory
+        render_dir = drift_root / "render"
+        subprocess.run(["git", "init"], cwd=str(render_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(render_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(render_dir), capture_output=True, check=True)
+
+        # 4. Commit only pkg_one specifically
+        run_primitive_3_commit_render_repo(workspace_config, "Commit pkg_one specifically", ["pkg_one"])
+
+        # Verify pkg_one is committed and clean, but pkg_two is still untracked
+        status_res = subprocess.run(
+            ["git", "-C", str(render_dir), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        status_output = status_res.stdout.strip()
+        self.assertNotIn("pkg_one/", status_output)
+        self.assertTrue("?? pkg_two/" in status_output or "?? pkg_two/file.txt" in status_output)
 
 
 if __name__ == "__main__":

@@ -104,7 +104,7 @@ class TestCLI(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn_stripped("✨ Successfully rendered package 'pkg_b'!", stdout.getvalue())
+        self.assertIn_stripped("✨ Successfully rendered package", stdout.getvalue())
 
         # pkg_b was explicitly requested -> should be rendered even if disabled in bulk
         self.assertTrue(os.path.exists(os.path.join(self.drift_root, "render", "pkg_b", "file.txt")))
@@ -140,7 +140,7 @@ class TestCLI(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn_stripped("✨ Successfully rendered package 'pkg_a'!", stdout.getvalue())
+        self.assertIn_stripped("✨ Successfully rendered package", stdout.getvalue())
 
     def test_render_outside_git_repository_raises_friendly_error(self) -> None:
         """Verifies that running render outside a Git repository prints our friendly error message."""

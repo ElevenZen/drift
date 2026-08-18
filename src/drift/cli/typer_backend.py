@@ -73,18 +73,19 @@ def typer_init(
 @app.command("render")
 def typer_render(
     ctx: typer.Context,
-    package: Optional[str] = typer.Argument(
+    packages: Optional[List[str]] = typer.Argument(
         None,
-        help="Optional package name to render specifically"
+        help="Optional package name(s) to render specifically"
     )
 ) -> None:
     """Render templates of a package or all enabled packages."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_render(drift_root, package)
-        if package:
-            rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package '{package}'![/bold green]")
+        execute_render(drift_root, packages)
+        if packages:
+            pkgs_str = ", ".join(packages)
+            rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package(s) '{pkgs_str}'![/bold green]")
         else:
             rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully rendered all enabled packages![/bold green]")
     except Exception as e:
@@ -143,9 +144,9 @@ def typer_apply(
 @app.command("render-commit")
 def typer_render_commit(
     ctx: typer.Context,
-    package: Optional[str] = typer.Argument(
+    packages: Optional[List[str]] = typer.Argument(
         None,
-        help="Optional package name to commit specifically"
+        help="Optional package name(s) to commit specifically"
     ),
     message: str = typer.Option(
         ...,
@@ -158,7 +159,7 @@ def typer_render_commit(
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_render_commit(drift_root, message, package)
+        execute_render_commit(drift_root, message, packages)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

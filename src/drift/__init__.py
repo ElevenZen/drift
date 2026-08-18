@@ -17,7 +17,7 @@ from .render_core import (
 from .render_package import (
     render_package,
     render_all_packages,
-    commit_render_repo,
+    run_primitive_3_commit_render_repo,
 )
 from .init_repo import (
     init_drift_workspace,
