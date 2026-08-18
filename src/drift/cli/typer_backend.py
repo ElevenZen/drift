@@ -5,7 +5,16 @@ from pathlib import Path
 import typer
 from rich import print as rprint
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply, execute_install_commit
+from .actions import (
+    get_drift_root,
+    execute_render,
+    execute_init,
+    execute_stage,
+    execute_render_commit,
+    execute_apply,
+    execute_install_commit,
+    execute_reverse_sync
+)
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -184,6 +193,28 @@ def typer_install_commit(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_install_commit(drift_root, message, packages)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+@app.command("reverse-sync")
+def typer_reverse_sync(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to reverse-sync specifically"
+    )
+) -> None:
+    """Synchronize changes from host system back to install/ state database."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_reverse_sync(drift_root, packages)
+        if packages:
+            pkgs_str = ", ".join(packages)
+            rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]")
+        else:
+            rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]")
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

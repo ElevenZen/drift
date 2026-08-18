@@ -1,7 +1,16 @@
 import sys
 from pathlib import Path
 
-from .actions import get_drift_root, execute_render, execute_init, execute_stage, execute_render_commit, execute_apply, execute_install_commit
+from .actions import (
+    get_drift_root,
+    execute_render,
+    execute_init,
+    execute_stage,
+    execute_render_commit,
+    execute_apply,
+    execute_install_commit,
+    execute_reverse_sync
+)
 
 
 def run_argparse_cli(argv=None) -> None:
@@ -107,6 +116,17 @@ def run_argparse_cli(argv=None) -> None:
         help="Commit message"
     )
 
+    # reverse-sync subcommand
+    reverse_sync_parser = subparsers.add_parser(
+        "reverse-sync",
+        help="Synchronize changes from host system back to install/ state database"
+    )
+    reverse_sync_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to reverse-sync specifically"
+    )
+
     args = parser.parse_args(argv)
 
     # Resolve literal base directory path
@@ -180,6 +200,21 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_install_commit(drift_root, args.message, args.packages)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "reverse-sync":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_reverse_sync(drift_root, args.packages)
+            if args.packages:
+                print(f"✨ Successfully reverse-synced package(s) '{', '.join(args.packages)}'!")
+            else:
+                print("✨ Successfully reverse-synced all enabled packages!")
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
