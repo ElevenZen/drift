@@ -4,13 +4,13 @@ import sys
 import subprocess
 from pathlib import Path
 
-from .check_repo import (
+from .check_repo import check_existing_workspace_status
+from .git_utils import (
     is_git_tracked,
     get_drift_root,
-    ensure_writable,
     ensure_git_repository_health,
-    check_existing_workspace_status,
 )
+from .file_utils import ensure_directory_writable
 
 
 def git_init_repo(dir_path: Path, name: str) -> bool:
@@ -96,7 +96,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     Only works if the directory is empty or tracked by git, unless force is True.
     """
     # 1. Ensure the provided drift_root path is valid and read-writable
-    ensure_writable(drift_root)
+    ensure_directory_writable(drift_root, sudo=False)
 
     # 2. Check if the directory is tracked by git
     is_git = is_git_tracked(drift_root)

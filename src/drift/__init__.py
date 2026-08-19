@@ -21,7 +21,7 @@ from .render_package import (
 from .reverse_sync import (
     run_primitive_1_reverse_sync,
 )
-from .init_repo import (
+from .workspace_init import (
     init_drift_workspace,
 )
 from .stage_repo import (

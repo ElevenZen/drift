@@ -6,8 +6,8 @@ from typing import Optional, List
 
 from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
 from ..workspace_config import load_workspace_config
-from ..init_repo import init_drift_workspace
-from ..check_repo import get_drift_root
+from ..workspace_init import init_drift_workspace
+from ..git_utils import get_drift_root
 
 logger = logging.getLogger(__name__)
 
@@ -126,19 +126,19 @@ def execute_new(drift_root: Path, package_name: str, config_filename: Optional[s
     create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
 
 
-def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False) -> None:
+def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False, dry_run: bool = False) -> None:
     """Core function to uninstall packages, shared by both CLI backends."""
     from ..uninstall_repo import run_primitive_7_uninstall_packages
 
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force)
+    run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force, dry_run=dry_run)
 
 
 def execute_status(drift_root: Path, package_names: Optional[List[str]] = None) -> None:
     """Core function to audit workspace status, shared by both CLI backends."""
-    from ..status import run_primitive_status
+    from ..workspace_status import run_primitive_status
     
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
@@ -174,10 +174,10 @@ def execute_status(drift_root: Path, package_names: Optional[List[str]] = None) 
 
 
 def execute_gc(drift_root: Path, dry_run: bool = False) -> None:
-    """Core function to garbage collect orphans, shared by both CLI backends."""
-    from ..gc import run_primitive_9_garbage_collect_orphans
+    """Core function to garbage collect orphans and purge databases, shared by both CLI backends."""
+    from ..workspace_gc import run_primitive_9_purge_workspace_garbage
 
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    run_primitive_9_garbage_collect_orphans(workspace_config, dry_run=dry_run)
+    run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run)

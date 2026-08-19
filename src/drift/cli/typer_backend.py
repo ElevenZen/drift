@@ -274,13 +274,18 @@ def typer_uninstall(
         "--force",
         "-f",
         help="Force uninstallation even if package is still active in drift.toml"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview uninstallation without making changes"
     )
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, packages, force=force)
+        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

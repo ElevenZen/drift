@@ -7,13 +7,13 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.check_repo import (
+from drift.git_utils import (
     is_git_tracked,
     is_bare_repository,
     is_detached_head,
     is_merge_or_rebase_in_progress,
 )
-from drift.init_repo import (
+from drift.workspace_init import (
     git_init_repo,
     init_drift_workspace,
 )

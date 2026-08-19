@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
-from .constants import IGNORED_FILENAMES
+from .constants import MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .file_utils import (
     tree_relative_files,

@@ -171,6 +171,11 @@ def run_argparse_cli(argv=None) -> None:
         action="store_true",
         help="Force uninstallation even if package is still active in drift.toml"
     )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview uninstallation without making changes"
+    )
 
     # status subcommand
     status_parser = subparsers.add_parser(
@@ -309,7 +314,7 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_uninstall(drift_root, args.packages, force=args.force)
+            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

@@ -22,8 +22,14 @@ class TestIntegration(unittest.TestCase):
         os.environ["HOME"] = str(self.system_target_dir)
         
         # 1. Initialize drift workspace via CLI logic
-        from drift.init_repo import init_drift_workspace
+        from drift.workspace_init import init_drift_workspace
         init_drift_workspace(self.drift_root)
+        
+        # Configure git identity for commits in tests
+        for repo in ["render", "install"]:
+            repo_path = self.drift_root / repo
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "test@example.com"], check=True)
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True)
         
         # 2. Load workspace config
         config_path = self.drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
@@ -131,7 +137,7 @@ class TestIntegration(unittest.TestCase):
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment
-        from drift.gc import run_primitive_9_garbage_collect_orphans
+        from drift.workspace_gc import run_primitive_9_purge_workspace_garbage
         
         pkg = "pkg_to_be_orphan"
         self.workspace_config.packages_enable[pkg] = True
@@ -150,13 +156,26 @@ class TestIntegration(unittest.TestCase):
         # 2. Disable in config
         self.workspace_config.packages_enable[pkg] = False
         
-        # 3. Run GC (explicit primitive call)
-        run_primitive_9_garbage_collect_orphans(self.workspace_config)
+        # 3. Setup a "zombie" folder in render/ and install/ (folder without drift_package.toml)
+        zombie_render = self.render_dir / "zombie_pkg_r"
+        zombie_render.mkdir(parents=True, exist_ok=True)
+        (zombie_render / "trash.txt").write_text("garbage")
         
-        # 4. Verify uninstalled
+        zombie_install = self.install_dir / "zombie_pkg_i"
+        zombie_install.mkdir(parents=True, exist_ok=True)
+        (zombie_install / "trash.txt").write_text("garbage")
+        
+        # 4. Run GC (explicit primitive call)
+        run_primitive_9_purge_workspace_garbage(self.workspace_config)
+        
+        # 5. Verify uninstalled
         self.assertFalse(target_file.exists())
         registry = load_state_registry(self.install_dir / "state.toml")
         self.assertNotIn(pkg, registry.packages)
+        
+        # 6. Verify zombies purged
+        self.assertFalse(zombie_render.exists())
+        self.assertFalse(zombie_install.exists())
 
     def test_template_engine_dependency_chain(self):
         """Scenario: mustache template depends on envsubst-rendered JSON input."""

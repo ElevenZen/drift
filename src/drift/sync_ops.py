@@ -13,7 +13,7 @@ from .file_utils import (
     sync_broken_symlink,
     run_command,
 )
-from .constants import IGNORED_FILENAMES
+from .constants import MANAGED_CONFIG_FILES
 
 if TYPE_CHECKING:
     from .ignore import DriftIgnore
@@ -30,7 +30,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional['Dri
     
     # Process deletions
     for rel_file in diff.deleted:
-        if rel_file.name in IGNORED_FILENAMES:
+        if rel_file.name in MANAGED_CONFIG_FILES:
             continue
         target_dst = dst / rel_file if rel_file != Path("") else dst
         logger.info(f"System Deletion: '{src / rel_file if rel_file != Path('') else src}' is missing. Deleting counterpart '{target_dst}' from install/...")
@@ -38,7 +38,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional['Dri
 
     # Process additions and modifications
     for rel_file in diff.added + diff.modified:
-        if rel_file.name in IGNORED_FILENAMES:
+        if rel_file.name in MANAGED_CONFIG_FILES:
             continue
         target_src = src / rel_file if rel_file != Path("") else src
         target_dst = dst / rel_file if rel_file != Path("") else dst

@@ -5,7 +5,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from drift.workspace_config import WorkspaceConfig
-from drift.status import run_primitive_status
+from drift.workspace_status import run_primitive_status
 
 class TestStatus(unittest.TestCase):
     def setUp(self):

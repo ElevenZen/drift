@@ -11,7 +11,7 @@ from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_package_config_static
-from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
+from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .stage_repo import PackageStageChanges
@@ -58,12 +58,12 @@ def is_stow_version_sufficient(version: str) -> bool:
 def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     """Loads package configuration strictly from the install/ base directory."""
     install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME
-    if install_config_file.exists():
-        try:
-            return load_package_config_static(install_config_file, default_name=pkg)
-        except Exception as e:
-            raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
-    raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
+    if not install_config_file.exists():
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
+    try:
+        return load_package_config_static(install_config_file, default_name=pkg)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 
 
 def trigger_package_lifecycle_hook(
@@ -280,7 +280,7 @@ def run_collision_guard(
     
     relative_files = tree_relative_files(install_pkg_dir)
     for rel_file in relative_files:
-        if rel_file.name in IGNORED_FILENAMES:
+        if rel_file.name in MANAGED_CONFIG_FILES:
             continue
             
         if ignore_handler.match_path(rel_file):

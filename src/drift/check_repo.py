@@ -1,131 +1,14 @@
 """Repository validation and health checks using pathlib."""
 
-import os
-import subprocess
+import logging
 from pathlib import Path
-from typing import Optional
 
+from .git_utils import (
+    is_git_tracked,
+    is_bare_repository,
+)
 
-def is_git_tracked(dir_path: Path) -> bool:
-    """Checks if a directory is inside a Git repository."""
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True
-        )
-        return res.returncode == 0
-    except Exception:
-        return False
-
-
-def get_drift_root(dir_path: Path, force: bool = False) -> Path:
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--show-toplevel"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return Path(res.stdout.strip()).resolve()
-    except subprocess.CalledProcessError as e:
-        ensure_git_repository_health(dir_path, force=force)
-        # Check if the error is due to not being inside a Git repo
-        if not is_git_tracked(dir_path):
-            raise RuntimeError(
-                f"The directory '{dir_path}' is not inside a Git repository. "
-                "drift requires a Git-backed workspace to manage configuration state. "
-                "Run 'drift init' to initialize a new workspace, or specify '--no-git-root' to run drift in literal mode."
-            )
-        raise RuntimeError(f"Failed to resolve git repository root: {e.stderr.strip()}")
-
-
-def is_bare_repository(dir_path: Path) -> bool:
-    """Checks if the Git repository is a bare repository."""
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--is-bare-repository"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True
-        )
-        return res.returncode == 0 and res.stdout.strip() == "true"
-    except Exception:
-        return False
-
-
-def is_detached_head(dir_path: Path) -> bool:
-    """Checks if the Git repository is in a detached HEAD state."""
-    try:
-        res = subprocess.run(
-            ["git", "symbolic-ref", "-q", "HEAD"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True
-        )
-        return res.returncode != 0
-    except Exception:
-        return False
-
-
-def is_merge_or_rebase_in_progress(dir_path: Path) -> bool:
-    """Checks if a merge or rebase operation is currently in progress."""
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        git_dir = (dir_path / res.stdout.strip()).resolve()
-    except Exception:
-        return False
-
-    # Check for merge
-    merge_head = git_dir / "MERGE_HEAD"
-    if merge_head.exists():
-        return True
-
-    # Check for rebase
-    rebase_merge = git_dir / "rebase-merge"
-    rebase_apply = git_dir / "rebase-apply"
-    if rebase_merge.exists() or rebase_apply.exists():
-        return True
-
-    return False
-
-
-def ensure_git_repository_health(dir_path: Path, force: bool = False) -> None:
-    """Validates that the Git repository at dir_path is healthy and compatible with drift."""
-    if force:
-        return
-    if not is_git_tracked(dir_path):
-        return
-    if is_bare_repository(dir_path):
-        raise RuntimeError("Bare Git repositories are not supported for drift workspace.")
-    if is_detached_head(dir_path):
-        raise RuntimeError("Git repository is in a detached HEAD state.")
-    if is_merge_or_rebase_in_progress(dir_path):
-        raise RuntimeError("Git repository is currently in the middle of a merge or rebase operation.")
-
-
-def ensure_writable(path: Path) -> None:
-    """Ensures that the provided path is valid and read-writable."""
-    curr = path.resolve()
-    while curr:
-        if curr.exists():
-            if curr.is_dir() and os.access(curr, os.W_OK | os.X_OK):
-                return
-            else:
-                raise PermissionError(f"Path '{path}' (resolved at '{curr}') is not writable.")
-        parent = curr.parent
-        if parent == curr:  # Root reached
-            break
-        curr = parent
-    raise ValueError(f"Path '{path}' is invalid.")
+logger = logging.getLogger(__name__)
 
 
 def check_existing_workspace_status(drift_root: Path) -> bool:
@@ -175,27 +58,3 @@ def check_existing_workspace_status(drift_root: Path) -> bool:
         return False
 
     return True
-
-
-def has_uncommitted_modifications(repo_path: Path, sub_path: Optional[Path] = None) -> bool:
-    """Checks if a git repository (or a specific path inside it) has uncommitted local modifications.
-
-    Uncommitted modifications include staged changes, unstaged changes, and untracked files.
-    """
-    if not is_git_tracked(repo_path):
-        return False
-
-    cmd = ["git", "-C", str(repo_path), "status", "--porcelain"]
-    if sub_path:
-        cmd.append(str(sub_path))
-
-    try:
-        res = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return bool(res.stdout.strip())
-    except subprocess.CalledProcessError:
-        return False

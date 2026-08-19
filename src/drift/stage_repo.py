@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import List, Union, Optional
 from dataclasses import dataclass, field
 
-from .constants import PACKAGE_CONFIG_FILE_NAME, IGNORED_FILENAMES
+from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_static, PackageConfig
 from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
 from .folder_diff import compare_folders
 from .ignore import DriftIgnore
-from .check_repo import has_uncommitted_modifications
+from .git_utils import has_uncommitted_modifications
 from .state_registry import load_state_registry, save_state_registry
 
 logger = logging.getLogger(__name__)
@@ -40,10 +40,9 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
 
 
 def load_config_from_render(render_base: Path, pkg: str, force: bool = False) -> PackageConfig:
-    pkg_render_dir = render_base / pkg
     try:
         # the drift_package.toml should exist as a static package config.
-        config_file = pkg_render_dir / PACKAGE_CONFIG_FILE_NAME
+        config_file = render_base / pkg / PACKAGE_CONFIG_FILE_NAME
         if not config_file.exists():
             raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
         else:
@@ -52,7 +51,7 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
     except Exception as e:
         if not force:
             raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
-        logger.warning(f"Skipping package '{pkg}' during staging as config loading failed (force enabled): {e}")
+        logger.warning(f"Config load failed for '{pkg}' in render sandbox, but proceeding due to --force: {e}")
         metadata = PackageConfig(pkg)
         metadata.enable_render = True
         metadata.enable_install = True
@@ -126,7 +125,7 @@ def process_package_changes(
 
     # A. Process Deletions
     for rel_file in diff.deleted:
-        if rel_file.name in IGNORED_FILENAMES:
+        if rel_file.name in MANAGED_CONFIG_FILES:
             continue
         install_file = install_pkg_dir / rel_file
         if install_file.is_dir() and not install_file.is_symlink():
