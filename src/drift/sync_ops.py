@@ -3,7 +3,7 @@
 import logging
 import shutil
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from .folder_diff import compare_folders
 from .file_utils import (
@@ -14,14 +14,13 @@ from .file_utils import (
     run_command,
 )
 from .constants import MANAGED_CONFIG_FILES
+from .ignore import DriftIgnore
 
-if TYPE_CHECKING:
-    from .ignore import DriftIgnore
 
 logger = logging.getLogger(__name__)
 
 
-def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional['DriftIgnore'] = None) -> None:
+def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[DriftIgnore] = None) -> None:
     """
     Performs reverse sync for a single file, directory, or link from src (typically on the system)
     back to dst (typically in the local install state database).

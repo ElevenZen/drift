@@ -2,10 +2,8 @@ import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, List
-
-if TYPE_CHECKING:
-    from .ignore import DriftIgnore
+from typing import Optional, List
+from .ignore import DriftIgnore
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +16,7 @@ class FolderDiff:
 def compare_folders(
     src_dir: Path,
     dst_dir: Path,
-    ignore_handler: Optional['DriftIgnore'] = None,
+    ignore_handler: Optional[DriftIgnore] = None,
     resolve_symlinks: bool = True
 ) -> FolderDiff:
     """
