@@ -6,7 +6,7 @@ import tempfile
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .constants import in_test_mode, PACKAGE_CONFIG_FILE_NAME
 from .toml_parser import parse_toml
@@ -199,6 +199,39 @@ class WorkspaceConfig:
         # otherwise raise an error for missing packages
         return [x for x in target_pkgs if x in discovered]
 
+    def find_source_file_for_targets(self, directory: Path, target_names: List[str]) -> Optional[Tuple[Path, Optional[RenderEngineConfig], str]]:
+        """
+        Locates a file in the given directory that will render to one of the target names.
+        Checks for static files first, then for templates using defined render engines.
+        Returns a tuple (Path, engine, matched_target_name) or None if no match is found.
+        """
+        # 1. Static check
+        for name in target_names:
+            p = directory / name
+            if p.is_file():
+                return p, None, name
+
+        # 2. Template check (using defined engines)
+        for engine in self.render_engine_configs.values():
+            suffix = engine.suffix
+            if not suffix:
+                continue
+            for name in target_names:
+                # Check for template form 1: name.suffix (e.g., config.envst)
+                template_name_1 = f"{name}.{suffix}"
+                p1 = directory / template_name_1
+                if p1.is_file():
+                    return p1, engine, name
+
+                # Check for template form 2: name with suffix inserted before last dot (e.g., config.envst.toml)
+                dot_idx = name.rfind('.')
+                if dot_idx != -1:
+                    template_name_2 = name[:dot_idx] + f".{suffix}" + name[dot_idx:]
+                    p2 = directory / template_name_2
+                    if p2.is_file():
+                        return p2, engine, name
+        return None
+
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
@@ -324,7 +357,7 @@ def load_workspace_config(file_path: Path) -> WorkspaceConfig:
                 f"Workspace configuration file not found: {file_path} or {envst_path}"
             )
             
-    logger.info(f"Workspace config is loaded from: {actual_path}")
+    logger.info(f"Workspace config is loaded from: '{actual_path}'")
     content = actual_path.read_text(encoding="utf-8")
     data = parse_toml(content)
     

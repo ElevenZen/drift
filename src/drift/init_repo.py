@@ -155,6 +155,15 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     config_file = config_dir / "drift.toml"
     config_file.write_text(get_default_drift_toml_content(), encoding="utf-8")
 
+    # Create empty envsubst.bash and mustache.envst.json as referenced in default drift.toml
+    envsubst_input = config_dir / "envsubst.bash"
+    if not envsubst_input.exists():
+        envsubst_input.write_text("#!/bin/bash\n", encoding="utf-8")
+
+    mustache_input = config_dir / "mustache.envst.json"
+    if not mustache_input.exists():
+        mustache_input.write_text("{}\n", encoding="utf-8")
+
     # Write install/state.toml
     state_file = install_dir / "state.toml"
     state_file.write_text("[packages]\n", encoding="utf-8")

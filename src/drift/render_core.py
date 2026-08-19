@@ -77,11 +77,11 @@ def render_template(
         template_file_path=template_file_path,
         input_file_path=input_file_path
     )
-    cmd = engine_config.render_command
+    cmd: str = engine_config.render_command
     cmd = cmd.replace("%i", str(resolved_input_file))
     cmd = cmd.replace("%s", str(template_file_path))
 
-    logger.debug(f"Executing render command: {cmd}")
+    logger.debug(f"External: {cmd}")
 
     try:
         result = subprocess.run(

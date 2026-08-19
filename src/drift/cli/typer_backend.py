@@ -13,7 +13,11 @@ from .actions import (
     execute_render_commit,
     execute_apply,
     execute_install_commit,
-    execute_reverse_sync
+    execute_reverse_sync,
+    execute_new,
+    execute_uninstall,
+    execute_status,
+    execute_gc
 )
 
 app = typer.Typer(
@@ -49,8 +53,18 @@ def main_callback(
         False,
         "--no-git-root",
         help="Stop resolving git root of cwd or -C directory, using the literal path instead"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "-v",
+        "--verbose",
+        help="Enable verbose (DEBUG) logging output"
     )
 ) -> None:
+    if verbose:
+        from . import setup_logging
+        import logging
+        setup_logging(level=logging.DEBUG)
     ctx.obj = DriftCLIContext(directory=directory, no_git_root=no_git_root)
 
 
@@ -74,6 +88,7 @@ def typer_init(
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]")
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]")
         rprint("[bold yellow]📝[/bold yellow] [bold green]Generated drift.toml template.[/bold green]")
+        rprint("[bold yellow]📝[/bold yellow] [bold green]Generated config/envsubst.bash and config/mustache.envst.json.[/bold green]")
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
@@ -215,6 +230,94 @@ def typer_reverse_sync(
             rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]")
         else:
             rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]")
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+@app.command("new")
+def typer_new(
+    ctx: typer.Context,
+    package_name: str = typer.Argument(
+        ...,
+        help="Name of the new package to create"
+    ),
+    config_filename: Optional[str] = typer.Argument(
+        None,
+        help="Explicitly name the config file (defaults to package.toml)"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Forcefully overwrite any existing config file inside the package"
+    )
+) -> None:
+    """Scaffold a new package directory and drift_package.toml."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_new(drift_root, package_name, config_filename=config_filename, force=force)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("uninstall")
+def typer_uninstall(
+    ctx: typer.Context,
+    packages: List[str] = typer.Argument(
+        ...,
+        help="One or more package names to uninstall"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force uninstallation even if package is still active in drift.toml"
+    )
+) -> None:
+    """Uninstall a package from the system and restore any backups."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_uninstall(drift_root, packages, force=force)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("status")
+def typer_status(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to audit specifically"
+    )
+) -> None:
+    """Audit and aggregate configuration status across active packages."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_status(drift_root, packages)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("gc")
+def typer_gc(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate the garbage collection without making changes"
+    )
+) -> None:
+    """Identify and uninstall orphan packages (present in state but disabled in config)."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_gc(drift_root, dry_run=dry_run)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

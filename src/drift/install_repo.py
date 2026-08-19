@@ -5,6 +5,7 @@ import re
 import logging
 import subprocess
 import datetime
+import shlex
 from pathlib import Path
 from typing import List, Optional, Union
 
@@ -99,7 +100,9 @@ def trigger_package_lifecycle_hook(
     target_dir = cwd_override or metadata.target_directory or workspace_config.default_target_path
     assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
 
-    logger.info(f"Triggering lifecycle hook '{hook_name}' for package '{pkg}': {hook_path} (CWD: {target_dir})")
+    logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
+    logger.debug(f"   Script: {hook_path}")
+    logger.debug(f"   CWD:    {target_dir}")
     
     cmd = [str(hook_path)]
     if metadata.sudo:
@@ -118,7 +121,7 @@ def trigger_package_lifecycle_hook(
         stderr_str = e.stderr or ""
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
-            f"Command: {' '.join(cmd)}\n"
+            f"Command: {shlex.join(cmd)}\n"
         )
         if stdout_str.strip():
             err_msg += f"Stdout:\n{stdout_str.strip()}\n"
@@ -131,7 +134,7 @@ def trigger_package_lifecycle_hook(
         stderr_str = e.stderr or ""
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
-            f"Command: {' '.join(cmd)}\n"
+            f"Command: {shlex.join(cmd)}\n"
         )
         if stdout_str.strip():
             err_msg += f"Stdout:\n{stdout_str.strip()}\n"
@@ -177,10 +180,8 @@ def handle_symlinked_parent_error(
     # Maintain nested relative path structure in overwriting backups
     rel_parent = parent_symlink.relative_to(target_dir)
     backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_parent
-    logger.warning(
-        f"[RECOVERY] Symlinked parent directory error. "
-        f"Backing up parent symlink '{parent_symlink}' to '{backup_path}'..."
-    )
+    logger.warning(f"⚠️  [RECOVERY] Symlinked parent directory error at '{parent_symlink}'")
+    logger.debug(f"   Backing up parent symlink to: {backup_path}")
     backup_file_or_dir_external(parent_symlink, backup_path, sudo, resolve_symlinks=resolve_symlinks)
     
     # Remove parent symlink
@@ -237,27 +238,29 @@ def run_single_file_collision_guard(
                 if is_relative_to(normalized_target, drift_root_abs):
                     # It points into drift_root but to a different path (e.g. dangling, or other package).
                     # Delete without backup to clear the collision.
-                    logger.info(f"Removing internal/dangling drift-root symlink '{system_target}' without backup.")
+                    logger.info(f"🧹 Removing internal/dangling drift-root symlink: {system_target.relative_to(target_dir)}")
                     remove_file_or_dir_with_sudo(system_target, metadata.sudo)
                     return
                 # else fall to backup code below.
             except Exception as e:
                 # Readlink or analysis failed.
                 # If we fail to resolve/analyze, we treat it as an external collision and backup the symlink itself.
-                logger.warning(f"Failed to analyze symlink target of '{system_target}': {e}. Backing up symlink itself.")
+                logger.warning(f"⚠️  Failed to analyze symlink target of '{system_target}': {e}. Backing up symlink itself.")
                 backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
                 backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=False)
                 return
 
         backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-        logger.warning(f"[COLLISION GUARD] Stow conflict at '{system_target}'. Backing up...")
+        logger.warning(f"🛡️  [COLLISION] Stow conflict at '{system_target}'.")
+        logger.debug(f"   Backing up to: {backup_path}")
         backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
         return
         
     # Condition 2: Copy Mode - copy conflict on very first installation of this package
     elif metadata.install_method == "copy" and is_first_time:
         backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-        logger.warning(f"[COLLISION GUARD] Copy conflict at '{system_target}' (first install). Backing up...")
+        logger.warning(f"🛡️  [COLLISION] Copy conflict at '{system_target}' (first install).")
+        logger.debug(f"   Backing up to: {backup_path}")
         backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
         return
 
@@ -285,7 +288,8 @@ def run_collision_guard(
             system_target = resolve_system_target(rel_file, target_dir)
             if system_target.exists() or system_target.is_symlink():
                 backup_path = workspace_config.backup_path / pkg / "deleted_files" / rel_file
-                logger.info(f"[CLEANUP] Ignored file '{rel_file}' exists at system target. Backing up and deleting.")
+                logger.info(f"🧹 [CLEANUP] Ignored file '{rel_file}' exists at system target. Backing up and deleting.")
+                logger.debug(f"   Backing up to: {backup_path}")
                 backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
                 # Ensure the system target itself is removed (if it was a symlink and we resolved symlinks, the symlink is still there)
                 remove_file_or_dir_with_sudo(system_target, metadata.sudo)
@@ -313,6 +317,7 @@ def run_full_copy_deployment(
     If deployable_files is provided, it uses rsync --files-from or manual loop to respect ignores.
     """
     ensure_dir_exists_with_sudo(target_dir, sudo)
+    pkg = src_pkg_dir.name
 
     if deployable_files is not None:
         # Optimized path: use rsync --files-from to only copy deployable files.
@@ -322,10 +327,10 @@ def run_full_copy_deployment(
             rsync_cmd.insert(0, "sudo")
 
         try:
-            logger.info(f"Attempting full copy deployment via rsync (filtered): {' '.join(rsync_cmd)}")
+            logger.info(f"🚚 Syncing files: {pkg} (copy)")
+            logger.debug(f"   Command: {shlex.join(rsync_cmd)}")
             file_list = "\n".join(str(f) for f in deployable_files)
             run_command(rsync_cmd, input=file_list, text=True)
-            logger.info("Full copy deployment succeeded via rsync.")
             return
         except Exception as e:
             logger.warning(f"Filtered rsync failed or not available, falling back to manual loop: {e}")
@@ -339,9 +344,9 @@ def run_full_copy_deployment(
         rsync_cmd.insert(0, "sudo")
         
     try:
-        logger.info(f"Attempting full copy deployment via rsync: {' '.join(rsync_cmd)}")
+        logger.info(f"🚚 Syncing files: {pkg} (copy)")
+        logger.debug(f"   Command: {shlex.join(rsync_cmd)}")
         run_command(rsync_cmd)
-        logger.info("Full copy deployment succeeded via rsync.")
         return
     except Exception as e:
         logger.warning(f"rsync failed or not available, falling back to cp: {e}")
@@ -350,7 +355,8 @@ def run_full_copy_deployment(
     cp_cmd = ["cp", "-R", str(src_pkg_dir) + "/.", str(target_dir) + "/"]
     if sudo:
         cp_cmd.insert(0, "sudo")
-    logger.info(f"Attempting full copy deployment via cp: {' '.join(cp_cmd)}")
+    logger.info(f"🚚 Syncing files: {pkg} (copy/cp fallback)")
+    logger.debug(f"   Command: {shlex.join(cp_cmd)}")
     run_command(cp_cmd)
     
 
@@ -368,9 +374,9 @@ def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bo
         ]
         if sudo:
             stow_cmd.insert(0, "sudo")
-        logger.info(f"Attempting full deployment via GNU Stow: {' '.join(stow_cmd)}")
+        logger.info(f"🔗 Linking files: {pkg} (stow)")
+        logger.debug(f"   Command: {shlex.join(stow_cmd)}")
         run_command(stow_cmd, cwd=str(install_base))
-        logger.info(f"Full deployment succeeded via GNU Stow for package '{pkg}'.")
     else:
         raise RuntimeError("Stow version is insufficient (< 2.4.1) or not installed.")
 
@@ -424,12 +430,13 @@ def reconcile_orphaned_files(
     orphaned_files = set(previous_files) - set(current_files)
     if not orphaned_files:
         return
-    logger.info(f"Reconciling desired state. Pruning {len(orphaned_files)} orphaned files from system target.")
+    logger.info(f"🔍 Reconciling desired state: Pruning {len(orphaned_files)} orphaned files")
     for orphaned in sorted(orphaned_files):
         system_target = resolve_system_target(orphaned, target_dir)
         if system_target.exists() or system_target.is_symlink():
             backup_path = workspace_config.backup_path / pkg / "deleted_files" / orphaned
-            logger.info(f"[PRUNE] Orphaned file '{orphaned}' is no longer in install/. Backing up and deleting.")
+            logger.info(f"🧹 [PRUNE] Orphaned file '{orphaned}' removed. Backing up and deleting.")
+            logger.debug(f"   Backing up to: {backup_path}")
             backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
             # Ensure the system target itself is removed
             remove_file_or_dir_with_sudo(system_target, metadata.sudo)
@@ -545,10 +552,10 @@ def deploy_package_impl(
     
     install_pkg_dir = install_base / pkg
     if not install_pkg_dir.is_dir():
-        logger.warning(f"Package installation directory '{install_pkg_dir}' does not exist. Skipping.")
+        logger.warning(f"⚠️  Package installation directory '{install_pkg_dir}' does not exist. Skipping.")
         return
         
-    logger.info(f"Deploying package '{pkg}'...")
+    logger.info(f"🚀 Deploying package: {pkg}")
     
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
     
@@ -611,8 +618,7 @@ def deploy_package_impl(
             metadata=metadata
         )
 
-    logger.info(f"File delivery of package '{pkg}' completed with method '{metadata.install_method}'.")
-    logger.info(f"Updating state registry and triggering lifecycle hooks...")
+    logger.debug(f"   File delivery completed via {metadata.install_method}")
     
     # Post Hooks
     if is_first_time:
@@ -637,7 +643,7 @@ def deploy_package_impl(
         
     save_state_registry(state_file, state_registry)
 
-    logger.info(f"Deployment of package '{pkg}' completed successfully")
+    logger.info(f"✨ Package '{pkg}' deployed successfully.")
 
 
 def deploy_package(
@@ -665,7 +671,7 @@ def deploy_package(
         stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
         err_msg = (
             f"Subcommand failed during package '{pkg}' deployment.\n"
-            f"Command: {' '.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
+            f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
             f"Exit Code: {e.returncode}"
         )
         if stderr_str.strip():
@@ -721,55 +727,18 @@ def run_primitive_6_commit_install_repo(
     If target_pkgs is specified, only those packages' subdirectories are staged and committed.
     If there are no changes to commit, it returns gracefully without raising an error.
     """
+    from .git_utils import commit_repo_changes
+    
     install_dir = workspace_config.install_path
-    if not install_dir.exists():
-        raise FileNotFoundError(f"Install directory does not exist: {install_dir}")
-
-    # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
-    if target_pkgs:
-        add_cmd = ["git", "-C", str(install_dir), "add"]
-        for pkg in target_pkgs:
-            add_cmd.append(f"{pkg}/")
+    
+    committed = commit_repo_changes(
+        repo_path=install_dir,
+        commit_message=commit_message,
+        target_pkgs=target_pkgs,
+        repo_name="install repo"
+    )
+    
+    if committed:
+        logger.info(f"💾 Committed install repo changes: {commit_message}")
     else:
-        add_cmd = ["git", "-C", str(install_dir), "add", "-A"]
-
-    try:
-        run_command(
-            add_cmd,
-            text=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to stage changes in install repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to stage changes in install repo: {e.stderr}") from e
-
-    # 2. Check if there are staged changes to commit (scoped to package folders if provided)
-    if target_pkgs:
-        status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
-        for pkg in target_pkgs:
-            status_cmd.append(f"{pkg}/")
-    else:
-        status_cmd = ["git", "-C", str(install_dir), "status", "--porcelain"]
-
-    try:
-        status_res = run_command(
-            status_cmd,
-            text=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to check git status in install repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to check git status in install repo: {e.stderr}") from e
-
-    if not status_res.stdout.strip():
         logger.info("Nothing to commit, install repository is clean.")
-        return
-
-    # 3. Perform git commit with the given commit message
-    try:
-        run_command(
-            ["git", "-C", str(install_dir), "commit", "-m", commit_message],
-            text=True
-        )
-        logger.info(f"Committed install repo changes with message: '{commit_message}'")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to commit changes in install repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to commit changes in install repo: {e.stderr}") from e

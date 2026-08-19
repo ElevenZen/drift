@@ -272,6 +272,34 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook updated")
 
+    def test_install_copy_is_physical_not_link(self) -> None:
+        """Verifies that 'copy' installation method results in real physical files, not symlinks."""
+        pkg = "pkg_copy_physical"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Write config
+        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # 2. Add a file in install/
+        src_file = pkg_install_dir / "real_file.txt"
+        src_file.write_text("actual content", encoding="utf-8")
+
+        # 3. Run deployment
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # 4. Verify the target is a regular file, NOT a symlink
+        target_file = self.system_target_dir / "real_file.txt"
+        self.assertTrue(target_file.is_file())
+        self.assertFalse(target_file.is_symlink(), f"Target file {target_file} should be a physical copy, not a symlink.")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "actual content")
+
     def test_lifecycle_hook_failure_and_timeout(self) -> None:
         """Verifies trigger_package_lifecycle_hook handles failures and timeouts with detailed logging and RuntimeError."""
         from unittest.mock import patch

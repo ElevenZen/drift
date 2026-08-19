@@ -9,7 +9,11 @@ from .actions import (
     execute_render_commit,
     execute_apply,
     execute_install_commit,
-    execute_reverse_sync
+    execute_reverse_sync,
+    execute_new,
+    execute_uninstall,
+    execute_status,
+    execute_gc
 )
 
 
@@ -26,6 +30,11 @@ def run_argparse_cli(argv=None) -> None:
         "--no-git-root",
         action="store_true",
         help="Stop resolving git root of cwd or -C directory, using the literal path instead"
+    )
+    parser.add_argument(
+        "-v", "--verbose",
+        action="store_true",
+        help="Enable verbose (DEBUG) logging output"
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
@@ -127,7 +136,70 @@ def run_argparse_cli(argv=None) -> None:
         help="Optional package name(s) to reverse-sync specifically"
     )
 
+    # new subcommand
+    new_parser = subparsers.add_parser(
+        "new",
+        help="Scaffold a new package directory and drift_package.toml"
+    )
+    new_parser.add_argument(
+        "package_name",
+        help="Name of the new package to create"
+    )
+    new_parser.add_argument(
+        "config_filename",
+        nargs="?",
+        help="Explicitly name the config file (defaults to package.toml)"
+    )
+    new_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Forcefully overwrite any existing config file inside the package"
+    )
+
+    # uninstall subcommand
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Uninstall a package from the system and restore any backups"
+    )
+    uninstall_parser.add_argument(
+        "packages",
+        nargs="+",
+        help="One or more package names to uninstall"
+    )
+    uninstall_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force uninstallation even if package is still active in drift.toml"
+    )
+
+    # status subcommand
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Audit and aggregate configuration status across active packages"
+    )
+    status_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to audit specifically"
+    )
+
+    # gc subcommand
+    gc_parser = subparsers.add_parser(
+        "gc",
+        help="Identify and uninstall orphan packages (present in state but disabled in config)"
+    )
+    gc_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the garbage collection without making changes"
+    )
+
     args = parser.parse_args(argv)
+
+    if args.verbose:
+        from . import setup_logging
+        import logging
+        setup_logging(level=logging.DEBUG)
 
     # Resolve literal base directory path
     base_dir = Path(args.directory).resolve() if args.directory else Path.cwd().resolve()
@@ -141,6 +213,7 @@ def run_argparse_cli(argv=None) -> None:
             print("📁 Created render/ sandbox Git database.")
             print("📁 Created install/ local state Git database.")
             print("📝 Generated drift.toml template.")
+            print("📝 Generated config/envsubst.bash and config/mustache.envst.json.")
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
@@ -215,6 +288,50 @@ def run_argparse_cli(argv=None) -> None:
                 print(f"✨ Successfully reverse-synced package(s) '{', '.join(args.packages)}'!")
             else:
                 print("✨ Successfully reverse-synced all enabled packages!")
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "new":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_new(drift_root, args.package_name, config_filename=args.config_filename, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "uninstall":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_uninstall(drift_root, args.packages, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "status":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_status(drift_root, args.packages)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "gc":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_gc(drift_root, dry_run=args.dry_run)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

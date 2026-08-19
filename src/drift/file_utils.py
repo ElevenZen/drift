@@ -5,8 +5,9 @@ import hashlib
 import logging
 import shutil
 import subprocess
+import shlex
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Any
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +20,10 @@ def is_relative_to(path: Path, other: Path) -> bool:
         return False
 
 
-def run_command(cmd: List[str], **kwargs) -> subprocess.CompletedProcess:
+def run_command(cmd: List[str], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
     """Logs the command before executing it with subprocess.run."""
-    logger.info(f"Executing: {' '.join(cmd)}")
-    params = {"check": True, "capture_output": True}
+    logger.debug(f"External: {shlex.join(cmd)}")
+    params: Any = {"check": True, "capture_output": True}
     params.update(kwargs)
     return subprocess.run(cmd, **params)
 
@@ -221,7 +222,7 @@ def ensure_directory_writable(path: Path, sudo: bool) -> None:
     curr = path.resolve()
     while curr:
         if curr.exists():
-            if os.access(curr, os.W_OK):
+            if curr.is_dir() and os.access(curr, os.W_OK | os.X_OK):
                 return
             else:
                 raise PermissionError(

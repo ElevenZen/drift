@@ -99,8 +99,6 @@ class PackageConfig:
             "target_directory",
             "sudo",
             "fully_controlled_dirs",
-            "on_install",  # backward compatibility
-            "on_update",   # backward compatibility
             "pre_install",
             "post_install",
             "pre_update",
@@ -126,10 +124,12 @@ class PackageConfig:
         raw_timeout = package_data.get("hook_timeout", 120)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
             raw_timeout = int(raw_timeout)
+        if not isinstance(raw_timeout, int):
+            raise TypeError(f"hook_timeout must be an integer for package '{name}'.")
 
         # Mapping for backward compatibility
-        post_install = package_data.get("post_install") or package_data.get("on_install")
-        post_update = package_data.get("post_update") or package_data.get("on_update")
+        post_install = package_data.get("post_install")
+        post_update = package_data.get("post_update")
 
         config = cls(
             name=str(name),
@@ -199,26 +199,18 @@ def get_package_config_file_info(
     - engine: RenderEngineConfig instance (if 'template', otherwise None)
     - target_name: 'drift_package.toml' or 'package.toml' (PACKAGE_CONFIG_FILE_NAMES)
     """
-    # 1. drift_package.toml and package.toml
-    for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
-        p = package_dir / filename
-        if p.is_file():
-            return PackageConfigFileInfo(type="static", path=p, engine=None,
-                                         target_name=filename)
+    res = workspace_config.find_source_file_for_targets(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    if not res:
+        return None
 
-    # 2. Iterate over render engines in definition order
-    for engine in workspace_config.render_engine_configs.values():
-        suffix = engine.suffix
-        if not suffix:
-            continue
-        for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
-            template_filename = filename.replace(".toml", f".{suffix}.toml")
-            p = package_dir / template_filename
-            if p.is_file():
-                return PackageConfigFileInfo(type="template", path=p, engine=engine,
-                                             target_name=filename)
+    path, engine, target_name = res
 
-    return None
+    return PackageConfigFileInfo(
+        type="static" if engine is None else "template",
+        path=path,
+        engine=engine,
+        target_name=target_name
+    )
 
 
 def load_package_config_from_dir(

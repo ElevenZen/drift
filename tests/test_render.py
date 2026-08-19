@@ -11,7 +11,7 @@ from typing import cast
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
 from drift.render_core import render_template, render_template_to_file
-from drift.dependency import (
+from drift.render_input import (
     find_engine_for_file,
     strip_engine_suffix,
     resolve_dependencies,
@@ -782,6 +782,74 @@ class TestRenderPackage(unittest.TestCase):
         status_output = status_res.stdout.strip()
         self.assertNotIn("pkg_one/", status_output)
         self.assertTrue("?? pkg_two/" in status_output or "?? pkg_two/file.txt" in status_output)
+
+    def test_render_engine_input_dependency(self) -> None:
+        """Verifies that engine input templates are rendered before package rendering."""
+        from drift.render_package import run_primitive_2_render_packages
+        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+
+        drift_root = self.drift_root
+
+        # 1. Setup config files:
+        config_dir = drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        env_file_path = config_dir / "env.sh"
+        env_file_path.write_text("export MY_VAL='orchestrated_value'", encoding="utf-8")
+
+        mustache_template_path = config_dir / "mustache.envst.json"
+        # Mustache input template that uses envsubst
+        mustache_template_path.write_text('{"the_value": "$MY_VAL"}', encoding="utf-8")
+
+        # 2. Setup WorkspaceConfig with engines
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            packages_enable={"my_pkg": True}
+        )
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        # Mustache engine depends on rendered mustache.json (from mustache.envst.json)
+        mustache_engine = RenderEngineConfig(
+            name="mustache",
+            input_file=Path("mustache.envst.json"),
+            suffix="mustache",
+            # We'll use a simple python command to 'render' mustache-like if mustache is not installed
+            # But here we just want to verify the orchestration.
+            # Using cat and some markers to simulate mustache.
+            render_command="bash -c 'cat %i %s'"
+        )
+        workspace_config.render_engine_config = {
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine
+        }
+
+        # 3. Create a package that uses mustache
+        pkg_dir = drift_root / "src" / "my_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "package.toml").write_text('[package]\nname = "my_pkg"\nenable_render = true', encoding="utf-8")
+        (pkg_dir / "file.mustache.txt").write_text("Template content", encoding="utf-8")
+
+        # 4. Run rendering
+        run_primitive_2_render_packages(workspace_config)
+
+        # 5. Verify engine input was rendered
+        rendered_mustache_json = drift_root / "render" / "config" / "mustache.json"
+        self.assertTrue(rendered_mustache_json.is_file())
+        self.assertIn('"the_value": "orchestrated_value"', rendered_mustache_json.read_text(encoding="utf-8"))
+
+        # 6. Verify package file was rendered using the rendered input
+        rendered_pkg_file = drift_root / "render" / "my_pkg" / "file.txt"
+        self.assertTrue(rendered_pkg_file.is_file())
+        content = rendered_pkg_file.read_text(encoding="utf-8")
+        # Since our simulated mustache command was 'cat %i %s', it should contain both
+        self.assertIn('"the_value": "orchestrated_value"', content)
+        self.assertIn("Template content", content)
 
 
 if __name__ == "__main__":

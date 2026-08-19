@@ -172,6 +172,38 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
 
+    def test_find_source_file_for_targets(self) -> None:
+        """Verifies find_source_file_for_targets correctly identifies static and template source files."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir).resolve()
+            
+            from drift.workspace_config import RenderEngineConfig
+            # Setup engines
+            engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
+            config = WorkspaceConfig(render_engine_config={"envsubst": engine})
+            
+            targets = ["config.toml", "settings.json"]
+            
+            # 1. Neither exists
+            self.assertIsNone(config.find_source_file_for_targets(directory, targets))
+            
+            # 2. Template form 1 exists (config.toml.envst)
+            p1 = directory / "config.toml.envst"
+            p1.touch()
+            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p1, engine, "config.toml"))
+            p1.unlink()
+
+            # 3. Template form 2 exists (config.envst.toml)
+            p2 = directory / "config.envst.toml"
+            p2.touch()
+            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p2, engine, "config.toml"))
+
+            # 4. Static exists (takes precedence over template)
+            p_static = directory / "config.toml"
+            p_static.touch()
+            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p_static, None, "config.toml"))
+
+
     def test_package_config_from_dict(self) -> None:
         data = {
             "package": {
@@ -492,7 +524,7 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
-        from drift.dependency import render_input_templates
+        from drift.render_input import render_input_templates
         render_input_templates(list(workspace_config.render_engine_configs.values()), workspace_config.drift_root_path)
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)

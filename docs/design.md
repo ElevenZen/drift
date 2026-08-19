@@ -484,8 +484,9 @@ The overall file detection order should be like:
 1. drift_package.toml
 2. package.toml
 3. drift_package.<engine1>.toml
-4. package.<engine1>.toml  
-5. template for engine 2 and so on.  
+4. template to drift_package.toml of engine 2 and so on.  
+5. package.<engine1>.toml  
+6. template to package.toml of engine 2 and so on.  
 
 The order of engine 1, engine 2, engine 3 is undefined, because toml dict doesn't have a reliable key order.
 
@@ -863,11 +864,11 @@ def run_primitive_5_install_deployment(packages_to_redeploy, full_redeploy=False
                 
         # E. Lifecycle Hooks Trigger & State Registry Update
         if is_first_time:
-            trigger_package_lifecycle_hook(pkg, "on_install", metadata)
+            trigger_package_lifecycle_hook(pkg, "post_install", metadata)
             state_registry.set("packages", pkg, "installed")
             save_state_registry("install/state.toml", state_registry)
         else:
-            trigger_package_lifecycle_hook(pkg, "on_update", metadata)
+            trigger_package_lifecycle_hook(pkg, "post_update", metadata)
 
 
 def run_primitive_6_install_commit(target_pkg=None):

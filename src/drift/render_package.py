@@ -11,7 +11,7 @@ from .package_config import (
     load_package_config_from_dir,
     PackageConfig,
 )
-from .dependency import find_engine_for_file
+from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file
 from .file_utils import tree_relative_files
 
@@ -56,7 +56,7 @@ def copy_static_package_config(render_pkg_dir: Path, pkg_config: PackageConfig) 
     dest_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src_path, dest_path)
-    logger.debug(f"Copied static package config from {src_path} to {dest_path}")
+    logger.debug(f"Copied static package config from '{src_path}' to '{dest_path}'")
 
 
 def render_or_copy_file(
@@ -76,7 +76,8 @@ def render_or_copy_file(
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
         dest_path = render_pkg_dir / stripped_relative_path
-        logger.info(f"Rendering template '{relative_path}' using engine '{engine.name}' to '{dest_path}'")
+        logger.info(f"🎨 Rendering: {relative_path} ({engine.name})")
+        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
         render_template_to_file(
             engine_config=engine,
             drift_root=workspace_config.drift_root,
@@ -85,9 +86,11 @@ def render_or_copy_file(
         )
     else:
         dest_path = render_pkg_dir / relative_path
-        logger.info(f"Copying static file '{relative_path}' to '{dest_path}'")
+        logger.info(f"📄 Copying: {relative_path}")
+        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(file_path, dest_path)
+
 
 
 def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None:
@@ -151,12 +154,21 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
 
     # Trigger post_render hook
     trigger_post_render_hook(pkg_config, workspace_config)
+    logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
 
 def run_primitive_2_render_packages(
         workspace_config: WorkspaceConfig,
         target_pkgs: Optional[List[str]] = None) -> None:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
+    # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
+    render_input_templates(
+        engines=list(workspace_config.render_engine_configs.values()),
+        drift_root=workspace_config.drift_root,
+        workspace_config=workspace_config
+    )
+
+    # 2. Identify and render packages
     candidates = workspace_config.get_package_names_from_source_dir()
     active_packages = workspace_config.get_packages(
             candidates, target_pkgs, custom_dir=workspace_config.source_path)
@@ -175,63 +187,18 @@ def run_primitive_3_commit_render_repo(
     If target_pkgs is specified, only those packages' subdirectories are staged and committed.
     If there are no changes to commit, it returns gracefully without raising an error.
     """
-    import subprocess
+    from .git_utils import commit_repo_changes
 
     render_dir = workspace_config.render_path
-    if not render_dir.exists():
-        raise FileNotFoundError(f"Render directory does not exist: {render_dir}")
-
-    # 1. Stage changes (scoped to package folders if provided, otherwise all changes)
-    if target_pkgs:
-        add_cmd = ["git", "-C", str(render_dir), "add"]
-        for pkg in target_pkgs:
-            add_cmd.append(f"{pkg}/")
+    
+    committed = commit_repo_changes(
+        repo_path=render_dir,
+        commit_message=commit_message,
+        target_pkgs=target_pkgs,
+        repo_name="render repo"
+    )
+    
+    if committed:
+        logger.info(f"✨ Committed render repo changes with message: '{commit_message}'")
     else:
-        add_cmd = ["git", "-C", str(render_dir), "add", "-A"]
-
-    try:
-        subprocess.run(
-            add_cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to stage changes in render repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to stage changes in render repo: {e.stderr}") from e
-
-    # 2. Check if there are staged changes to commit (scoped to package folders if provided)
-    if target_pkgs:
-        status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]
-        for pkg in target_pkgs:
-            status_cmd.append(f"{pkg}/")
-    else:
-        status_cmd = ["git", "-C", str(render_dir), "status", "--porcelain"]
-
-    try:
-        status_res = subprocess.run(
-            status_cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to check git status in render repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to check git status in render repo: {e.stderr}") from e
-
-    if not status_res.stdout.strip():
         logger.info("Nothing to commit, render repository is clean.")
-        return
-
-    # 3. Perform git commit with the given commit message
-    try:
-        subprocess.run(
-            ["git", "-C", str(render_dir), "commit", "-m", commit_message],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        logger.info(f"Committed render repo changes with message: '{commit_message}'")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Failed to commit changes in render repo. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to commit changes in render repo: {e.stderr}") from e

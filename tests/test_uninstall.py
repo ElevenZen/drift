@@ -1,0 +1,188 @@
+import unittest
+import os
+import shutil
+import tempfile
+import subprocess
+from pathlib import Path
+from drift.workspace_config import WorkspaceConfig
+from drift.state_registry import load_state_registry, save_state_registry, PackageState
+from drift.uninstall_repo import run_primitive_7_uninstall_packages
+from drift.constants import PACKAGE_CONFIG_FILE_NAME
+
+class TestUninstall(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base_path = Path(self.temp_dir.name).resolve()
+        
+        self.drift_root = self.base_path / "drift_workspace"
+        self.system_target_dir = self.base_path / "system_home"
+        
+        # Override HOME environment variable for the duration of the test
+        self._old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.system_target_dir)
+
+        self.source_dir = self.drift_root / "src"
+        self.render_dir = self.drift_root / "render"
+        self.install_dir = self.drift_root / "install"
+        self.backup_dir = self.drift_root / "backup"
+        
+        for d in [self.source_dir, self.render_dir, self.install_dir, self.backup_dir, self.system_target_dir]:
+            d.mkdir(parents=True, exist_ok=True)
+            
+        self.workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            default_target_directory=self.system_target_dir,
+            packages_enable={"pkg_a": True}
+        )
+        # Ensure it doesn't expand to real home during test
+        self.workspace_config.default_target_directory = self.system_target_dir
+
+        
+        # Initialize Git in install_dir for Primitive 6 commit
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), capture_output=True, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), capture_output=True, check=True)
+
+    def tearDown(self):
+        if self._old_home:
+            os.environ["HOME"] = self._old_home
+        else:
+            os.environ.pop("HOME", None)
+        self.temp_dir.cleanup()
+
+    def test_uninstall_basic_stow(self):
+        """Verifies basic uninstallation of a stowed package."""
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup install/pkg/package.toml
+        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+            
+        # 2. Setup system target with a symlink (simulating deployment)
+        src_file = pkg_install_dir / "dot-bashrc"
+        src_file.write_text("pkg content")
+        
+        system_target = self.system_target_dir / ".bashrc"
+        os.symlink(src_file, system_target)
+        
+        # 3. Setup state.toml
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="stow")
+        registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
+        save_state_registry(state_file, registry)
+        
+        # Commit initial state so git tracks it
+        # or it will say nothing to commit when we try to commit the uninstall changes
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        
+        # 4. Run uninstall
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
+        
+        # 5. Verify results
+        self.assertFalse(system_target.exists())
+        self.assertFalse(system_target.is_symlink())
+        self.assertFalse(pkg_install_dir.exists())
+        
+        updated_registry = load_state_registry(state_file)
+        self.assertNotIn(pkg, updated_registry.packages)
+        
+        # Verify commit happened
+        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f"Uninstall: Removed package(s) {pkg}", res.stdout)
+
+    def test_uninstall_with_backup_restore(self):
+        """Verifies that uninstallation restores overwritten files from backup."""
+        pkg = "pkg_copy"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup install/pkg/package.toml
+        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+            
+        # 2. Setup system target (simulating deployed file)
+        system_target = self.system_target_dir / "config.txt"
+        system_target.write_text("deployed content")
+        
+        # 3. Setup backup (simulating overwritten file)
+        backup_pkg_overwritten = self.backup_dir / pkg / "overwritten"
+        backup_pkg_overwritten.mkdir(parents=True, exist_ok=True)
+        backup_file = backup_pkg_overwritten / "config.txt"
+        backup_file.write_text("original user content")
+        
+        # 4. Setup state.toml
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="copy")
+        registry.set_package_deployed_files(pkg, [Path("config.txt")])
+        save_state_registry(state_file, registry)
+
+        # Commit initial state so git tracks it
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+
+        # 5. Run uninstall
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
+        
+        # 6. Verify restoration
+        self.assertTrue(system_target.exists())
+        self.assertEqual(system_target.read_text(), "original user content")
+        
+        # Verify cleanup
+        self.assertFalse(backup_pkg_overwritten.exists())
+        self.assertFalse((self.backup_dir / pkg).exists())
+        self.assertFalse(pkg_install_dir.exists())
+
+    def test_uninstall_safeguard_abort(self):
+        """Verifies that uninstall aborts if package is enabled in workspace config."""
+        pkg = "pkg_active"
+        
+        # 1. Enable package in workspace config
+        self.workspace_config.packages_enable[pkg] = True
+        
+        # 2. Run uninstall - should raise RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
+        self.assertIn("Safeguard abort", str(ctx.exception))
+        
+        # 3. Run with force=True - should NOT raise RuntimeError (it might skip if not in state, but won't abort on safeguard)
+        # To make it proceed, we need it in state and the folder to exist
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dummy.txt").write_text("untracked file")
+        
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed")
+        save_state_registry(state_file, registry)
+        
+        # Commit initial state so git tracks it
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        
+        # Verify it proceeded
+        updated_registry = load_state_registry(state_file)
+        self.assertNotIn(pkg, updated_registry.packages)
+
+if __name__ == "__main__":
+    unittest.main()

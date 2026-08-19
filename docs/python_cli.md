@@ -67,6 +67,7 @@ drift [--global-flags] [command] [package] [--command-flags]
 Global Flags:  
 `-C, --directory` Run as if drift is started in `<directory>` instead of current working directory.  
 `--no-git-root` Stop resolving git root of cwd or -C directory, using the literal path instead.  
+`-v, --verbose` Enable verbose (DEBUG) logging output.
 
 
 ### A. Initialization: `drift init`
@@ -78,13 +79,14 @@ Only works if the directory is empty or tracked by git.
     3.  Change to git root, and check if it's already inited with necessary files.  
     4.  Creates `.gitignore` entries to isolate `render/` and `install/` folders.
     5.  Initializes `render/` and `install/` as independent, untracked local Git repositories.
-    6.  Creates default directory templates (`src/`, `drift.toml`, `install/state.toml`).
+    6.  Creates default directory templates (`src/`, `config/drift.toml`, `config/envsubst.bash`, `config/mustache.envst.json`, `install/state.toml`).
 *   **Terminal Output**:
     ```bash
     ✨ Initialized drift workspace!
     📁 Created render/ sandbox Git database.
     📁 Created install/ local state Git database.
     📝 Generated drift.toml template.
+    📝 Generated config/envsubst.bash and config/mustache.envst.json.
     ```
 
 ### B. Status Inspection: `drift status [packages...]` (Planned)
@@ -248,8 +250,6 @@ $ drift new nvim
       2. `package.toml`
       3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.  
 
-      TODO: If config_filename is given, only check if any file will render to that name.  
-
     - If any configuration file exists:  
       - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
       - If `--force` **is** supplied: Overwrites the configuration with the default template.
@@ -258,12 +258,22 @@ $ drift new nvim
     # src/<package>/package.toml
     [package]
     name = "<package>"
-    install_method = "stow"
-    enable_render = true
-    enable_install = true
-    target_directory = "~"
-    fully_controlled_dirs = []
-    sudo = false
+    install_method = "stow"  # Options: "stow" (symlink) or "copy" (physical)
+    target_directory = "~"   # Destination for this package
+
+    # Lifecycle Hooks (Optional)
+    # pre_install  = ""
+    # post_install = ""
+    # pre_update   = ""
+    # post_update  = ""
+    # post_render  = ""
+    # hook_timeout = 120
+
+    # Advanced Flags
+    # sudo = false
+    # fully_controlled_dirs = []  # Sync deletions inside these directories
+    # enable_render = true
+    # enable_install = true
     ```
 
 ---

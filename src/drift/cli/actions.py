@@ -114,3 +114,70 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
         package_names = [package_names]
 
     run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
+
+
+def execute_new(drift_root: Path, package_name: str, config_filename: Optional[str] = None, force: bool = False) -> None:
+    """Core function to create a new package, shared by both CLI backends."""
+    from ..new_package import create_new_package
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
+
+
+def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False) -> None:
+    """Core function to uninstall packages, shared by both CLI backends."""
+    from ..uninstall_repo import run_primitive_7_uninstall_packages
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force)
+
+
+def execute_status(drift_root: Path, package_names: Optional[List[str]] = None) -> None:
+    """Core function to audit workspace status, shared by both CLI backends."""
+    from ..status import run_primitive_status
+    
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    results = run_primitive_status(workspace_config, target_pkgs=package_names)
+    
+    # We use a simple print here, which can be enhanced by CLI backends if needed
+    for s in results:
+        print(f"\nPackage: {s.name}")
+        
+        # Template
+        a_status = f"[A] Template: {s.template_status}"
+        print(f"  {a_status}")
+        if s.template_changes:
+             for change in s.template_changes:
+                 print(f"      {change}")
+                 
+        # System
+        b_status = f"[B] System:   {s.system_status}"
+        print(f"  {b_status}")
+        if s.system_changes:
+             for change in s.system_changes:
+                 print(f"      {change}")
+                 
+        # Pending
+        d_status = f"[Δ] Pending:  {s.pending_status}"
+        print(f"  {d_status}")
+        if s.pending_status != "CLEAN" and s.pending_status != "EMPTY":
+            plus = len(s.pending_changes.added)
+            tilde = len(s.pending_changes.modified)
+            minus = len(s.pending_changes.deleted)
+            print(f"      (+{plus}, ~{tilde}, -{minus} files)")
+
+
+def execute_gc(drift_root: Path, dry_run: bool = False) -> None:
+    """Core function to garbage collect orphans, shared by both CLI backends."""
+    from ..gc import run_primitive_9_garbage_collect_orphans
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_9_garbage_collect_orphans(workspace_config, dry_run=dry_run)

@@ -155,8 +155,9 @@ def render_input_templates(
             # The 'render' string is read dynamically from the workspace_config if provided
             output_file_path = drift_root / render_dir / CONFIG_DIR_NAME / output_filename
 
-            # Use logger.info instead of print
-            logger.info(f"Rendering input for {engine.name} using {dep_name}: {template_file_path} >> {output_file_path}")
+            # Use logger.info with a high-signal format
+            logger.info(f"🎨 Rendering engine input: {engine.name} (via {dep_name})")
+            logger.debug(f"   {template_file_path.relative_to(drift_root)} -> {output_file_path.relative_to(drift_root)}")
 
             render_template_to_file(
                 engine_config=dep_engine,

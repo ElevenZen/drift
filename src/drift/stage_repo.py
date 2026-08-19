@@ -97,7 +97,7 @@ def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[
                 f.write("\n")
             for pattern in to_append:
                 f.write(f"{pattern}\n")
-    logger.info(f"Created/updated Stow ignore file at {stow_ignore_path} with patterns: {append_patterns}")
+    logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path} with patterns: {append_patterns}")
 
 
 def process_package_changes(
@@ -133,7 +133,8 @@ def process_package_changes(
             remove_file_or_dir(install_file)
             continue
         backup_file = backup_dir / rel_file
-        logger.info(f"Moving deleted file to backup: {backup_file}")
+        logger.info(f"🗑️  Deleting: {pkg}/{rel_file}")
+        logger.debug(f"   (Backup: {backup_file})")
         backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
         changes.deleted_files.append(rel_file)
 
@@ -144,7 +145,7 @@ def process_package_changes(
         if src.is_dir() and not src.is_symlink():
             dst.mkdir(parents=True, exist_ok=True)
             continue
-        logger.info(f"Adding new file: {pkg}/{rel_file}")
+        logger.info(f"📦 Adding: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         changes.added_files.append(rel_file)
@@ -156,7 +157,7 @@ def process_package_changes(
         if src.is_dir() and not src.is_symlink():
             dst.mkdir(parents=True, exist_ok=True)
             continue
-        logger.info(f"Modifying file: {pkg}/{rel_file}")
+        logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
         changes.modified_files.append(rel_file)
@@ -236,7 +237,7 @@ def run_primitive_4_stage_render_to_install(
         for pkg in pkg_metadata.keys():
             ensure_install_pkg_dir_clean(install_base, pkg)
 
-    logger.info(f"Staging the following packages from render/ to install/: {list(pkg_metadata.keys())}")
+    logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
 
     # Set state of packages to "staging" before staging to prevent partial staging issues
     state_file = install_base / "state.toml"
@@ -270,9 +271,16 @@ def run_primitive_4_stage_render_to_install(
     pkg_changes_with_actual_changes = [
             change for change in pkg_changes.values()
             if change.added_files or change.modified_files or change.deleted_files]
-    logger.info("Staging completed. Summary of changes:")
-    for pkg_change in pkg_changes_with_actual_changes:
-        logger.info(f"Package '{pkg_change.package_name}': Added: {len(pkg_change.added_files)}, Modified: {len(pkg_change.modified_files)}, Deleted: {len(pkg_change.deleted_files)}")
+    
+    if pkg_changes_with_actual_changes:
+        logger.info("✨ Staging completed. Summary of changes:")
+        for pkg_change in pkg_changes_with_actual_changes:
+            logger.info(f"   Package '{pkg_change.package_name}': "
+                        f"+{len(pkg_change.added_files)}, "
+                        f"~{len(pkg_change.modified_files)}, "
+                        f"-{len(pkg_change.deleted_files)}")
+    else:
+        logger.info("✨ Staging completed. No changes detected.")
 
     # Set state of packages to "staged" after successful staging
     for pkg in pkg_metadata.keys():

@@ -78,7 +78,7 @@ The implementation of the 7 core primitives and workflows outlined in `@design.m
 *   **The Blueprint**:
     *   **Atomic Copies**: When performing `copy` installations, copy the file to a temporary location on the target filesystem first, then run a surgical `mv` to overwrite. This prevents partial writes if the process is terminated mid-execution.
     *   **Incremental Checklist**: Primitive 4 must write a JSON file (`install/.changelist.json`) detailing files slated for deployment. If execution is interrupted, the next run can read this changelist to resume incrementally.
-    *   **Fail-Fast Hook Isolation**: If a lifecycle hook (e.g. `on_install` or `on_update` script) returns a non-zero exit status, the script must halt immediately. It must print the exact failure log and halt Stage 2 to prevent subsequent state corruption.
+    *   **Fail-Fast Hook Isolation**: If a lifecycle hook (e.g. `pre_install` or `post_update` script) returns a non-zero exit status, the script must halt immediately. It must print the exact failure log and halt Stage 2 to prevent subsequent state corruption.
 
 ---
 
