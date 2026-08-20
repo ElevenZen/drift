@@ -65,22 +65,28 @@ def generate_import_worklist(
                 raise ValueError(f"Import path '{abs_import}' is not inside package target directory '{target_base}'")
             
             rel_root_target = abs_import.relative_to(target_base)
-            
-            # Use compare_folders to get a clean list of files from system, resolving symlinks.
-            # We compare against an empty temp directory to get everything as 'added'.
-            diff = compare_folders(abs_import, tmp_dir, resolve_symlinks=True)
+            # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
+            repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
+
+            # Scoped ignore handler that offsets paths to match package-root-relative patterns
+            class ScopedIgnore:
+                def match_path(self, rel_repo: Path) -> bool:
+                    # rel_repo is already dot-prefixed by compare_folders(translate_mode="reverse")
+                    return ignore_handler.match_path(repo_prefix / rel_repo)
+
+            # Use compare_folders to get a clean list of files from system.
+            # translate_mode="reverse" ensures the ignore handler receives repo-style paths.
+            diff = compare_folders(
+                abs_import, 
+                tmp_dir, 
+                ignore_handler=ScopedIgnore(), 
+                resolve_symlinks=True,
+                translate_mode="reverse"
+            )
             
             for rel_path in diff.added:
-                # rel_path is relative to abs_import.
-                # If abs_import was a file, rel_path is Path("").
-                full_rel_target = (rel_root_target / rel_path
-                        if rel_path != Path("") else rel_root_target)
-                
-                # Filter using ignore_handler (which already filters MANAGED_CONFIG_FILES internally)
-                if ignore_handler.match_path(full_rel_target):
-                     logger.debug(f"   Skipping ignored file: {full_rel_target}")
-                     continue
-                     
+                # rel_path is relative to abs_import (system style, e.g. leading dots)
+                full_rel_target = rel_root_target / rel_path if rel_path != Path("") else rel_root_target
                 worklist.append((abs_import / rel_path, full_rel_target))
                 
     return worklist

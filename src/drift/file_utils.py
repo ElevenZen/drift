@@ -33,17 +33,27 @@ def resolve_system_target(relative_path: Path, relative_base: Path) -> Path:
     Applies relative file path to base path,
     expanding user home and applying dot prefix conversion.
     """
+    translated_path = translate_dot_prefixes(relative_path)
     target_path = relative_base.expanduser()
-    translated_parts = ["." + p[4:] if p.startswith("dot-") else p for p in relative_path.parts]
-    return target_path.joinpath(*translated_parts)
+    return target_path / translated_path
+
+
+def translate_dot_prefixes(relative_path: Path) -> Path:
+    """ Converts 'dot-' prefixes in path segments to leading dots ('.').
+    skipping 'dot-', 'dot-.' and segments. """
+    translated_parts = ["." + p[4:] if p.startswith("dot-") else p
+                        for p in relative_path.parts
+                        if p not in ('dot-', 'dot-.')]
+    return Path(*translated_parts)
 
 
 def translate_dot_prefixes_reverse(relative_path: Path) -> Path:
     """
-    Converts leading dots ('.') in path segments to 'dot-', which is the opposite of dot segment resolution.
+    Converts leading dots ('.') in path segments to 'dot-', which is the opposite of translate_dot_prefixes().
     Skipping '.' and '..' segments.
     """
-    translated_parts = ["dot-" + p[1:] if p.startswith(".") and p not in (".", "..") else p for p in relative_path.parts]
+    translated_parts = ["dot-" + p[1:] if p.startswith(".") and p not in (".", "..") else p
+                        for p in relative_path.parts]
     return Path(*translated_parts)
 
 

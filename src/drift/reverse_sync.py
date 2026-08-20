@@ -8,62 +8,16 @@ from .workspace_config import WorkspaceConfig
 from .constants import MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .file_utils import (
-    tree_relative_files,
+    is_relative_to,
     resolve_system_target,
     translate_dot_prefixes_reverse,
+    remove_file_or_dir,
 )
+from .folder_diff import compare_folders
 from .sync_ops import reverse_sync_file_or_dir
 from .install_repo import load_config_for_install
 
 logger = logging.getLogger(__name__)
-
-
-def should_skip_fcd_path(local_rel_path: Path, system_file: Path, ignore_handler: DriftIgnore, install_pkg_dir: Path) -> bool:
-    """Checks if a given FCD path should be skipped during reverse sync."""
-    if not system_file.exists() and not system_file.is_symlink():
-        return True
-    if ignore_handler.match_path(local_rel_path):
-        return True
-    local_install_file = install_pkg_dir / local_rel_path
-    if local_install_file.exists():
-        return True
-    return False
-
-
-def reverse_sync_fcd_dir(
-    fcd_rel_path: Path,
-    target_dir_path: Path,
-    install_pkg_dir: Path,
-    ignore_handler: DriftIgnore
-) -> None:
-    """Audits a single Fully-Controlled Directory subfolder/file for wild/untracked files and syncs them back."""
-    target_sub_dir = target_dir_path / fcd_rel_path
-    local_rel_path = translate_dot_prefixes_reverse(fcd_rel_path)
-    local_install_file = install_pkg_dir / local_rel_path
-
-    if should_skip_fcd_path(local_rel_path, target_sub_dir, ignore_handler, install_pkg_dir):
-        return
-
-    # If the FCD target is not a directory (is a file or a broken link), sync it back
-    if not target_sub_dir.is_dir():
-        reverse_sync_file_or_dir(target_sub_dir, local_install_file, ignore_handler=ignore_handler)
-        return
-
-    # If it is a directory, process its children recursively
-    if target_sub_dir.is_dir():
-        # Scan all files recursively inside the target subdirectory
-        host_files = tree_relative_files(target_sub_dir)
-        for rel_file in host_files:
-            # Map '.' to 'dot-' using utility function
-            translated_rel_file = translate_dot_prefixes_reverse(rel_file)
-            child_local_rel_path = fcd_rel_path / translated_rel_file
-            child_system_file = target_sub_dir / rel_file
-
-            if should_skip_fcd_path(child_local_rel_path, child_system_file, ignore_handler, install_pkg_dir):
-                continue
-
-            child_local_install_file = install_pkg_dir / child_local_rel_path
-            reverse_sync_file_or_dir(child_system_file, child_local_install_file, ignore_handler=ignore_handler)
 
 
 def reverse_sync_package(pkg: str, install_base: Path, workspace_config: WorkspaceConfig) -> None:
@@ -88,22 +42,65 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     # Load ignore patterns
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
 
-    # A. Traverse and sync all files currently tracked by our database (under install/<pkg>)
-    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    # Use compare_folders to detect all changes (modifications and wild files in FCD)
+    # We compare System (src) against Repo (dst) in "reverse" translation mode.
+    # This identifies:
+    # - added: files on system NOT in repo (potential wild files for FCD)
+    # - modified: files on system that differ from repo (including symlink vs physical mismatches)
+    # - deleted: files in repo NOT on system (tracked files deleted manually)
+    diff = compare_folders(
+        src_dir=target_dir_path,
+        dst_dir=install_pkg_dir,
+        ignore_handler=ignore_handler,
+        resolve_symlinks=True,
+        translate_mode="reverse"
+    )
 
-    for relative_path in deployable_files:
-        system_target = resolve_system_target(relative_path, target_dir_path)
-        local_install_file = install_pkg_dir / relative_path
-        reverse_sync_file_or_dir(system_target, local_install_file, ignore_handler=ignore_handler)
+    # 1. Handle system deletions (deleted in system but exist in repo)
+    for rel in diff.deleted:
+        # diff returns rel relative to src_dir (system). 
+        # But for deletions, we need to know what it corresponds to in repo.
+        repo_rel = translate_dot_prefixes_reverse(rel)
+        repo_file = install_pkg_dir / repo_rel
+        
+        # We only sync back deletions for files that are actually in the repo
+        if repo_file.exists():
+            logger.info(f"System Deletion: '{target_dir_path / rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
+            remove_file_or_dir(repo_file)
 
-    # B. Audit Fully-Controlled Directory subfolders for wild/untracked files
-    for fcd_rel_path in metadata.fully_controlled_dirs:
-        reverse_sync_fcd_dir(
-            fcd_rel_path=fcd_rel_path,
-            target_dir_path=target_dir_path,
-            install_pkg_dir=install_pkg_dir,
-            ignore_handler=ignore_handler
-        )
+    # 2. Handle system modifications
+    for rel in diff.modified:
+        system_file = target_dir_path / rel
+        repo_file = install_pkg_dir / translate_dot_prefixes_reverse(rel)
+        reverse_sync_file_or_dir(system_file, repo_file, ignore_handler=ignore_handler)
+
+    # 3. Handle wild files in FCD and promoted tracked files (added on system but not in repo)
+    # We sync these if:
+    # a) They are within a Fully-Controlled Directory (FCD).
+    # b) They are part of a tracked path that changed type (e.g. file became a directory).
+    for rel in diff.added:
+        if rel.name in MANAGED_CONFIG_FILES:
+            continue
+
+        is_to_sync = False
+        # Case a: Check if rel is inside any FCD
+        for fcd_rel in metadata.fully_controlled_dirs:
+            if is_relative_to(rel, fcd_rel):
+                is_to_sync = True
+                break
+        
+        if not is_to_sync:
+            # Case b: Check if any parent (or the path itself) was previously tracked
+            # but is now reported as 'deleted' (meaning it's missing or changed type on system).
+            for parent in [rel] + list(rel.parents):
+                if parent in diff.deleted:
+                    is_to_sync = True
+                    break
+        
+        if is_to_sync:
+            system_file = target_dir_path / rel
+            repo_file = install_pkg_dir / translate_dot_prefixes_reverse(rel)
+            reverse_sync_file_or_dir(system_file, repo_file, ignore_handler=ignore_handler)
 
 
 def run_primitive_1_reverse_sync(
