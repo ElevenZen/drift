@@ -13,7 +13,6 @@ from .package_config import (
 )
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file
-from .file_utils import tree_relative_files
 
 logger = logging.getLogger(__name__)
 

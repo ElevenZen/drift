@@ -20,7 +20,7 @@ from .folder_diff import compare_folders
 
 logger = logging.getLogger(__name__)
 
-def get_package_target_directory(
+def get_package_target_directory_from_source(
     workspace_config: WorkspaceConfig,
     src_pkg_dir: Path,
     package_name: str
@@ -110,7 +110,7 @@ def run_primitive_11_add_resources(
         raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
 
     # 2. Resolve target directory and ignores
-    target_base = get_package_target_directory(workspace_config, src_pkg_dir, package_name)
+    target_base = get_package_target_directory_from_source(workspace_config, src_pkg_dir, package_name)
     ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir)
 
     # 3. Generate global worklist of files to import

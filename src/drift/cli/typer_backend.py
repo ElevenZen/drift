@@ -281,13 +281,18 @@ def typer_uninstall(
         False,
         "--dry-run",
         help="Preview uninstallation without making changes"
+    ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Remove management relationship but keep configurations as actual physical files on host system"
     )
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run)
+        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

@@ -184,5 +184,67 @@ class TestUninstall(unittest.TestCase):
         updated_registry = load_state_registry(state_file)
         self.assertNotIn(pkg, updated_registry.packages)
 
+    def test_uninstall_detach_stow(self):
+        """Verifies that detaching a stowed package replaces the symlink with a copy, and keeps backup folders intact."""
+        pkg = "pkg_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 1. Setup install/pkg/package.toml
+        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "stow"
+            target_directory = "{self.system_target_dir}"
+            """)
+            
+        # 2. Setup system target with a symlink (simulating deployment)
+        src_file = pkg_install_dir / "dot-bashrc"
+        src_file.write_text("pkg content")
+        
+        system_target = self.system_target_dir / ".bashrc"
+        os.symlink(src_file, system_target)
+        
+        # 3. Setup backup (should remain intact during detach)
+        backup_pkg_overwritten = self.backup_dir / pkg / "overwritten"
+        backup_pkg_overwritten.mkdir(parents=True, exist_ok=True)
+        backup_file = backup_pkg_overwritten / "dot-bashrc"
+        backup_file.write_text("original backup user content")
+        
+        # 4. Setup state.toml
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="stow")
+        registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
+        save_state_registry(state_file, registry)
+        
+        # Commit initial state so git tracks it
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        
+        # 5. Run uninstall with detach=True
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], detach=True)
+        
+        # 6. Verify results
+        # Target file is NO LONGER a symlink, but a physical copy of "pkg content"
+        self.assertTrue(system_target.exists())
+        self.assertFalse(system_target.is_symlink())
+        self.assertEqual(system_target.read_text(encoding="utf-8"), "pkg content")
+        
+        # Backup folder and backup file remain completely intact!
+        self.assertTrue(backup_file.exists())
+        self.assertEqual(backup_file.read_text(encoding="utf-8"), "original backup user content")
+        
+        # install/pkg dir is removed
+        self.assertFalse(pkg_install_dir.exists())
+        
+        updated_registry = load_state_registry(state_file)
+        self.assertNotIn(pkg, updated_registry.packages)
+        
+        # Verify commit happened with "Detach" message
+        res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f"Detach: Removed package(s) {pkg}", res.stdout)
+
 if __name__ == "__main__":
     unittest.main()

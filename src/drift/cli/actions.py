@@ -126,14 +126,14 @@ def execute_new(drift_root: Path, package_name: str, config_filename: Optional[s
     run_primitive_10_create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
 
 
-def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False, dry_run: bool = False) -> None:
-    """Core function to uninstall packages, shared by both CLI backends."""
+def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False, dry_run: bool = False, detach: bool = False) -> None:
+    """Core function to uninstall or detach packages, shared by both CLI backends."""
     from ..uninstall_repo import run_primitive_7_uninstall_packages
 
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force, dry_run=dry_run)
+    run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force, dry_run=dry_run, detach=detach)
 
 
 def execute_status(drift_root: Path, package_names: Optional[List[str]] = None) -> None:

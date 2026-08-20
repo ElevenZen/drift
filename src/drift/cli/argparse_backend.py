@@ -178,6 +178,11 @@ def run_argparse_cli(argv=None) -> None:
         action="store_true",
         help="Preview uninstallation without making changes"
     )
+    uninstall_parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Remove management relationship but keep configurations as actual physical files on host system"
+    )
 
     # status subcommand
     status_parser = subparsers.add_parser(
@@ -368,7 +373,7 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run)
+            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

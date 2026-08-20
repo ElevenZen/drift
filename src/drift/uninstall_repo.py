@@ -111,7 +111,10 @@ def restore_backups(
     
     if not backup_pkg_overwritten.exists():
         return restored  # No backups to restore
+
+    # We assume there won't be any symlinks to directories in the backup, so we can safely use tree_relative_files
     backup_files = tree_relative_files(backup_pkg_overwritten)
+
     if not backup_files:
         return restored  # No backups to restore
     if not dry_run:
@@ -141,13 +144,70 @@ def restore_backups(
     return restored
 
 
-def uninstall_single_package(
+def clean_up_package_directories(workspace_config: WorkspaceConfig, pkg: str) -> None:
+    """Cleans up the package directory under install_path and empty package directory under backup_path."""
+    # Clean up install/pkg directory
+    install_pkg_dir = workspace_config.install_path / pkg
+    if install_pkg_dir.exists():
+        try:
+            shutil.rmtree(install_pkg_dir)
+        except Exception as e:
+            logger.warning(f"   Failed to clean up install directory {install_pkg_dir}: {e}")
+
+    # Clean up backup/pkg directory if empty
+    backup_pkg_dir = workspace_config.backup_path / pkg
+    if backup_pkg_dir.exists() and not any(backup_pkg_dir.iterdir()):
+        try:
+            backup_pkg_dir.rmdir()
+        except Exception:
+            pass
+
+
+def detach_single_package(
     workspace_config: WorkspaceConfig,
     pkg: str,
     pkg_state: PackageState,
     dry_run: bool = False
 ) -> bool:
-    """Orchestrates the uninstallation of a single package."""
+    """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
+    if not dry_run:
+        logger.info(f"🔌 Detaching package: {pkg} (converting to independent system config)")
+    else:
+        logger.info(f"🔍 [DRY RUN] Would detach package: {pkg} (replacing symlinks with copies)")
+
+    target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
+
+    for rel_file in pkg_state.deployed_files:
+        system_target = resolve_system_target(rel_file, target_dir)
+        if system_target.is_symlink():
+            # Log the file that will be replaced in both dry-run and live modes
+            if dry_run:
+                logger.info(f"🔍 [DRY RUN] Would replace symlink with actual copy: {system_target}")
+            else:
+                logger.info(f"   Replacing symlink with actual copy: {system_target}")
+                remove_file_or_dir_with_sudo(system_target, sudo)
+                src_file = workspace_config.install_path / pkg / rel_file
+                if src_file.is_file():
+                    system_target.parent.mkdir(parents=True, exist_ok=True)
+                    copy_or_move_file_or_dir_external(src_file, system_target, sudo, move=False)
+
+    if not dry_run:
+        logger.info(f"🔌 Successfully detached and converted {pkg} files to independent configurations on the host.")
+
+    if dry_run:
+        return True
+
+    clean_up_package_directories(workspace_config, pkg)
+    return True
+
+
+def uninstall_single_package_standard(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    pkg_state: PackageState,
+    dry_run: bool = False
+) -> bool:
+    """Orchestrates standard uninstallation of a single package."""
     if not dry_run:
         logger.info(f"🗑️  Uninstalling package: {pkg}")
     else:
@@ -164,33 +224,33 @@ def uninstall_single_package(
     if dry_run:
         return True
 
-    # 3. Clean up install/pkg directory
-    install_pkg_dir = workspace_config.install_path / pkg
-    if install_pkg_dir.exists():
-        try:
-            shutil.rmtree(install_pkg_dir)
-        except Exception as e:
-            logger.warning(f"   Failed to clean up install directory {install_pkg_dir}: {e}")
-
-    # 4. Clean up backup/pkg directory if empty
-    backup_pkg_dir = workspace_config.backup_path / pkg
-    if backup_pkg_dir.exists() and not any(backup_pkg_dir.iterdir()):
-        try:
-            backup_pkg_dir.rmdir()
-        except Exception:
-            pass
-
+    clean_up_package_directories(workspace_config, pkg)
     return True
+
+
+def uninstall_single_package(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    pkg_state: PackageState,
+    dry_run: bool = False,
+    detach: bool = False
+) -> bool:
+    """Orchestrates the uninstallation or detachment of a single package."""
+    if detach:
+        return detach_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run)
+    else:
+        return uninstall_single_package_standard(workspace_config, pkg, pkg_state, dry_run=dry_run)
 
 
 def run_primitive_7_uninstall_packages(
     workspace_config: WorkspaceConfig,
     package_names: Optional[List[str]] = None,
     force: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    detach: bool = False
 ) -> List[str]:
     """
-    Uninstalls one or more packages from the system.
+    Uninstalls or detaches one or more packages from the system.
     Safeguard: Aborts if the package is still enabled in workspace config unless force=True.
     If package_names is None, uninstalls all orphans.
     Returns the list of successfully uninstalled package names.
@@ -219,7 +279,7 @@ def run_primitive_7_uninstall_packages(
     successfully_uninstalled = []
 
     for pkg, pkg_state in safe_map.items():
-        if uninstall_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run):
+        if uninstall_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run, detach=detach):
             if not dry_run:
                 registry.remove_package(pkg)
                 successfully_uninstalled.append(pkg)
@@ -233,9 +293,13 @@ def run_primitive_7_uninstall_packages(
     # 4. Commit changes in install repo
     if successfully_uninstalled:
         from .install_repo import run_primitive_6_commit_install_repo
-        commit_msg = f"Uninstall: Removed package(s) {', '.join(successfully_uninstalled)}"
+        action_name = "Detach" if detach else "Uninstall"
+        commit_msg = f"{action_name}: Removed package(s) {', '.join(successfully_uninstalled)}"
         run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
-        logger.info(f"✨ Successfully uninstalled {len(successfully_uninstalled)} package(s)!")
+        if detach:
+            logger.info(f"✨ Successfully detached {len(successfully_uninstalled)} package(s)!")
+        else:
+            logger.info(f"✨ Successfully uninstalled {len(successfully_uninstalled)} package(s)!")
     else:
         logger.info("Nothing was uninstalled.")
         
