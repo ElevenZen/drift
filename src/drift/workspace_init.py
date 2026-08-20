@@ -1,5 +1,7 @@
 """Feature implementation for initializing a drift workspace using pathlib."""
 
+import json
+import logging
 import sys
 import subprocess
 from pathlib import Path
@@ -11,6 +13,9 @@ from .git_utils import (
     ensure_git_repository_health,
 )
 from .file_utils import ensure_directory_writable
+
+
+logger = logging.getLogger(__name__)
 
 
 def git_init_repo(dir_path: Path, name: str) -> bool:
@@ -158,11 +163,16 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     # Create empty envsubst.bash and mustache.envst.json as referenced in default drift.toml
     envsubst_input = config_dir / "envsubst.bash"
     if not envsubst_input.exists():
-        envsubst_input.write_text("#!/bin/bash\n", encoding="utf-8")
+        envsubst_input.write_text("#!/bin/bash\nexport TEST_STRING='Hello, Drift!'\n", encoding="utf-8")
+    else:
+        logger.warning(f"envsubst.bash already exists at '{envsubst_input}', skipping creation.")
 
     mustache_input = config_dir / "mustache.envst.json"
+    mustache_input_json = { "TEST_STRING": "${TEST_STRING}" }
     if not mustache_input.exists():
-        mustache_input.write_text("{}\n", encoding="utf-8")
+        mustache_input.write_text(json.dumps(mustache_input_json, indent=4), encoding="utf-8")
+    else:
+        logger.warning(f"mustache.envst.json already exists at '{mustache_input}', skipping creation.")
 
     # Write install/state.toml
     state_file = install_dir / "state.toml"
