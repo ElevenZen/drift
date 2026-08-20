@@ -199,24 +199,22 @@ def get_package_config_file_info(
     - engine: RenderEngineConfig instance (if 'template', otherwise None)
     - target_name: 'drift_package.toml' or 'package.toml' (PACKAGE_CONFIG_FILE_NAMES)
     """
-    res = workspace_config.find_source_file_for_targets(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    res = workspace_config.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
     if not res:
         return None
 
-    path, engine, target_name = res
-
     return PackageConfigFileInfo(
-        type="static" if engine is None else "template",
-        path=path,
-        engine=engine,
-        target_name=target_name
+        type="static" if res.engine is None else "template",
+        path=res.path,
+        engine=res.engine,
+        target_name=res.target_name
     )
 
 
-def load_package_config_from_dir(
+def load_package_config_from_source_dir(
     package_dir: Path,
     package_name: str,
-    workspace_config: Optional["WorkspaceConfig"] = None
+    workspace_config: Optional[WorkspaceConfig] = None
 ) -> PackageConfig:
     """Loads package configuration from a package directory, optionally rendering it if it is a template."""
     if workspace_config is None:

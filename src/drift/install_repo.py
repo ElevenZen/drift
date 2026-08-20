@@ -270,19 +270,15 @@ def run_collision_guard(
     pkg: str,
     install_pkg_dir: Path,
     metadata: PackageConfig,
+    ignore_handler: DriftIgnore,
     target_dir: Path,
     is_first_time: bool,
     resolve_symlinks: bool,
     install_base: Path
 ) -> None:
     """Handles collision backing up before any file deployment."""
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
-    
     relative_files = tree_relative_files(install_pkg_dir)
     for rel_file in relative_files:
-        if rel_file.name in MANAGED_CONFIG_FILES:
-            continue
-            
         if ignore_handler.match_path(rel_file):
             # The ignore file is acting as delete instruction for the system target.
             system_target = resolve_system_target(rel_file, target_dir)
@@ -565,6 +561,7 @@ def deploy_package_impl(
         pkg=pkg,
         install_pkg_dir=install_pkg_dir,
         metadata=metadata,
+        ignore_handler=ignore_handler,
         target_dir=target_dir,
         is_first_time=is_first_time,
         resolve_symlinks=resolve_symlinks,

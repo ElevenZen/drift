@@ -18,7 +18,8 @@ from .actions import (
     execute_uninstall,
     execute_status,
     execute_gc,
-    execute_diff
+    execute_diff,
+    execute_add
 )
 
 app = typer.Typer(
@@ -369,6 +370,33 @@ def typer_diff(
             diff_type = "system"
             
         execute_diff(drift_root, packages, diff_type=diff_type, side_by_side=side_by_side, stat=stat)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("add")
+def typer_add(
+    ctx: typer.Context,
+    package_name: str = typer.Argument(
+        ...,
+        help="Name of the package to add resources into"
+    ),
+    paths: List[str] = typer.Argument(
+        ...,
+        help="One or more file/folder paths to import"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview the import without making changes"
+    )
+) -> None:
+    """Import files or folders from the system into a package (with dot-prefix translation)."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_add(drift_root, package_name, paths, dry_run=dry_run)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

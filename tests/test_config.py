@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,13 +19,16 @@ from drift.toml_parser import (
 )
 from drift.workspace_config import (
     WorkspaceConfig,
-   load_workspace_config,
+    RenderEngineConfig,
+    RenderSourceMatch,
+    load_workspace_config,
 )
 from drift.package_config import (
     PackageConfig,
     locate_package_config_file_static,
     load_package_config_static,
-    load_package_config_from_dir,
+    load_package_config_from_source_dir
+,
     get_package_config_file_info,
     PackageConfigFileInfo,
 )
@@ -172,12 +176,11 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
 
-    def test_find_source_file_for_targets(self) -> None:
-        """Verifies find_source_file_for_targets correctly identifies static and template source files."""
+    def test_find_source_file_for_rendered_names(self) -> None:
+        """Verifies find_source_file_for_rendered_names correctly identifies static and template source files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir).resolve()
             
-            from drift.workspace_config import RenderEngineConfig
             # Setup engines
             engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
             config = WorkspaceConfig(render_engine_config={"envsubst": engine})
@@ -185,23 +188,90 @@ class TestConfigClasses(unittest.TestCase):
             targets = ["config.toml", "settings.json"]
             
             # 1. Neither exists
-            self.assertIsNone(config.find_source_file_for_targets(directory, targets))
+            self.assertIsNone(config.find_source_file_for_rendered_names(directory, targets))
             
             # 2. Template form 1 exists (config.toml.envst)
             p1 = directory / "config.toml.envst"
             p1.touch()
-            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p1, engine, "config.toml"))
+            match = config.find_source_file_for_rendered_names(directory, targets)
+            self.assertEqual(match, RenderSourceMatch(path=p1, engine=engine, target_name="config.toml"))
             p1.unlink()
 
             # 3. Template form 2 exists (config.envst.toml)
             p2 = directory / "config.envst.toml"
             p2.touch()
-            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p2, engine, "config.toml"))
+            match = config.find_source_file_for_rendered_names(directory, targets)
+            self.assertEqual(match, RenderSourceMatch(path=p2, engine=engine, target_name="config.toml"))
 
             # 4. Static exists (takes precedence over template)
             p_static = directory / "config.toml"
             p_static.touch()
-            self.assertEqual(config.find_source_file_for_targets(directory, targets), (p_static, None, "config.toml"))
+            match = config.find_source_file_for_rendered_names(directory, targets)
+            self.assertEqual(match, RenderSourceMatch(path=p_static, engine=None, target_name="config.toml"))
+
+    def test_find_source_file_for_targets_with_directories(self) -> None:
+        """Verifies find_source_file_for_rendered_names correctly identifies directories."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            directory = Path(temp_dir).resolve()
+            config = WorkspaceConfig(render_engine_config={})
+            
+            targets = ["my_folder", "other_folder"]
+            
+            # 1. Directory exists
+            d1 = directory / "my_folder"
+            d1.mkdir()
+            match = config.find_source_file_for_rendered_names(directory, targets)
+            self.assertEqual(match, RenderSourceMatch(path=d1, engine=None, target_name="my_folder"))
+            
+            # 2. File with same name takes precedence
+            shutil.rmtree(d1)
+            f1 = directory / "my_folder"
+            f1.touch()
+            match = config.find_source_file_for_rendered_names(directory, targets)
+            self.assertEqual(match, RenderSourceMatch(path=f1, engine=None, target_name="my_folder"))
+
+    def test_find_conflict_in_source_dir(self) -> None:
+        """Verifies find_conflict_in_source_dir correctly identifies matches and blocks."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir).resolve()
+            src_pkg_dir = root / "src" / "pkg"
+            src_pkg_dir.mkdir(parents=True)
+            
+            engine = RenderEngineConfig(name="envst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
+            config = WorkspaceConfig(render_engine_config={"envst": engine})
+            
+            # 1. Exact match (static file)
+            f1 = src_pkg_dir / "dot-bashrc"
+            f1.touch()
+            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            self.assertIsNotNone(match)
+            self.assertEqual(match.path, f1)
+            self.assertEqual(match.status, "match")
+            f1.unlink()
+            
+            # 2. Exact match (template)
+            t1 = src_pkg_dir / "dot-bashrc.envst"
+            t1.touch()
+            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            self.assertIsNotNone(match)
+            self.assertEqual(match.path, t1)
+            self.assertEqual(match.status, "match")
+            t1.unlink()
+            
+            # 3. Block (intermediate file)
+            # We want to render to .config/nvim/init.vim
+            # But src/pkg/dot-config is a file
+            b1 = src_pkg_dir / "dot-config"
+            b1.touch()
+            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
+            self.assertIsNotNone(match)
+            self.assertEqual(match.path, b1)
+            self.assertEqual(match.status, "block")
+            b1.unlink()
+            
+            # 4. No conflict
+            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
+            self.assertIsNone(match)
 
 
     def test_package_config_from_dict(self) -> None:
@@ -418,7 +488,7 @@ class TestConfigLoaders(unittest.TestCase):
         # No config file exists yet (raises FileNotFoundError)
         self.assertIsNone(locate_package_config_file_static(pkg_dir))
         with self.assertRaises(FileNotFoundError):
-            load_package_config_from_dir(pkg_dir, "my_pkg_folder")
+            load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
 
         # Creating drift_package.toml (alternative name)
         alt_config_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -428,7 +498,7 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
         self.assertEqual(locate_package_config_file_static(pkg_dir), alt_config_path)
         
-        config = load_package_config_from_dir(pkg_dir, "my_pkg_folder")
+        config = load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
         self.assertEqual(config.name, "my_pkg_folder")
         self.assertEqual(config.install_method, "copy")
         # Static path fields are identical
@@ -528,7 +598,7 @@ class TestConfigLoaders(unittest.TestCase):
         render_input_templates(list(workspace_config.render_engine_configs.values()), workspace_config.drift_root_path)
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
-        pkg_config = load_package_config_from_dir(pkg_dir, "my_pkg", workspace_config)
+        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg", workspace_config)
 
         # Verify fields and values
         self.assertEqual(pkg_config.name, "my_pkg")

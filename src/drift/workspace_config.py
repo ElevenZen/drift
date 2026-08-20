@@ -52,6 +52,15 @@ class RenderEngineConfig:
 
 
 @dataclass
+class RenderSourceMatch:
+    """Encapsulates a match or blocking entry found in the source directory."""
+    path: Path
+    engine: Optional[RenderEngineConfig]
+    target_name: str
+    status: str = "match"  # "match" or "block"
+
+
+@dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift.toml."""
     drift_root_path: Path = Path(".")
@@ -206,19 +215,25 @@ class WorkspaceConfig:
         # otherwise raise an error for missing packages
         return [x for x in target_pkgs if x in discovered]
 
-    def find_source_file_for_targets(self, directory: Path, target_names: List[str]) -> Optional[Tuple[Path, Optional[RenderEngineConfig], str]]:
+    def find_source_file_for_rendered_names(
+        self, 
+        directory: Path, 
+        target_names: List[str]
+    ) -> Optional[RenderSourceMatch]:
         """
-        Locates a file in the given directory that will render to one of the target names.
-        Checks for static files first, then for templates using defined render engines.
-        Returns a tuple (Path, engine, matched_target_name) or None if no match is found.
+        Locates a file or directory in the given directory that will render to one of the rendered names.
+        Checks for static files/dirs first, then for templates using defined render engines.
+        Returns a RenderSourceMatch or None if no match is found.
         """
         # 1. Static check
         for name in target_names:
             p = directory / name
-            if p.is_file():
-                return p, None, name
+            if p.exists():
+                return RenderSourceMatch(path=p, engine=None, target_name=name, status="match")
 
         # 2. Template check (using defined engines)
+        # Only normal file templates are considered for rendering; directories are not rendered.
+        # So directories with a template suffix won't conflict.
         for engine in self.render_engine_configs.values():
             suffix = engine.suffix
             if not suffix:
@@ -228,7 +243,7 @@ class WorkspaceConfig:
                 template_name_1 = f"{name}.{suffix}"
                 p1 = directory / template_name_1
                 if p1.is_file():
-                    return p1, engine, name
+                    return RenderSourceMatch(path=p1, engine=engine, target_name=name, status="match")
 
                 # Check for template form 2: name with suffix inserted before last dot (e.g., config.envst.toml)
                 dot_idx = name.rfind('.')
@@ -236,7 +251,47 @@ class WorkspaceConfig:
                     template_name_2 = name[:dot_idx] + f".{suffix}" + name[dot_idx:]
                     p2 = directory / template_name_2
                     if p2.is_file():
-                        return p2, engine, name
+                        return RenderSourceMatch(path=p2, engine=engine, target_name=name, status="match")
+        return None
+
+    def find_conflict_in_source_dir(
+        self,
+        src_pkg_dir: Path,
+        rel_target_path: Path
+    ) -> Optional[RenderSourceMatch]:
+        """
+        Finds a source file that renders to rel_target_path or a blocking path.
+        Returns RenderSourceMatch with status="match" if it's an exact rendering match,
+        or status="block" if an intermediate path segment is blocked by a file.
+        """
+        # We avoid circular import by importing here
+        from .file_utils import translate_dot_prefixes_reverse
+        
+        translated_path = translate_dot_prefixes_reverse(rel_target_path)
+        parts = translated_path.parts
+        
+        current_dir = src_pkg_dir
+        for i, part in enumerate(parts):
+            match = self.find_source_file_for_rendered_names(current_dir, [part])
+            
+            if match:
+                if i == len(parts) - 1:
+                    # Last segment reached: exact conflict (match).
+                    match.status = "match"
+                    return match
+                else:
+                    # Not last segment: if it's a file, it's a conflict (file blocking directory).
+                    if match.path.is_file():
+                        match.status = "block"
+                        return match
+                    # Directory found, descend for next segment.
+                    current_dir = match.path
+            else:
+                # No match for this segment, no conflict possible for this path.
+                return None
+                
+            if not current_dir.exists() or not current_dir.is_dir():
+                return None
         return None
 
     @classmethod

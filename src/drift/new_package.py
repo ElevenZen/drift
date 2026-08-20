@@ -41,11 +41,10 @@ def create_new_package(
     targets_to_probe = [config_filename] if config_filename else PACKAGE_CONFIG_FILE_NAME_LIST
     
     package_dir.mkdir(parents=True, exist_ok=True)
-    existing_info = workspace_config.find_source_file_for_targets(package_dir, targets_to_probe)
+    existing_info = workspace_config.find_source_file_for_rendered_names(package_dir, targets_to_probe)
     if existing_info and not force:
-        existing_path, _, _ = existing_info
         raise FileExistsError(
-            f"Configuration file already exists: {existing_path}. "
+            f"Configuration file already exists: {existing_info.path}. "
             "Use --force to overwrite."
         )
 

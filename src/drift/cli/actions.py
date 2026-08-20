@@ -197,3 +197,19 @@ def execute_diff(
     workspace_config = load_workspace_config(config_path)
 
     run_primitive_diff(workspace_config, package_names=package_names, diff_type=diff_type, side_by_side=side_by_side, stat=stat)
+
+
+def execute_add(
+    drift_root: Path,
+    package_name: str,
+    import_paths: List[str],
+    dry_run: bool = False
+) -> None:
+    """Core function to import resources into a package, shared by both CLI backends."""
+    from ..add_resource import run_primitive_11_add_resources
+    
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+    
+    paths = [Path(p) for p in import_paths]
+    run_primitive_11_add_resources(workspace_config, package_name, paths, dry_run=dry_run)

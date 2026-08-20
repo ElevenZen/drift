@@ -48,7 +48,11 @@ def translate_dot_prefixes_reverse(relative_path: Path) -> Path:
 
 
 def tree_relative_files(dir_path: Path) -> List[Path]:
-    """Gets all files in dir_path recursively as Path objects relative to dir_path."""
+    """
+    Gets all files in dir_path recursively as Path objects relative to dir_path.
+    tree_relative_files() is used only when there is no symlink and no comparison.
+    Otherwise, compare_folders() is used to detect untracked files and resolve links.
+    """
     if not dir_path.exists() or not dir_path.is_dir():
         return []
     relative_files = []

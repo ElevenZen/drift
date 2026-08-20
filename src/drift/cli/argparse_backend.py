@@ -14,7 +14,8 @@ from .actions import (
     execute_uninstall,
     execute_status,
     execute_gc,
-    execute_diff
+    execute_diff,
+    execute_add
 )
 
 
@@ -232,6 +233,26 @@ def run_argparse_cli(argv=None) -> None:
         help="Show concise summary of changes (diffstat)"
     )
 
+    # add subcommand
+    add_parser = subparsers.add_parser(
+        "add",
+        help="Import files or folders from the system into a package (with dot-prefix translation)"
+    )
+    add_parser.add_argument(
+        "package_name",
+        help="Name of the package to add resources into"
+    )
+    add_parser.add_argument(
+        "paths",
+        nargs="+",
+        help="One or more file/folder paths to import"
+    )
+    add_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview the import without making changes"
+    )
+
     args = parser.parse_args(argv)
 
     if args.verbose:
@@ -387,6 +408,17 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_diff(drift_root, args.packages, diff_type=diff_type, side_by_side=args.side_by_side, stat=args.stat)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "add":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

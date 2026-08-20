@@ -8,7 +8,7 @@ from typing import List, Optional
 from .constants import PACKAGE_CONFIG_FILE_NAME
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
 from .package_config import (
-    load_package_config_from_dir,
+    load_package_config_from_source_dir,
     PackageConfig,
 )
 from .render_input import find_engine_for_file, render_input_templates
@@ -102,7 +102,7 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
 
     # Load package config from directory
     # (which automatically renders package.envst.toml if it is a template)
-    pkg_config = load_package_config_from_dir(
+    pkg_config = load_package_config_from_source_dir(
         package_dir=package_dir,
         package_name=package_name,
         workspace_config=workspace_config
