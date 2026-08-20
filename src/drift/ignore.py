@@ -10,7 +10,6 @@ from .constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
 logger = logging.getLogger(__name__)
 
 
-# TODO: add test that MANAGED_CONFIG_FILES are always ignored, even if not in .drift_ignore
 class DriftIgnore:
     """Handles parsing and match evaluation of drift ignore patterns."""
 
@@ -41,8 +40,6 @@ class DriftIgnore:
             result.append(char)
         return "".join(result).strip()
 
-    # TODO: add test to ensure that this method is called and works correctly when loading from .drift_ignore
-    # And returns an empty object if not found, which can ignore MANAGED_CONFIG_FILES when called with filter_deployable_files.
     @classmethod
     def load_from_dir(cls, render_pkg_dir: Path) -> "DriftIgnore":
         """

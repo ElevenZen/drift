@@ -13,7 +13,7 @@ class FolderDiff:
     modified: List[Path] = field(default_factory=list)
     deleted: List[Path] = field(default_factory=list)
     matches: List[Path] = field(default_factory=list)
-    # internal_symlinks: paths in dst that are symlinks pointing into drift_root (Safety Abort)
+    # internal_symlinks: paths in dst that are symlinks pointing into drift_root (for safety detection)
     internal_symlinks: List[Path] = field(default_factory=list)
 
 def compare_folders(

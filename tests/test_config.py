@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from typing import cast
+from typing import cast, Any
 from drift.constants import (
     CONFIG_DIR_NAME,
     GLOBAL_CONFIG_FILE_NAME,
@@ -243,7 +243,7 @@ class TestConfigClasses(unittest.TestCase):
             # 1. Exact match (static file)
             f1 = src_pkg_dir / "dot-bashrc"
             f1.touch()
-            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            match: Any = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, f1)
             self.assertEqual(match.status, "match")
@@ -252,7 +252,7 @@ class TestConfigClasses(unittest.TestCase):
             # 2. Exact match (template)
             t1 = src_pkg_dir / "dot-bashrc.envst"
             t1.touch()
-            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            match: Any = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, t1)
             self.assertEqual(match.status, "match")
