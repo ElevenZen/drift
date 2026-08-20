@@ -181,3 +181,19 @@ def execute_gc(drift_root: Path, dry_run: bool = False) -> None:
     workspace_config = load_workspace_config(config_path)
 
     run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run)
+
+
+def execute_diff(
+    drift_root: Path,
+    package_names: Optional[List[str]] = None,
+    diff_type: str = "pending",
+    side_by_side: bool = False,
+    stat: bool = False
+) -> None:
+    """Core function to visualize changes, shared by both CLI backends."""
+    from ..workspace_diff import run_primitive_diff
+    
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_diff(workspace_config, package_names=package_names, diff_type=diff_type, side_by_side=side_by_side, stat=stat)

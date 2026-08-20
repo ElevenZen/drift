@@ -184,6 +184,13 @@ class WorkspaceConfig:
     def get_packages(self, discovered: List[str],
                      target_pkgs: Optional[List[str]] = None,
                      custom_dir: Optional[Path] = None) -> List[str]:
+        """
+        Get the list of packages to operate on based on discovered packages and target packages.
+        If target_pkgs is None or empty, returns all discovered packages that are enabled in the
+        workspace config.
+        custom_dir is used for error messages when target packages are not found in the directory.
+        """
+
         if not target_pkgs:
             # Fallback: redeploy all discovered packages currently inside install/ that are enabled in workspace config
             return [pkg for pkg in discovered if self.is_package_enabled(pkg)]

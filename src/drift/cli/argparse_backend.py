@@ -13,7 +13,8 @@ from .actions import (
     execute_new,
     execute_uninstall,
     execute_status,
-    execute_gc
+    execute_gc,
+    execute_diff
 )
 
 
@@ -199,6 +200,38 @@ def run_argparse_cli(argv=None) -> None:
         help="Simulate the garbage collection without making changes"
     )
 
+    # diff subcommand
+    diff_parser = subparsers.add_parser(
+        "diff",
+        help="Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)"
+    )
+    diff_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to diff specifically"
+    )
+    diff_group = diff_parser.add_mutually_exclusive_group()
+    diff_group.add_argument(
+        "-t", "--template",
+        action="store_true",
+        help="Visualize Template Evolution (Diff A: src -> render)"
+    )
+    diff_group.add_argument(
+        "-s", "--system",
+        action="store_true",
+        help="Visualize System Drift (Diff B: System -> install)"
+    )
+    diff_parser.add_argument(
+        "-y", "--side-by-side",
+        action="store_true",
+        help="Show side-by-side comparison (Note: relies on git/diff capabilities)"
+    )
+    diff_parser.add_argument(
+        "--stat",
+        action="store_true",
+        help="Show concise summary of changes (diffstat)"
+    )
+
     args = parser.parse_args(argv)
 
     if args.verbose:
@@ -337,6 +370,23 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_gc(drift_root, dry_run=args.dry_run)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "diff":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        diff_type = "pending"
+        if args.template:
+            diff_type = "template"
+        elif args.system:
+            diff_type = "system"
+
+        try:
+            execute_diff(drift_root, args.packages, diff_type=diff_type, side_by_side=args.side_by_side, stat=args.stat)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

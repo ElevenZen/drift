@@ -17,7 +17,8 @@ from .actions import (
     execute_new,
     execute_uninstall,
     execute_status,
-    execute_gc
+    execute_gc,
+    execute_diff
 )
 
 app = typer.Typer(
@@ -323,6 +324,51 @@ def typer_gc(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_gc(drift_root, dry_run=dry_run)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("diff")
+def typer_diff(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to diff specifically"
+    ),
+    template: bool = typer.Option(
+        False,
+        "--template", "-t",
+        help="Visualize Template Evolution (Diff A: src -> render)"
+    ),
+    system: bool = typer.Option(
+        False,
+        "--system", "-s",
+        help="Visualize System Drift (Diff B: System -> install)"
+    ),
+    side_by_side: bool = typer.Option(
+        False,
+        "--side-by-side", "-y",
+        help="Show side-by-side comparison (Note: relies on git/diff capabilities)"
+    ),
+    stat: bool = typer.Option(
+        False,
+        "--stat",
+        help="Show concise summary of changes (diffstat)"
+    )
+) -> None:
+    """Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        
+        diff_type = "pending"
+        if template:
+            diff_type = "template"
+        elif system:
+            diff_type = "system"
+            
+        execute_diff(drift_root, packages, diff_type=diff_type, side_by_side=side_by_side, stat=stat)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
