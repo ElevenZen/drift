@@ -4,7 +4,7 @@ import unittest
 import logging
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.stage_repo import run_primitive_4_stage_render_to_install
 from drift.render_package import render_package
@@ -73,7 +73,7 @@ class TestStageRepo(unittest.TestCase):
             enable_install = true
             """)
         # We write patterns using Stow PCRE matching format
-        with open(self.pkg_ignored_src / ".drift_ignore", "w", encoding="utf-8") as f:
+        with open(self.pkg_ignored_src / DRIFT_IGNORE_FILE_NAME, "w", encoding="utf-8") as f:
             f.write("""
             # Ignore patterns with PCRE
             ignored_file.txt
@@ -244,7 +244,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_dir")))
 
         # Check .drift_ignore was copied to install
-        self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", ".drift_ignore")))
+        self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_IGNORE_FILE_NAME)))
 
         # Check .stow-local-ignore file was created and contains ^/.drift_ignore and ^/drift_package.toml
         stow_ignore_path = os.path.join(self.install_dir, "pkg_ignored", ".stow-local-ignore")
@@ -252,8 +252,8 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn("^/.drift_ignore", stow_content)
-        self.assertIn("^/drift_package.toml", stow_content)
+        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", stow_content)
+        self.assertIn(f"^/{PACKAGE_CONFIG_FILE_NAME}", stow_content)
 
     def test_stow_local_ignore_without_drift_ignore(self) -> None:
         """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created to ignore drift_package.toml."""
@@ -280,8 +280,8 @@ class TestStageRepo(unittest.TestCase):
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             content = f.read()
         
-        self.assertIn("^/drift_package.toml", content)
-        self.assertIn("^/.drift_ignore", content)
+        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", content)
+        self.assertIn(f"^/{PACKAGE_CONFIG_FILE_NAME}", content)
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
@@ -307,7 +307,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Check that it was written to render/pkg_misspelled as .drift_ignore, and .driftignore was skipped
         pkg_misspelled_render = os.path.join(self.render_dir, "pkg_misspelled")
-        self.assertTrue(os.path.isfile(os.path.join(pkg_misspelled_render, ".drift_ignore")))
+        self.assertTrue(os.path.isfile(os.path.join(pkg_misspelled_render, DRIFT_IGNORE_FILE_NAME)))
         self.assertFalse(os.path.exists(os.path.join(pkg_misspelled_render, ".driftignore")))
 
         # Create valid and ignored files
@@ -326,14 +326,14 @@ class TestStageRepo(unittest.TestCase):
         install_pkg_misspelled = os.path.join(self.install_dir, "pkg_misspelled")
         self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, "valid.txt")))
         self.assertFalse(os.path.exists(os.path.join(install_pkg_misspelled, "misspelled_ignored.txt")))
-        self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, ".drift_ignore")))
+        self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, DRIFT_IGNORE_FILE_NAME)))
         
         stow_ignore_path = os.path.join(install_pkg_misspelled, ".stow-local-ignore")
         self.assertTrue(os.path.isfile(stow_ignore_path))
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn("^/.drift_ignore", stow_content)
+        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", stow_content)
 
     def test_tree_relative_files_utility(self) -> None:
         """Tests tree_relative_files utility function."""
@@ -435,7 +435,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
         # 2. Now write a .drift_ignore inside render/pkg_a/ to ignore file1.txt
-        with open(os.path.join(pkg_a_render, ".drift_ignore"), "w") as f:
+        with open(os.path.join(pkg_a_render, DRIFT_IGNORE_FILE_NAME), "w") as f:
             f.write("file1.txt\n")
 
         # 3. Stage again

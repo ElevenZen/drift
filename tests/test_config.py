@@ -345,11 +345,11 @@ class TestConfigClasses(unittest.TestCase):
             # Create directories
             pkg_a_dir = root_path / "pkg_a"
             pkg_a_dir.mkdir()
-            (pkg_a_dir / "drift_package.toml").touch()
+            (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).touch()
 
             pkg_b_dir = root_path / "pkg_b"
             pkg_b_dir.mkdir()
-            (pkg_b_dir / "drift_package.toml").touch()
+            (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).touch()
 
             # pkg_c has no config file, should not be discovered
             pkg_c_dir = root_path / "pkg_c"

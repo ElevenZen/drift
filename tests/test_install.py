@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
 from drift.state_registry import (
@@ -369,7 +369,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("should be ignored")
         
         # Add .drift_ignore
-        with open(os.path.join(pkg_install_dir, ".drift_ignore"), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
             f.write("ignore_me.txt\n")
 
         # Run full deployment (no package_changes passed)
@@ -379,7 +379,7 @@ class TestInstallRepo(unittest.TestCase):
         kept_file = os.path.join(self.system_target_dir, "keep.txt")
         ignored_file = os.path.join(self.system_target_dir, "ignore_me.txt")
         config_file = os.path.join(self.system_target_dir, PACKAGE_CONFIG_FILE_NAME)
-        ignore_file_on_target = os.path.join(self.system_target_dir, ".drift_ignore")
+        ignore_file_on_target = os.path.join(self.system_target_dir, DRIFT_IGNORE_FILE_NAME)
 
         self.assertTrue(os.path.isfile(kept_file), "keep.txt should be copied")
         self.assertFalse(os.path.exists(ignored_file), "ignore_me.txt should be ignored")
@@ -552,7 +552,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("should be deleted")
 
         # Write .drift_ignore to install/pkg_stow telling it to ignore ignored_file.txt
-        with open(os.path.join(pkg_install_dir, ".drift_ignore"), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
             f.write("ignored_file.txt\n")
 
         # Create that file at system target (simulating it was previously deployed or exists there)

@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from .constants import PACKAGE_CONFIG_FILE_NAME
+from .constants import DRIFT_IGNORE_FILE_NAME, PACKAGE_CONFIG_FILE_NAME
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
 from .package_config import (
     load_package_config_from_source_dir,
@@ -119,13 +119,13 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
 
     # Misspelled .driftignore warning and copy logic
     misspelled_path = package_dir / ".driftignore"
-    correct_path = package_dir / ".drift_ignore"
+    correct_path = package_dir / DRIFT_IGNORE_FILE_NAME
     if misspelled_path.is_file() and not correct_path.is_file():
         logger.warning(
             f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
             "Please rename it to '.drift_ignore'."
         )
-        dest_correct = render_pkg_dir / ".drift_ignore"
+        dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(misspelled_path, dest_correct)
 

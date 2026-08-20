@@ -59,7 +59,7 @@ class TestNewPackage(unittest.TestCase):
             config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
             
             pkg_name = "custom_pkg"
-            custom_name = "drift_package.toml"
+            custom_name = PACKAGE_CONFIG_FILE_NAME
             create_new_package(config, pkg_name, config_filename=custom_name)
             
             self.assertTrue((src_dir / pkg_name / custom_name).exists())

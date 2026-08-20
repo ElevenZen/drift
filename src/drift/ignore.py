@@ -5,11 +5,12 @@ import logging
 from pathlib import Path
 from typing import List
 
-from .constants import MANAGED_CONFIG_FILES
+from .constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
 
 logger = logging.getLogger(__name__)
 
 
+# TODO: add test that MANAGED_CONFIG_FILES are always ignored, even if not in .drift_ignore
 class DriftIgnore:
     """Handles parsing and match evaluation of drift ignore patterns."""
 
@@ -40,10 +41,16 @@ class DriftIgnore:
             result.append(char)
         return "".join(result).strip()
 
+    # TODO: add test to ensure that this method is called and works correctly when loading from .drift_ignore
+    # And returns an empty object if not found, which can ignore MANAGED_CONFIG_FILES when called with filter_deployable_files.
     @classmethod
     def load_from_dir(cls, render_pkg_dir: Path) -> "DriftIgnore":
-        """Loads ignore PCRE regex patterns from .drift_ignore inside render_pkg_dir."""
-        ignore_path = render_pkg_dir / ".drift_ignore"
+        """
+        Loads ignore PCRE regex patterns from .drift_ignore inside render_pkg_dir.
+        Returns an instance of DriftIgnore with the loaded patterns.
+        If the file does not exist, returns an instance with an empty pattern list.
+        """
+        ignore_path = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         if not ignore_path.exists() or not ignore_path.is_file():
             return cls([])
         patterns = []
