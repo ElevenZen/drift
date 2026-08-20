@@ -6,6 +6,10 @@ from pathlib import Path
 from drift.workspace_config import WorkspaceConfig
 from drift.workspace_diff import run_primitive_diff
 
+# Disable interactive pagers during tests to prevent blocking and pop-up windows.
+os.environ["PAGER"] = "cat"
+os.environ["GIT_PAGER"] = "cat"
+
 class TestDiff(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
