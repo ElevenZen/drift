@@ -368,8 +368,10 @@ class TestDependencyResolver(unittest.TestCase):
             suffix="envst",
             render_command="bash -c 'source %i && source %s'"
         )
-        with self.assertRaises(FileNotFoundError):
-            render_input_templates([envsubst_engine], self.drift_root)
+        # Calling render_input_templates should not raise FileNotFoundError anymore.
+        # It logs a warning and updates input_file to Path("").
+        render_input_templates([envsubst_engine], self.drift_root)
+        self.assertEqual(envsubst_engine.input_file, Path(""))
 
     def test_multi_level_dependency_raises_error(self) -> None:
         engines = [
@@ -850,6 +852,61 @@ class TestRenderPackage(unittest.TestCase):
         # Since our simulated mustache command was 'cat %i %s', it should contain both
         self.assertIn('"the_value": "orchestrated_value"', content)
         self.assertIn("Template content", content)
+
+    def test_render_input_templates_graceful_missing_static_input(self) -> None:
+        """Tests that a missing static input file results in a warning, sets input_file to empty path, and subsequent rendering raises ValueError."""
+        # Setup config directory
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create an engine config pointing to a non-existent input file
+        engine_config = RenderEngineConfig(
+            name="missing_static_engine",
+            input_file=Path("non_existent_env.sh"),
+            suffix="sh",
+            render_command="bash -c 'source %i && source %s'"
+        )
+
+        # Calling render_input_templates should not raise FileNotFoundError anymore
+        # It logs a warning and updates engine_config.input_file to Path("")
+        render_input_templates([engine_config], self.drift_root)
+        self.assertEqual(engine_config.input_file, Path(""))
+
+        # Create a mock template
+        template_path = self.drift_root / "template.sh"
+        template_path.write_text("echo -n 'hello'", encoding="utf-8")
+
+        # Calling render_template with this engine should raise a ValueError
+        with self.assertRaises(ValueError) as ctx:
+            render_template(
+                engine_config=engine_config,
+                drift_root=self.drift_root,
+                template_file_path=template_path
+            )
+        self.assertIn("is disabled or has an invalid/empty input file", str(ctx.exception))
+
+    def test_render_input_templates_graceful_missing_templated_input(self) -> None:
+        """Tests that a missing input template file for a dependent engine results in a warning and updates input_file to empty path."""
+        # Setup config directory
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a dependent engine where its input template file is missing
+        dep_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"), # we can let env.sh exist or not
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        mustache_engine = RenderEngineConfig(
+            name="mustache",
+            input_file=Path("non_existent_mustache.envst.json"), # Missing template input!
+            suffix="mustache",
+            render_command="mustache %i %s"
+        )
+
+        render_input_templates([dep_engine, mustache_engine], self.drift_root)
+        self.assertEqual(mustache_engine.input_file, Path(""))
 
 
 if __name__ == "__main__":

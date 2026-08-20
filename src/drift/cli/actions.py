@@ -118,12 +118,12 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
 
 def execute_new(drift_root: Path, package_name: str, config_filename: Optional[str] = None, force: bool = False) -> None:
     """Core function to create a new package, shared by both CLI backends."""
-    from ..new_package import create_new_package
+    from ..new_package import run_primitive_10_create_new_package
 
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
+    run_primitive_10_create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
 
 
 def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False, dry_run: bool = False) -> None:

@@ -28,13 +28,15 @@ def resolve_render_template_args(
         raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
     if input_file_path:
+        if str(input_file_path) == "":
+            raise ValueError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
         if not input_file_path.exists():
             raise FileNotFoundError(f"Input file does not exist: {input_file_path}")
         resolved_input_file = input_file_path
     else:
         # Resolve input file if not explicitly provided
         if not engine_config.input_file or str(engine_config.input_file) in ("", "."):
-            raise ValueError(f"Render engine '{engine_config.name}' requires an input file")
+            raise ValueError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
         config_path = engine_config_input_relative_to / engine_config.input_file
         if not config_path.exists():
             if config_path.is_absolute():

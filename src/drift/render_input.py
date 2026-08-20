@@ -88,15 +88,19 @@ def resolve_static_input_file(
     engine_name: str
 ) -> Path:
     """Resolves and validates a static input file path (handling both absolute and config-relative paths)."""
+    if not input_file or str(input_file) in ("", "."):
+        logger.warning(f"Input file for render engine '{engine_name}' is not specified or empty.")
+        return Path("")
     if input_file.is_absolute():
         path = input_file
     else:
         path = drift_root / CONFIG_DIR_NAME / input_file
 
     if not path.exists():
-        raise FileNotFoundError(
+        logger.warning(
             f"Input file for render engine '{engine_name}' not found: {path}"
         )
+        return Path("")
     return path
 
 
@@ -142,14 +146,20 @@ def render_input_templates(
             dep_engine = engines_by_name[dep_name]
             # Since only one level of dependency is allowed, dep_engine's input file is resolved as static without recursion
             dep_input_file = resolve_static_input_file(dep_engine.input_file, drift_root, dep_engine.name)
+            if dep_input_file == Path(""):
+                logger.warning(f"Dependency engine '{dep_name}' has an invalid input file, skipping rendering for '{engine.name}'.")
+                memo[engine.name] = Path("")
+                return Path("")
 
             # Formulate template file path (supporting both absolute and config-relative paths)
             template_file_path = drift_root / CONFIG_DIR_NAME / engine.input_file
 
             if not template_file_path.exists():
-                raise FileNotFoundError(
+                logger.warning(
                     f"Input template file for render engine '{engine.name}' not found: {template_file_path}"
                 )
+                memo[engine.name] = Path("")
+                return Path("")
 
             output_filename = dep_engine.strip_suffix(template_file_path.name)
             # The 'render' string is read dynamically from the workspace_config if provided
@@ -159,13 +169,18 @@ def render_input_templates(
             logger.info(f"🎨 Rendering engine input: {engine.name} (via {dep_name})")
             logger.debug(f"   {template_file_path.relative_to(drift_root)} -> {output_file_path.relative_to(drift_root)}")
 
-            render_template_to_file(
-                engine_config=dep_engine,
-                drift_root=drift_root,
-                template_file_path=template_file_path,
-                output_file_path=output_file_path,
-                input_file_path=dep_input_file
-            )
+            try:
+                render_template_to_file(
+                    engine_config=dep_engine,
+                    drift_root=drift_root,
+                    template_file_path=template_file_path,
+                    output_file_path=output_file_path,
+                    input_file_path=dep_input_file
+                )
+            except Exception as e:
+                logger.warning(f"Failed to render input template for engine '{engine.name}': {e}")
+                memo[engine.name] = Path("")
+                return Path("")
 
             memo[engine.name] = output_file_path
             return output_file_path

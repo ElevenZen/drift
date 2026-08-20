@@ -50,7 +50,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_lifecycle_stow_basic(self):
         """Scenario: Basic stow deployment, drift detection, and uninstallation."""
-        from drift.new_package import create_new_package
+        from drift.new_package import run_primitive_10_create_new_package
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment
@@ -61,7 +61,7 @@ class TestIntegration(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
         
         # 1. Create & Setup
-        create_new_package(self.workspace_config, pkg)
+        run_primitive_10_create_new_package(self.workspace_config, pkg)
         (self.source_dir / pkg / "bashrc").write_text("alias ll='ls -l'")
         
         # 2. Render & Stage & Apply
@@ -93,7 +93,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_lifecycle_copy_with_backup_restore(self):
         """Scenario: Copy deployment overwriting existing system file, then restoring it."""
-        from drift.new_package import create_new_package
+        from drift.new_package import run_primitive_10_create_new_package
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment
@@ -107,7 +107,7 @@ class TestIntegration(unittest.TestCase):
         target_file.write_text("original config")
         
         # 2. Setup package with copy method
-        create_new_package(self.workspace_config, pkg)
+        run_primitive_10_create_new_package(self.workspace_config, pkg)
         with open(self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME, "a") as f:
             f.write('install_method = "copy"\n')
         (self.source_dir / pkg / "config.ini").write_text("drift managed config")
@@ -133,7 +133,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_orphan_garbage_collection(self):
         """Scenario: Deploying a package, then disabling it and running gc to trigger cleanup."""
-        from drift.new_package import create_new_package
+        from drift.new_package import run_primitive_10_create_new_package
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment
@@ -143,7 +143,7 @@ class TestIntegration(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
         
         # 1. Deploy
-        create_new_package(self.workspace_config, pkg)
+        run_primitive_10_create_new_package(self.workspace_config, pkg)
         (self.source_dir / pkg / "orphaned_file.txt").write_text("I will be gone")
         
         run_primitive_2_render_packages(self.workspace_config)

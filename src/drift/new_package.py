@@ -27,7 +27,7 @@ target_directory = "~"   # Destination for this package
 # enable_install = true
 """
 
-def create_new_package(
+def run_primitive_10_create_new_package(
     workspace_config: WorkspaceConfig,
     package_name: str,
     config_filename: Optional[str] = None,
