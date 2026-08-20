@@ -304,7 +304,7 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies trigger_package_lifecycle_hook handles failures and timeouts with detailed logging and RuntimeError."""
         from unittest.mock import patch
         import subprocess
-        from drift.install_repo import trigger_package_lifecycle_hook
+        from drift.lifecycle_hooks import trigger_package_lifecycle_hook
         
         pkg = "pkg_copy"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -321,6 +321,9 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
 
+        hook_dir = Path(pkg_install_dir)
+        cwd = Path(self.system_target_dir)
+
         # 1. Test CalledProcessError
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(
@@ -330,7 +333,13 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Some severe error output"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_lifecycle_hook(pkg, "post_install", config, self.workspace_config)
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name="post_install",
+                    metadata=config,
+                    hook_dir=hook_dir,
+                    cwd=cwd
+                )
             self.assertIn("failed with exit code 5", str(ctx.exception))
             self.assertIn("Some severe error output", str(ctx.exception))
 
@@ -343,7 +352,13 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Standard timeout stderr"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_lifecycle_hook(pkg, "post_install", config, self.workspace_config)
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name="post_install",
+                    metadata=config,
+                    hook_dir=hook_dir,
+                    cwd=cwd
+                )
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
             self.assertIn("Standard timeout stderr", str(ctx.exception))
 

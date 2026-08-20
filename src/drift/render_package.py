@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 def trigger_post_render_hook(pkg_config: PackageConfig, workspace_config: WorkspaceConfig) -> None:
     """Trigger the post_render hook if it exists."""
-    from .install_repo import trigger_package_lifecycle_hook
+    from .lifecycle_hooks import trigger_package_lifecycle_hook
     pkg = pkg_config.name
     render_pkg_dir = workspace_config.render_path / pkg
     
@@ -31,8 +31,8 @@ def trigger_post_render_hook(pkg_config: PackageConfig, workspace_config: Worksp
         pkg=pkg,
         hook_name="post_render",
         metadata=pkg_config,
-        workspace_config=workspace_config,
-        cwd_override=render_pkg_dir
+        hook_dir=render_pkg_dir,
+        cwd=render_pkg_dir
     )
 
 
@@ -93,15 +93,8 @@ def render_or_copy_file(
 
 
 
-def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None:
-    """Renders all templates and copies static files in a package folder into the render directory."""
-    package_name = package_dir.name
-
-    # Clear the target package render directory first to avoid sequence issues with template-rendered config files
-    clear_render_package_dir(workspace_config, package_name)
-
-    # Load package config from directory
-    # (which automatically renders package.envst.toml if it is a template)
+def prepare_package_config(package_dir: Path, package_name: str, workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> Optional[PackageConfig]:
+    """Loads package config and handles static copying. Returns None if rendering is disabled."""
     pkg_config = load_package_config_from_source_dir(
         package_dir=package_dir,
         package_name=package_name,
@@ -110,17 +103,31 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
 
     if not pkg_config.enable_render:
         logger.info(f"Rendering is disabled for package '{package_name}'. Skipping.")
-        return
-
-    render_pkg_dir = workspace_config.render_path / package_name
+        return None
 
     if pkg_config.is_static():
         copy_static_package_config(render_pkg_dir, pkg_config)
 
-    # Misspelled .driftignore warning and copy logic
+    return pkg_config
+
+
+def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path, package_name: str) -> None:
+    """Handles warning and copying of drift ignore files."""
     misspelled_path = package_dir / ".driftignore"
     correct_path = package_dir / DRIFT_IGNORE_FILE_NAME
-    if misspelled_path.is_file() and not correct_path.is_file():
+
+    if correct_path.exists():
+        if correct_path.is_dir():
+            raise ValueError(f"The path '{correct_path}' is a directory, but must be a file.")
+        if misspelled_path.is_file():
+            logger.warning(
+                f"Both '{DRIFT_IGNORE_FILE_NAME}' and legacy '.driftignore' exist in package '{package_name}'. "
+                f"The misspelled file '.driftignore' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
+            )
+        dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
+        dest_correct.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(correct_path, dest_correct)
+    elif misspelled_path.is_file():
         logger.warning(
             f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
             "Please rename it to '.drift_ignore'."
@@ -129,9 +136,32 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(misspelled_path, dest_correct)
 
+
+def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None:
+    """Renders all templates and copies static files in a package folder into the render directory."""
+    package_name = package_dir.name
+
+    # Clear the target package render directory first to avoid sequence issues with template-rendered config files
+    clear_render_package_dir(workspace_config, package_name)
+
+    render_pkg_dir = workspace_config.render_path / package_name
+
+    pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
+    if not pkg_config:
+        return
+
+    handle_driftignore_file(package_dir, render_pkg_dir, package_name)
+
     # 3. Recursively process all other files inside the package directory
-    files = tree_relative_files(package_dir)
-    for file in files:
+    from .ignore import DriftIgnore
+    # Proactively check for nested ignore files and trigger clean validation
+    DriftIgnore.load_from_dir(package_dir)
+
+    from .folder_diff import compare_folders
+    # Use compare_folders to walk every file in package_dir, resolving symlinks to directories
+    diff = compare_folders(package_dir, render_pkg_dir, resolve_symlinks=True, src_only=True)
+
+    for file in diff.added:
         file_path = package_dir / file
 
         # Skip if the file is the package config file or its template itself
@@ -142,8 +172,8 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
             continue
 
         if ((file.name == ".driftignore" or file.name == ".drift_ignore")
-                and file.parent != Path(".")):
-            raise ValueError(f"Ignore files '.drift_ignore' must be located at the root of the package directory. ")
+                and file_path.parent != package_dir):
+            raise ValueError("Ignore config '.drift_ignore' must be located at the root of the package directory.")
 
         render_or_copy_file(
             file_path=file_path,

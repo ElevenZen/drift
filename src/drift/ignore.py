@@ -47,6 +47,20 @@ class DriftIgnore:
         Returns an instance of DriftIgnore with the loaded patterns.
         If the file does not exist, returns an instance with an empty pattern list.
         """
+        if not render_pkg_dir.exists() or not render_pkg_dir.is_dir():
+            return cls([])
+
+        # Proactively check for nested ignore files in subdirectories
+        for ignore_name in [DRIFT_IGNORE_FILE_NAME, ".driftignore"]:
+            for path in render_pkg_dir.rglob(ignore_name):
+                # Ensure the path is inside a subdirectory, not at the root
+                if path.parent != render_pkg_dir:
+                    raise ValueError(
+                        f"Nested ignore files are not allowed. "
+                        f"Found nested '{ignore_name}' inside subdirectory: "
+                        f"{path.parent.relative_to(render_pkg_dir)}"
+                    )
+
         ignore_path = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         if not ignore_path.exists() or not ignore_path.is_file():
             return cls([])
@@ -60,7 +74,12 @@ class DriftIgnore:
 
 
     def filter_deployable_files(self, install_pkg_dir: Path) -> List[Path]:
-        """Returns a list of relative Path objects for all deployable files in a package."""
+        """
+        Returns a list of relative Path objects for all deployable files in a package.
+        The install_pkg_dir is the path to the package in the install directory.
+        The input should not contain any symlink to other directories.
+        The returned list excludes files that match the ignore patterns.
+        """
         from .file_utils import tree_relative_files
         return [ rel_file for rel_file in tree_relative_files(install_pkg_dir)
                 if rel_file.name not in MANAGED_CONFIG_FILES

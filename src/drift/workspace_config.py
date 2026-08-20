@@ -224,6 +224,8 @@ class WorkspaceConfig:
         Locates a file or directory in the given directory that will render to one of the rendered names.
         Checks for static files/dirs first, then for templates using defined render engines.
         Returns a RenderSourceMatch or None if no match is found.
+
+        The callers includes package_config_render, drift_new, reverse_sync.
         """
         # 1. Static check
         for name in target_names:

@@ -115,3 +115,33 @@ class TestDriftIgnore(unittest.TestCase):
             result = ignore.match_path(Path("somefile.txt"))
             self.assertFalse(result)
             self.assertTrue(any("Invalid regex pattern" in log for log in cm.output))
+
+    def test_load_from_dir_rejects_nested_ignores(self) -> None:
+        """Verifies that load_from_dir raises ValueError when nested ignore files (.drift_ignore or .driftignore) are present in subdirectories."""
+        # 1. Root-only ignore works fine
+        (self.pkg_dir / DRIFT_IGNORE_FILE_NAME).write_text("root_pattern", encoding="utf-8")
+        ignore = DriftIgnore.load_from_dir(self.pkg_dir)
+        self.assertEqual(ignore.patterns, ["root_pattern"])
+
+        # 2. Add a nested .drift_ignore inside a subdirectory
+        nested_dir = self.pkg_dir / "subdir"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        nested_ignore = nested_dir / DRIFT_IGNORE_FILE_NAME
+        nested_ignore.write_text("nested_pattern", encoding="utf-8")
+
+        with self.assertRaises(ValueError) as ctx:
+            DriftIgnore.load_from_dir(self.pkg_dir)
+        self.assertIn("Nested ignore files are not allowed", str(ctx.exception))
+        self.assertIn(f"Found nested '{DRIFT_IGNORE_FILE_NAME}'", str(ctx.exception))
+
+        # Clean up nested .drift_ignore and try with nested .driftignore
+        nested_ignore.unlink()
+
+        nested_driftignore = nested_dir / ".driftignore"
+        nested_driftignore.write_text("nested_pattern_2", encoding="utf-8")
+
+        with self.assertRaises(ValueError) as ctx:
+            DriftIgnore.load_from_dir(self.pkg_dir)
+        self.assertIn("Nested ignore files are not allowed", str(ctx.exception))
+        self.assertIn("Found nested '.driftignore'", str(ctx.exception))
+

@@ -67,82 +67,7 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
         raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 
 
-def trigger_package_lifecycle_hook(
-    pkg: str,
-    hook_name: str,
-    metadata: PackageConfig,
-    workspace_config: WorkspaceConfig,
-    cwd_override: Optional[Path] = None
-) -> None:
-    """Executes a package lifecycle hook script if specified and found.
-
-    The working directory defaults to the package's active target directory,
-    but can be overridden (e.g. to install/pkg or render/pkg folders).
-    If the hook execution fails or times out, detailed output logs are printed and a RuntimeError is raised.
-    """
-    hook_file = getattr(metadata, hook_name, None)
-    if not hook_file:
-        return
-        
-    hook_path = workspace_config.install_path / pkg / hook_file
-    if not hook_path.exists():
-        # Fallback to render_path if not in install_path (for post_render)
-        hook_path = workspace_config.render_path / pkg / hook_file
-        
-    if not hook_path.exists():
-        logger.warning(f"Lifecycle hook file specified but not found: {hook_path}")
-        return
-        
-    try:
-        hook_path.chmod(0o755)
-    except Exception:
-        pass
-        
-    target_dir = cwd_override or metadata.target_directory or workspace_config.default_target_path
-    assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
-
-    logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
-    logger.debug(f"   Script: {hook_path}")
-    logger.debug(f"   CWD:    {target_dir}")
-    
-    cmd = [str(hook_path)]
-    if metadata.sudo:
-        cmd.insert(0, "sudo")
-        
-    timeout_seconds = metadata.hook_timeout
-    try:
-        run_command(
-            cmd,
-            cwd=str(target_dir),
-            text=True,
-            timeout=timeout_seconds
-        )
-    except subprocess.TimeoutExpired as e:
-        stdout_str = e.stdout or ""
-        stderr_str = e.stderr or ""
-        err_msg = (
-            f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
-            f"Command: {shlex.join(cmd)}\n"
-        )
-        if stdout_str.strip():
-            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-        if stderr_str.strip():
-            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-        logger.error(err_msg)
-        raise RuntimeError(err_msg) from e
-    except subprocess.CalledProcessError as e:
-        stdout_str = e.stdout or ""
-        stderr_str = e.stderr or ""
-        err_msg = (
-            f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
-            f"Command: {shlex.join(cmd)}\n"
-        )
-        if stdout_str.strip():
-            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-        if stderr_str.strip():
-            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-        logger.error(err_msg)
-        raise RuntimeError(err_msg) from e
+from .lifecycle_hooks import trigger_package_lifecycle_hook
 
 
 def handle_collision_error(
@@ -561,9 +486,21 @@ def deploy_package_impl(
     
     # 3. Lifecycle Hooks & State registry update
     if is_first_time:
-        trigger_package_lifecycle_hook(pkg, "pre_install", metadata, workspace_config, cwd_override=install_pkg_dir)
+        trigger_package_lifecycle_hook(
+            pkg=pkg,
+            hook_name="pre_install",
+            metadata=metadata,
+            hook_dir=install_pkg_dir,
+            cwd=install_pkg_dir
+        )
     else:
-        trigger_package_lifecycle_hook(pkg, "pre_update", metadata, workspace_config, cwd_override=install_pkg_dir)
+        trigger_package_lifecycle_hook(
+            pkg=pkg,
+            hook_name="pre_update",
+            metadata=metadata,
+            hook_dir=install_pkg_dir,
+            cwd=install_pkg_dir
+        )
 
     # 2. Physical Deployment Execution
     stow_version = get_stow_version() if metadata.install_method == "stow" else None
@@ -592,9 +529,21 @@ def deploy_package_impl(
     
     # Post Hooks
     if is_first_time:
-        trigger_package_lifecycle_hook(pkg, "post_install", metadata, workspace_config)
+        trigger_package_lifecycle_hook(
+            pkg=pkg,
+            hook_name="post_install",
+            metadata=metadata,
+            hook_dir=install_pkg_dir,
+            cwd=target_dir
+        )
     else:
-        trigger_package_lifecycle_hook(pkg, "post_update", metadata, workspace_config)
+        trigger_package_lifecycle_hook(
+            pkg=pkg,
+            hook_name="post_update",
+            metadata=metadata,
+            hook_dir=install_pkg_dir,
+            cwd=target_dir
+        )
         
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
