@@ -101,9 +101,9 @@ You no longer want a package active on this machine.
 
 ---
 
-## 3. The 8 Core Primitives
+## 3. The 9 Core Primitives
 
-All high-level workflows in drift are composed of these eight atomic, sequential primitives:
+All high-level workflows in drift are composed of these nine atomic, sequential primitives:
 
 ```
                           [ Execution: drift deploy ]
@@ -123,9 +123,10 @@ All high-level workflows in drift are composed of these eight atomic, sequential
            - Show Diff B                        │ Stage 2 Sequential Flow:      │
            - Require manual commit              │ 2. Render                     │
                                                 │ 3. Render Repo Commit         │
-                                                │ 4. Stage Render to Install     │
+                                                │ 4. Stage Render to Install    │
                                                 │ 5. Install Repo Deployment    │
                                                 │ 6. Install Repo Commit        │
+                                                │ 9. Workspace GC (Bulk Only)   │
                                                 └───────────────┬───────────────┘
                                                                 ▼
                                                         [ Deploy Success ]
@@ -174,6 +175,12 @@ Removes a package from the system:
 
 ### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
 Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure.
+
+### Primitive 9: Workspace Garbage Collection [Low-level: `drift gc`]
+Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories:
+1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift.toml`.
+2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml` or `package.toml`), which prevents database pollution from historical directories.
+3.  **Auto-Commit Database changes**: Auto-stages and commits zombie removal operations inside `render/` and `install/` databases.
 
 ---
 
@@ -529,11 +536,25 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 *   **Uncommitted State Check**: After performing reverse-sync on all active packages, the deployer checks if `git -C install status` is dirty. If uncommitted changes are detected (representing active host drift, i.e., Diff B), the deployer **halts immediately**. This acts as a security sentinel, forcing the developer to explicitly review the drift (via `drift diff --system`) and either **Adopt** (by committing the drift in the `install/` repository) or **Dismiss** (by deploying with `--force`) the system changes before template rendering can continue.
 
 #### 3. Stage 2: Sandboxing & Reconciliation (Render -> Stage)
-*   **Sandbox Render**: Package templates inside `src/` are compiled via configured engines (e.g. `envsubst`, `mustache`) into the `render/` sandbox. The rendering changes are automatically committed.
-*   **Staging Database**: The compiled `render/` outputs are reconciled into the `install/` state database (Primitive 4).
-    - *Deletion*: Any package file present in the database but missing from the rendered sandbox is deleted from `install/`.
-    - *Modification/Addition*: Files missing from `install/` or containing differences are copied from `render/` to `install/`.
-    - *Stage Changes Calculation*: A granular record of `added`, `modified`, and `deleted` files (represented as `PackageStageChanges`) is produced.
+*   **Sandbox Render (Primitive 2)**:
+    - **Global Pre-render Resolving**: Before compiling packages, all configured global template variables or input database configs (e.g. `mustache.envst.json` -> `mustache.json` using `envsubst`) are rendered.
+    - **Rendering Execution Flow (`render_package.py`)**:
+        1. *Sandbox Cleansing*: Clears any pre-existing package folder in `render/` using `shutil.rmtree` to maintain clean state while preserving the underlying `render/.git` repo.
+        2. *Metadata Compiling*: Loads and compiles package config from the source folder (supporting on-the-fly parsing of `package.envst.toml` templates). If `enable_render` is false, rendering is skipped.
+        3. *Misspelled Ignore Warning*: Checks for a misspelled `.driftignore` and if found (without `.drift_ignore`), logs a warning and automatically copies it under correct name `.drift_ignore`.
+        4. *Surgical File Walk*: Traverses the source package directory. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
+        5. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to `render/<package>`.
+    - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
+
+*   **Staging Database (Primitive 4 - `stage_repo.py`)**:
+    - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false`.
+    - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
+    - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted.
+    - **Reconciliation comparison**: Compares `render/<pkg>` with `install/<pkg>` using `compare_folders` in forward mode.
+        1. *Deletions*: Tracks files in `install/` that are missing in `render/` (ignoring managed configs). They are moved to `backup/<package>/deleted_files/` and deleted from `install/`.
+        2. *Additions/Modifications*: Physical files in `render/` are copied to `install/`.
+        3. *Stow Ignore generation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore` and package config file so GNU Stow ignores them.
+    - **Staged Transaction Complete**: Calculates granular file changes (`added_files`, `modified_files`, `deleted_files`) as a `PackageStageChanges` object and updates the state registry database to stable `"staged"`.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:
@@ -555,6 +576,10 @@ For each redeployable package:
 
 #### 5. Stage 2: Final State Commit (Primitive 6)
 *   The updated configurations and `state.toml` file are staged and committed into the local-only `install/` Git repository, locking the environment into a clean, reproducible state.
+
+#### 6. Stage 2: Workspace Garbage Collection (Primitive 9 - Bulk Mode Only)
+*   **Workspace GC (Post-Deployment)**: If a bulk deployment (all active packages) succeeds, the engine automatically triggers **Primitive 9: Workspace Garbage Collection**.
+*   This uninstalls orphan packages (previously installed but now disabled in workspace config) and purges "zombie" directory folders in `render/` and `install/` which lack valid package configuration files, auto-committing the database cleanup to lock in a clean workspace environment.
 
 ---
 
@@ -624,6 +649,14 @@ def cli_deploy_full_sequence(target_pkg=None, force=False):
     except Exception as e:
         print(f"[CRITICAL FAILURE] Failed to commit state registry: {e}")
         exit(2)
+
+    # --- Part 4: Post-Deployment Workspace Garbage Collection ---
+    if target_pkg is None:
+        try:
+            print("[INFO] Executing post-deployment workspace garbage collection...")
+            run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False)
+        except Exception as e:
+            print(f"[WARNING] Garbage collection failed: {e}")
 
 
 def cli_rollback_recovery(target_pkg=None, force=False):
