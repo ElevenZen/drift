@@ -14,6 +14,7 @@ from .package_config import PackageConfig, load_package_config_static
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
+from .folder_diff import compare_folders
 from .stage_repo import PackageStageChanges
 from .file_utils import (
         resolve_system_target,
@@ -144,125 +145,25 @@ def trigger_package_lifecycle_hook(
         raise RuntimeError(err_msg) from e
 
 
-def handle_symlinked_parent_error(
-    system_target: Path,
-    parent_symlink: Path,
+def handle_collision_error(
     pkg: str,
-    target_dir: Path,
+    rel_path: Path,
+    system_target: Path,
     workspace_config: WorkspaceConfig,
     sudo: bool,
-    resolve_symlinks: bool = True
+    reason: str,
+    resolve_symlinks: bool,
+    backup_subfolder: str = "overwritten"
 ) -> None:
-    """
-    System_target is the installation target for one file.
-    If any parent directory of system_target is a symlink pointing into drift_root, this is treated as an error.
-    Backups the symlinked parent folder, removes it, and recreates it as a physical folder.
-
-    Raises severe error if parent symlink lies outside package's own target directory.
-    """
-    if not parent_symlink:
-        return
-        
-    # Enforce severe safety guard: only allow automatic repair if parent_symlink lies inside target_dir. This prevents accidental deletion of unrelated system paths.
-    # We don't care where thse symlink points to, we only care that the symlink itself is inside the package's target directory.
-    # parent_symlink is a prefix of system_target, target_dir is also a prefix of system_target,
-    # so we can check if parent_symlink is relative to target_dir.
-    abs_parent = parent_symlink.absolute()
-    abs_target = target_dir.absolute()
-    if not is_relative_to(abs_parent, abs_target):
-        raise RuntimeError(
-            f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}' is a symlink pointing into "
-            f"drift workspace root '{workspace_config.drift_root}', but lies outside "
-            f"the package target directory '{target_dir}'. Resolving this automatically is "
-            f"unsafe and could permanently delete unrelated system paths. Please resolve manually."
-        )
-        
-    # Maintain nested relative path structure in overwriting backups
-    rel_parent = parent_symlink.relative_to(target_dir)
-    backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_parent
-    logger.warning(f"⚠️  [RECOVERY] Symlinked parent directory error at '{parent_symlink}'")
-    logger.debug(f"   Backing up parent symlink to: {backup_path}")
-    backup_file_or_dir_external(parent_symlink, backup_path, sudo, resolve_symlinks=resolve_symlinks)
+    """Helper to backup and report a collision/error at a system target path."""
+    # Ensure backup path respects relative structure
+    backup_path = workspace_config.backup_path / pkg / backup_subfolder / rel_path
+    logger.warning(f"🛡️  [COLLISION] {reason} at '{system_target}'")
+    logger.debug(f"   Backing up to: {backup_path}")
+    backup_file_or_dir_external(system_target, backup_path, sudo, resolve_symlinks=resolve_symlinks)
     
-    # Remove parent symlink
-    remove_file_or_dir_with_sudo(parent_symlink, sudo)
-    
-    # Recreate parent directory as a physical folder
-    ensure_dir_exists_with_sudo(parent_symlink, sudo)
-
-
-def run_single_file_collision_guard(
-    rel_file: Path,
-    pkg: str,
-    metadata: PackageConfig,
-    target_dir: Path,
-    install_base: Path,
-    workspace_config: WorkspaceConfig,
-    is_first_time: bool,
-    resolve_symlinks: bool
-) -> None:
-    """Collision guard logic for a single configuration file."""
-    system_target = resolve_system_target(rel_file, target_dir)
-    
-    # Repo Pollution And Infinite Loop Protection: checks if any parent directory of system_target is a symlink into drift_root.
-    parent_symlink = get_symlinked_parent(system_target.parent, workspace_config.drift_root)
-    if parent_symlink:
-        handle_symlinked_parent_error(
-            system_target=system_target,
-            parent_symlink= parent_symlink,
-            pkg=pkg,
-            target_dir=target_dir,
-            workspace_config=workspace_config,
-            sudo=metadata.sudo,
-            resolve_symlinks=resolve_symlinks
-        )
-
-    if not system_target.exists() and not system_target.is_symlink():
-        return
-
-    pkg_install_dir = install_base / pkg
-
-    # Condition 1: Stow Mode - physical non-link file or folder/symlink exists at target
-    if metadata.install_method == "stow":
-        if system_target.is_symlink():
-            try:
-                # do not resolve link here, it may be broken, backup_file_or_dir_external() will resolve it properly.
-                link_str = system_target.readlink()
-                abs_link_target = system_target.parent / link_str
-                normalized_target = Path(os.path.normpath(abs_link_target.absolute()))
-                
-                if is_relative_to(normalized_target, pkg_install_dir.resolve()):
-                    # Skip backup if symlink already points to the SAME package's install path
-                    return
-                drift_root_abs = workspace_config.drift_root.resolve()
-                if is_relative_to(normalized_target, drift_root_abs):
-                    # It points into drift_root but to a different path (e.g. dangling, or other package).
-                    # Delete without backup to clear the collision.
-                    logger.info(f"🧹 Removing internal/dangling drift-root symlink: {system_target.relative_to(target_dir)}")
-                    remove_file_or_dir_with_sudo(system_target, metadata.sudo)
-                    return
-                # else fall to backup code below.
-            except Exception as e:
-                # Readlink or analysis failed.
-                # If we fail to resolve/analyze, we treat it as an external collision and backup the symlink itself.
-                logger.warning(f"⚠️  Failed to analyze symlink target of '{system_target}': {e}. Backing up symlink itself.")
-                backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-                backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=False)
-                return
-
-        backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-        logger.warning(f"🛡️  [COLLISION] Stow conflict at '{system_target}'.")
-        logger.debug(f"   Backing up to: {backup_path}")
-        backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
-        return
-        
-    # Condition 2: Copy Mode - copy conflict on very first installation of this package
-    elif metadata.install_method == "copy" and is_first_time:
-        backup_path = workspace_config.backup_path / pkg / "overwritten" / rel_file
-        logger.warning(f"🛡️  [COLLISION] Copy conflict at '{system_target}' (first install).")
-        logger.debug(f"   Backing up to: {backup_path}")
-        backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
-        return
+    # After backup, remove the colliding item to clear the way
+    remove_file_or_dir_with_sudo(system_target, sudo)
 
 
 def run_collision_guard(
@@ -276,31 +177,103 @@ def run_collision_guard(
     resolve_symlinks: bool,
     install_base: Path
 ) -> None:
-    """Handles collision backing up before any file deployment."""
-    relative_files = tree_relative_files(install_pkg_dir)
-    for rel_file in relative_files:
-        if ignore_handler.match_path(rel_file):
-            # The ignore file is acting as delete instruction for the system target.
-            system_target = resolve_system_target(rel_file, target_dir)
-            if system_target.exists() or system_target.is_symlink():
-                backup_path = workspace_config.backup_path / pkg / "deleted_files" / rel_file
-                logger.info(f"🧹 [CLEANUP] Ignored file '{rel_file}' exists at system target. Backing up and deleting.")
-                logger.debug(f"   Backing up to: {backup_path}")
-                backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
-                # Ensure the system target itself is removed (if it was a symlink and we resolved symlinks, the symlink is still there)
-                remove_file_or_dir_with_sudo(system_target, metadata.sudo)
-            continue
-            
-        run_single_file_collision_guard(
-            rel_file=rel_file,
+    """Handles collision backing up before any file deployment using FolderDiff."""
+    # 0. Safety Abort Check for parents ABOVE or AT target_dir
+    # This detects if our target base itself is a symlink into drift_root
+    parent_symlink = get_symlinked_parent(target_dir, workspace_config.drift_root)
+    if parent_symlink:
+         raise RuntimeError(
+            f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
+            f"is a symlink pointing into drift workspace root '{workspace_config.drift_root}', "
+            f"but lies outside the package target directory '{target_dir}'. "
+            f"Resolving this automatically is unsafe. Please resolve manually."
+        )
+
+    # 1. Recursive Audit using FolderDiff
+    diff = compare_folders(
+        src_dir=install_pkg_dir,
+        dst_dir=target_dir,
+        ignore_handler=ignore_handler,
+        resolve_symlinks=resolve_symlinks,
+        translate_mode="forward",
+        src_only=True,
+        drift_root=workspace_config.drift_root
+    )
+
+    processed_paths = set()
+
+    # 2. Handle Internal Symlinks INSIDE target_dir
+    for rel in diff.internal_symlinks:
+        system_target = resolve_system_target(rel, target_dir)
+        processed_paths.add(rel)
+        
+        # Internal symlinks are repo pollution; we backup and remove them to recover
+        handle_collision_error(
             pkg=pkg,
-            metadata=metadata,
-            target_dir=target_dir,
-            install_base=install_base,
+            rel_path=rel,
+            system_target=system_target,
             workspace_config=workspace_config,
-            is_first_time=is_first_time,
+            sudo=metadata.sudo,
+            reason="Internal symlink parent error",
             resolve_symlinks=resolve_symlinks
         )
+        
+        # If the repo expects a directory here, recreate it as physical to avoid cycles
+        repo_path = install_pkg_dir / rel
+        if repo_path.is_dir() and not repo_path.is_symlink():
+             ensure_dir_exists_with_sudo(system_target, metadata.sudo)
+
+    # 3. Handle Deleted items (system files blocking repo dirs or now-ignored files)
+    for rel in diff.deleted:
+        if rel in processed_paths:
+            continue
+        processed_paths.add(rel)
+        
+        system_target = resolve_system_target(rel, target_dir)
+        if ignore_handler.match_path(rel):
+            # Clean up now-ignored files
+            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
+                                   "Ignored file cleanup", resolve_symlinks, backup_subfolder="deleted_files")
+        else:
+            # Type mismatch (e.g. System has file, Repo has dir)
+            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
+                                   "Type mismatch collision", resolve_symlinks)
+
+    # 4. Handle Modified items (collisions that need overwrite)
+    for rel in diff.modified:
+        if rel in processed_paths:
+            continue
+        processed_paths.add(rel)
+        
+        system_target = resolve_system_target(rel, target_dir)
+        
+        # Stow specific check: skip if it's already a link to OUR package in install_pkg_dir (i.e. a previous stow link)
+        if metadata.install_method == "stow" and system_target.is_symlink():
+            try:
+                link_target = (system_target.parent / os.readlink(system_target)).resolve()
+                if is_relative_to(link_target, install_pkg_dir.resolve()):
+                    continue
+            except Exception:
+                pass
+
+        # Copy mode check: only collision on FIRST installation
+        if metadata.install_method == "copy" and not is_first_time:
+            continue
+
+        handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
+                               "Deployment collision", resolve_symlinks)
+
+    # 5. Handle Match items (Stow specific: physical file matching repo content is STILL a collision)
+    if metadata.install_method == "stow":
+        for rel in diff.matches:
+            if rel in processed_paths:
+                continue
+            processed_paths.add(rel)
+            
+            system_target = resolve_system_target(rel, target_dir)
+            if not system_target.is_symlink():
+                handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
+                                       "Stow physical collision", resolve_symlinks)
 
 
 def run_full_copy_deployment(
