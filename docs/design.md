@@ -230,7 +230,9 @@ To safely determine whether a package should execute its `pre/post_install` or `
     - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
 *   **Safety Abort Logic**:
     When a package enters Primitive 4 or 5, the system checks its current state.
-    - If the state is **`"staging"`** or **`"deploying"`**, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
+    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
+    - **Nesting and Scope Safety Checks**: 
+      The target directory written in the configuration (`target_directory` or `default_target_path`) cannot be inside or equal to the `drift` workspace root (`drift_root`). If the absolute target directory is inside or equal to the absolute workspace root, the operation **aborts immediately** with a `ValueError`. This protects the workspace from accidentally being polluted or recursively linked.
     - A package in **`"staged"`** state is allowed to proceed to deployment or be re-staged.
 *   **Hook Classification**:
     When a package is about to be deployed:
@@ -242,15 +244,27 @@ To safely determine whether a package should execute its `pre/post_install` or `
     Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
 
 ### B. Physical Conflict Prevention (Collision Guard)
-To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces three safety rules:
-1.  **Stow Method Guard (Every Deploy)**:
-    *   If a file in `install/<package>/<path>` is slated to be linked to `~/<path>` via `stow`, and `~/<path>` already exists on the system as a **regular physical file** (not a symlink pointing into `install/`), the system must halt and move the regular file to `backup/<package>/overwritten/<path>` before creating the link.
-2.  **Copy Method Guard (First-Time Deploy Only)**:
-    *   If a package is being deployed via `copy` for the **very first time** (i.e., not registered in `install/state.toml`), and a physical file already exists at the `target_directory/<path>` on the host, the system must backup the existing target file to `backup/<package>/overwritten/<path>` before copying the new one.
-    *   For subsequent updates of `copy` packages, the database file simply overwrites the target file, assuming previous state synchronization has already accounted for drift.
-3.  **Ignored Files as Delete Instructions**:
-    *   If a file inside the staged package directory (`install/<package>/<path>`) matches the package's `.drift_ignore` patterns, it acts as a dynamic **delete instruction** for the system target.
-    *   During collision guard execution, if the corresponding file/link exists at `target_directory/<path>` on the active host system, it is safely backed up to `backup/<package>/deleted_files/<path>` (preserving nested directory paths, not under `overwritten`), and then removed from the active system.
+To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces four levels of audits using the centralized `compare_folders` tool. 
+
+#### 1. Target Parent Symlink Safety Abort (Pre-Check)
+Prior to running any folder comparisons, the system traverses up the target directory path. If it discovers that any parent directory of `target_dir` (at or above the target base) is a symlink pointing inside the workspace root (`drift_root`), it **aborts immediately** with a `RuntimeError`. Automatic cleanup/resolution of parent-level symlinks is highly risky and must be resolved manually by the user to avoid data loss.
+
+#### 2. Unified Recursive Audit Flow
+If the parent symlink safety check passes, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically). 
+
+Files are categorized and safely routed to prevent overwriting or data loss:
+1.  **Internal Symlinks (`diff.internal_symlinks`)**:
+    *   Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution.
+    *   The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and (if the repository expects a physical directory at that path) recreates it as a physical directory to avoid infinite directory-reference loops.
+2.  **Deleted files & Type Mismatches (`diff.deleted`)**:
+    *   *Ignored Files*: If a file exists on the system at a path matched by `.drift_ignore` patterns, it acts as an active delete instruction. It is backed up to `backup/<package>/deleted_files/<path>` and removed from the active system.
+    *   *Type Mismatches*: If the type of a target path on the host system differs from the repository (e.g., a physical regular file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and removes it to clear the way.
+3.  **Modified paths (`diff.modified`)**:
+    *   *Stow Link Exemption*: If the package is deployed via `stow` and the target is already a symlink pointing to OUR package inside the `install/` base directory, it is a valid pre-existing link and is skipped.
+    *   *Copy Mode Exemption*: If the package is deployed via `copy` and it is **not** a first-time installation (i.e. already registered as `"installed"` or `"staged"` in `state.toml`), collision backups are skipped; the target file is simply overwritten with updated contents.
+    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
+4.  **Matches (`diff.matches` under Stow mode)**:
+    *   If a file matches the repo's content exactly but exists on the host as a **regular physical file** rather than a symlink, it is still treated as a collision because Stow requires symlinks. The system backs up the physical file to `backup/<package>/overwritten/<path>` and deletes it so the symlink can be created safely.
 
 ### C. Incremental vs. Full Deployment Strategies
 To minimize system disruption and application reloads, deployment is executed under two distinct strategies:
@@ -355,7 +369,6 @@ tempfile=$(mktemp)
 envsubst < config/drift.envst.toml > $tempfile
 echo "Workspace config is loaded from: $tempfile"
 ```
-
 
 ### F. Execution Safeguards and Package Exclusion
 *   **The `enable_install = false` Block**:
@@ -493,147 +506,119 @@ The order of engine 1, engine 2, engine 3 is undefined, because toml dict doesn'
 
 ---
 
-### Detailed Workflow Pseudocode
+### Detailed Workflow Control Flow & Pseudocode
 
-#### 1. Command Orchestration (`Makefile` / CLI targets)
+### Overview of Control Flow & Orchestration
+
+The active configuration engine and orchestrator follow a strict sequence designed for predictability, transaction-like integrity, and extensive error recovery.
+
+#### 1. Discovery and Registry Check
+Deployment can be triggered in **Bulk Mode** (evaluating all declared active packages) or **Targeted Mode** (focusing on a specific package).
+*   **Discovery**: The orchestrator checks workspace declarations in `config/drift.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `package.toml`.
+*   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"deploying"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
+
+#### 2. Stage 1: Alignment Safeguard (System -> Install)
+*   The system executes **Primitive 1: Reverse Sync** on all target packages to capture any local, manual modifications.
+*   If `git -C install status` detects uncommitted changes (indicating active host drift exists in Diff B), the deployer halts immediately, prompting the developer to either *Adopt* the changes (commit them) or *Dismiss* them.
+
+#### 3. Stage 2: Sandboxing & Reconciliation (Render -> Stage)
+*   **Sandbox Render**: Package templates inside `src/` are compiled via configured engines (e.g. `envsubst`, `mustache`) into the `render/` sandbox. The rendering changes are automatically committed.
+*   **Staging Database**: The compiled `render/` outputs are reconciled into the `install/` state database (Primitive 4).
+    - *Deletion*: Any package file present in the database but missing from the rendered sandbox is deleted from `install/`.
+    - *Modification/Addition*: Files missing from `install/` or containing differences are copied from `render/` to `install/`.
+    - *Stage Changes Calculation*: A granular record of `added`, `modified`, and `deleted` files (represented as `PackageStageChanges`) is produced.
+
+#### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
+For each redeployable package:
+*   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root.
+*   **State Transition to `"deploying"`**: The state registry database `state.toml` is written to mark the package's state as `"deploying"`.
+*   **Collision Guard (Incremental/Full)**:
+    - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
+    - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` (or `deleted_files/` if matched by `.drift_ignore` patterns) and removed from the active system to clear the path.
+*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>`.
+*   **File Delivery Phase**:
+    - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
+        1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
+        2.  *High-Level Delivery*: Invokes copying commands (using `rsync` if available, otherwise `cp -R`) or links packages via GNU Stow (stow version must be >= 2.4.1; falls back to manual file-by-file linking on older versions).
+    - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
+        1.  Deletes files listed in `package_changes.deleted_files`.
+        2.  Deploys individual files manually using precise symlink creation or copy operations.
+*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory.
+*   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
+
+#### 5. Stage 2: Final State Commit (Primitive 6)
+*   The updated configurations and `state.toml` file are staged and committed into the local-only `install/` Git repository, locking the environment into a clean, reproducible state.
+
+---
+
+#### 1. Command Orchestration & Deployment Control Flow
 
 ```python
-# Helper to retrieve active packages list
-def get_discovered_active_packages(target_pkg=None):
-    # If a specific package is targetted by CLI (e.g. package=nvim)
-    if target_pkg is not None:
-        return [target_pkg]
-        
-    # Otherwise read active list from config/drift.toml
-    config_registry = load_toml("config/drift.toml")
-    enabled_list = []
-    for pkg, enabled in config_registry.get("packages", {}).items():
-        if enabled:
-            # Check package-level metadata overrides
-            metadata = load_package_metadata(pkg)
-            if metadata.enable_install:
-                enabled_list.append(pkg)
-    return enabled_list
-
-# View Template Evolution (Diff A)
-def cli_show_diff_A(target_pkg=None):
-    run_primitive_2_render(target_pkg)
-    run_shell(f"git -C render diff {target_pkg}/")
-
-# View Template Evolution (Status A)
-def cli_show_status_A(target_pkg=None):
-    run_primitive_2_render(target_pkg)
-    run_shell(f"git -C render status {target_pkg}/")
-
-# View Active System Drift (Diff B)
-def cli_show_diff_B(target_pkg=None):
-    run_primitive_1_reverse_sync(target_pkg)
-    if target_pkg is not None:
-        run_shell(f"git -C install diff {target_pkg}/")
-    else:
-        run_shell("git -C install diff")
-
-# View Active System Drift (Status B)
-def cli_show_status_B(target_pkg=None):
-    run_primitive_1_reverse_sync(target_pkg)
-    if target_pkg is not None:
-        run_shell(f"git -C install status {target_pkg}/")
-    else:
-        run_shell("git -C install status")
-
-# View Dry-Run Deployment (Diff C)
-def cli_show_diff_C(target_pkg=None, stat=False):
-    run_primitive_1_reverse_sync(target_pkg)
-    run_primitive_2_render(target_pkg)
-    git_options = ['--no-index', '--color']
-    if stat:
-        git_options.append('--stat')
-    # Direct comparison of new sandbox with the current system state
-    if target_pkg is not None:
-        run_shell(f"git diff {' '.join(git_options)} install/{target_pkg}/ render/{target_pkg}/")
-    else:
-        run_shell("git diff {' '.join(git_options)} install/ render/")
-
-# Full Safe Deployment (make deploy)
-def cli_deploy_full_sequence(target_pkg=None):
+def cli_deploy_full_sequence(target_pkg=None, force=False):
+    # Load local-only state database
     state_registry = load_state_registry("install/state.toml")
-    # TODO: check for state 'deploying' packages here, if we have deploying package, then abort.
+    
+    # Verify no packages are currently stuck in mid-deployment transient states
+    for pkg_name, state_data in state_registry.get_packages().items():
+        if not force and state_data.get("state") in ("staging", "deploying"):
+            print(f"[CRITICAL ABORT] Package '{pkg_name}' is in '{state_data.get('state')}' state.")
+            print("Run 'drift rollback' to restore workspace integrity first.")
+            exit(1)
 
     # --- Bulk Garbage Collection (Self-Cleaning) ---
     if target_pkg is None:
-        # Check for orphan packages (present in state.toml but disabled in drift.toml)
         active_declared = get_discovered_active_packages()
-        for registered_pkg in state_registry.get("packages", {}).keys():
+        for registered_pkg in state_registry.get_packages().keys():
             if registered_pkg not in active_declared:
-                print(f"[GARBAGE COLLECTION] Discovered orphan package '{registered_pkg}'. Executing automatic uninstall...")
+                print(f"[GARBAGE COLLECTION] Uninstalling orphan package: {registered_pkg}")
                 run_primitive_7_uninstall_package(registered_pkg)
 
-    # --- Stage 1: Security Sentinel Checks ---
+    # --- Stage 1: Alignment Check ---
     run_primitive_1_reverse_sync(target_pkg)
     
-    # Scoped Drift check
-    drift_dirty = False
-    if target_pkg is not None:
-        # Targeted mode: Only check target package folder and state.toml
-        drift_dirty = git_dir_is_dirty("install/", f"install/{target_pkg}/") or git_file_is_dirty("install/", "install/state.toml")
-    else:
-        # Bulk mode: Check entire repository
-        drift_dirty = git_repo_is_dirty("install/")
-        
-    if drift_dirty:
-        print("[ERROR] Stage 1 sentinel found drift inside active configurations (Diff B)!")
-        cli_show_diff_B(target_pkg)
-        print("Abort deploy. Please review drift (via make diff-B), Adopt or Dismiss edits, then retry.")
+    if not force and git_repo_is_dirty("install/"):
+        print("[ABORT] Stage 1 sentinel found drift inside active configurations (Diff B)!")
         exit(1)
-        
-    print("[SUCCESS] Scoped active configurations in perfect alignment. Beginning Stage 2...")
-    
-    # --- Stage 2: Deploy Sequence ---
+
+    print("[SUCCESS] Configurations in perfect alignment. Beginning Stage 2...")
+
+    # --- Stage 2: Sandbox Rendering ---
     try:
-        # Step 2: Render Templates to Sandbox
         run_primitive_2_render(target_pkg)
-        
-        # Step 3: Lock Render History
         run_primitive_3_render_commit(target_pkg)
     except Exception as e:
-        print(f"[CRITICAL FAILURE] Deployment failed in Stage 2 Render sequence: {e}")
-        print("Halted immediately to prevent inconsistent system states. Please debug render/ directory.")
+        print(f"[CRITICAL FAILURE] Render phase failed: {e}")
         exit(2)
-        
+
+    # --- Stage 2: Database Staging and Physical Delivery ---
     try:
-        state_registry.set("packages", pkg, "deploying")
-        save_state_registry("install/state.toml", state_registry)
-        # Step 4: Stage Sandbox into Local DB & compute changes
-        changelist = run_primitive_4_stage_render_to_install(target_pkg)
-        # Step 5: Physically deploy changes to host system (Incremental mode)
-        run_primitive_5_install_deployment(changelist, full_redeploy=False)
-        state_registry.set("packages", pkg, "installed")
-        save_state_registry("install/state.toml", state_registry)
+        # Step 4: Stage render/ outputs to install/ base, computing package changes
+        package_changes = run_primitive_4_stage_render_to_install(target_pkg)
         
+        # Step 5: Deploys changes to host system (applying Incremental if package_changes is present)
+        run_primitive_5_install_deployment(
+            packages_to_redeploy=[c.package_name for c in package_changes],
+            package_changes=package_changes,
+            force=force
+        )
     except Exception as e:
-        print(f"[CRITICAL FAILURE] Deployment failed in Stage 2 Deploy sequence: {e}")
-        print("================================================================================")
-        print("                           MID-DEPLOYMENT FAILURE DETECTED                      ")
-        print("================================================================================")
-        print("The deployment has failed midway and the system state may be inconsistent.")
-        pkg_arg = f" package={target_pkg}" if target_pkg else ""
-        print(f"Please run: 'make rollback {pkg_arg}' to restore the last clean committed state.")
-        print("WARNING: Do NOT run rollback under normal non-failing circumstances as it will")
-        print("discard all uncommitted local system drift and cause data loss.")
-        print("================================================================================")
+        print(f"[CRITICAL FAILURE] Physical deployment failed midway: {e}")
+        print("Please run 'drift rollback' to restore the last clean committed state.")
         exit(2)
 
+    # --- Stage 2: Lock & Commit ---
     try:
-        # Step 6: Commit deployed configurations (Scoped to target package and state.toml if targeted)
-        run_primitive_6_install_commit(target_pkg)
-        print("[SUCCESS] Scoped configurations deployed successfully!")
-
+        # Step 6: Commit state changes in local database
+        run_primitive_6_commit_install_repo(
+            commit_message="Deploy: Sync active packages",
+            target_pkgs=[c.package_name for c in package_changes] if target_pkg else None
+        )
+        print("[SUCCESS] Configurations deployed successfully!")
     except Exception as e:
-        print(f"[CRITICAL FAILURE] Deployment failed in Stage 2 Commit sequence: {e}")
-        print("Halted immediately to prevent inconsistent system states. Please debug install/ directory then commit it.")
+        print(f"[CRITICAL FAILURE] Failed to commit state registry: {e}")
         exit(2)
 
-# Rollback Recovery (make rollback)
+
 def cli_rollback_recovery(target_pkg=None, force=False):
     # This invokes Primitive 8
     print("================================================================================")
@@ -647,7 +632,7 @@ def cli_rollback_recovery(target_pkg=None, force=False):
         if target_pkg is not None and state_registry.get_package_state(target_pkg) != "deploying":
             print(f"[ERROR] Package '{target_pkg}' is not in conflict state, rollback aborted. (use '--force' to ignore.)")
             exit(1)
-        if target_pkg is None and not state_register.has_deploying_package():
+        if target_pkg is None and not state_registry.has_deploying_package():
             print(f"[ERROR] No package is in conflict state, rollback aborted. (use '--force' to ignore.)")
             exit(1)
         # Require user confirmation or assume it's run strictly under midway failure scenario
@@ -655,7 +640,7 @@ def cli_rollback_recovery(target_pkg=None, force=False):
         
     run_primitive_8_rollback_recovery(target_pkg)
 
-# Uninstallation Utility (make uninstall)
+
 def cli_uninstall_utility(target_pkg, force=False):
     if target_pkg is None:
         print("[ERROR] Uninstall primitive requires a specific package target! e.g. make uninstall package=nvim")
@@ -791,103 +776,235 @@ def run_primitive_4_stage_render_to_install(target_pkg=None):
     return list(packages_to_redeploy)
 
 
-def run_primitive_5_install_deployment(packages_to_redeploy, full_redeploy=False):
-    # Retrieve deployment state registry from install/state.toml
+def run_primitive_5_install_deployment(packages_to_redeploy, package_changes=None, force=False):
     state_registry = load_state_registry("install/state.toml")
     
     for pkg in packages_to_redeploy:
-        metadata = load_package_metadata(pkg)
-        if not metadata.enable_install:
-            continue
-            
-        # Is this package deployed for the first time?
-        is_first_time = (pkg not in state_registry.get("packages", {}))
+        pkg_change = next((c for c in package_changes if c.package_name == pkg), None) if package_changes else None
+        deploy_package_impl(workspace_config, pkg, state_registry, "install/state.toml", resolve_symlinks=True, force=force, package_changes=pkg_change)
+
+
+def deploy_package_impl(workspace_config, pkg, state_registry, state_file, resolve_symlinks, force, package_changes=None):
+    install_base = workspace_config.install_path
+    metadata = load_config_for_install(install_base, pkg)
+    
+    if not (force or metadata.enable_install):
+        print(f"Skipping package '{pkg}' (enable_install is False)")
+        return
         
-        print(f"Deploying package {pkg}...")
+    target_dir = metadata.target_directory or workspace_config.default_target_path
+    
+    # Safety Check: Target directory cannot be inside or equal to workspace root
+    abs_target = target_dir.absolute()
+    abs_drift_root = workspace_config.drift_root.absolute()
+    if abs_target == abs_drift_root or abs_target.is_relative_to(abs_drift_root):
+        raise ValueError("Safety Abort: Target directory cannot be inside or equal to drift workspace root.")
         
-        # C. Collision Guard
-        for file in get_files(f"install/{pkg}"):
-            if is_ignored_by_local_ignore(file, pkg):
+    # Verify/Ensure target folder is writable
+    ensure_directory_writable(target_dir, metadata.sudo)
+    
+    current_state = state_registry.get_package_state(pkg)
+    if not force and current_state in ("staging", "deploying"):
+        raise RuntimeError("Safety Abort: Package is currently in transient conflict state.")
+        
+    is_first_time = (current_state is None)
+    
+    # Set package state to transient "deploying"
+    state_registry.set_package_state(pkg, "deploying", install_method=metadata.install_method)
+    save_state_registry(state_file, state_registry)
+    
+    install_pkg_dir = install_base / pkg
+    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
+    
+    # 1. Physical Collision Guard Pre-Deployment Audit
+    run_collision_guard(
+        workspace_config=workspace_config,
+        pkg=pkg,
+        install_pkg_dir=install_pkg_dir,
+        metadata=metadata,
+        ignore_handler=ignore_handler,
+        target_dir=target_dir,
+        is_first_time=is_first_time,
+        resolve_symlinks=resolve_symlinks,
+        install_base=install_base
+    )
+    
+    # If package_changes is None, perform Full Redeploy, else Incremental
+    full_redeploy = (package_changes is None)
+    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    
+    if full_redeploy:
+        # Prune orphaned files present in state registry manifest but no longer in package
+        reconcile_orphaned_files(
+            pkg=pkg,
+            target_dir=target_dir,
+            current_files=current_files,
+            state_registry=state_registry,
+            workspace_config=workspace_config,
+            metadata=metadata,
+            resolve_symlinks=resolve_symlinks
+        )
+        
+    # 2. Trigger Pre-deployment Lifecycle Hook (CWD: install_pkg_dir)
+    if is_first_time:
+        trigger_package_lifecycle_hook(pkg, "pre_install", metadata, workspace_config, cwd_override=install_pkg_dir)
+    else:
+        trigger_package_lifecycle_hook(pkg, "pre_update", metadata, workspace_config, cwd_override=install_pkg_dir)
+
+    # 3. Physical File Delivery
+    stow_version = get_stow_version() if metadata.install_method == "stow" else None
+    stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
+    
+    if full_redeploy:
+        run_full_file_delivery(
+            pkg=pkg,
+            install_base=install_base,
+            install_pkg_dir=install_pkg_dir,
+            target_dir=target_dir,
+            metadata=metadata,
+            deployable_files=current_files,
+            stow_sufficient=stow_sufficient
+        )
+    else:
+        run_incremental_file_delivery(
+            package_changes=package_changes,
+            install_pkg_dir=install_pkg_dir,
+            target_dir=target_dir,
+            metadata=metadata
+        )
+
+    # 4. Trigger Post-deployment Lifecycle Hook (CWD: target_dir)
+    if is_first_time:
+        trigger_package_lifecycle_hook(pkg, "post_install", metadata, workspace_config)
+    else:
+        trigger_package_lifecycle_hook(pkg, "post_update", metadata, workspace_config)
+        
+    # 5. Lock Final State and Manifest
+    now_str = datetime.datetime.now().isoformat()
+    state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
+    
+    if full_redeploy:
+        state_registry.set_package_deployed_files(pkg, current_files)
+    else:
+        new_deployed = set(state_registry.get_package_deployed_files(pkg))
+        for rel in package_changes.deleted_files:
+            new_deployed.discard(rel)
+        for rel in package_changes.added_files:
+            new_deployed.add(rel)
+        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
+        
+    save_state_registry(state_file, state_registry)
+
+
+def run_collision_guard(workspace_config, pkg, install_pkg_dir, metadata, ignore_handler, target_dir, is_first_time, resolve_symlinks, install_base):
+    # Level 1 Pre-Check: Prevent parent symlink pollution
+    parent_symlink = get_symlinked_parent(target_dir, workspace_config.drift_root)
+    if parent_symlink:
+         raise RuntimeError(f"Safety Abort: Parent '{parent_symlink}' is a symlink pointing into drift workspace.")
+
+    # Level 2 Pre-Check: Unified Folder Comparison Audit
+    diff = compare_folders(
+        src_dir=install_pkg_dir,
+        dst_dir=target_dir,
+        ignore_handler=ignore_handler,
+        resolve_symlinks=resolve_symlinks,
+        translate_mode="forward",
+        src_only=True,
+        drift_root=workspace_config.drift_root
+    )
+
+    processed_paths = set()
+
+    # Route Internal Symlinks
+    for rel in diff.internal_symlinks:
+        system_target = resolve_system_target(rel, target_dir)
+        processed_paths.add(rel)
+        
+        handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo, "Internal symlink error", resolve_symlinks)
+        
+        repo_path = install_pkg_dir / rel
+        if repo_path.is_dir() and not repo_path.is_symlink():
+             ensure_dir_exists_with_sudo(system_target, metadata.sudo)
+
+    # Route Deletions (Ignored files or type mismatches)
+    for rel in diff.deleted:
+        if rel in processed_paths: continue
+        processed_paths.add(rel)
+        
+        system_target = resolve_system_target(rel, target_dir)
+        if ignore_handler.match_path(rel):
+            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo, "Ignored file cleanup", resolve_symlinks, "deleted_files")
+        else:
+            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo, "Type mismatch collision", resolve_symlinks)
+
+    # Route Modifications
+    for rel in diff.modified:
+        if rel in processed_paths: continue
+        processed_paths.add(rel)
+        
+        system_target = resolve_system_target(rel, target_dir)
+        
+        # Stow Mode: skip if target link already points to our own package folder
+        if metadata.install_method == "stow" and system_target.is_symlink():
+            if target_link_is_ours(system_target, install_pkg_dir):
                 continue
                 
-            system_target = resolve_system_target(pkg, file, metadata)
+        # Copy Mode: skip collision backup if subsequent update (only backup on first-time deploy)
+        if metadata.install_method == "copy" and not is_first_time:
+            continue
+
+        handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo, "Deployment collision", resolve_symlinks)
+
+    # Route Matches (Stow mode specific)
+    if metadata.install_method == "stow":
+        for rel in diff.matches:
+            if rel in processed_paths: continue
+            processed_paths.add(rel)
             
-            # Condition 1: Stow Mode, target exists but is a regular/physical file
-            if metadata.install_method == "stow":
-                if os.path.exists(system_target) and not os.path.islink(system_target):
-                    backup_path = f"backup/{pkg}/overwritten/{file}"
-                    print(f"[GUARD WARNING] Stow conflict. Physical file found at {system_target}. Backing up...")
-                    move_file_with_sudo(system_target, backup_path, metadata.sudo)
-                    
-            # Condition 2: Copy Mode, and it's the very first installation of this package
-            elif metadata.install_method == "copy" and is_first_time:
-                if os.path.exists(system_target):
-                    backup_path = f"backup/{pkg}/overwritten/{file}"
-                    print(f"[GUARD WARNING] Copy conflict on first install. File found at {system_target}. Backing up...")
-                    move_file_with_sudo(system_target, backup_path, metadata.sudo)
-        
-        # D. Physical Deployment Execution
-        if full_redeploy:
-            # Full Redeployment Fallback utilizes high-level binary/rsync commands
-            if metadata.install_method == "stow":
-                run_shell(f"stow --no-folding --dotfiles -t {metadata.target_directory} {pkg}")
-            elif metadata.install_method == "copy":
-                # Copying without --delete to avoid sweeping unrelated target files
-                run_shell_with_sudo(f"cp -r install/{pkg}/* {metadata.target_directory}/", metadata.sudo)
-        else:
-            # Incremental Deployment operates manually file-by-file with minimal disruption
-            for file in get_files(f"install/{pkg}"):
-                if is_ignored_by_local_ignore(file, pkg):
-                    continue
-                src_file = f"install/{pkg}/{file}"
-                system_target = resolve_system_target(pkg, file, metadata) # Converts prefixes dot- to .
-                
-                # Infinite Loop Protection
-                parent_dir = os.path.dirname(system_target)
-                is_stow_linked_parent = False
-                # Walk up directory tree to audit symlinks
-                while parent_dir and parent_dir != "/" and parent_dir != os.path.expanduser("~"):
-                    if os.path.islink(parent_dir):
-                        link_target = os.readlink(parent_dir)
-                        if "install/" in link_target:
-                            is_stow_linked_parent = True
-                            break
-                    parent_dir = os.path.dirname(parent_dir)
-                    
-                if metadata.install_method == "stow":
-                    if is_stow_linked_parent:
-                        print(f"Skipping incremental stow for {system_target} as its parent directory is already symlinked.")
-                        continue
-                    create_symlink_manually_with_sudo(src_file, system_target, metadata.sudo)
-                elif metadata.install_method == "copy":
-                    copy_file_contents_with_sudo(src_file, system_target, metadata.sudo)
-                
-        # E. Lifecycle Hooks Trigger & State Registry Update
-        if is_first_time:
-            trigger_package_lifecycle_hook(pkg, "post_install", metadata)
-            state_registry.set("packages", pkg, "installed")
-            save_state_registry("install/state.toml", state_registry)
-        else:
-            trigger_package_lifecycle_hook(pkg, "post_update", metadata)
+            system_target = resolve_system_target(rel, target_dir)
+            if not system_target.is_symlink():
+                handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo, "Stow physical collision", resolve_symlinks)
 
 
-def run_primitive_6_install_commit(target_pkg=None):
-    # Lock the deployed configurations inside install/ repo with scoped git actions
-    if target_pkg is not None:
-        # Scoped commit: stage and commit ONLY target package directory and state.toml
-        run_shell(f"git -C install add {target_pkg}/ state.toml")
-        run_shell(f"git -C install commit -m 'Deploy: Sync scoped package {target_pkg} at $(date)'")
+def run_full_file_delivery(pkg, install_base, install_pkg_dir, target_dir, metadata, deployable_files, stow_sufficient):
+    if metadata.install_method == "copy":
+        run_full_copy_deployment(install_pkg_dir, target_dir, metadata.sudo, deployable_files)
+    elif metadata.install_method == "stow":
+        if stow_sufficient:
+            run_stow_deployment(install_base, target_dir, pkg, metadata.sudo, stow_sufficient)
+        else:
+            print("[WARN] Stow version insufficient. Falling back to manual symlinking.")
+            for rel_file in deployable_files:
+                deploy_single_stow_file(rel_file, install_pkg_dir, target_dir, metadata.sudo)
+
+
+def run_incremental_file_delivery(package_changes, install_pkg_dir, target_dir, metadata):
+    # 1. Apply Deletions
+    for rel_file in package_changes.deleted_files:
+        delete_single_system_file(rel_file, target_dir, metadata.sudo)
+
+    # 2. Apply Additions and Modifications
+    for rel_file in package_changes.added_files + package_changes.modified_files:
+        if metadata.install_method == "stow":
+            deploy_single_stow_file(rel_file, install_pkg_dir, target_dir, metadata.sudo)
+        elif metadata.install_method == "copy":
+            deploy_single_copy_file(rel_file, install_pkg_dir, target_dir, metadata.sudo)
+
+
+def run_primitive_6_commit_install_repo(commit_message, target_pkgs=None):
+    if target_pkgs:
+        run_shell(f"git -C install add {shlex.join(target_pkgs)} state.toml")
+        run_shell(f"git -C install commit -m '{commit_message}'")
     else:
-        # Bulk commit: stage and commit the entire repository
         run_shell("git -C install add -A")
-        run_shell("git -C install commit -m 'Deploy: Sync bulk active packages at $(date)'")
+        run_shell("git -C install commit -m '{commit_message}'")
 
 
 def run_primitive_7_uninstall_package(pkg):
     print(f"Starting uninstallation for package: {pkg}...")
     state_registry = load_state_registry("install/state.toml")
     
-    if pkg not in state_registry.get("packages", {}):
+    if pkg not in state_registry.get_packages():
         print(f"Warning: Package {pkg} is not registered as installed in state.toml. Forcing safety unlink...")
         
     metadata = load_package_metadata(pkg)
@@ -923,14 +1040,13 @@ def run_primitive_7_uninstall_package(pkg):
         delete_directory(install_pkg_dir)
         
     # 4. Remove registry entry and auto-commit database
-    state_registry.remove("packages", pkg)
+    state_registry.remove_package(pkg)
     save_state_registry("install/state.toml", state_registry)
     
     # Auto-commit the local database changes (scoped strictly to state.toml and the deleted directory)
     run_shell(f"git -C install add state.toml")
-    # git rm on deleted package files
     run_shell(f"git -C install rm -r --ignore-unmatch {pkg}/")
-    run_shell(f"git -C install commit -m 'Uninstall: Removed package {pkg} at $(date)'")
+    run_shell(f"git -C install commit -m 'Uninstall: Removed package {pkg}'")
     print(f"[SUCCESS] Package {pkg} uninstalled and deployment traces cleaned.")
 
 
@@ -945,10 +1061,12 @@ def run_primitive_8_rollback_recovery(target_pkg=None):
     run_primitive_5_install_deployment(packages_to_redeploy=packages, full_redeploy=True)
 
     state_registry = load_state_registry("install/state.toml")
-    # TODO: set given package or all packages to "installed" state.
+    # Mark package or all packages back to "installed" state
+    state_registry.set_package_state(target_pkg, "installed")
     save_state_registry("install/state.toml", state_registry)
 
     print("[SUCCESS] Rollback recovery complete. Clean state restored.")
+```
 ```
 
 ---
