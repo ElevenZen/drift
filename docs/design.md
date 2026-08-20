@@ -132,15 +132,17 @@ All high-level workflows in drift are composed of these eight atomic, sequential
 ```
 
 ### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Low-level: `drift reverse-sync`])
-Unconditionally pulls the current host configuration state into the `install/` Git repository.
-*   **For `stow` Packages**:
-    *   *Missing Symlink*: If a symlink in the system is deleted, deletes the counterpart inside `install/`.
-    *   *Replaced by Regular File*: If a symlink was replaced by a normal file containing edits, copies that file's contents back into `install/`.
-    *   *Fully-Controlled Directories (FCD)*: Scans subdirectories for new (untracked) files and syncs them back.
-*   **For `copy` Packages**:
-    *   *Modified*: Compares physical active system files with `install/`. If different, reverse-copies back into `install/`.
-    *   *Deleted*: If a system file is missing, deletes the counterpart inside `install/`.
-    *   *FCD*: Scans target subdirectories for untracked files and copies them back.
+Unconditionally pulls the current host configuration state into the `install/` state Git repository using the unified `compare_folders` tool in `"reverse"` translation mode (comparing the system target `target_directory` as source against the repository `install/<package>` folder as destination).
+
+The comparison identifies three categories of change:
+1.  **Deleted on System (`diff.deleted`)**:
+    *   If a tracked file or directory exists in the repo but is missing from the active host system, it is symmetrically removed from the local state repository (`install/`).
+2.  **Modified on System (`diff.modified`)**:
+    *   If a file on the host system contains modifications or differs from its repository counterpart, it is reverse-copied back to the local state repository (`install/`).
+3.  **Added on System (`diff.added`)**:
+    *   New/untracked files or directories on the host system are only synced back to the local state repository (`install/`) under two conditions:
+        - **Fully-Controlled Directory (FCD) Check:** The new file lies within one of the package's configured `fully_controlled_dirs`.
+        - **Tracked Path Type Promotion/Change:** The new file resides at a path that was previously tracked but changed its type (e.g. parent path is reported in `diff.deleted` indicating a type promotion from file to directory or vice versa).
 
 ### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
 Processes files in `src/` (expanding templates via `envsubst`/`mustache`) and places the results in `render/`. No live system files are altered. Triggers the `post_render` hook upon completion.
@@ -284,8 +286,8 @@ The program needs to ensure the compatibility between these two ways. In either 
 
 ### D. Ignored Files and Name Conversion Rules
 Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
-1.  **Ignore Filter (`.stow-local-ignore`)**:
-    *   The system parses `.stow-local-ignore` at the root of each package directory.
+1.  **Ignore Filter (`.drift_ignore`)**:
+    *   The system parses `.drift_ignore` at the root of each package directory.
     *   Any file matching the ignore patterns (such as `package.toml` or helper files) is completely skipped during render and deployment.
     *   An extra `.stow-local-ignore` must be generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as a package.
 2.  **Prefix Conversion (`dot-` to `.`)**:
@@ -518,8 +520,13 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 *   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"deploying"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
 
 #### 2. Stage 1: Alignment Safeguard (System -> Install)
-*   The system executes **Primitive 1: Reverse Sync** on all target packages to capture any local, manual modifications.
-*   If `git -C install status` detects uncommitted changes (indicating active host drift exists in Diff B), the deployer halts immediately, prompting the developer to either *Adopt* the changes (commit them) or *Dismiss* them.
+*   The system executes **Primitive 1: Reverse Sync** on all target packages to capture and reconcile any manual, local modifications made directly on the active host system.
+*   **The Reverse-Sync Reconciliation Flow**:
+    - **Folder Comparison**: The orchestrator triggers `compare_folders(translate_mode="reverse")` with the system target directory as the source and `install/<package>` as the destination.
+    - **System Deletions (`diff.deleted`)**: Any files manually deleted on the system that are currently tracked by the repository are symmetrically pruned/removed from the `install/` state database folder.
+    - **System Modifications (`diff.modified`)**: Any files manually edited on the system are reverse-copied back to their corresponding repository paths in `install/` (applying reverse dot-prefix translation so system `.bashrc` translates back to repo `dot-bashrc`).
+    - **System Additions & Type Changes (`diff.added`)**: New files on the system are processed and synced back only if they reside inside configured **Fully-Controlled Directories (FCD)**, or if they represent a **Type Change / Type Promotion** (meaning the file path or one of its parent paths changed type, which is detected by checking if it appears in `diff.deleted`).
+*   **Uncommitted State Check**: After performing reverse-sync on all active packages, the deployer checks if `git -C install status` is dirty. If uncommitted changes are detected (representing active host drift, i.e., Diff B), the deployer **halts immediately**. This acts as a security sentinel, forcing the developer to explicitly review the drift (via `drift diff --system`) and either **Adopt** (by committing the drift in the `install/` repository) or **Dismiss** (by deploying with `--force`) the system changes before template rendering can continue.
 
 #### 3. Stage 2: Sandboxing & Reconciliation (Render -> Stage)
 *   **Sandbox Render**: Package templates inside `src/` are compiled via configured engines (e.g. `envsubst`, `mustache`) into the `render/` sandbox. The rendering changes are automatically committed.
@@ -670,48 +677,61 @@ def run_primitive_1_reverse_sync(target_pkg=None):
             continue
             
         install_pkg_dir = f"install/{pkg}"
-        if not os.path.exists(install_pkg_dir):
+        target_dir = metadata.target_directory
+        if not os.path.exists(target_dir):
             continue
             
-        # A. Traverse and sync all files tracked by our database
-        for relative_path in get_recursive_files(install_pkg_dir):
-            system_target = resolve_system_target(pkg, relative_path, metadata)
-            local_db_file = f"{install_pkg_dir}/{relative_path}"
-            
-            if metadata.install_method == "stow":
-                # Check if the active symlink was deleted by the user or system
-                if not os.path.exists(system_target) and not os.path.islink(system_target):
-                    print(f"Stow System Deletion: {system_target} is missing. Pruning in install/...")
-                    delete_physical_file(local_db_file)
-                    
-                # Check if symlink was replaced by a normal file containing local overrides
-                elif os.path.isfile(system_target) and not os.path.islink(system_target):
-                    print(f"Stow Replaced Link: Link {system_target} replaced by physical file. Pulling contents...")
-                    copy_file_contents(system_target, local_db_file)
-                    
-            elif metadata.install_method == "copy":
-                # Check if physical copy was deleted on host
-                if not os.path.exists(system_target):
-                    print(f"Copy System Deletion: {system_target} is missing. Pruning in install/...")
-                    delete_physical_file(local_db_file)
-                    
-                # Check if physical copy contains modifications
-                elif file_contents_differ(local_db_file, system_target):
-                    print(f"Copy System Modification: {system_target} has drifted. Reverse-copying back to install/...")
-                    copy_file_contents(system_target, local_db_file)
+        ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
 
-        # B. Audit Fully-Controlled Directory subfolders for wild/untracked files
-        for rel_sub_dir in metadata.fully_controlled_dirs:
-            target_sub_dir = f"{metadata.target_directory}/{rel_sub_dir}"
-            local_sub_dir = f"{install_pkg_dir}/{rel_sub_dir}"
-            
-            if os.path.exists(target_sub_dir):
-                expected_files = get_files_in_local_db(local_sub_dir)
-                for file in os.listdir(target_sub_dir):
-                    if file not in expected_files and not is_ignored_file(file, pkg):
-                        print(f"FCD Untracked File Found: {target_sub_dir}/{file}. Syncing back to install/ to track...")
-                        ensure_dir_exists(os.path.dirname(f"{local_sub_dir}/{file}"))
-                        copy_file_contents(f"{target_sub_dir}/{file}", f"{local_sub_dir}/{file}")
+        # Unified Reverse Folder Comparison
+        # System Target is src, Repo Install is dst.
+        diff = compare_folders(
+            src_dir=target_dir,
+            dst_dir=install_pkg_dir,
+            ignore_handler=ignore_handler,
+            resolve_symlinks=True,
+            translate_mode="reverse"
+        )
+        
+        # 1. Handle system deletions
+        for rel in diff.deleted:
+            repo_rel = translate_dot_prefixes_reverse(rel)
+            repo_file = install_pkg_dir / repo_rel
+            if os.path.exists(repo_file):
+                print(f"System Deletion: Pruning missing counterpart '{repo_file}'.")
+                delete_physical_file(repo_file)
+
+        # 2. Handle system modifications
+        for rel in diff.modified:
+            system_file = target_dir / rel
+            repo_file = install_pkg_dir / translate_dot_prefixes_reverse(rel)
+            print(f"System Modification: Syncing drift from '{system_file}'.")
+            reverse_sync_file_or_dir(system_file, repo_file, ignore_handler)
+
+        # 3. Handle wild files (FCD) or promoted tracked files
+        for rel in diff.added:
+            if is_managed_config_file(rel):
+                continue
+                
+            is_to_sync = False
+            # Condition A: Inside a Fully-Controlled Directory (FCD)
+            for fcd_rel in metadata.fully_controlled_dirs:
+                if is_relative_to(rel, fcd_rel):
+                    is_to_sync = True
+                    break
+                    
+            # Condition B: Part of a tracked path that changed type
+            if not is_to_sync:
+                for parent in [rel] + list(get_parents(rel)):
+                    if parent in diff.deleted:
+                        is_to_sync = True
+                        break
+                        
+            if is_to_sync:
+                system_file = target_dir / rel
+                repo_file = install_pkg_dir / translate_dot_prefixes_reverse(rel)
+                print(f"Untracked FCD/Promoted File: Syncing '{system_file}' to repo.")
+                reverse_sync_file_or_dir(system_file, repo_file, ignore_handler)
 ```
 
 ---
