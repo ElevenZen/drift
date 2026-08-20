@@ -177,6 +177,82 @@ class TestIntegration(unittest.TestCase):
         self.assertFalse(zombie_render.exists())
         self.assertFalse(zombie_install.exists())
 
+    def test_workspace_gc_scopes_commits(self):
+        """Scenario: Running GC should only commit purged folders, leaving other modified packages unstaged/uncommitted."""
+        from drift.new_package import run_primitive_10_create_new_package
+        from drift.render_package import run_primitive_2_render_packages
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.workspace_gc import run_primitive_9_purge_workspace_garbage
+        from drift.git_utils import commit_repo_changes
+
+        pkg_a = "pkg_a"
+        self.workspace_config.packages_enable[pkg_a] = True
+
+        # 1. Create and render pkg_a
+        run_primitive_10_create_new_package(self.workspace_config, pkg_a)
+        (self.source_dir / pkg_a / "file.txt").write_text("pkg_a original", encoding="utf-8")
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+
+        # Commit initial state of pkg_a in both repos
+        commit_repo_changes(self.render_dir, "Commit pkg_a render", target_pkgs=[pkg_a])
+        commit_repo_changes(self.install_dir, "Commit pkg_a install", target_pkgs=[pkg_a])
+
+        # Verify repos are clean initially for pkg_a (ignoring untracked files like config/)
+        status_render = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_install = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        self.assertEqual(status_render.stdout.strip(), "")
+        self.assertEqual(status_install.stdout.strip(), "")
+
+        # 2. Setup a tracked zombie folder in render/ and install/
+        zombie_pkg = "zombie_pkg"
+        zombie_render = self.render_dir / zombie_pkg
+        zombie_render.mkdir(parents=True, exist_ok=True)
+        (zombie_render / "trash.txt").write_text("garbage", encoding="utf-8")
+
+        zombie_install = self.install_dir / zombie_pkg
+        zombie_install.mkdir(parents=True, exist_ok=True)
+        (zombie_install / "trash.txt").write_text("garbage", encoding="utf-8")
+
+        # Track and commit zombie_pkg
+        commit_repo_changes(self.render_dir, "Commit zombie render", target_pkgs=[zombie_pkg])
+        commit_repo_changes(self.install_dir, "Commit zombie install", target_pkgs=[zombie_pkg])
+
+        # Verify repos are clean after zombie addition (ignoring untracked files like config/)
+        status_render = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        status_install = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True)
+        self.assertEqual(status_render.stdout.strip(), "")
+        self.assertEqual(status_install.stdout.strip(), "")
+
+        # 3. Modify pkg_a files in render/ and install/ to simulate unrelated changes / system drifts
+        (self.render_dir / pkg_a / "file.txt").write_text("uncommitted render change", encoding="utf-8")
+        (self.install_dir / pkg_a / "file.txt").write_text("uncommitted install change", encoding="utf-8")
+
+        # Verify that we have uncommitted modifications in pkg_a
+        status_render_before = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_install_before = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        self.assertIn(f"pkg_a/file.txt", status_render_before)
+        self.assertIn(f"pkg_a/file.txt", status_install_before)
+
+        # 4. Run GC (which will purge zombie_pkg because it has no package config)
+        run_primitive_9_purge_workspace_garbage(self.workspace_config)
+
+        # 5. Verify zombie_pkg was removed
+        self.assertFalse(zombie_render.exists())
+        self.assertFalse(zombie_install.exists())
+
+        # 6. Verify that modifications in pkg_a remain unstaged/uncommitted!
+        status_render_after = subprocess.run(["git", "-C", str(self.render_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        status_install_after = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain", "-uno"], capture_output=True, text=True, check=True).stdout
+        
+        # They MUST still be shown as modified/unstaged
+        self.assertIn(f"M pkg_a/file.txt", status_render_after)
+        self.assertIn(f"M pkg_a/file.txt", status_install_after)
+
+        # The zombie_pkg deletion should be fully committed and NOT present in status
+        self.assertNotIn(zombie_pkg, status_render_after)
+        self.assertNotIn(zombie_pkg, status_install_after)
+
     def test_template_engine_dependency_chain(self):
         """Scenario: mustache template depends on envsubst-rendered JSON input."""
         from drift.render_package import run_primitive_2_render_packages

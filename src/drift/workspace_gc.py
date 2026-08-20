@@ -84,12 +84,14 @@ def run_primitive_9_purge_workspace_garbage(
             commit_repo_changes(
                 workspace_config.render_path,
                 f"GC Purge: Removed zombie folder(s) {', '.join(render_zombies)}",
+                target_pkgs=render_zombies,
                 repo_name="render repo"
             )
         if install_zombies:
             commit_repo_changes(
                 workspace_config.install_path,
                 f"GC Purge: Removed zombie folder(s) {', '.join(install_zombies)}",
+                target_pkgs=install_zombies,
                 repo_name="install repo"
             )
     
