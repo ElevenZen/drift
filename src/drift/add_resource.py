@@ -5,7 +5,7 @@ import shutil
 import os
 import tempfile
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
 from .file_utils import (
@@ -68,18 +68,20 @@ def generate_import_worklist(
             # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
             repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
 
-            # Scoped ignore handler that offsets paths to match package-root-relative patterns
+            # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
             class ScopedIgnore:
                 def match_path(self, rel_repo: Path) -> bool:
                     # rel_repo is already dot-prefixed by compare_folders(translate_mode="reverse")
                     return ignore_handler.match_path(repo_prefix / rel_repo)
+
+            scoped_ignore: Any = ScopedIgnore()
 
             # Use compare_folders to get a clean list of files from system.
             # translate_mode="reverse" ensures the ignore handler receives repo-style paths.
             diff = compare_folders(
                 abs_import, 
                 tmp_dir, 
-                ignore_handler=ScopedIgnore(), 
+                ignore_handler=scoped_ignore,
                 resolve_symlinks=True,
                 translate_mode="reverse"
             )
@@ -128,21 +130,21 @@ def run_primitive_11_add_resources(
             raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
 
     # 5. Execution Phase
-    if dry_run:
-        for src_on_system, rel_target in full_worklist:
-            rel_src = translate_dot_prefixes_reverse(rel_target)
-            dest_path = src_pkg_dir / rel_src
-            logger.info(f"🔍 [DRY RUN] Would import '{src_on_system}' to '{dest_path.relative_to(workspace_config.drift_root)}'")
-        return
-
     for src_on_system, rel_target in full_worklist:
         rel_src = translate_dot_prefixes_reverse(rel_target)
         dest_path = src_pkg_dir / rel_src
         
+        if dry_run:
+            logger.info(f"🔍 [DRY RUN] Would import '{src_on_system}' to '{dest_path.relative_to(workspace_config.drift_root)}'")
+            continue
+
         logger.info(f"📥 Importing: {src_on_system}")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
-        
+
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src_on_system, dest_path)
+
+    if dry_run:
+        return
 
     logger.info(f"✨ Successfully imported {len(full_worklist)} file(s) into package '{package_name}'.")
