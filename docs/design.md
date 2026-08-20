@@ -101,9 +101,9 @@ You no longer want a package active on this machine.
 
 ---
 
-## 3. The 9 Core Primitives
+## 3. The 11 Core Primitives
 
-All high-level workflows in drift are composed of these nine atomic, sequential primitives:
+All high-level workflows in drift are composed of these eleven atomic, sequential primitives:
 
 ```
                           [ Execution: drift deploy ]
@@ -168,10 +168,16 @@ Applies changes to the physical active system.
 Locks the deployed configurations into the local state database with an automated commit.
 
 ### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
-Removes a package from the system:
-1.  **De-stow or Delete**: Unlinks symlinks or deletes physical files.
-2.  **Rollback Collision Guard**: Restores original host files backed up in `backup/`.
-3.  **Update Registry**: Removes the package from the state database.
+Removes or detaches a package from the system:
+1.  **Standard Uninstall Mode (Default)**:
+    *   **De-stow or Delete**: Unlinks symlinks or deletes physical files.
+    *   **Rollback Collision Guard**: Restores original host files backed up in `backup/`.
+    *   **Update Registry**: Removes the package from the state database.
+2.  **Detach/Eject Mode (`--detach`)**:
+    *   **Keep Configuration**: Stops managing this package via Drift, but preserves the current configuration files active on the system (e.g. freezing them as permanent configurations).
+    *   **Symlink to Copy Conversion**: If the package was installed using `stow` (symlinking), the engine recursively iterates through the deployed files, removes the symlink, and copies the physical file counterpart from `install/<pkg>/` to the active host target path.
+    *   **Backups Kept Intact**: Leaves the user's historical original backups inside `backup/<pkg>/overwritten/` completely untouched (does not restore them).
+    *   **Clean Database Decouple**: Unregisters the package from `state.toml` and deletes the local `install/<pkg>` directory, fully decoupling the repository from the active host system without deleting configurations.
 
 ### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
 Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure.
@@ -182,6 +188,18 @@ Identifies and cleans up workspace anomalies, orphaned packages, and zombie data
 2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml` or `package.toml`), which prevents database pollution from historical directories.
 3.  **Auto-Commit Database changes**: Auto-stages and commits zombie removal operations inside `render/` and `install/` databases.
 
+### Primitive 10: Package Creation [High-level: `drift new`]
+Scaffolds a new declarative package inside the `src/` directory.
+1.  Creates the `src/<package_name>` directory.
+2.  Generates a default `package.toml` (or designated config file) with standard safe defaults (e.g. `install_method = "stow"`).
+3.  Features built-in probing guards to prevent accidental overwriting of existing package configurations unless `--force` is used.
+
+### Primitive 11: Resource Import [High-level: `drift add`]
+Imports an existing, active host system configuration file directly into the declarative source repository.
+1.  Resolves symlinks to capture the actual physical files if the system target is linked elsewhere.
+2.  Translates standard hidden dotfile names (e.g. `.bashrc`) to repository-safe dot-prefixes (e.g. `dot-bashrc`).
+3.  Scans for existing templates in the `src/<package>` folder to safely back up colliding configs to `backup/` before overwriting.
+
 ---
 
 ## 4. User-Facing Operations (CLI Overview)
@@ -189,6 +207,8 @@ Identifies and cleans up workspace anomalies, orphaned packages, and zombie data
 The `drift` Python command provides a unified interface for all primitives and high-level workflows.
 
 ### High-Level Commands (Planned)
+*   **`drift new <package>`**: Scaffolds a new dotfiles package (Primitive 10).
+*   **`drift add <package> <path>`**: Imports an active system file into a declarative package (Primitive 11).
 *   **`drift status [packages...]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
 *   **`drift diff [packages...]`**: Visualizes changes between layers (Diff A, B, or C).
 *   **`drift deploy [packages...]`**: Atomic Two-Stage deployment with safety guards.
@@ -207,106 +227,22 @@ These commands are for advanced users or CI/CD pipelines to trigger specific pri
 
 ---
 
-## 5. Recovery & Edge Case Safeguards
+## 5. Workspace & Package Configuration
 
-This section defines the core architectural policies required to maintain technical integrity under edge cases and partial execution failures.
+This section provides the essential syntax and specifications for global and package-level configurations.
 
-### A. State Registry Database (`install/state.toml`)
-To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.
-*   This registry tracks package lifecycle states:
-    ```toml
-    # install/state.toml
-    [packages.nvim]
-    state = "installed"
-    last_deployed = "2026-08-16T21:10:50.123456"
-    install_method = "stow"
-    deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
+### A. Global Workspace Configuration: `config/drift.toml` Specification
+Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift.toml` (which can itself be a template named `drift.envst.toml`). This file orchestrates two main responsibilities:
+1. **Workspace Paths & Rendering Engines**: Defines directories (`source_directory`, `render_directory`, `install_directory`, `backup_directory`, `default_target_directory`) and template engines with their file suffixes and rendering subprocess commands (e.g. `envsubst`, `mustache`).
+2. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages.enable]` section.
 
-    [packages.qbittorrent]
-    state = "staged"
-    install_method = "copy"
-    deployed_files = ["config.ini"]
+*   **Active Package Determination**:
+    During global operations (like a bulk `drift status` or `drift deploy`), the engine checks the `[packages.enable]` table:
+    - If a package is listed as `true`, it is processed.
+    - If listed as `false`, it is completely ignored.
+    - An optional `DEFAULT = true | false` key specifies whether packages not explicitly listed are enabled or disabled by default. If `DEFAULT` is omitted or `false`, unlisted folders are ignored.
 
-    [packages.wezterm]
-    state = "deploying"
-    install_method = "stow"
-    deployed_files = []
-    ```
-*   **Lifecycle States**:
-    - **`"installed"`**: (Stable) The package is fully applied to the host system.
-    - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
-    - **`"staging"`**: (Transient) The package is currently undergoing database synchronization (Primitive 4).
-    - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
-*   **Safety Abort Logic**:
-    When a package enters Primitive 4 or 5, the system checks its current state.
-    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
-    - **Nesting and Scope Safety Checks**: 
-      The target directory written in the configuration (`target_directory` or `default_target_path`) cannot be inside or equal to the `drift` workspace root (`drift_root`). If the absolute target directory is inside or equal to the absolute workspace root, the operation **aborts immediately** with a `ValueError`. This protects the workspace from accidentally being polluted or recursively linked.
-    - A package in **`"staged"`** state is allowed to proceed to deployment or be re-staged.
-*   **Hook Classification**:
-    When a package is about to be deployed:
-    1.  The system reads `install/state.toml`.
-    2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** (triggers `pre/post_install`).
-    3.  If the package is **listed** (even as `"staged"` or `"installed"`), it is classified as an **Update/Redeploy** (triggers `pre/post_update`).
-*   **Desired-State Manifest Tracking**:
-    To ensure self-healing and robust deletion behavior during standalone executions, retries, or rollbacks without relying on event-driven stages (Primitive 4), the registry tracks the precise relative paths of all successfully deployed files under the `deployed_files` array.
-    Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
-
-### B. Physical Conflict Prevention (Collision Guard)
-To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces four levels of audits using the centralized `compare_folders` tool. 
-
-#### 1. Target Parent Symlink Safety Abort (Pre-Check)
-Prior to running any folder comparisons, the system traverses up the target directory path. If it discovers that any parent directory of `target_dir` (at or above the target base) is a symlink pointing inside the workspace root (`drift_root`), it **aborts immediately** with a `RuntimeError`. Automatic cleanup/resolution of parent-level symlinks is highly risky and must be resolved manually by the user to avoid data loss.
-
-#### 2. Unified Recursive Audit Flow
-If the parent symlink safety check passes, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically). 
-
-Files are categorized and safely routed to prevent overwriting or data loss:
-1.  **Internal Symlinks (`diff.internal_symlinks`)**:
-    *   Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution.
-    *   The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and (if the repository expects a physical directory at that path) recreates it as a physical directory to avoid infinite directory-reference loops.
-2.  **Deleted files & Type Mismatches (`diff.deleted`)**:
-    *   *Ignored Files*: If a file exists on the system at a path matched by `.drift_ignore` patterns, it acts as an active delete instruction. It is backed up to `backup/<package>/deleted_files/<path>` and removed from the active system.
-    *   *Type Mismatches*: If the type of a target path on the host system differs from the repository (e.g., a physical regular file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and removes it to clear the way.
-3.  **Modified paths (`diff.modified`)**:
-    *   *Stow Link Exemption*: If the package is deployed via `stow` and the target is already a symlink pointing to OUR package inside the `install/` base directory, it is a valid pre-existing link and is skipped.
-    *   *Copy Mode Exemption*: If the package is deployed via `copy` and it is **not** a first-time installation (i.e. already registered as `"installed"` or `"staged"` in `state.toml`), collision backups are skipped; the target file is simply overwritten with updated contents.
-    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
-4.  **Matches (`diff.matches` under Stow mode)**:
-    *   If a file matches the repo's content exactly but exists on the host as a **regular physical file** rather than a symlink, it is still treated as a collision because Stow requires symlinks. The system backs up the physical file to `backup/<package>/overwritten/<path>` and deletes it so the symlink can be created safely.
-
-### C. Incremental vs. Full Deployment Strategies
-To minimize system disruption and application reloads, deployment is executed under two distinct strategies:
-1.  **Incremental Deployment (Surgical File-by-File)**:
-    *   When executing a contiguous `make deploy` sequence, Primitive 4 outputs a granular list of added, modified, or deleted files.
-    *   In both `stow` and `copy` modes, the deployment engine **avoids invoking external command-line tools** (like the `stow` binary or heavy shell directories copiers).
-    *   Instead, it surgically iterates through the computed file list, creating individual symlinks (or copying individual files) manually. This maintains a minimal interruption footprint and prevents bulk reload signals to running processes.
-    *   **Infinite Loop Protection**: In `stow` mode, before creating any symlink `~/<path>`, the incremental deployer traverses up the directory path from the parent. If it discovers any parent directory (e.g. `~/.config/nvim/`) is **already a symlink** pointing into `install/`, it **must immediately and safely skip** creating individual symlinks inside that directory. This prevents creating self-referencing circular symlink loops inside the local database.
-2.  **Full Deployment (Heavy-Duty Fallback)**:
-    *   When triggering a standalone deployment, running `make rollback`, or performing a first-time setup, the system defaults to a robust **Full Package Redeploy**.
-    *   It utilizes high-level automated commands:
-        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`, prefixed with `sudo` if configured.  
-        TODO: If stow >= 2.4.1 (which fix --dotfiles problems with stow ignore) is not found, we should symlink file by file in the package folder, and print a warning at the end.
-        *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured. Use `rsync` first, if not available, fallback to `cp`) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.  
-
-The program needs to ensure the compatibility between these two ways. In either way, the program needs to check the package config has 'enable_install=true' and load the install method, install location, sudo flag from it.
-
-### D. Ignored Files and Name Conversion Rules
-Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
-1.  **Ignore Filter (`.drift_ignore`)**:
-    *   The system parses `.drift_ignore` at the root of each package directory.
-    *   Any file matching the ignore patterns (such as `package.toml` or helper files) is completely skipped during render and deployment.
-    *   An extra `.stow-local-ignore` must be generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as a package.
-2.  **Prefix Conversion (`dot-` to `.`)**:
-    *   To allow developers to easily manage hidden folders in standard git environments, folders and files starting with the prefix `dot-` inside `install/` must be translated to a dot `.` prefix at deployment target paths.
-    *   *Example*: `install/shell/dot-bashrc` translates to `~/.bashrc`.
-    *   *Example*: `install/nvim/dot-config/nvim/` translates to `~/.config/nvim/`.
-    *   This translation is enforced symmetrically across both `stow` and `copy` installation methods.
-
-### E. Active Package Discovery (`config/drift.toml`)
-Rather than scanning the entire `src/` directory, the system reads an explicit active packages registry from `config/drift.toml`. Only packages listed as enabled in this file are evaluated.
-*   *Example*:
-    ```toml
+```toml
     # =====================================================================
     # drift.toml Configuration
     # =====================================================================
@@ -364,61 +300,65 @@ Rather than scanning the entire `src/` directory, the system reads an explicit a
     proxychains = false
     ```
 
-Input files of every used render engine should be stated clearly in this configuration. Corresponding render engine will be disabled if its input file is not stated in `drift.toml` file or cannot be read. If any file in `src/` relies on that render engine, a render failure will occur.  
-Render engine input file can be a template of another render engine, only one level of rendering is allowed. The name "file.<engine1>.suffix" is allowed, this input template file will be rendered using engine 1. The name "file.<engine1>.<engine2>.suffix" for engine 3 won't work, only engine 2 rendering will be applied, and "file.<engine1>.suffix" will be used as final input file to engine 3.  
-Rendered outputs will be stored at `render/config/file.suffix` .  
-So, what can be done if we need a multi-level rendering? A clean dependency hierarchy should be maintained, input files of powerful render engines can be rendered by simple ones.  
-User MUST NOT create cyclic dependency in render engine inputs. Dependency error will be thrown before anything being rendered.
+#### Meta-Config Templating: `drift.envst.toml`
+To allow complete bootstrapping of workspaces under different environment parameters, the main config file itself can be a template. By renaming `config/drift.toml` to `config/drift.envst.toml`, the system will compile it on-the-fly using `envsubst` populated with active system-level environment variables.
+*   The generated output is safely saved to a temporary path, loaded, and printed in the logs:
+    ```
+    # pseudocode when config/drift.toml does not exist and config/drift.envst.toml can be found.
+    tempfile=$(mktemp)
+    envsubst < config/drift.envst.toml > $tempfile
+    echo "Workspace config is loaded from: $tempfile"
+    ```
 
-This `drift.toml` file can also be a template. You can rename `drift.toml` to `drift.envst.toml` to enable this meta rendering. But only one level of envsubst will be used. The input of envsubst is the env variables when invoking this application. The rendered result will be stored in a temporary file with path printed out.
+### B. Custom Render Engines & Template Input Dependencies
+Rather than utilizing closed/hardcoded compilation scripts, the drift workspace supports registering flexible, custom-defined template render engines.
 
-```
-# pseudocode when config/drift.toml does not exist and config/drift.envst.toml can be found.
-tempfile=$(mktemp)
-envsubst < config/drift.envst.toml > $tempfile
-echo "Workspace config is loaded from: $tempfile"
-```
+#### 1. Custom Render Engine Schema
+Under the `[render.<engine_name>]` tables in `drift.toml`, developers can define arbitrary engines. Each engine declaration supports three main properties:
+1.  **`input_file`**: The file path providing active variables or values to the engine (e.g. a shell environment script or JSON dataset). If relative, the path is always resolved against the `config/` base folder.
+2.  **`suffix`**: The file extension pattern matched by the engine (e.g., matching `.envst` or `.mustache`).
+3.  **`render_command`**: The exact shell execution pattern used to compile files. It supports two special interpolation placeholders:
+    *   `%i`: Substituted with the resolved, absolute path of the engine's `input_file` (or its rendered counterpart).
+    *   `%s`: Substituted with the absolute path of the source template file inside `src/`.
 
-### F. Execution Safeguards and Package Exclusion
-*   **The `enable_install = false` Block**:
-    *   If a package's `package.toml` declares `enable_install = false`, the sync engine **completely skips copying its files from `render/` to `install/`**.
-    *   This ensures the package remains purely in the sandbox and has no presence inside the local state database, preventing any accidental system deployments.
+#### 2. Template Input Dependencies
+Render engines often require dynamic input parameters (such as `mustache` needing a static JSON configuration constructed from variable environment templates). To support this cleanly, the drift engine natively implements **Template Input Dependencies**:
+*   An engine's `input_file` can itself be a template matching another registered render engine.
+*   **The Single-Level Resolution Chain**: 
+    If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first.
+    *   *Example*: The `mustache` engine registers `input_file = "mustache.envst.json"`. Since `.envst.json` matches the `envsubst` suffix (`envst`), the compiler first renders `config/mustache.envst.json` via the `envsubst` engine.
+    *   The compiled static output is saved inside the sandbox under `render/config/mustache.json`.
+    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/config/mustache.json`).
 
-### G. Orphan Package Garbage Collection & Uninstall Protection
-To maintain parity between declarations and system states, the deployer enforces two robust policies:
-1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
-    *   When executing a **Bulk All-Packages Deployment** (`make deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift.toml` (and respects `enable_install = false` in `package.toml`).
-    *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the deployment script **automatically executes Primitive 7 (Uninstall) on this orphan package** before initiating Stage 2 deployment.
-    *   This ensures decommissioned packages are automatically and cleanly purged from the host system.
-2.  **Uninstall Protection Safeguard**:
-    *   If a user tries to manually uninstall a package (e.g. `make uninstall package=proxychains`), but that package is **still active/enabled** inside `config/drift.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
-    *   In this case, the uninstaller will **halt and print an error**, instructing the user to first disable the package in declarations, **unless a `--force` flag is supplied**.
+#### 3. Single-Level Suffix Resolution Constraint
+The template resolution engine resolves exactly **one level** of input template compilation. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:
+*   An input named `file.<engine1>.<engine2>.suffix` is evaluated as a template for `engine2` only. The `<engine1>` portion of the name remains treated as passive text, and `file.<engine1>.suffix` is forwarded as the final compiled input file to the parent engine.
 
-### H. Architectural Policy on Host Deletions
-If a configuration file or symlink is manually deleted by the user on the active system target:
-*   Stage 1's `Reverse Sync` detects the deletion and symmetrically removes the file counterpart inside `install/`.
-*   This generates an uncommitted deletion state (`git -C install status` will show the file as deleted). This is **intentional behavior**: the system's current live state (deletion) is faithfully tracked by Diff B.
-*   **Reconciling Deletion (Adopt vs. Dismiss)**:
-    *   *Adopt*: To persist the deletion declaratively, the user must update their `src/` templates to remove the file, commit the deletion inside `install/`, and backport changes.
-    *   *Dismiss (Recovery)*: To discard the deletion and restore the file, the user simply runs `make deploy` (Stage 2 will render the sandbox copy, see it as missing in `install/` and recreate the file and link via normal `Add` logic, completing a clean `Delete -> Add` Git timeline).
+#### 4. Directed Acyclic Graph (DAG) Cyclic Detection
+Because inputs can depend on the outputs of other engines, compilation order must follow a strictly sequential pipeline.
+*   Before any rendering begins, the compiler builds a dependency graph of all registered render engines and executes a **Cycle Detection** algorithm.
+*   If any circular dependency is detected (e.g., Engine A's input depends on Engine B's output, and Engine B's input depends on Engine A's output), compilation is instantly aborted with a `CyclicDependencyError` to prevent infinite rendering loops.
 
-### I. Naming Convention for Templates (IDE & LSP Friendly)
-To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax highlighting, linting, autocomplete) for template files within editors (such as VSCode, Neovim, or Emacs), the system enforces a strict suffix naming convention:
-*   **Format**: `[filename].[engine_prefix].[target_extension]`
-*   **Officially Supported Engines** (Custom engines can be defined in `drift.toml`):
-    1.  *Envsubst*: Uses suffix **`.envst.[ext]`** (e.g., `dot-bashrc.envst.sh`, `all_proxy.envst.conf`).
-    2.  *Mustache*: Uses suffix **`.mustache.[ext]`** (e.g., `home.mustache.nix`, `settings.mustache.json`).
-*   **Why this is superior**: Because the terminal extension is the actual target format (like `.sh`, `.nix`, `.json`), text editors instantly apply the correct syntax highlighting, formatters, and LSP environments without requiring custom regex filetype mappings.
+#### 5. Graceful Disabling & Deferred Execution Check
+If a registered engine's `input_file` is not specified, is empty, or is missing on disk (whether as a static path or a templated dependency), the compilation engine handles it gracefully:
+*   **Initialization Warning**: During the workspace bootstrapping phase (`render_input_templates`), instead of raising a fatal crash, the engine logs a clear, descriptive warning and sets the engine's resolved input file to `Path("")` (an empty path). This allows other independent render processes to initialize and compile normally.
+*   **Deferred Runtime Check**: The safety safeguard is deferred to actual template rendering. If any template file in the repository relies on a gracefully disabled engine, the core rendering pipeline (`resolve_render_template_args`) checks for the empty `Path("")` input path. If found, it halts compilation immediately with a descriptive `ValueError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
 
----
+### C. Package Configuration: `package.toml` Specification
+A package configuration file—named either `package.toml` or `drift_package.toml`—is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
 
-## 6. Detailed Implementation Specifications
+#### Loading and Rendering Code Flow
+The engine evaluates and loads package configurations during compilation using the following deterministic sequence:
+1. **Discovery & Probing**: The config loader checks the package root for any valid configuration file or template. The file detection order is:
+   - `drift_package.toml`
+   - `package.toml`
+   - Templated configs matching registered render engines (e.g. `drift_package.<engine_suffix>.toml`, `package.<engine_suffix>.toml`).
+2. **On-the-Fly Template Rendering**:
+   - If a static `.toml` file is matched, it is loaded directly.
+   - If a templated `.toml` configuration is found, the engine compiles it on-the-fly using the matched template engine. The rendered output is saved in the sandbox at `render/<package_name>/drift_package.toml` and then loaded from there.
+3. **Exclusion Guard**: Regardless of its original name, the package configuration file is strictly marked as a metadata file. It is **never copied** or symlinked into the `install/` directory or deployed to the active target system.
 
-### Package Metadata: `package.toml` Template
-
-Each modular subdirectory under `src/` can contain a `package.toml` to customize its compilation, target locations, deployment types, and life cycles. If omitted, default configurations are applied. This config file has an alternative name `drift_package.toml` if filename `package.toml` is used for other purpose and cannot be used in this package.  
-Therefore, config loader should check if `drift_package.toml` exists first then `package.toml` . Regardless of the name, the actual file selected as config file should not be copied into `install/` folder.
-
+#### Default Config Template:
 ```toml
 # =====================================================================
 # package.toml Template & Specification
@@ -456,12 +396,24 @@ target_directory = "~/.config/example"
 sudo = false
 
 # ---------------------------------------------------------------------
-# Fully-Controlled Directory (FCD) Audit Options
+# Fully-Controlled Directory (FCD) Audit Options & Ignore Mechanics
 # ---------------------------------------------------------------------
 # List of subdirectories (expressed as relative paths under target_directory)
 # which are fully owned by this dotfiles repository.
-# Stage 1 will recursively scan these folders on the host system. Any wild/untracked
-# files found here will be reverse-synchronized back to install/ to prevent lost updates.
+# Stage 1 recursively scans these folders on the host system. Any untracked
+# files found here are reverse-synchronized back to install/.
+#
+# FCD Ignore & Discard Reconciliation Mechanics:
+# When untracked files are found in FCDs, they are reverse-synced to install/.
+# Developers can reconcile them using `drift adopt`:
+# - Adopt: Copy the file from install/ to src/ (translating dot-prefixes).
+# - Ignore: Symmetrically deletes the file from install/, and appends the
+#   relative path pattern to the package's `.drift_ignore` file. This prevents
+#   future reverse-sync passes from sweeping this file back to install/, leaving
+#   it safely untouched on the host system.
+# - Discard/Delete: Symmetrically deletes the file from the install/ database. 
+#   In the subsequent deploy pass, since the file is missing from src/ (not rendered), 
+#   it is treated as an orphan and is automatically deleted from the host system.
 fully_controlled_dirs = [
     "sub_dir1",
     "sub_dir2"
@@ -488,32 +440,230 @@ post_render = "post-render.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 hook_timeout = 120
-
 ```
-
-If the package config toml file is not present, and one of the follwing things happened:  
-
-1. this package is explicitly mentioned in commands.
-2. this package is not disabled in workspace config `drift.toml` file, and the user invokes a global operation without specific package name.  
-
-Then an error will be thrown to prevent system corruption, and the render process will not start.  
-
-You can always using CLI `drift new <package-folder> [<package.toml | drift_package.toml>]` to init a package level config in that folder.  
-
-The package toml config file can be a template, the template should be rendered using the render engines defined in workspace config file `drift.toml` . The rendered output is stored at `render/<pkg>/package.toml | drift_package.toml` . The output name depends on the template name. Only one level of rendering is allowed.  
-
-The overall file detection order should be like:  
-1. drift_package.toml
-2. package.toml
-3. drift_package.<engine1>.toml
-4. template to drift_package.toml of engine 2 and so on.  
-5. package.<engine1>.toml  
-6. template to package.toml of engine 2 and so on.  
-
-The order of engine 1, engine 2, engine 3 is undefined, because toml dict doesn't have a reliable key order.
 
 
 ---
+
+## 6. Execution Safeguards, Policies & Customization
+
+This section defines the core architectural policies, safeguards, and customization guidelines required to maintain technical integrity.
+
+### A. Ignored Files and Name Conversion Rules
+Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
+1.  **Ignore Filter (`.drift_ignore`) Syntax & Rules**:
+    *   **Single File Restriction**: Exactly **one** `.drift_ignore` (or `drift_ignore`) file is allowed at the root of each package directory. Nested subdirectory ignore files are strictly prohibited and will trigger execution aborts.
+    *   **Syntax & Engine**:
+        *   The `.drift_ignore` matches the exact syntax and matching rules used by GNU Stow's `.stow-local-ignore`.
+        *   **No Globbing**: The ignore engine **does NOT use globbing**. Instead, it compiles and evaluates patterns as **PCRE Regular Expressions** (compiled in Python's `re` engine).
+        *   **Comments and Blank Lines**: Lines starting with `#` are treated as comments and stripped (unless escaped as `\#`), and empty lines are bypassed.
+    *   **Matching Algorithm**:
+        *   *With Slashes*: If a pattern contains a forward slash `/`, it is evaluated against the complete relative path of the file prefixed with a forward slash (e.g. `/dot-config/coc-settings.json`).
+        *   *Without Slashes*: If a pattern does not contain a slash, it is matched directly against the file's `basename` (e.g., `\.bak$`).
+    *   **Match Timing Guard**: The ignore engine matches file patterns against the native repository filenames **before** any prefix conversion or suffix extraction takes place.
+        *   *Important*: To ignore a file named `dot-bashrc`, your `.drift_ignore` file must list `dot-bashrc`, not `.bashrc`. Listing `.bashrc` will fail to match on disk, and the file will still be processed.
+    *   **Implicit Exclusions**: Package configurations (such as `package.toml` and `drift_package.toml`) are automatically excluded by the compilation engine without requiring manual entries.
+    *   An extra `.stow-local-ignore` is dynamically generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as an active package.
+
+    #### PCRE `.drift_ignore` File Example:
+    ```ini
+    # Ignore any files ending in '.bak' anywhere in the package
+    \.bak$
+
+    # Ignore any files starting with a tilde (such as temp files)
+    ^~
+
+    # Ignore a specific directory named 'build' anywhere in the package path
+    /build/
+
+    # Ignore a specific path relative to the package root
+    ^/dot-config/coc-settings\.json$
+
+    # Ignore a specific directory under a subfolder, recursively
+    ^/dot-config/nvim/tmp/
+    ```
+
+2.  **Prefix Conversion (`dot-` to `.`)**:
+    *   To allow developers to easily manage hidden folders in standard git environments, folders and files starting with the prefix `dot-` inside `install/` must be translated to a dot `.` prefix at deployment target paths.
+    *   *Example*: `install/shell/dot-bashrc` translates to `~/.bashrc`.
+    *   *Example*: `install/nvim/dot-config/nvim/` translates to `~/.config/nvim/`.
+    *   This translation is enforced symmetrically across both `stow` and `copy` installation methods.
+
+### B. Naming Convention for Templates (IDE & LSP Friendly)
+To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax highlighting, linting, autocomplete) for template files within editors (such as VSCode, Neovim, or Emacs), the system enforces a strict suffix naming convention:
+*   **Format**: `[filename].[engine_prefix].[target_extension]`
+*   **Officially Supported Engines** (Custom engines can be defined in `drift.toml`):
+    1.  *Envsubst*: Uses suffix **`.envst.[ext]`** (e.g., `dot-bashrc.envst.sh`, `all_proxy.envst.conf`).
+    2.  *Mustache*: Uses suffix **`.mustache.[ext]`** (e.g., `home.mustache.nix`, `settings.mustache.json`).
+*   **Why this is superior**: Because the terminal extension is the actual target format (like `.sh`, `.nix`, `.json`), text editors instantly apply the correct syntax highlighting, formatters, and LSP environments without requiring custom regex filetype mappings.
+
+### C. Incremental vs. Full Deployment Strategies
+To minimize system disruption and application reloads, deployment is executed under two distinct strategies:
+1.  **Incremental Deployment (Surgical File-by-File)**:
+    *   When executing a contiguous `make deploy` sequence, Primitive 4 outputs a granular list of added, modified, or deleted files.
+    *   In both `stow` and `copy` modes, the deployment engine **avoids invoking external command-line tools** (like the `stow` binary or heavy shell directories copiers).
+    *   Instead, it surgically iterates through the computed file list, creating individual symlinks (or copying individual files) manually. This maintains a minimal interruption footprint and prevents bulk reload signals to running processes.
+    *   **Infinite Loop Protection**: In `stow` mode, before creating any symlink `~/<path>`, the incremental deployer traverses up the directory path from the parent. If it discovers any parent directory (e.g. `~/.config/nvim/`) is **already a symlink** pointing into `install/`, it **must immediately and safely skip** creating individual symlinks inside that directory. This prevents creating self-referencing circular symlink loops inside the local database.
+2.  **Full Deployment (Heavy-Duty Fallback)**:
+    *   When triggering a standalone deployment, running `make rollback`, or performing a first-time setup, the system defaults to a robust **Full Package Redeploy**.
+    *   It utilizes high-level automated commands:
+        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`, prefixed with `sudo` if configured.  
+            If stow >= 2.4.1 (which fix --dotfiles problems with stow ignore) is not found, the external `stow` command will be replaced by incremental deployment for all files in install folder.
+        *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured. Use `rsync` first, if not available, fallback to `cp`) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+
+The program needs to ensure the compatibility between these two ways. In either way, the program needs to check the package config has 'enable_install=true' and load the install method, install location, sudo flag from it.
+
+### D. Physical Conflict Prevention (Collision Guard)
+To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces four levels of audits using the centralized `compare_folders` tool. 
+
+#### 1. Target Parent Symlink Safety Abort (Pre-Check)
+Prior to running any folder comparisons, the system traverses up the target directory path. If it discovers that any parent directory of `target_dir` (at or above the target base) is a symlink pointing inside the workspace root (`drift_root`), it **aborts immediately** with a `RuntimeError`. Automatic cleanup/resolution of parent-level symlinks is highly risky and must be resolved manually by the user to avoid data loss.
+
+#### 2. Unified Recursive Audit Flow
+If the parent symlink safety check passes, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically). 
+
+Files are categorized and safely routed to prevent overwriting or data loss:
+1.  **Internal Symlinks (`diff.internal_symlinks`)**:
+    *   Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution.
+    *   The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and (if the repository expects a physical directory at that path) recreates it as a physical directory to avoid infinite directory-reference loops.
+2.  **Deleted files & Type Mismatches (`diff.deleted`)**:
+    *   *Ignored Files*: If a file exists on the system at a path matched by `.drift_ignore` patterns, it acts as an active delete instruction. It is backed up to `backup/<package>/deleted_files/<path>` and removed from the active system.
+    *   *Type Mismatches*: If the type of a target path on the host system differs from the repository (e.g., a physical regular file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and removes it to clear the way.
+3.  **Modified paths (`diff.modified`)**:
+    *   *Stow Link Exemption*: If the package is deployed via `stow` and the target is already a symlink pointing to OUR package inside the `install/` base directory, it is a valid pre-existing link and is skipped.
+    *   *Copy Mode Exemption*: If the package is deployed via `copy` and it is **not** a first-time installation (i.e. already registered as `"installed"` or `"staged"` in `state.toml`), collision backups are skipped; the target file is simply overwritten with updated contents.
+    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
+4.  **Matches (`diff.matches` under Stow mode)**:
+    *   If a file matches the repo's content exactly but exists on the host as a **regular physical file** rather than a symlink, it is still treated as a collision because Stow requires symlinks. The system backs up the physical file to `backup/<package>/overwritten/<path>` and deletes it so the symlink can be created safely.
+
+### E. Execution Safeguards and Package Exclusion
+To enable granular control over modular configurations, the deployment pipeline respects three cascading enablement switches across different execution phases:
+
+#### 1. Global Activation Switch: `drift.toml [packages.enable]`
+*   **Location**: Global workspace config (`config/drift.toml`).
+*   **Affected Phase**: **Global Workspace Discovery**.
+*   **How it works**: This table controls whether a package is active on this machine.
+    *   If a package is set to `false` (or is unlisted while `DEFAULT = false` is active), the orchestrator completely ignores its directory.
+    *   The package is skipped during *render*, *stage*, and *deploy* tasks if the package name is not explicitly mentioned in commands.
+    *   **Self-Cleaning**: If a package was previously installed but is now toggled to `false` in this table, running a bulk `make deploy` will automatically detect the orphan status and invoke **Primitive 7 (Uninstall)** to cleanly remove it from the system.
+
+#### 2. Sandbox Compilation Switch: `package.toml -> enable_render`
+*   **Location**: Package configuration file (`src/<pkg>/package.toml`).
+*   **Affected Phase**: **Primitive 2: Render Packages** (Sandbox Rendering).
+*   **How it works**: Controls whether templates inside `src/` are compiled and output into the `render/` sandbox directory.
+    *   Defaults to `true`. If explicitly set to `false`, the rendering engine skips compiling the package directory entirely.
+    *   This is useful for local static packages where no template processing is required and the developer wants to bypass rendering and installing completely.
+
+#### 3. State Promotion Switch: `package.toml -> enable_install`
+*   **Location**: Package configuration file (`src/<pkg>/package.toml`).
+*   **Affected Phase**: **Primitive 4: Stage Render to Install** (Staging Promotion).
+*   **How it works**: Controls whether compiled files in the `render/` sandbox are promoted to the staging state database `install/` for eventual deployment to the system.
+    *   Defaults to `true`. If set to `false`, the sync engine **completely skips copying its files from `render/` to `install/`**.
+    *   This isolates the package's output files inside the local `render/` sandbox database, preventing them from registering in the state database or deploying onto the host target. This is ideal for testing rendering outputs in sandboxes before enabling active system installation.
+
+### F. Orphan Package Garbage Collection & Uninstall Protection
+To maintain parity between declarations and system states, the deployer enforces two robust policies:
+1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
+    *   When executing a **Bulk All-Packages Deployment** (`make deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift.toml` (and respects `enable_install = false` in `package.toml`).
+    *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the deployment script **automatically executes Primitive 7 (Uninstall) on this orphan package** before initiating Stage 2 deployment.
+    *   This ensures decommissioned packages are automatically and cleanly purged from the host system.
+2.  **Uninstall Protection Safeguard**:
+    *   If a user tries to manually uninstall a package (e.g. `make uninstall package=proxychains`), but that package is **still active/enabled** inside `config/drift.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
+    *   In this case, the uninstaller will **halt and print an error**, instructing the user to first disable the package in declarations, **unless a `--force` flag is supplied**.
+
+### G. Architectural Policy on Host Deletions & System Drift Adoption
+If a configuration file, folder, or symlink is manually deleted, modified, or added by the user on the active system host target, the deployment pipeline executes the following reconciliation flow:
+
+1.  **Reverse Sync Detection**:
+    *   Stage 1's **Reverse Sync** detects that the file has been deleted, modified, or added on the target system and symmetrically syncs/mirrors the change inside the `install/` base folder (handling reverse prefix translations like `.` back to `dot-` automatically).
+    *   This generates an uncommitted state inside the `install/` state database (e.g., `git -C install status` will list files as deleted, modified, or newly created). This is intentional; it reflects the real-world live configuration change and represents active host drift (Diff B).
+
+2.  **Reconciling Deletions (Adopt vs. Discard/Restore)**:
+    *   **Adopt (Persist the Deletion)**:
+        *   If the user wants to permanently keep this deletion, they must delete the corresponding source template from the `src/` directory.
+        *   They can then commit the deletion inside the `install/` git repository, aligning the declarative source with the local state.
+    *   **Discard (Restore the File / Acknowledge System Drift)**:
+        *   If the user wants to reject the deletion and restore the file to the active host target, they must **commit the deletion inside the `install/` repository without changing anything in `src/`**.
+        *   This commit serves as a formal **acknowledgement on system drift**, returning the `install/` repository status to clean/committed.
+        *   Because the template file still exists in `src/`, running `make deploy` (Stage 2) compiles the template into `render/`, sees that the compiled file is missing in the newly clean `install/` base (since we committed its deletion!), treats it as a brand-new **file addition**, stages it to `install/`, and deploys it back onto the system, perfectly restoring the missing resource!
+
+3.  **Adopting Host-Side Modifications & New Additions**:
+    When manual modifications or new file additions (within Fully-Controlled Directories or from type promotions) are reverse-synced back into `install/`:
+    *   **To Adopt a File Modification**:
+        1.  *Commit the Drift*: Run `git commit` on the `install/` repository to commit the reverse-synced modification. This action formally acknowledges and settles the system drift.
+        2.  *Declarative Backport*: Manually copy or merge the updated file content from `install/<package>/<path>` back into the original source file or template inside `src/<package>/<path>`. This ensures the changes are permanently preserved in the source repository for future builds.
+    *   **To Adopt a New File Addition**:
+        1.  *Commit the Drift*: Run `git -C install add <file>` followed by `git commit` to register and commit the new resource inside the local `install/` state database.
+        2.  *Declarative Alignment*: Copy the newly added file from `install/<package>/<path>` back into the matching folder under `src/<package>/<path>` (converting dot-prefixes to native names, and setting up template suffixes or config mappings if desired).
+
+### H. State Registry Database (`install/state.toml`)
+To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.
+*   This registry tracks package lifecycle states:
+    ```toml
+    # install/state.toml
+    [packages.nvim]
+    state = "installed"
+    last_deployed = "2026-08-16T21:10:50.123456"
+    install_method = "stow"
+    deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
+
+    [packages.qbittorrent]
+    state = "staged"
+    install_method = "copy"
+    deployed_files = ["config.ini"]
+
+    [packages.wezterm]
+    state = "deploying"
+    install_method = "stow"
+    deployed_files = []
+    ```
+*   **Lifecycle States**:
+    - **`"installed"`**: (Stable) The package is fully applied to the host system.
+    - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
+    - **`"staging"`**: (Transient) The package is currently undergoing database synchronization (Primitive 4).
+    - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
+*   **Safety Abort Logic**:
+    When a package enters Primitive 4 or 5, the system checks its current state.
+    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
+    - **Nesting and Scope Safety Checks**: 
+      The target directory written in the configuration (`target_directory` or `default_target_path`) cannot be inside or equal to the `drift` workspace root (`drift_root`). If the absolute target directory is inside or equal to the absolute workspace root, the operation **aborts immediately** with a `ValueError`. This protects the workspace from accidentally being polluted or recursively linked.
+    - A package in **`"staged"`** state is allowed to proceed to deployment or be re-staged.
+*   **Hook Classification**:
+    When a package is about to be deployed:
+    1.  The system reads `install/state.toml`.
+    2.  If the package is **not listed** in the registry, it is classified as a **First-Time Installation** (triggers `pre/post_install`).
+    3.  If the package is **listed** (even as `"staged"` or `"installed"`), it is classified as an **Update/Redeploy** (triggers `pre/post_update`).
+*   **Desired-State Manifest Tracking**:
+    To ensure self-healing and robust deletion behavior during standalone executions, retries, or rollbacks without relying on event-driven stages (Primitive 4), the registry tracks the precise relative paths of all successfully deployed files under the `deployed_files` array.
+    Upon each full redeployment, the engine compares the current desired files inside `install/<package>/` with the historical `deployed_files` manifest. Any orphaned files found in `deployed_files` but no longer present in `install/` are dynamically treated as delete instructions. They are safely backed up to `backup/<package>/deleted_files/` and surgically pruned from the active host system, ensuring zero file-leaks.
+
+### I. Fully-Controlled Directories (FCD) Audit Mechanics & Ignore Reconciliation
+A package can declare a list of subdirectories under `target_directory` as **Fully-Controlled Directories (FCD)** using the `fully_controlled_dirs` configuration array. These directories are designated as fully owned and managed by the workspace dotfiles package.
+
+#### 1. FCD Reverse-Sync Sweep
+During **Primitive 1: Reverse Sync** (Stage 1 deployment check), the engine recursively traverses the host's FCD subdirectories on disk.
+*   Any wild, untracked, or newly created file found inside these directories on the host is automatically reverse-synchronized and copied back into the `install/` state database folder.
+*   This places the workspace in an uncommitted state, signaling an active host configuration drift that must be reconciled.
+
+#### 2. Bidirectional Reconciliation Flow (`drift adopt`)
+Developers reconcile discovered untracked FCD additions using `drift adopt`, which executes the following underlying Git and ignore engine mechanics depending on the selection:
+*   **Scoped Git Cleanliness Safeguard Check**: Prior to modifying any file inside `src/`, `drift adopt` verifies that the specific target package's source directory (`src/<package>/`) is completely Git clean. This ensures uncommitted draft changes in other active packages do not block the adoption workflow.
+
+*   **Adopt (Keep in Repository)**:
+    1.  *Source Copy*: The file is copied from `install/<package>/` to `src/<package>/` (reverting prefix translations like `.` back to `dot-` and preparing template configurations if desired).
+    2.  *Commit*: The change is committed, merging the new file permanently into the declarative source repository.
+*   **Ignore (Keep on System, Stop Tracking)**:
+    1.  *State Unlink*: The untracked file is deleted from the `install/<package>/` state database, restoring state cleanliness.
+    2.  *Ignore Registration*: The file's relative path pattern is appended to the package's `.drift_ignore` PCRE ignore configuration.
+    3.  *The Result*: During all future `reverse-sync` sweeps, the ignore engine sees that the physical host file matches `.drift_ignore` and skips syncing it, allowing the untracked file to reside on the active host system without registering as database drift.
+*   **Discard/Delete (Remove from System)**:
+    1.  *State Indexing (`git add`)*: Instead of immediately unlinking, Drift stages and tracks the untracked file inside the local `install/` Git repository by executing `git -C install add <file_path>`.
+    2.  *Staging Delta Promotion*: On the subsequent `drift deploy` (Stage 2) run, because the file is tracked in `install/` but is completely absent from the newly compiled `render/` sandbox output, the staging promotion compiler (`drift stage` / Primitive 4) automatically flags it as an **orphaned deletion** (tracked in state, but missing from compiled declarations).
+    3.  *The Result*: A delete instruction is generated for this file, and during the physical deployment phase (`drift apply` / Primitive 5), it is symmetrically and cleanly deleted from the active host system, restoring pristine configuration baseline alignment!
+
+---
+
+## 7. Detailed Implementation Specifications
 
 ### Detailed Workflow Control Flow & Pseudocode
 
@@ -1120,11 +1270,11 @@ def run_primitive_8_rollback_recovery(target_pkg=None):
 
     print("[SUCCESS] Rollback recovery complete. Clean state restored.")
 ```
-```
+
 
 ---
 
-## 7. Philosophical & Operational Benefits
+## 8. Philosophical & Operational Benefits
 
 By implementing this architecture, the user reaps distinct Unix-style benefits:
 1.  **Strict Demarcation of Merges**: Automation is restricted to simple *reverse-syncing state* and *unilateral overwrite deployment*. The human developer remains the sole merge authority. If active system changes (Diff B) are dirty, the user is presented with standard Git outputs and handles the backport to templates manually.

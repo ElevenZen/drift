@@ -89,7 +89,85 @@ Only works if the directory is empty or tracked by git.
     📝 Generated config/envsubst.bash and config/mustache.envst.json.
     ```
 
-### B. Status Inspection: `drift status [packages...]` (Planned)
+### B. Package Creation: `drift new <package> [config_filename] [--force]` (Planned)  
+#### **Common Usage**
+Create a new package directory with the default `package.toml` configuration file:
+```bash
+$ drift new nvim
+✨ Package 'nvim' created successfully!
+📝 Generated package.toml at src/nvim/package.toml.
+```
+
+#### **Details & Deep Probing Logic**
+*   **Command Signature**: `drift new <package> [config_filename] [--force / -f]`
+*   **Optional Arguments**:
+    - `<config_filename>`: Explicitly name the config file as `drift_package.toml` or `package.toml` (defaults to `package.toml`).
+    - `--force / -f`: Forcefully overwrites any existing config file inside the package.
+*   **Probing Guard**:
+    - The CLI first checks if *any* configuration file already exists inside the package directory `src/<package>/`.
+    - Specifically, it probes following files if `<config_filename>` is not present:
+      1. `drift_package.toml`
+      2. `package.toml`
+      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.  
+
+    - If any configuration file exists:  
+      - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
+      - If `--force` **is** supplied: Overwrites the configuration with the default template.
+*   **Default Configuration Output**:
+    ```toml
+    # src/<package>/package.toml
+    [package]
+    name = "<package>"
+    install_method = "stow"  # Options: "stow" (symlink) or "copy" (physical)
+    target_directory = "~"   # Destination for this package
+
+    # Lifecycle Hooks (Optional)
+    # pre_install  = ""
+    # post_install = ""
+    # pre_update   = ""
+    # post_update  = ""
+    # post_render  = ""
+    # hook_timeout = 120
+
+    # Advanced Flags
+    # sudo = false
+    # fully_controlled_dirs = []  # Sync deletions inside these directories
+    # enable_render = true
+    # enable_install = true
+    ```
+
+---
+
+### C. Resource Import: `drift add <package> <realfile> [--force]` (Planned)
+#### **Common Usage**
+Import a physical active system configuration file (like `~/.config/nvim/init.lua`) into your declarative source folder:
+```bash
+$ drift add nvim ~/.config/nvim/init.lua
+🚀 Imported ~/.config/nvim/init.lua into nvim package!
+📁 Copied contents to src/nvim/dot-config/nvim/init.lua (Translated dot-prefix).
+```
+
+#### **Details & Deep Logic**
+*   **Command Signature**: `drift add <package> <realfile> [--force / -f]`
+*   **Link State Safeguard**:
+    - The command checks if `realfile` is a symlink pointing into the `install/` state database repository. If it is, the CLI aborts because the file is already under drift's active governance.
+*   **Symlink Resolution Policy**:
+    - If `realfile` is a symlink pointing *elsewhere* (not to the state repository), or if it's a directory containing symlink entries, drift **recursively resolves all symlinks and copies their actual physical contents** rather than copying the links. This ensures complete package self-containment, portability, and reproducibility across fresh machines.
+*   **Path Resolution & prefix Translation**:
+    - Computes `package_config.target_directory` (with a fallback to `workspace_config.default_target_directory`).
+    - Resolves both paths absolutely and computes the relative path: `rel_path = os.path.relpath(abs_realfile, abs_target_dir)`.
+    - **Dot-Prefix Translation (Symmetric Symmetry)**:
+      - Directories and files starting with standard dots `.` must be translated to a `dot-` prefix to maintain Git-friendly name handling in the repository.
+      - *Example*: `.config/nvim/init.lua` is translated to `dot-config/nvim/init.lua`.
+*   **Collision Guard & Backup Policy**:
+    - Before writing, drift checks if there's an existing file or template in the source directory that compiles/renders to the same `realfile` (e.g., checking for both `src/<package>/dot-config/nvim/init.lua` and templates like `init.envst.lua`).
+    - If a collision occurs:
+      - Without `--force`: The command halts and warns of the collision.
+      - With `--force`: Drift **safely moves the colliding template/file to `backup/<package>/deleted_files/`** to avoid irreversible data loss, before overwriting it with the new source file.
+
+---  
+
+### D. Status Inspection: `drift status [packages...]` (Planned)
 Analyzes and aggregates the current system alignment. It computes three independent vectors:
 *   **Template Status (A)**: Did template files under `src/` evolve compared to `render/`?
 *   **System Drift Status (B)**: Has the host system drifted from `install/` due to runtime changes?
@@ -111,7 +189,7 @@ $ drift status
    └── 🚀 Deployment Pending [BLOCK]   ── Blocked by system drift (Run 'drift diff -s')
 ```
 
-### C. Change Visualization: `drift diff [packages...] [options]` (Planned)
+### E. Change Visualization: `drift diff [packages...] [options]` (Planned)
 Provides deep comparisons between configuration layers, outputting side-by-side terminal color diffs.
 
 *   **`drift diff [packages...]` (Default, Pending Delta / Diff C)**:
@@ -123,7 +201,7 @@ Provides deep comparisons between configuration layers, outputting side-by-side 
 
 ---
 
-### D. Safe Deployment: `drift deploy [packages...] [--force]` (Planned)
+### F. Safe Deployment: `drift deploy [packages...] [--force]` (Planned)
 Deploys configurations using a robust, atomic two-stage deployment engine.
 
 #### Stage 1: Safety Guard (Sentinel)
@@ -173,7 +251,7 @@ successfully committed configurations.
 
 ---
 
-### E. Recovery: `drift rollback [packages...] [--force]` (Planned)
+### G. Recovery: `drift rollback [packages...] [--force]` (Planned)
 *   **Mechanism (Primitive 8)**:
     1.  Resets the local state database to the last clean commit: `git -C install reset --hard HEAD`.
     2.  Computes active packages from configurations.
@@ -189,31 +267,109 @@ successfully committed configurations.
 
 ---
 
-### F. Synchronization: `drift adopt [packages...] [--interactive]` (Planned)
-Enables seamless bidirectional workflows. When GUI tools modify configuration files on the system, the developer can choose to "adopt" those modifications.
-*   **Interactive Command Mode**:
-    Allows users to interactively inspect each drift file block, choosing whether to backport it to templates, ignore it, or discard it:
+### H. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [--interactive]` (Planned)
+The `drift adopt` command provides an elegant, bidirectional synchronization workflow. When GUI preferences panels, desktop utilities, or manual edits modify active system configuration files, `drift adopt` allows the developer to cleanly incorporate (adopt) those system drifts back into their declarative templates under `src/`.
+
+#### 1. Pre-adoption Git Safeguard Check
+To prevent blending concurrent modifications or causing accidental data loss, `drift adopt` strictly enforces a scoped, pre-adoption cleanliness guard:
+*   Before modifying any file inside the declarative repository, the command checks if the specific target package source folder (`src/<package>/`) is **Git clean** (contains no uncommitted, staged, or untracked changes).
+*   **Scoped Usability**: Uncommitted modifications in *other* package folders do not block adoption. This allows developers to work on multiple packages concurrently and adopt system edits for one package in isolation.
+*   If the target package source directory (`src/<package>/`) is dirty, the command aborts immediately:
     ```bash
-    $ drift adopt qbittorrent --interactive
-    
-    Found system drift in: ~/.config/qBittorrent/qBittorrent.conf
-    ------------------------------------------------------------
-    + QueueingSystem\MaxActiveDownloads=5
-    - QueueingSystem\MaxActiveDownloads=3
-    ------------------------------------------------------------
-    
-    How would you like to reconcile this block?
-    [1] Backport to template source (src/qbittorrent/dot-config/qBittorrent/qBittorrent.conf)
-    [2] Accept and commit in local state database only (Accept runtime change without changing source template)
-    [3] Discard host change (Will be overwritten on next deploy)
-    [4] Skip file
-    
-    Select option [1-4]: 
+    ❌ [ADOPT ABORTED] The source directory of package 'nvim' has uncommitted modifications!
+    Adopting system configurations into a dirty package directory is unsafe.
+
+    👉 Please commit or stash your changes in 'src/nvim/' before running 'drift adopt nvim'.
     ```
+
+#### 2. Non-Interactive Mode (Targeted File Adoptions)
+*   **Syntax**: `drift adopt <package> [file_paths...]`
+*   **Description**: Symmetrically adopts specific configuration files directly into the package's declarative source folder (`src/<package>/`).
+    *   **File Additions**: Symmetrically copied into the package source folder, automatically converting target-system dotfile prefixes (such as `.bashrc` or `.config/`) back to repository-safe prefixes (`dot-bashrc` or `dot-config/`).
+    *   **File Deletions**: Symmetrically deleted from the package source folder.
+    *   **File Modifications**:
+        *   *Static Source File*: Directly overwrites the source file in `src/` with the reverse-synced file.
+        *   *Templated Source File*: Bypasses blind overwriting to protect placeholders, and attempts a **Symmetric Patch Application** (detailed below). If the patch application fails, the command aborts and instructs the user to run interactive mode to resolve the conflict.
+
+#### 3. Interactive Command Mode (`drift adopt <package> --interactive` or `-i`)
+Walks the developer through every single modified, added, or deleted system file detected in active system drift (Diff B), prompting them with clear reconciliation choices.
+
+##### A. Reconciling File Additions & Deletions
+File additions (which only originate inside Fully-Controlled Directories or from type promotions) and file deletions are distinct events and are handled via dedicated prompts:
+
+###### Scenario 1: Interactive File Additions (FCD)
+When a brand-new file is created on the host inside an FCD, `reverse-sync` pulls it into the `install/` base. During `drift adopt -i`, the developer is prompted:
+```bash
+Found host file addition inside FCD: ~/.config/qBittorrent/themes/dark.qbtheme
+------------------------------------------------------------
+New physical file created on host system.
+------------------------------------------------------------
+
+Reconciliation options:
+[1] Adopt and copy into source package (Creates src/qbittorrent/dot-config/qBittorrent/themes/dark.qbtheme)
+[2] Ignore file (Unlinks from install/, appends 'dark.qbtheme' to .drift_ignore to prevent future reverse-sync)
+[3] Discard file (Stages file to install/ database so it is deleted from host on next deployment)
+[4] Skip file
+
+Select option [1-4]: 
+```
+
+###### Scenario 2: Interactive File Deletions
+When a tracked file is deleted on the host system, `reverse-sync` records its deletion in `install/` as an uncommitted change. During `drift adopt -i`, the developer is prompted:
+```bash
+Found host file deletion: ~/.config/nvim/init.lua
+------------------------------------------------------------
+Tracked file deleted on host system.
+------------------------------------------------------------
+
+Reconciliation options:
+[1] Adopt deletion (Deletes src/nvim/dot-config/nvim/init.lua from source package)
+[2] Discard deletion / Restore (Saves uncommitted deletion, will be re-rendered & redeployed in next deploy)
+[3] Skip file
+
+Select option [1-3]: 
+```
+
+##### Under-the-Hood FCD Ignore & Discard Git Mechanics
+When a developer makes choices on FCD untracked files, the underlying database states and ignore engines coordinate as follows to achieve mathematical alignment:
+*   **Adopting (Option [1])**: Drift copies the file from `install/<package>/` to `src/<package>/` (translating dot-prefixes) and commits the change, aligning the source with the active host.
+*   **Ignoring (Option [2])**:
+    1.  *State Unlink*: Drift removes the file from `install/<package>/` (restoring database cleanliness).
+    2.  *Pattern Append*: Drift appends the relative file path pattern to the package's `.drift_ignore` file.
+    3.  *The Result*: In all future `reverse-sync` runs, the ignore engine sees that the host file matches `.drift_ignore` and skips reverse-syncing it. Since the file is deleted from `install/` and ignored in `.drift_ignore`, it won't be part of any next render/deploy comparisons, safely leaving the untracked file alone on the active system.
+*   **Discarding (Option [3])**:
+    1.  *State Track (`git add`)*: Drift stages and tracks the file inside the `install/` state repository (`git -C install add <file_path>`).
+    2.  *The Result*: On the subsequent `drift deploy` (Stage 2) run, because the file is now actively tracked in `install/` but is absent from the newly compiled `render/` sandbox output, the compiler's delta-staging pipeline (`drift stage`) automatically classifies it as an orphaned deletion and generates a delete instruction for it. During `drift apply`, it is safely deleted from the host system, perfectly restoring baseline system alignment!
+
+##### B. Reconciling File Modifications: Resolving the Template Override Challenge
+*   **The Difficulty**: The reverse-synced file in `install/` is static (has variables expanded), but the source file in `src/` is a template (has placeholders like `${ENV_VAR}` or `%i`). Directly overwriting the template with the static file would destroy the templating logic.
+*   **The Drift Solution**:
+    1.  **Symmetric Patch Application**: Drift extracts the active system modifications as a unified patch from the `install/` state repository (`git diff install/<pkg>/file`). It then attempts to programmatically apply this patch onto the template file inside `src/` (re-aligning paths). If the user edits do not overlap with placeholder lines, the patch completes successfully!
+    2.  **Conflict Fallback Pipeline**: If the patch application fails or rejects (due to overlaps with placeholder fields), the interactive terminal displays a patch conflict card:
+        ```bash
+        ⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto template file 'init.envst.lua'!
+           The system changes overlap with existing template placeholders (${ENV_VAR}).
+
+        Choose a fallback resolution strategy:
+        [1] Over-render & Freeze (Overwrites template with static content, saving original template to init.envst.lua.bak)
+        [2] Open Merge Conflict Editor (Opens $EDITOR with conflict markers <<<<<< SYSTEM CHANGE ======= >>>>>>)
+        [3] Open Side-by-Side Reference (Opens $EDITOR with template, while printing host diff to terminal side-by-side)
+        [4] Skip file
+        
+        Select option [1-4]: 
+        ```
+
+##### Fallback Options Explained:
+*   **Option [1] Over-render & Freeze**: Converts the template into a static file. It overwrites `src/<package>/file.envst.lua` with the new static file, while saving a backup of the original template as `file.envst.lua.bak` and logging a warning so the developer can manually restore placeholders later if they wish.
+*   **Option [2] Open Merge Conflict Editor**: Generates a temporary file containing standard three-way git conflict markers (`<<<<<<< SYSTEM CHANGE`, `=======`, `>>>>>>> TEMPLATE PLACEHOLDERS`). It launches the developer's default editor (configured via `$EDITOR`, falling back to `vim` or `nano`). Once edited and saved, the resolved file is validated and committed back to `src/`.
+*   **Option [3] Open Side-by-Side Reference**: Launches the template file inside the developer's editor, while printing the active system diff on the side-by-side terminal screen as reference, letting the developer manually apply settings directly inside their editor without destroying adjacent templates.
 
 ---
 
-### G. Uninstallation: `drift uninstall [packages...] [--force]` (Planned)
+### I. Uninstallation & Detachment: `drift uninstall [packages...] [--force] [--detach]` (Planned)
+The uninstall command supports two distinct operational modes:
+
+#### 1. Standard Uninstall Mode (Default)
 *   **Mechanism (Primitive 7)**:
     1.  Identifies files belonging to the package.
     2.  Removes active symlinks (stow method) or deletes target files (copy method).
@@ -225,85 +381,20 @@ Enables seamless bidirectional workflows. When GUI tools modify configuration fi
         git -C install rm -r --ignore-unmatch <package>/
         git -C install commit -m "Uninstall: Removed package <package>"
         ```
-*   **Safeguard**: Aborts with an error if the package is still declared as active/enabled in `drift.toml`, preventing accidental uninstalls of packages scheduled to run in bulk deploys, unless `--force` is supplied.
 
----  
+#### 2. Detach/Eject Mode (`--detach`)
+*   **Mechanism (Primitive 7 with `--detach`)**:
+    1.  **Keep Configuration**: Keeps the current configuration files active on your host system, fully decoupling them from Drift's future management.
+    2.  **Symlink to Copy Conversion**: If the package was stowed via symlinks, recursively iterates through the deployed files. For every active symlink on the system, the engine unlinks it and copies the physical file counterpart from `install/<package>/` to the active host target path.
+    3.  **Backups Kept Intact**: Leaves historical original backups inside `backup/<package>/overwritten/` completely untouched (does not restore them).
+    4.  **Database Decouple**: Safely deletes the local `install/<package>/` directory and unregisters the package from `install/state.toml`, committing the decoupling to the local database with a `Detach:` prefix:
+        ```bash
+        git -C install add state.toml
+        git -C install rm -r --ignore-unmatch <package>/
+        git -C install commit -m "Detach: Removed package <package>"
+        ```
 
-### H. Package Creation: `drift new <package> [config_filename] [--force]` (Planned)
-#### **Common Usage**
-Create a new package directory with the default `package.toml` configuration file:
-```bash
-$ drift new nvim
-✨ Package 'nvim' created successfully!
-📝 Generated package.toml at src/nvim/package.toml.
-```
-
-#### **Details & Deep Probing Logic**
-*   **Command Signature**: `drift new <package> [config_filename] [--force / -f]`
-*   **Optional Arguments**:
-    - `<config_filename>`: Explicitly name the config file as `drift_package.toml` or `package.toml` (defaults to `package.toml`).
-    - `--force / -f`: Forcefully overwrites any existing config file inside the package.
-*   **Probing Guard**:
-    - The CLI first checks if *any* configuration file already exists inside the package directory `src/<package>/`.
-    - Specifically, it probes following files if `<config_filename>` is not present:
-      1. `drift_package.toml`
-      2. `package.toml`
-      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.  
-
-    - If any configuration file exists:  
-      - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
-      - If `--force` **is** supplied: Overwrites the configuration with the default template.
-*   **Default Configuration Output**:
-    ```toml
-    # src/<package>/package.toml
-    [package]
-    name = "<package>"
-    install_method = "stow"  # Options: "stow" (symlink) or "copy" (physical)
-    target_directory = "~"   # Destination for this package
-
-    # Lifecycle Hooks (Optional)
-    # pre_install  = ""
-    # post_install = ""
-    # pre_update   = ""
-    # post_update  = ""
-    # post_render  = ""
-    # hook_timeout = 120
-
-    # Advanced Flags
-    # sudo = false
-    # fully_controlled_dirs = []  # Sync deletions inside these directories
-    # enable_render = true
-    # enable_install = true
-    ```
-
----
-
-### I. Resource Import: `drift add <package> <realfile> [--force]` (Planned)
-#### **Common Usage**
-Import a physical active system configuration file (like `~/.config/nvim/init.lua`) into your declarative source folder:
-```bash
-$ drift add nvim ~/.config/nvim/init.lua
-🚀 Imported ~/.config/nvim/init.lua into nvim package!
-📁 Copied contents to src/nvim/dot-config/nvim/init.lua (Translated dot-prefix).
-```
-
-#### **Details & Deep Logic**
-*   **Command Signature**: `drift add <package> <realfile> [--force / -f]`
-*   **Link State Safeguard**:
-    - The command checks if `realfile` is a symlink pointing into the `install/` state database repository. If it is, the CLI aborts because the file is already under drift's active governance.
-*   **Symlink Resolution Policy**:
-    - If `realfile` is a symlink pointing *elsewhere* (not to the state repository), or if it's a directory containing symlink entries, drift **recursively resolves all symlinks and copies their actual physical contents** rather than copying the links. This ensures complete package self-containment, portability, and reproducibility across fresh machines.
-*   **Path Resolution & prefix Translation**:
-    - Computes `package_config.target_directory` (with a fallback to `workspace_config.default_target_directory`).
-    - Resolves both paths absolutely and computes the relative path: `rel_path = os.path.relpath(abs_realfile, abs_target_dir)`.
-    - **Dot-Prefix Translation (Symmetric Symmetry)**:
-      - Directories and files starting with standard dots `.` must be translated to a `dot-` prefix to maintain Git-friendly name handling in the repository.
-      - *Example*: `.config/nvim/init.lua` is translated to `dot-config/nvim/init.lua`.
-*   **Collision Guard & Backup Policy**:
-    - Before writing, drift checks if there's an existing file or template in the source directory that compiles/renders to the same `realfile` (e.g., checking for both `src/<package>/dot-config/nvim/init.lua` and templates like `init.envst.lua`).
-    - If a collision occurs:
-      - Without `--force`: The command halts and warns of the collision.
-      - With `--force`: Drift **safely moves the colliding template/file to `backup/<package>/deleted_files/`** to avoid irreversible data loss, before overwriting it with the new source file.
+*   **Safeguard**: Aborts with an error if the package is still declared as active/enabled in `drift.toml`, preventing accidental uninstalls/detachments of packages scheduled to run in bulk deploys, unless `--force` is supplied.
 
 ---  
 
