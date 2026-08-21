@@ -19,7 +19,8 @@ from .actions import (
     execute_status,
     execute_gc,
     execute_diff,
-    execute_add
+    execute_add,
+    execute_adopt
 )
 
 app = typer.Typer(
@@ -293,6 +294,53 @@ def typer_uninstall(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("adopt")
+def typer_adopt(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to adopt specifically"
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Interactively reconcile each drifted file"
+    ),
+    accept_conflicts: bool = typer.Option(
+        False,
+        "--accept-conflicts",
+        help="Apply conflicting patches, writing merge conflict markers directly into templates"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force adoption even if the package source directory has uncommitted modifications"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate the adoption, previewing changes and conflict results"
+    )
+) -> None:
+    """Adopt active system drifts and incorporate them back into source templates."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_adopt(
+            drift_root=drift_root,
+            package_names=packages or [],
+            interactive=interactive,
+            accept_conflicts=accept_conflicts,
+            force=force,
+            dry_run=dry_run
+        )
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

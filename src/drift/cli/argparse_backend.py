@@ -15,7 +15,8 @@ from .actions import (
     execute_status,
     execute_gc,
     execute_diff,
-    execute_add
+    execute_add,
+    execute_adopt
 )
 
 
@@ -182,6 +183,37 @@ def run_argparse_cli(argv=None) -> None:
         "--detach",
         action="store_true",
         help="Remove management relationship but keep configurations as actual physical files on host system"
+    )
+
+    # adopt subcommand
+    adopt_parser = subparsers.add_parser(
+        "adopt",
+        help="Adopt active system drifts and incorporate them back into source templates"
+    )
+    adopt_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to adopt specifically"
+    )
+    adopt_parser.add_argument(
+        "-i", "--interactive",
+        action="store_true",
+        help="Interactively reconcile each drifted file"
+    )
+    adopt_parser.add_argument(
+        "--accept-conflicts",
+        action="store_true",
+        help="Apply conflicting patches, writing merge conflict markers directly into templates"
+    )
+    adopt_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force adoption even if the package source directory has uncommitted modifications"
+    )
+    adopt_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the adoption, previewing changes and conflict results"
     )
 
     # status subcommand
@@ -374,6 +406,24 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "adopt":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_adopt(
+                drift_root=drift_root,
+                package_names=args.packages,
+                interactive=args.interactive,
+                accept_conflicts=args.accept_conflicts,
+                force=args.force,
+                dry_run=args.dry_run
+            )
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

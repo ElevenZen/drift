@@ -183,6 +183,30 @@ def execute_gc(drift_root: Path, dry_run: bool = False) -> None:
     run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run)
 
 
+def execute_adopt(
+    drift_root: Path,
+    package_names: List[str],
+    interactive: bool = False,
+    accept_conflicts: bool = False,
+    force: bool = False,
+    dry_run: bool = False
+) -> None:
+    """Core function to adopt system drifts back to source templates, shared by both CLI backends."""
+    from ..adopt_repo import run_primitive_adopt_drifts
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_adopt_drifts(
+        workspace_config=workspace_config,
+        package_names=package_names,
+        interactive=interactive,
+        accept_conflicts=accept_conflicts,
+        force=force,
+        dry_run=dry_run
+    )
+
+
 def execute_diff(
     drift_root: Path,
     package_names: Optional[List[str]] = None,

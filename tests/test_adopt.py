@@ -1,0 +1,438 @@
+"""Unit tests for Primitive 7 & Stage 1: drift adopt."""
+
+import os
+import shutil
+import subprocess
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from drift.workspace_config import WorkspaceConfig
+from drift.adopt_repo import (
+    get_drifted_packages,
+    check_source_cleanliness,
+    get_package_drifts,
+    generate_unified_patch,
+    check_patch_conflicts,
+    apply_source_patch,
+    test_file_conflict,
+    resolve_source_file_path,
+    adopt_addition,
+    ignore_addition,
+    discard_addition,
+    adopt_deletion,
+    discard_deletion,
+    adopt_modification,
+    discard_modification,
+    fallback_over_render,
+    run_primitive_adopt_drifts,
+)
+
+
+class TestAdopt(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.temp_dir = TemporaryDirectory()
+        self.workspace_path = Path(self.temp_dir.name) / "workspace"
+        self.workspace_path.mkdir()
+
+        self.src_dir = self.workspace_path / "src"
+        self.src_dir.mkdir()
+        
+        self.install_dir = self.workspace_path / "install"
+        self.install_dir.mkdir()
+
+        self.backup_dir = self.workspace_path / "backup"
+        self.backup_dir.mkdir()
+
+        # Initialize install repo as a git repository
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
+        # Commit a dummy state.toml to establish HEAD
+        with open(self.install_dir / "state.toml", "w", encoding="utf-8") as f:
+            f.write("# dummy")
+        subprocess.run(["git", "add", "state.toml"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True)
+
+        # Initialize main workspace repo as a git repository (for cleanliness check)
+        subprocess.run(["git", "init"], cwd=str(self.workspace_path), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.workspace_path), check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.workspace_path), check=True)
+        # Commit a dummy file
+        with open(self.workspace_path / ".gitignore", "w", encoding="utf-8") as f:
+            f.write("install/\nbackup/\n")
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_path), check=True)
+        subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=str(self.workspace_path), check=True)
+
+        from drift.workspace_config import RenderEngineConfig
+        env_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("envsubst.bash"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        self.workspace_config = WorkspaceConfig(
+            drift_root_path=self.workspace_path,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            default_target_directory=self.workspace_path / "system_home",
+            packages_enable={},
+            render_engine_config = {"envsubst": env_engine}
+        )
+        
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_get_drifted_packages(self) -> None:
+        # Create a package source folder
+        pkg = "pkg_a"
+        (self.src_dir / pkg).mkdir(parents=True, exist_ok=True)
+
+        # Before any uncommitted files in install/, drifted list should be empty
+        self.assertEqual(get_drifted_packages(self.workspace_config), [])
+
+        # Create an uncommitted file inside install/pkg_a
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "file.txt").write_text("drift", encoding="utf-8")
+
+        # Now get_drifted_packages should detect pkg_a
+        self.assertEqual(get_drifted_packages(self.workspace_config), [pkg])
+
+    def test_check_source_cleanliness(self) -> None:
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clean source directory should pass
+        check_source_cleanliness(self.workspace_config, pkg, force=False)
+
+        # Create uncommitted dirty file in source
+        dirty_file = src_pkg_dir / "dirty.txt"
+        dirty_file.write_text("unstaged change", encoding="utf-8")
+
+        # Clean check should raise RuntimeError
+        with self.assertRaises(RuntimeError):
+            check_source_cleanliness(self.workspace_config, pkg, force=False)
+
+        # Passing force=True should bypass check without error
+        check_source_cleanliness(self.workspace_config, pkg, force=True)
+
+    def test_get_package_drifts(self) -> None:
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Setup a tracked file in Git HEAD
+        tracked_file = pkg_install_dir / "tracked.txt"
+        tracked_file.write_text("original content", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Tracked files"], cwd=str(self.install_dir), check=True)
+
+        # Setup a Deletion
+        deleted_file = pkg_install_dir / "deleted.txt"
+        deleted_file.write_text("will be deleted", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "To delete"], cwd=str(self.install_dir), check=True)
+        deleted_file.unlink()
+
+        # Setup an Addition (Untracked) at the very end
+        (pkg_install_dir / "added.txt").write_text("new content", encoding="utf-8")
+
+        # Modify tracked file
+        tracked_file.write_text("modified content", encoding="utf-8")
+
+        # Run drift extraction
+        additions, deletions, modifications, renames = get_package_drifts(self.install_dir, pkg)
+        self.assertEqual(additions, [Path("added.txt")])
+        self.assertEqual(deletions, [Path("deleted.txt")])
+        self.assertEqual(modifications, [Path("tracked.txt")])
+        self.assertEqual(renames, [])
+
+    def test_get_package_drifts_rename(self) -> None:
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup tracked file
+        orig_file = pkg_install_dir / "old_name.txt"
+        orig_file.write_text("hello", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+
+        # 2. Perform git rename
+        subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True)
+
+        # Get package drifts
+        additions, deletions, modifications, renames = get_package_drifts(self.install_dir, pkg)
+
+        # Rename should be detected as a distinct rename branch
+        self.assertEqual(deletions, [])
+        self.assertEqual(additions, [])
+        self.assertEqual(modifications, [])
+        self.assertEqual(renames, [(Path("old_name.txt"), Path("new_name.txt"))])
+
+    def test_apply_source_patch_clean(self) -> None:
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Create original file and commit
+        tracked_file = pkg_install_dir / "file.txt"
+        tracked_file.write_text("line 1\nline 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "original file"], cwd=str(self.install_dir), check=True)
+
+        # 2. Modify file in install base
+        tracked_file.write_text("line 1 modified\nline 2\n", encoding="utf-8")
+
+        # 3. Create original file in src/
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        src_file = src_pkg_dir / "file.txt"
+        src_file.write_text("line 1\nline 2\n", encoding="utf-8")
+
+        # 4. Generate diff & apply patch
+        patch_content = generate_unified_patch(self.install_dir, Path(pkg) / "file.txt")
+        self.assertTrue(bool(patch_content.strip()))
+
+        success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
+        self.assertTrue(success)
+        self.assertEqual(src_file.read_text(encoding="utf-8"), "line 1 modified\nline 2\n")
+
+    def test_resolve_source_file_path(self) -> None:
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Test for a file that does not exist yet
+        rel_path = Path("dot-bashrc")
+        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        self.assertIsNone(resolved) # Does not exist yet
+
+        # Create static file dot-bashrc
+        static_file = src_pkg_dir / "dot-bashrc"
+        static_file.write_text("static", encoding="utf-8")
+        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        self.assertEqual(resolved, static_file)
+
+        # Clean static, test template resolution (dot-bashrc -> dot-bashrc.envst)
+        static_file.unlink()
+        template_file = src_pkg_dir / "dot-bashrc.envst"
+        template_file.write_text("templated", encoding="utf-8")
+        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        self.assertEqual(resolved, template_file)
+
+    def test_adopt_addition(self) -> None:
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create wild addition in FCD (dot-config/qBittorrent/config.ini)
+        rel_path = Path("dot-config/qBittorrent/config.ini")
+        install_file = pkg_install_dir / rel_path
+        install_file.parent.mkdir(parents=True, exist_ok=True)
+        install_file.write_text("some configuration", encoding="utf-8")
+
+        # Run adopt_addition
+        adopt_addition(src_pkg_dir, pkg_install_dir, rel_path)
+
+        # Symmetrically converted to dot-config/... in src/ pkg dir
+        expected_src = src_pkg_dir / "dot-config/qBittorrent/config.ini"
+        self.assertTrue(expected_src.exists())
+        self.assertEqual(expected_src.read_text(encoding="utf-8"), "some configuration")
+
+        # No longer exists inside install/
+        self.assertFalse(install_file.exists())
+
+    def test_ignore_addition(self) -> None:
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create wild addition
+        rel_path = Path("untracked.txt")
+        install_file = pkg_install_dir / rel_path
+        install_file.write_text("some file", encoding="utf-8")
+
+        # Create initial empty .drift_ignore
+        (src_pkg_dir / ".drift_ignore").write_text("# ignore config", encoding="utf-8")
+
+        ignore_addition(src_pkg_dir, pkg_install_dir, rel_path)
+
+        # File is unlinked from install/
+        self.assertFalse(install_file.exists())
+
+        # Pattern added to .drift_ignore
+        ignore_content = (src_pkg_dir / ".drift_ignore").read_text(encoding="utf-8")
+        self.assertIn("untracked.txt", ignore_content)
+
+    def test_discard_addition(self) -> None:
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("wild.txt")
+        install_file = pkg_install_dir / rel_path
+        install_file.write_text("trash", encoding="utf-8")
+
+        # Discard addition stages the file in install repo
+        discard_addition(pkg_install_dir, rel_path)
+
+        # Check git status shows it staged (A index status)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn("A  pkg_a/wild.txt", res.stdout)
+
+    def test_adopt_deletion(self) -> None:
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create file in source folder
+        rel_path = Path("dot-bashrc")
+        src_file = src_pkg_dir / "dot-bashrc"
+        src_file.write_text("bash", encoding="utf-8")
+
+        # Run adopt deletion
+        adopt_deletion(self.workspace_config, pkg, rel_path)
+
+        # File should be removed from src/
+        self.assertFalse(src_file.exists())
+
+    def test_discard_deletion(self) -> None:
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create and commit tracked file
+        rel_path = Path("file.txt")
+        install_file = pkg_install_dir / rel_path
+        install_file.write_text("original", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "Commit file"], cwd=str(self.install_dir), check=True)
+
+        # Symmetrically delete on system (which reverse_sync mirrored by deleting from installpkg)
+        install_file.unlink()
+
+        # Discard deletion stages deletion to index
+        discard_deletion(pkg_install_dir, rel_path)
+
+        # Check git status shows it staged as deleted (D status)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn("D  pkg_a/file.txt", res.stdout)
+
+    def test_adopt_rename(self) -> None:
+        """Verifies that adopting a rename correctly renames the template file inside src/ and applies any content diff."""
+        from drift.adopt_repo import adopt_rename
+
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup old template in src/ (matching dot- prefix)
+        src_old_file = src_pkg_dir / "dot-old_name.envst.txt"
+        src_old_file.write_text("template content\ntemplate content\ntemplate content\n", encoding="utf-8")
+
+        # 2. Setup old file in install/ (matching repo format) and commit
+        install_old_file = pkg_install_dir / "dot-old_name.txt"
+        install_old_file.write_text("template content\ntemplate content\ntemplate content\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+
+        # 3. Rename and modify file inside install/
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True)
+        (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
+
+        # 4. Adopt the rename
+        from drift.adopt_repo import generate_adjusted_patch
+        patch_content = generate_adjusted_patch(
+            self.install_dir,
+            pkg,
+            Path("dot-new_name.txt"),
+            old_rel_path=Path("dot-old_name.txt"),
+            target_src_filename="dot-new_name.envst.txt"
+        )
+        adopt_rename(self.workspace_config, pkg, pkg_install_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+
+        # Verify old template is deleted, new template is created with dot- prefix and correct template suffixes, and modifications are applied!
+        self.assertFalse(src_old_file.exists())
+        
+        src_new_file = src_pkg_dir / "dot-new_name.envst.txt"
+        self.assertTrue(src_new_file.exists())
+        self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content\ntemplate content modified\n")
+
+    def test_discard_rename(self) -> None:
+        """Verifies that discarding a rename stages both old and new paths in the state index."""
+        from drift.adopt_repo import discard_rename
+
+        pkg = "pkg_a"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup tracked old file
+        install_old_file = pkg_install_dir / "old_name.txt"
+        install_old_file.write_text("hello", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "add old"], cwd=str(self.install_dir), check=True)
+
+        # 2. Rename on disk
+        install_new_file = pkg_install_dir / "new_name.txt"
+        install_old_file.rename(install_new_file)
+
+        # 3. Run discard rename
+        discard_rename(pkg_install_dir, Path("old_name.txt"), Path("new_name.txt"))
+
+        # Git status should show both staged as a staged rename (R status)
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn("R  pkg_a/old_name.txt -> pkg_a/new_name.txt", res.stdout)
+
+    def test_adopt_rename_missing_old_source_file(self) -> None:
+        """Verifies that adopting a rename when the old source file does not exist correctly creates a new file and applies the full content."""
+        from drift.adopt_repo import adopt_rename, generate_adjusted_patch
+
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup old file in install/ and commit, but NO template in src/
+        install_old_file = pkg_install_dir / "dot-old_name.txt"
+        install_old_file.write_text("template content\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+
+        # 2. Rename and modify file inside install/
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True)
+        (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content modified\n", encoding="utf-8")
+
+        # 3. Generate the patch (with old_rel_path=None to represent addition)
+        patch_content = generate_adjusted_patch(
+            self.install_dir,
+            pkg,
+            Path("dot-new_name.txt"),
+            old_rel_path=None,
+            target_src_filename="dot-new_name.txt"
+        )
+
+        # 4. Adopt the rename
+        adopt_rename(self.workspace_config, pkg, pkg_install_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+
+        # Verify a new file is created with new name in src/ and contains full content
+        src_new_file = src_pkg_dir / "dot-new_name.txt"
+        self.assertTrue(src_new_file.exists())
+        self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content modified\n")
+
+
+if __name__ == "__main__":
+    unittest.main()

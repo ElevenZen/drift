@@ -324,7 +324,7 @@ Tracked file deleted on host system.
 
 Reconciliation options:
 [1] Adopt deletion (Deletes src/nvim/dot-config/nvim/init.lua from source package)
-[2] Discard deletion / Restore (Saves uncommitted deletion, will be re-rendered & redeployed in next deploy)
+[2] Discard deletion / Restore (Stages deletion to install/ database, the file will be re-rendered & redeployed in next deploy)
 [3] Skip file
 
 Select option [1-3]: 
