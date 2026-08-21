@@ -64,5 +64,23 @@ class TestNewPackage(unittest.TestCase):
             
             self.assertTrue((src_dir / pkg_name / custom_name).exists())
 
+    def test_run_primitive_10_create_new_package_custom_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            drift_root = Path(temp_dir).resolve()
+            src_dir = drift_root / "src"
+            src_dir.mkdir()
+            
+            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            
+            pkg_name = "custom_pkg"
+            target_dir = "~/.config/nvim"
+            pkg_dir = run_primitive_10_create_new_package(config, pkg_name, target_directory=target_dir)
+            
+            config_file = pkg_dir / "package.toml"
+            self.assertTrue(config_file.exists())
+            
+            content = config_file.read_text()
+            self.assertIn(f'target_directory = "{target_dir}"', content)
+
 if __name__ == "__main__":
     unittest.main()

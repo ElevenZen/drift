@@ -303,6 +303,28 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(f.read(), "modified on host")
         self.assertIn_stripped("Successfully reverse-synced package", stdout.getvalue())
 
+    def test_cli_new_with_target_and_method(self) -> None:
+        """Verifies that 'new' command with target and method options works in both Typer and Argparse backends."""
+        from drift.cli import run_argparse_cli
+
+        # 1. Test Typer Backend (main)
+        main(["-C", self.drift_root, "new", "typer_pkg", "--target", "/tmp/typer_target", "--method", "copy"])
+        typer_config_file = os.path.join(self.src_dir, "typer_pkg", "package.toml")
+        self.assertTrue(os.path.isfile(typer_config_file))
+        with open(typer_config_file, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn('target_directory = "/tmp/typer_target"', content)
+            self.assertIn('install_method = "copy"', content)
+
+        # 2. Test Argparse Backend fallback
+        run_argparse_cli(["-C", self.drift_root, "new", "argparse_pkg", "--target", "/tmp/argparse_target", "--method", "copy"])
+        argparse_config_file = os.path.join(self.src_dir, "argparse_pkg", "package.toml")
+        self.assertTrue(os.path.isfile(argparse_config_file))
+        with open(argparse_config_file, "r", encoding="utf-8") as f:
+            content = f.read()
+            self.assertIn('target_directory = "/tmp/argparse_target"', content)
+            self.assertIn('install_method = "copy"', content)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,7 +20,8 @@ from .actions import (
     execute_gc,
     execute_diff,
     execute_add,
-    execute_adopt
+    execute_adopt,
+    execute_rollback
 )
 
 app = typer.Typer(
@@ -253,13 +254,32 @@ def typer_new(
         "--force",
         "-f",
         help="Forcefully overwrite any existing config file inside the package"
+    ),
+    target: Optional[str] = typer.Option(
+        None,
+        "--target",
+        "-t",
+        help="Explicitly configure the deployment target directory inside package.toml"
+    ),
+    method: Optional[str] = typer.Option(
+        None,
+        "--method",
+        "-m",
+        help="Explicitly configure the installation method ('stow' or 'copy') inside package.toml"
     )
 ) -> None:
-    """Scaffold a new package directory and drift_package.toml."""
+    """Scaffold a new package directory and package.toml."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_new(drift_root, package_name, config_filename=config_filename, force=force)
+        execute_new(
+            drift_root,
+            package_name,
+            config_filename=config_filename,
+            force=force,
+            target_directory=target,
+            install_method=method
+        )
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
@@ -450,6 +470,30 @@ def typer_add(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_add(drift_root, package_name, paths, dry_run=dry_run)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("rollback")
+def typer_rollback(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional specific package(s) to rollback"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force the rollback and skip failed interlock checking"
+    )
+) -> None:
+    """Rollback failed deployments and restore systems to the last committed clean state."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_rollback(drift_root, packages, force=force)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

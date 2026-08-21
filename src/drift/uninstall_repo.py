@@ -62,7 +62,7 @@ def get_uninstall_metadata(workspace_config: WorkspaceConfig, pkg: str) -> Tuple
     
     try:
         pkg_config = load_config_for_install(workspace_config.install_path, pkg)
-        target_dir = pkg_config.target_directory or workspace_config.default_target_path
+        target_dir = pkg_config.get_target_directory(workspace_config)
         sudo = pkg_config.sudo
         return target_dir, sudo
     except Exception as e:

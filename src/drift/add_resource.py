@@ -33,7 +33,7 @@ def get_package_target_directory_from_source(
             package_name=package_name,
             workspace_config=workspace_config
         )
-        target_base = pkg_config.target_directory or workspace_config.default_target_path
+        target_base = pkg_config.get_target_directory(workspace_config)
     except Exception as e:
         logger.warning(f"Failed to load package configuration in {src_pkg_dir}: {e}. Using defaults.")
         target_base = workspace_config.default_target_path

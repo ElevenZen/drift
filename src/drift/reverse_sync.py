@@ -33,7 +33,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
         logger.info(f"Reverse sync is disabled for package '{pkg}' (enable_install = false). Skipping.")
         return
 
-    target_dir_path = (metadata.target_directory or workspace_config.default_target_directory).expanduser()
+    target_dir_path = metadata.get_target_directory(workspace_config)
     assert target_dir_path.is_absolute(), f"Target directory '{target_dir_path}' for package '{pkg}' must be an absolute path."
     if not target_dir_path.exists():
         logger.warning(f"Target directory '{target_dir_path}' for package '{pkg}' does not exist. Skipping reverse sync.")

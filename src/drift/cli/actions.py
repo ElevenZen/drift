@@ -116,14 +116,28 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
     run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
 
 
-def execute_new(drift_root: Path, package_name: str, config_filename: Optional[str] = None, force: bool = False) -> None:
+def execute_new(
+    drift_root: Path,
+    package_name: str,
+    config_filename: Optional[str] = None,
+    force: bool = False,
+    target_directory: Optional[str] = None,
+    install_method: Optional[str] = None
+) -> None:
     """Core function to create a new package, shared by both CLI backends."""
     from ..new_package import run_primitive_10_create_new_package
 
     config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
     workspace_config = load_workspace_config(config_path)
 
-    run_primitive_10_create_new_package(workspace_config, package_name, config_filename=config_filename, force=force)
+    run_primitive_10_create_new_package(
+        workspace_config,
+        package_name,
+        config_filename=config_filename,
+        force=force,
+        target_directory=target_directory,
+        install_method=install_method
+    )
 
 
 def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = False, dry_run: bool = False, detach: bool = False) -> None:
@@ -237,3 +251,21 @@ def execute_add(
     
     paths = [Path(p) for p in import_paths]
     run_primitive_11_add_resources(workspace_config, package_name, paths, dry_run=dry_run)
+
+
+def execute_rollback(
+    drift_root: Path,
+    package_names: Optional[List[str]] = None,
+    force: bool = False
+) -> None:
+    """Core function to rollback failed deployments, shared by both CLI backends."""
+    from ..rollback_repo import run_primitive_8_rollback_recovery
+    
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_8_rollback_recovery(
+        workspace_config=workspace_config,
+        package_names=package_names,
+        force=force
+    )

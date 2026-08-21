@@ -71,6 +71,7 @@ class WorkspaceConfig:
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
     default_target_directory: Path = Path("~")
+    default_install_method: str = "stow"
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
     render_engine_config: Dict[str, RenderEngineConfig] = field(default_factory=dict)
@@ -100,6 +101,8 @@ class WorkspaceConfig:
             raise ValueError("default_target_directory must be a non-empty path.")
         if not self.default_target_directory.is_absolute():
             raise ValueError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
+        if self.default_install_method not in ("stow", "copy"):
+            raise ValueError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
         if not isinstance(self.packages_enable, dict):
             raise TypeError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
@@ -171,10 +174,6 @@ class WorkspaceConfig:
                     and (d / PACKAGE_CONFIG_FILE_NAME).exists()]
         return sorted(packages)
 
-    def get_package_names_from_source_dir(self) -> List[str]:
-        """Finds all potential package subdirectory names within the source directory."""
-        return WorkspaceConfig.get_package_names_from_dir(self.source_path)
-
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:
         """Calculates the new template filename based on the old template's engine suffix and the new target filename.
         
@@ -199,6 +198,10 @@ class WorkspaceConfig:
             return f"{new_rendered_name}.{engine_suffix}"
         else:
             return new_rendered_name[:dot_idx] + f".{engine_suffix}" + new_rendered_name[dot_idx:]
+
+    def get_package_names_from_source_dir(self) -> List[str]:
+        """Finds all potential package subdirectory names within the source directory."""
+        return WorkspaceConfig.get_package_names_from_dir(self.source_path)
 
     def is_package_enabled(self, package_name: str) -> bool:
         """Checks if a package is enabled based on WorkspaceConfig packages list or packages_enable_default."""
@@ -342,7 +345,8 @@ class WorkspaceConfig:
             "render_directory",
             "install_directory",
             "backup_directory",
-            "default_target_directory"
+            "default_target_directory",
+            "default_install_method"
         }
         for key in workspace_data:
             if key not in known_workspace_keys:
@@ -398,6 +402,7 @@ class WorkspaceConfig:
             install_directory=Path(workspace_data.get("install_directory", "install")),
             backup_directory=Path(workspace_data.get("backup_directory", "backup")),
             default_target_directory=default_target_dir,
+            default_install_method=str(workspace_data.get("default_install_method", "stow")),
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_config=render_engine_config,

@@ -21,7 +21,7 @@ class PackageConfig:
     config_rendered_path: Optional[Path] = None
     enable_render: bool = True
     enable_install: bool = True
-    install_method: str = "stow"
+    install_method: Optional[str] = None
     target_directory: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
@@ -46,7 +46,7 @@ class PackageConfig:
         """Validates configuration values."""
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Package config must have a non-empty 'name'.")
-        if self.install_method not in ("stow", "copy"):
+        if self.install_method is not None and self.install_method not in ("stow", "copy"):
             raise ValueError(
                 f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
                 "Must be 'stow' or 'copy'."
@@ -74,6 +74,12 @@ class PackageConfig:
         is_rendered = (self.config_rendered_path is not None
                        and file_path.resolve() == self.config_rendered_path.resolve())
         return is_template or is_rendered
+
+    def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
+        return (self.target_directory or workspace_config.default_target_path).expanduser()
+
+    def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
+        return self.install_method or workspace_config.default_install_method
 
     @classmethod
     def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
@@ -135,7 +141,7 @@ class PackageConfig:
             name=str(name),
             enable_render=bool(package_data.get("enable_render", True)),
             enable_install=bool(package_data.get("enable_install", True)),
-            install_method=str(package_data.get("install_method", "stow")),
+            install_method=package_data.get("install_method"),
             target_directory=target_dir,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],

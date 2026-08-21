@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
 [package]
 name = "{package_name}"
-install_method = "stow"  # Options: "stow" (symlink) or "copy" (physical)
-target_directory = "~"   # Destination for this package
+install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
+target_directory = "{target_directory}"   # Destination for this package
 
 # Lifecycle Hooks (Optional)
 # pre_install  = ""
@@ -31,7 +31,9 @@ def run_primitive_10_create_new_package(
     workspace_config: WorkspaceConfig,
     package_name: str,
     config_filename: Optional[str] = None,
-    force: bool = False
+    force: bool = False,
+    target_directory: Optional[str] = None,
+    install_method: Optional[str] = None
 ) -> Path:
     """Scaffolds a new package directory and a default package configuration file."""
     package_dir = workspace_config.source_path / package_name
@@ -53,9 +55,16 @@ def run_primitive_10_create_new_package(
     final_config_name = config_filename if config_filename else "package.toml"
     config_file = package_dir / final_config_name
     
+    final_target_dir: str = target_directory or str(workspace_config.default_target_path)
+    final_install_method: str = install_method or workspace_config.default_install_method
+    if final_install_method not in ("stow", "copy"):
+        raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
+
     config_content = DEFAULT_PACKAGE_CONFIG_TEMPLATE.format(
         package_name=package_name,
-        config_filename=final_config_name
+        config_filename=final_config_name,
+        target_directory=final_target_dir,
+        install_method=final_install_method
     )
     config_file.write_text(config_content, encoding="utf-8")
 

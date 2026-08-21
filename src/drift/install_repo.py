@@ -173,7 +173,7 @@ def run_collision_guard(
         system_target = resolve_system_target(rel, target_dir)
         
         # Stow specific check: skip if it's already a link to OUR package in install_pkg_dir (i.e. a previous stow link)
-        if metadata.install_method == "stow" and system_target.is_symlink():
+        if metadata.get_install_method(workspace_config) == "stow" and system_target.is_symlink():
             try:
                 link_target = (system_target.parent / os.readlink(system_target)).resolve()
                 if is_relative_to(link_target, install_pkg_dir.resolve()):
@@ -182,14 +182,14 @@ def run_collision_guard(
                 pass
 
         # Copy mode check: only collision on FIRST installation
-        if metadata.install_method == "copy" and not is_first_time:
+        if metadata.get_install_method(workspace_config) == "copy" and not is_first_time:
             continue
 
         handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
                                "Deployment collision", resolve_symlinks)
 
     # 5. Handle Match items (Stow specific: physical file matching repo content is STILL a collision)
-    if metadata.install_method == "stow":
+    if metadata.get_install_method(workspace_config) == "stow":
         for rel in diff.matches:
             if rel in processed_paths:
                 continue
@@ -337,6 +337,7 @@ def reconcile_orphaned_files(
 
 
 def run_full_file_delivery(
+    workspace_config: WorkspaceConfig,
     pkg: str,
     install_base: Path,
     install_pkg_dir: Path,
@@ -346,10 +347,10 @@ def run_full_file_delivery(
     stow_sufficient: bool
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
-    if metadata.install_method == "copy":
+    if metadata.get_install_method(workspace_config) == "copy":
         run_full_copy_deployment(install_pkg_dir, target_dir, metadata.sudo, deployable_files=deployable_files)
         return
-    if metadata.install_method == "stow":
+    if metadata.get_install_method(workspace_config) == "stow":
         if stow_sufficient:
             run_stow_deployment(install_base, target_dir, pkg, metadata.sudo, stow_sufficient)
             return
@@ -364,6 +365,7 @@ def run_full_file_delivery(
 
 
 def run_incremental_file_delivery(
+    workspace_config: WorkspaceConfig,
     package_changes: PackageStageChanges,
     install_pkg_dir: Path,
     target_dir: Path,
@@ -376,14 +378,14 @@ def run_incremental_file_delivery(
 
     # B. Process Additions and Modifications
     for rel_file in package_changes.added_files + package_changes.modified_files:
-        if metadata.install_method == "stow":
+        if metadata.get_install_method(workspace_config) == "stow":
             deploy_single_stow_file(
                 rel_file=rel_file,
                 install_pkg_dir=install_pkg_dir,
                 target_dir=target_dir,
                 sudo=metadata.sudo
             )
-        elif metadata.install_method == "copy":
+        elif metadata.get_install_method(workspace_config) == "copy":
             deploy_single_copy_file(
                 rel_file=rel_file,
                 install_pkg_dir=install_pkg_dir,
@@ -409,7 +411,7 @@ def deploy_package_impl(
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return
         
-    target_dir = metadata.target_directory or workspace_config.default_target_path
+    target_dir = metadata.get_target_directory(workspace_config)
     # target dir should be absolute.
     assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
     
@@ -441,7 +443,7 @@ def deploy_package_impl(
     is_first_time = (current_state is None)
     
     # Set package state to "deploying" before actual deployment
-    state_registry.set_package_state(pkg, "deploying", install_method=metadata.install_method)
+    state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
     save_state_registry(state_file, state_registry)
     
     install_pkg_dir = install_base / pkg
@@ -503,11 +505,12 @@ def deploy_package_impl(
         )
 
     # 2. Physical Deployment Execution
-    stow_version = get_stow_version() if metadata.install_method == "stow" else None
+    stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
     stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
     
     if full_redeploy:
         run_full_file_delivery(
+            workspace_config=workspace_config,
             pkg=pkg,
             install_base=install_base,
             install_pkg_dir=install_pkg_dir,
@@ -519,13 +522,14 @@ def deploy_package_impl(
     else:
         assert package_changes is not None
         run_incremental_file_delivery(
+            workspace_config=workspace_config,
             package_changes=package_changes,
             install_pkg_dir=install_pkg_dir,
             target_dir=target_dir,
             metadata=metadata
         )
 
-    logger.debug(f"   File delivery completed via {metadata.install_method}")
+    logger.debug(f"   File delivery completed via {metadata.get_install_method(workspace_config)}")
     
     # Post Hooks
     if is_first_time:
@@ -546,7 +550,7 @@ def deploy_package_impl(
         )
         
     now_str = datetime.datetime.now().isoformat()
-    state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.install_method)
+    state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.get_install_method(workspace_config))
     
     # Save the updated list of deployed files to state.toml
     if full_redeploy:

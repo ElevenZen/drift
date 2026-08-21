@@ -158,6 +158,16 @@ def run_argparse_cli(argv=None) -> None:
         action="store_true",
         help="Forcefully overwrite any existing config file inside the package"
     )
+    new_parser.add_argument(
+        "-t", "--target",
+        dest="target",
+        help="Explicitly configure the deployment target directory inside package.toml"
+    )
+    new_parser.add_argument(
+        "-m", "--method",
+        dest="method",
+        help="Explicitly configure the installation method ('stow' or 'copy') inside package.toml"
+    )
 
     # uninstall subcommand
     uninstall_parser = subparsers.add_parser(
@@ -394,7 +404,14 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_new(drift_root, args.package_name, config_filename=args.config_filename, force=args.force)
+            execute_new(
+                drift_root,
+                args.package_name,
+                config_filename=args.config_filename,
+                force=args.force,
+                target_directory=args.target,
+                install_method=args.method
+            )
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
