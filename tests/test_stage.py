@@ -547,6 +547,42 @@ class TestStageRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg), "staged")
 
+    def test_stage_package_name_starts_with_dot_dash(self) -> None:
+        """Verifies that staging a package whose name starts with 'dot-' preserves the package name exactly in install/."""
+        # Create a package in src/ and render/ starting with 'dot-'
+        pkg_name = "dot-my_pkg"
+        src_dir = self.source_dir / pkg_name
+        src_dir.mkdir(parents=True, exist_ok=True)
+        with open(src_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+            """)
+        
+        # Enable it in workspace config
+        self.workspace_config.packages_enable[pkg_name] = True
+        
+        render_pkg_dir = self.render_dir / pkg_name
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+            """)
+        with open(render_pkg_dir / "file.txt", "w", encoding="utf-8") as f:
+            f.write("rendered content")
+            
+        # Run stage
+        run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
+        
+        # Verify it was staged to install/dot-my_pkg (keeping the name dot-my_pkg exactly)
+        install_pkg_dir = self.install_dir / pkg_name
+        self.assertTrue(install_pkg_dir.is_dir())
+        self.assertTrue((install_pkg_dir / "file.txt").is_file())
+        self.assertEqual((install_pkg_dir / "file.txt").read_text(encoding="utf-8"), "rendered content")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -945,6 +945,41 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(Path(state_file))
         self.assertEqual(registry.get_package_state(pkg), "installed")
 
+    def test_install_package_name_starts_with_dot_dash(self) -> None:
+        """Verifies that deploying/installing a package whose name starts with 'dot-' works exactly as expected and preserves files on the target."""
+        pkg_name = "dot-my_pkg"
+        pkg_install_dir = self.install_dir / pkg_name
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Enable in workspace
+        self.workspace_config.packages_enable[pkg_name] = True
+
+        # Write config and file
+        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        with open(pkg_install_dir / "static.txt", "w", encoding="utf-8") as f:
+            f.write("deployed static content")
+
+        # Run deployment
+        run_primitive_5_install_deployment(self.workspace_config, [pkg_name])
+
+        # Verify output target file exists under system target dir (name preserved, files copied)
+        target_file = self.system_target_dir / "static.txt"
+        self.assertTrue(target_file.is_file())
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "deployed static content")
+
+        # Verify state in state.toml is registered under 'dot-my_pkg'
+        state_file = self.install_dir / "state.toml"
+        from drift.state_registry import load_state_registry
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_state(pkg_name), "installed")
+
 
 if __name__ == "__main__":
     unittest.main()

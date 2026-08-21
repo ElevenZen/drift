@@ -908,6 +908,40 @@ class TestRenderPackage(unittest.TestCase):
         render_input_templates([dep_engine, mustache_engine], self.drift_root)
         self.assertEqual(mustache_engine.input_file, Path(""))
 
+    def test_render_package_name_starts_with_dot_dash(self) -> None:
+        """Verifies that rendering a package whose name starts with 'dot-' preserves the name exactly."""
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig
+
+        # Setup WorkspaceConfig
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+        )
+
+        # Create package dir starting with dot-
+        pkg_dir = self.drift_root / "src" / "dot-my_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "dot-my_pkg"
+            enable_render = true
+            """)
+
+        with open(pkg_dir / "file.txt", "w", encoding="utf-8") as f:
+            f.write("static content")
+
+        render_package(workspace_config, pkg_dir)
+
+        # Verify output directory is 'render/dot-my_pkg' (name starting with 'dot-' is preserved)
+        render_pkg_dir = self.drift_root / "render" / "dot-my_pkg"
+        self.assertTrue(render_pkg_dir.is_dir())
+        self.assertTrue((render_pkg_dir / "file.txt").is_file())
+        self.assertEqual((render_pkg_dir / "file.txt").read_text(encoding="utf-8"), "static content")
+
 
 if __name__ == "__main__":
     unittest.main()
