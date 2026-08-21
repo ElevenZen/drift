@@ -269,3 +269,27 @@ def execute_rollback(
         package_names=package_names,
         force=force
     )
+
+
+def execute_deploy(
+    drift_root: Path,
+    package_names: Optional[List[str]] = None,
+    force: bool = False
+) -> None:
+    """Core function to execute transactional deploy workflow, shared by both CLI backends."""
+    from ..deploy_repo import run_primitive_deploy_pipeline
+
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+
+    run_primitive_deploy_pipeline(
+        workspace_config=workspace_config,
+        packages_to_deploy=package_names,
+        force=force
+    )
+
+
+def execute_help(topic: Optional[str] = None) -> None:
+    """Core function to display help documentation pages with paging fallback support."""
+    from .help_docs import print_help_document
+    print_help_document(topic)

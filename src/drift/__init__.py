@@ -37,6 +37,9 @@ from .install_repo import (
     run_primitive_5_install_deployment,
     run_primitive_6_commit_install_repo,
 )
+from .deploy_repo import (
+    run_primitive_deploy_pipeline,
+)
 from .render_input import (
     find_engine_for_file,
     strip_engine_suffix,

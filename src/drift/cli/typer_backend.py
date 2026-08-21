@@ -21,7 +21,9 @@ from .actions import (
     execute_diff,
     execute_add,
     execute_adopt,
-    execute_rollback
+    execute_rollback,
+    execute_deploy,
+    execute_help
 )
 
 app = typer.Typer(
@@ -106,7 +108,7 @@ def typer_render(
         help="Optional package name(s) to render specifically"
     )
 ) -> None:
-    """Render templates of a package or all enabled packages."""
+    """(Low-Level) Render templates of a package or all enabled packages."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -135,7 +137,7 @@ def typer_stage(
         help="Force staging and bypass uncommitted modifications check"
     )
 ) -> None:
-    """Stage compiled sandbox templates from render/ to install/ state database."""
+    """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -159,7 +161,7 @@ def typer_apply(
         help="Force deployment and bypass check"
     )
 ) -> None:
-    """Apply configurations from state database to active host system."""
+    """(Low-Level) Apply configurations from state database to active host system."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -183,7 +185,7 @@ def typer_render_commit(
         help="Commit message"
     )
 ) -> None:
-    """Stage and commit compiled render sandbox changes."""
+    """(Low-Level) Stage and commit compiled render sandbox changes."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -207,7 +209,7 @@ def typer_install_commit(
         help="Commit message"
     )
 ) -> None:
-    """Stage and commit install state directory changes."""
+    """(Low-Level) Stage and commit install state directory changes."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -224,7 +226,7 @@ def typer_reverse_sync(
         help="Optional package name(s) to reverse-sync specifically"
     )
 ) -> None:
-    """Synchronize changes from host system back to install/ state database."""
+    """(Low-Level) Synchronize changes from host system back to install/ state database."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -393,7 +395,7 @@ def typer_gc(
         help="Simulate the garbage collection without making changes"
     )
 ) -> None:
-    """Identify and uninstall orphan packages (present in state but disabled in config)."""
+    """(Low-Level) Identify and uninstall orphan packages (present in state but disabled in config)."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
@@ -497,3 +499,38 @@ def typer_rollback(
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
+
+
+@app.command("deploy")
+def typer_deploy(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional specific package(s) to deploy"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Forcefully deploy and bypass system drift sentinel safeguards"
+    )
+) -> None:
+    """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_deploy(drift_root, packages, force=force)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("help")
+def typer_help(
+    topic: Optional[str] = typer.Argument(
+        None,
+        help="Specific topic to display (package, src, render, install, package.toml, drift.toml)"
+    )
+) -> None:
+    """Show overall model of drift and its detailed manual pages."""
+    execute_help(topic)

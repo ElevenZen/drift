@@ -42,6 +42,10 @@ def commit_repo_changes(
                         added_any = True
                 except Exception:
                     pass
+        if (repo_path / "state.toml").exists():
+            add_cmd.append("state.toml")
+            added_any = True
+
         if not added_any:
             # Nothing to add for these specific packages
             return False
@@ -223,4 +227,30 @@ def get_git_status_porcelain(repo_path: Path, pkg_path: Optional[str] = None) ->
         return res.stdout.splitlines()
     except subprocess.CalledProcessError:
         return []
+
+
+def check_repo_can_commit(repo_path: Path) -> None:
+    """Verifies that Git user.name and user.email are configured for the repository.
+    Raises a RuntimeError if either configuration is missing, preventing commit failures.
+    """
+    if not repo_path.exists():
+        raise FileNotFoundError(f"Directory does not exist: {repo_path}")
+
+    # Query user.name
+    try:
+        subprocess.run(["git", "-C", str(repo_path), "config", "user.name"], capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"Git configuration error: 'user.name' is not configured in the repository or globally for '{repo_path}'. "
+            "Please run: git config --global user.name \"Your Name\""
+        ) from e
+
+    # Query user.email
+    try:
+        subprocess.run(["git", "-C", str(repo_path), "config", "user.email"], capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(
+            f"Git configuration error: 'user.email' is not configured in the repository or globally for '{repo_path}'. "
+            "Please run: git config --global user.email \"you@example.com\""
+        ) from e
 

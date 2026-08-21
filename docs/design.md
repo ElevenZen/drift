@@ -206,7 +206,7 @@ Imports an existing, active host system configuration file directly into the dec
 
 The `drift` Python command provides a unified interface for all primitives and high-level workflows.
 
-### High-Level Commands (Planned)
+### High-Level Commands (Implemented)
 *   **`drift new <package>`**: Scaffolds a new dotfiles package (Primitive 10).
 *   **`drift add <package> <path>`**: Imports an active system file into a declarative package (Primitive 11).
 *   **`drift status [packages...]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
@@ -667,8 +667,6 @@ Developers reconcile discovered untracked FCD additions using `drift adopt`, whi
 
 ## 7. Detailed Implementation Specifications
 
-### Detailed Workflow Control Flow & Pseudocode
-
 ### Overview of Control Flow & Orchestration
 
 The active configuration engine and orchestrator follow a strict sequence designed for predictability, transaction-like integrity, and extensive error recovery.
@@ -734,6 +732,8 @@ For each redeployable package:
 *   This uninstalls orphan packages (previously installed but now disabled in workspace config) and purges "zombie" directory folders in `render/` and `install/` which lack valid package configuration files, auto-committing the database cleanup to lock in a clean workspace environment.
 
 ---
+
+### Detailed Workflow Control Flow & Pseudocode  
 
 #### 1. Command Orchestration & Deployment Control Flow
 

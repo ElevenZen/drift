@@ -16,7 +16,10 @@ from .actions import (
     execute_gc,
     execute_diff,
     execute_add,
-    execute_adopt
+    execute_adopt,
+    execute_rollback,
+    execute_deploy,
+    execute_help
 )
 
 
@@ -56,7 +59,7 @@ def run_argparse_cli(argv=None) -> None:
     # render subcommand
     render_parser = subparsers.add_parser(
         "render",
-        help="Render templates of a package or all enabled packages"
+        help="(Low-Level) Render templates of a package or all enabled packages"
     )
     render_parser.add_argument(
         "packages",
@@ -67,10 +70,10 @@ def run_argparse_cli(argv=None) -> None:
     # stage subcommand
     stage_parser = subparsers.add_parser(
         "stage",
-        help="Stage compiled sandbox templates from render/ to install/ state database"
+        help="(Low-Level) Stage compiled sandbox templates from render/ to install/ state database"
     )
     stage_parser.add_argument(
-        "package",
+        "packages",
         nargs="*",
         help="Optional package name(s) to stage specifically"
     )
@@ -83,10 +86,10 @@ def run_argparse_cli(argv=None) -> None:
     # apply subcommand
     apply_parser = subparsers.add_parser(
         "apply",
-        help="Apply configurations from state database to active host system"
+        help="(Low-Level) Apply configurations from state database to active host system"
     )
     apply_parser.add_argument(
-        "package",
+        "packages",
         nargs="*",
         help="Optional package name(s) to apply specifically"
     )
@@ -99,7 +102,7 @@ def run_argparse_cli(argv=None) -> None:
     # render-commit subcommand
     render_commit_parser = subparsers.add_parser(
         "render-commit",
-        help="Stage and commit compiled render sandbox changes"
+        help="(Low-Level) Stage and commit compiled render sandbox changes"
     )
     render_commit_parser.add_argument(
         "packages",
@@ -115,7 +118,7 @@ def run_argparse_cli(argv=None) -> None:
     # install-commit subcommand
     install_commit_parser = subparsers.add_parser(
         "install-commit",
-        help="Stage and commit install state directory changes"
+        help="(Low-Level) Stage and commit install state directory changes"
     )
     install_commit_parser.add_argument(
         "packages",
@@ -131,7 +134,7 @@ def run_argparse_cli(argv=None) -> None:
     # reverse-sync subcommand
     reverse_sync_parser = subparsers.add_parser(
         "reverse-sync",
-        help="Synchronize changes from host system back to install/ state database"
+        help="(Low-Level) Synchronize changes from host system back to install/ state database"
     )
     reverse_sync_parser.add_argument(
         "packages",
@@ -240,7 +243,7 @@ def run_argparse_cli(argv=None) -> None:
     # gc subcommand
     gc_parser = subparsers.add_parser(
         "gc",
-        help="Identify and uninstall orphan packages (present in state but disabled in config)"
+        help="(Low-Level) Identify and uninstall orphan packages (present in state but disabled in config)"
     )
     gc_parser.add_argument(
         "--dry-run",
@@ -300,6 +303,49 @@ def run_argparse_cli(argv=None) -> None:
         help="Preview the import without making changes"
     )
 
+    # rollback subcommand
+    rollback_parser = subparsers.add_parser(
+        "rollback",
+        help="Rollback failed deployments and restore systems to the last committed clean state."
+    )
+    rollback_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to rollback specifically"
+    )
+    rollback_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force the rollback and skip failed interlock checking"
+    )
+
+    # deploy subcommand
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."
+    )
+    deploy_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional specific package(s) to deploy"
+    )
+    deploy_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Forcefully deploy and bypass system drift sentinel safeguards"
+    )
+
+    # help subcommand
+    help_parser = subparsers.add_parser(
+        "help",
+        help="Show overall model of drift and its detailed manual pages."
+    )
+    help_parser.add_argument(
+        "topic",
+        nargs="?",
+        help="Specific topic to display (package, src, render, install, package.toml, drift.toml)"
+    )
+
     args = parser.parse_args(argv)
 
     if args.verbose:
@@ -345,7 +391,7 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_stage(drift_root, args.package, force=args.force)
+            execute_stage(drift_root, args.packages, force=args.force)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
@@ -356,7 +402,7 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_apply(drift_root, args.package, force=args.force)
+            execute_apply(drift_root, args.packages, force=args.force)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
@@ -491,6 +537,34 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "rollback":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_rollback(drift_root, args.packages, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "deploy":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_deploy(drift_root, args.packages, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "help":
+        try:
+            execute_help(args.topic)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

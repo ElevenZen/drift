@@ -2,11 +2,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-186%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-209%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility. 
 
-Unlike traditional dotfile managers that directly symlink mutable directories or run opaque installation scripts, Drift implements a **two-stage, Git-backed compilation and deployment pipeline**. It isolates templates, compiles them in a secure sandbox, audits active system drifts, and executes deployments using atomic, transactional primitives.
+Unlike traditional dotfile managers that directly symlink mutable directories or run opaque installation scripts, Drift implements a **two-stage, Git-backed compilation and deployment pipeline**. It isolates templates, compiles them in a secure sandbox, audits active system drifts, and executes deployments using atomic, transactional workflows.
 
 ---
 
@@ -27,7 +27,7 @@ Modern desktop environments, IDEs, and system utilities frequently write configu
 In traditional dotfile managers, **these GUI-driven updates are silently lost—either completely ignored or blindly wiped away and overwritten during your next template deployment pass**.
 
 Drift fundamentally resolves this mismatch by recognizing configuration as a **continuous, two-way loop**:
-*   **Active Host Monitoring**: Drift's **Reverse-Sync (Primitive 1)** automatically scans active host paths, detects these silent GUI-driven or system-tool updates, and mirrors them back into the `install/` state base.
+*   **Active Host Monitoring**: Drift's **Reverse-Sync** automatically scans active host paths, detects these silent GUI-driven or system-tool updates, and mirrors them back into the `install/` state base.
 *   **Interactive Review & Adoption**: You can run a diff to inspect the changes written by your system's GUI utilities. If you want to keep them, simply commit the changes in `install/` and backport the settings to your source templates in `src/`.
 *   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply commit the deletion or modifications in the `install/` base and redeploy. Drift's engine will recognize the clean baseline and restore your files exactly as defined in `src/`.
 
@@ -49,7 +49,7 @@ Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package i
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
 ### 🧹 6. Autonomous Garbage Collection (Self-Cleaning)
-When you toggle packages to `false` in `drift.toml`, or delete source files, Drift's **Garbage Collection (Primitive 9)** automatically uninstalls them, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
+When you toggle packages to `false` in `drift.toml`, or delete source files, Drift's **Garbage Collection** automatically uninstalls them, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
 
 ### 🔌 7. Decouple & Eject Packages on Demand (Detach Mode)
@@ -61,56 +61,89 @@ Sometimes, you want to stop managing a configuration through a dotfile manager b
 
 ---
 
-## 🚀 Getting Started
+## 🔄 The Drift Data-Flow Loop
 
-### 1. Initialize Your Workspace
-Run the initialization command to scaffold a clean, Git-backed Drift workspace:
-```bash
-drift init
+Rather than running isolated commands, Drift operates as a continuous, closed-loop state machine. 
+
 ```
-This generates:
-*   `config/drift.toml` (Global settings, package activations, and engine configurations).
-*   `render/` and `install/` databases initialized as clean, independent local Git repositories.
-
-### 2. Scaffold a New Package
-```bash
-drift new shell
-```
-This scaffolds a standard package subdirectory structure in `src/shell/` including:
-*   `src/shell/package.toml` (Package metadata, hook commands, target home path, and deployment options).
-*   `src/shell/.drift_ignore` (Package PCRE ignore configuration).
-
-### 3. Add Your Configurations
-Place files or templates inside the package folder. For example, create `src/shell/dot-bashrc` with:
-```bash
-export ALIAS_VAR="my_alias"
-```
-
-### 4. Deploy Your Workspace
-Compile, sandbox-stage, and deploy your configurations to the host system in one command:
-```bash
-drift deploy
+                     [ 1. DECLARATIVE SOURCE ]
+                     src/ (Templates & drift.toml)
+                                 │
+                                 ▼ (drift deploy)
+                    [ 2. SANDBOX RENDER ZONE ]
+                      render/ (Git sandbox compile base)
+                                 │
+                                 ▼ (Stage render to install)
+                    [ 3. LOCAL STATE DATABASE ]
+                      install/ (Git local state database)
+                                 ▲
+                        Diff     │ (drift status / drift diff -s)
+                       (Live)    ▼ (Symmetric path translation)
+                    [ 4. SYSTEM ACTIVE HOST ]
+                       ~/* or /etc/* (Active system configurations)
 ```
 
 ---
 
-## 🛠️ The 11 Core Primitives
+## 🚀 High-Level Usage Scenarios
 
-Drift maps all operational workflows to **11 atomic primitives**:
+### Scenario A: Declaring & Deploying a New Configuration (One-Way Forward Flow)
+*When you want to manage a new configuration file (e.g., Neovim config) with declarative templates.*
 
-| Primitive | Command | Description |
-| :--- | :--- | :--- |
-| **P1** | `drift reverse-sync` | Scans system, reverse-syncs host edits to the state database. |
-| **P2** | `drift render` | Compiles source templates into the sandbox. |
-| **P3** | `drift render-commit` | Commits compiled sandbox changes to the `render/` repository. |
-| **P4** | `drift stage` | Stages sandbox modifications into the state database. |
-| **P5** | `drift deploy` | Symmetrically translates paths and deploys files to the host. |
-| **P6** | `drift install-commit` | Commits deployment states in the `install/` state database. |
-| **P7** | `drift uninstall` | Tears down host-side file mappings, restoring original backups. |
-| **P8** | `drift rollback` | Resets transaction failures, rolling back database states. |
-| **P9** | `drift gc` | Decommissions disabled packages and purges zombie folders. |
-| **P10** | `drift new <pkg>` | Scaffolds a new package configuration. |
-| **P11** | `drift add <pkg>` | Imports external system configurations into the source repository. |
+1.  **Scaffold**: Run `drift new nvim -t ~/.config/nvim` to create a package directory.
+    *   **Folder Structure Relieved**: By setting `target_directory = "~/.config/nvim"` inside `src/nvim/package.toml`, you no longer need nested directories like `dot-config/nvim/` on disk. Files are put directly inside `src/nvim/`.
+2.  **Author**: Add template or files into `src/nvim/` (e.g., `src/nvim/init.envst.lua` containing `${ENV_VAR}`).
+3.  **Deploy**: Run `drift deploy` (which triggers the functions: Render $\rightarrow$ Commit Render $\rightarrow$ Stage $\rightarrow$ Install Deployment $\rightarrow$ Commit Install).
+    *   All templates are compiled inside the sandbox, changes staged into the local state database, and configurations safely copied/linked onto your target active host target path (`~/.config/nvim/init.lua`).
+
+### Scenario B: Adopting GUI/System Utility Changes (Reverse-Sync & Backport Flow)
+*When a GUI app (like qBittorrent, VSCode, or system themes) writes settings directly on disk, and you want to merge them back into your source templates.*
+
+1.  **Detect**: Run `drift status` or `drift diff -s` to inspect active system drifts.
+2.  **Reverse-Sync**: Drift automatically reverse-syncs system adjustments into your local state repository (`install/`).
+3.  **Adopt & Merge**: Run `drift adopt nvim --interactive`.
+    *   Drift pre-stages all changes in `install/` to activate Git's rename detection.
+    *   It extracts system edits as a programmatic patch and cleanly applies them onto your templates in `src/`, avoiding placeholder collisions.
+    *   If you choose to **Skip** a file, it is selectively unstaged (`git restore --staged`) to remain as uncommitted local drift, preserving the unresolved issues.
+
+### Scenario C: Midway Deployment Recovery (Rollback Flow)
+*When a deployment template compilation, file permission error, or hook script crashes midway, leaving your host system in an inconsistent, half-written state.*
+
+1.  **Rollback**: Run `drift rollback nvim`.
+    *   Drift resets the package's local state database directory to the last committed clean HEAD, purges half-written/untracked files via `git checkout HEAD` and `git clean -fd`.
+    *   It then performs a full redeploy fallback to safely restore system files to the last committed stable state.
+
+---
+
+## 🛠️ Operational Commands & Functions
+
+Drift's actions are cleanly categorized into **High-Level User Commands** (frequently used workflows) and **Low-Level Control Commands** (under-the-hood troubleshooting & continuous integration).
+
+### 🚀 High-Level User Commands (Frequently Used)
+
+| Command | Description |
+| :--- | :--- |
+| `drift init` | Initializes a new Git-backed Drift workspace, databases, and configuration settings. |
+| `drift new <pkg>` | Scaffolds a new package directory with `package.toml` metadata config. |
+| `drift add <pkg>` | Imports external target-system configurations into the package source directory. |
+| `drift adopt <pkg>` | Backports uncommitted system drifts safely into package source templates. |
+| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
+| `drift uninstall [pkgs]` | Removes stowed/copied mappings on host target paths, reverting backups. |
+| `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
+| `drift status` | Audits and inspects current workspace template, staging, and system-drift status. |
+| `drift diff` | Compares and visualizes template, deployment, or active system layers. |
+
+### 🔧 Low-Level Control Commands (Troubleshooting & Automation)
+
+| Command | Description |
+| :--- | :--- |
+| `drift reverse-sync` | Force-syncs the active host system changes back into the `install/` state base. |
+| `drift render` | Sandbox-compiles raw source package templates into `render/`. |
+| `drift render-commit` | Manually commits compiled sandbox changes to the `render/` repository. |
+| `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
+| `drift apply` | Install files from `install/` to package target directories. |
+| `drift install-commit` | Manually commits deployment state database changes inside `install/`. |
+| `drift gc` | Garbage collects and purges unreferenced/disabled package data from repos. |
 
 ---
 
