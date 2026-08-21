@@ -485,6 +485,7 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
 
 2.  **Prefix Conversion (`dot-` to `.`)**:
     *   To allow developers to easily manage hidden folders in standard git environments, folders and files starting with the prefix `dot-` inside `install/` must be translated to a dot `.` prefix at deployment target paths.
+    *   **Mandatory 'dot-' Prefix Rule in Source Templates**: All files and directories inside source packages under `src/` that should be rendered and installed as hidden files/directories (starting with `.`) **must** be named with a `dot-` prefix (e.g., `dot-bashrc`, `dot-config/`). Raw hidden files starting with a dot `.` (such as `.bashrc` or `.env`) are **strictly prohibited** in source packages. The rendering process (`render_package`) will skip any `.*` files (except the special `.drift_ignore` file) in the rendering process and print an information log about them.
     *   *Example*: `install/shell/dot-bashrc` translates to `~/.bashrc`.
     *   *Example*: `install/nvim/dot-config/nvim/` translates to `~/.config/nvim/`.
     *   This translation is enforced symmetrically across both `stow` and `copy` installation methods.
@@ -492,6 +493,7 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
 ### B. Naming Convention for Templates (IDE & LSP Friendly)
 To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax highlighting, linting, autocomplete) for template files within editors (such as VSCode, Neovim, or Emacs), the system enforces a strict suffix naming convention:
 *   **Format**: `[filename].[engine_prefix].[target_extension]`
+*   **Suffix No-Dot Restriction**: The suffix defined for any render engine (such as `envst` or `mustache`) **cannot contain any dots ('.')**. This is validated during configuration loading, and any engine suffix containing dots will cause validation to fail.
 *   **Officially Supported Engines** (Custom engines can be defined in `drift.toml`):
     1.  *Envsubst*: Uses suffix **`.envst.[ext]`** (e.g., `dot-bashrc.envst.sh`, `all_proxy.envst.conf`).
     2.  *Mustache*: Uses suffix **`.mustache.[ext]`** (e.g., `home.mustache.nix`, `settings.mustache.json`).

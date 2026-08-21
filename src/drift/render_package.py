@@ -167,6 +167,11 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
         if pkg_config.is_package_config_file(file_path):
             continue
 
+        # Skip any '.*' files (except .drift_ignore) in rendering process and print info
+        if file.name.startswith(".") and file.name not in [".drift_ignore", ".driftignore"]:
+            logger.info(f"ℹ️  [SKIP] Skipping hidden file '{file}' in package rendering. All hidden files must use the 'dot-' prefix in source templates.")
+            continue
+
         if file == Path(".driftignore"):
             continue
 

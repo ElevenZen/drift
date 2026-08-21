@@ -632,6 +632,16 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         with self.assertRaises(ValueError):
             RenderEngineConfig(name="", input_file=Path("a"), suffix="b", render_command="c").validate()
 
+        # Suffix cannot contain dots ('.')
+        with self.assertRaises(ValueError) as ctx:
+            RenderEngineConfig(
+                name="invalid_suffix",
+                input_file=Path("envsubst.bash"),
+                suffix="envst.sh",
+                render_command="bash -c 'source %i && envsubst < %s'"
+            ).validate()
+        self.assertIn("cannot contain dots", str(ctx.exception))
+
     def test_workspace_config_with_render_engines(self) -> None:
         from drift.workspace_config import WorkspaceConfig
         data = {

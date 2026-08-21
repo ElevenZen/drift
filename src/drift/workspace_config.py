@@ -34,6 +34,8 @@ class RenderEngineConfig:
             raise ValueError("input_file must be a non-empty Path.")
         if not self.suffix or not isinstance(self.suffix, str):
             raise ValueError("suffix must be a non-empty string.")
+        if "." in self.suffix:
+            raise ValueError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
         if not self.render_command or not isinstance(self.render_command, str):
             raise ValueError("render_command must be a non-empty string.")
 

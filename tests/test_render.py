@@ -942,6 +942,61 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((render_pkg_dir / "file.txt").is_file())
         self.assertEqual((render_pkg_dir / "file.txt").read_text(encoding="utf-8"), "static content")
 
+    def test_render_package_skips_raw_hidden_files(self) -> None:
+        """Verifies that render_package skips raw hidden files (starting with '.') except for .drift_ignore."""
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig
+
+        # Setup WorkspaceConfig
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+        )
+
+        # Create package dir
+        pkg_dir = self.drift_root / "src" / "pkg_h"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "pkg_h"
+            enable_render = true
+            """)
+
+        # Add a valid .drift_ignore file
+        with open(pkg_dir / ".drift_ignore", "w", encoding="utf-8") as f:
+            f.write("# ignore config")
+
+        # Add a raw hidden file (should be skipped)
+        with open(pkg_dir / ".hidden_file.txt", "w", encoding="utf-8") as f:
+            f.write("hidden content")
+
+        # Add a normal file (should not be skipped)
+        with open(pkg_dir / "normal.txt", "w", encoding="utf-8") as f:
+            f.write("normal content")
+
+        # Setup logger spy to verify print info
+        with self.assertLogs("drift.render_package", level="INFO") as log_capture:
+            render_package(workspace_config, pkg_dir)
+
+        # Verify output directory
+        render_pkg_dir = self.drift_root / "render" / "pkg_h"
+        self.assertTrue(render_pkg_dir.is_dir())
+
+        # Verify .drift_ignore was processed/copied
+        self.assertTrue((render_pkg_dir / ".drift_ignore").is_file())
+
+        # Verify normal file was processed/copied
+        self.assertTrue((render_pkg_dir / "normal.txt").is_file())
+
+        # Verify .hidden_file.txt was skipped
+        self.assertFalse((render_pkg_dir / ".hidden_file.txt").exists())
+
+        # Verify SKIP warning message was logged
+        self.assertTrue(any("Skipping hidden file" in log_msg for log_msg in log_capture.output))
+
 
 if __name__ == "__main__":
     unittest.main()
