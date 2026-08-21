@@ -15,7 +15,6 @@ from .git_utils import (
     is_git_tracked,
     run_command
 )
-from .file_utils import make_new_template_name
 
 logger = logging.getLogger(__name__)
 
@@ -266,7 +265,8 @@ def adopt_rename(
     pkg_dir = workspace_config.source_path / pkg
     old_src_file = resolve_source_file_path(workspace_config, pkg, old_rel_path)
     if old_src_file and old_src_file.exists():
-        new_src_name = make_new_template_name(old_src_file.name, str(new_rel_path))
+        new_src_name = workspace_config.make_new_template_name(old_src_file.name,
+                                                               new_rel_path.name)
         new_src_file = pkg_dir / new_rel_path.parent / new_src_name
 
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
@@ -512,7 +512,8 @@ def handle_rename_interactive(
         if choice in ["1", "2", "3"]:
             # Perform rename first
             if old_src_file and old_src_file.exists():
-                new_src_name = make_new_template_name(old_src_file.name, str(new_rel_path))
+                new_src_name = workspace_config.make_new_template_name(old_src_file.name,
+                                                                       new_rel_path.name)
                 new_src_file = pkg_dir / new_rel_path.parent / new_src_name
                 new_src_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(old_src_file, new_src_file)
@@ -581,14 +582,7 @@ def handle_single_rename(
         has_patch_conflict = check_patch_conflicts(old_src_file, patch_content)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Treating as new file addition.")
-        patch_content = generate_adjusted_patch(
-            workspace_config.install_path,
-            pkg,
-            new_rel_path,
-            old_rel_path=None,
-            target_src_filename=new_rel_path.name
-        )
-        has_patch_conflict = False
+        return handle_single_addition(workspace_config, pkg, install_pkg_dir, new_rel_path, interactive)
 
     if not interactive:
         return handle_rename_non_interactive(

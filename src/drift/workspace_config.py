@@ -173,6 +173,31 @@ class WorkspaceConfig:
         """Finds all potential package subdirectory names within the source directory."""
         return WorkspaceConfig.get_package_names_from_dir(self.source_path)
 
+    def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:
+        """Calculates the new template filename based on the old template's engine suffix and the new target filename.
+        
+        Example: old_template_name = "dot-old.envst.sh", new_rendered_name = "dot-new.sh"
+                 Returns: "dot-new.envst.sh"
+                 old_template_name = "dot-old.envst", new_rendered_name = "dot-new"
+                 Returns: "dot-new.envst"
+        """
+        old_parts = old_template_name.split(".")
+        engine_suffix = None
+        
+        # Determine engine config suffixes dynamically from workspace configurations
+        valid_suffixes = {engine.suffix for engine in self.render_engine_configs.values() if engine.suffix}
+        
+        # Search the old parts for any valid engine suffix
+        engine_suffix = next(part for part in reversed(old_parts) if part in valid_suffixes)
+        if not engine_suffix:
+            return new_rendered_name  # No engine suffix found, return the new name as is
+
+        dot_idx = new_rendered_name.rfind('.')
+        if dot_idx == -1:
+            return f"{new_rendered_name}.{engine_suffix}"
+        else:
+            return new_rendered_name[:dot_idx] + f".{engine_suffix}" + new_rendered_name[dot_idx:]
+
     def is_package_enabled(self, package_name: str) -> bool:
         """Checks if a package is enabled based on WorkspaceConfig packages list or packages_enable_default."""
         if package_name in self.packages_enable:

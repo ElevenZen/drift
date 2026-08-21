@@ -318,7 +318,8 @@ class TestAdopt(unittest.TestCase):
             old_rel_path=Path("dot-old_name.txt"),
             target_src_filename="dot-new_name.envst.txt"
         )
-        adopt_rename(self.workspace_config, pkg, pkg_install_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+        adopt_rename(self.workspace_config, pkg, pkg_install_dir,
+                     Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
 
         # Verify old template is deleted, new template is created with dot- prefix and correct template suffixes, and modifications are applied!
         self.assertFalse(src_old_file.exists())
@@ -363,6 +364,95 @@ class TestAdopt(unittest.TestCase):
         src_new_file = src_pkg_dir / "dot-new_name.txt"
         self.assertTrue(src_new_file.exists())
         self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content modified\n")
+
+    def test_adopt_addition_conflict_target_exists(self) -> None:
+        """Verifies that non-interactive adopt skips addition if the target already exists in source."""
+        from drift.adopt_repo import handle_single_addition
+
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # File exists in source package
+        (src_pkg_dir / "dot-existing.txt").write_text("source content", encoding="utf-8")
+        
+        # File is also added in install pkg
+        rel_path = Path("dot-existing.txt")
+        (pkg_install_dir / "dot-existing.txt").write_text("install content", encoding="utf-8")
+
+        # non-interactive handle_single_addition should return False due to collision conflict
+        resolved = handle_single_addition(
+            self.workspace_config,
+            pkg,
+            pkg_install_dir,
+            rel_path,
+            interactive=False
+        )
+        self.assertFalse(resolved)
+
+    def test_adopt_deletion_target_missing(self) -> None:
+        """Verifies that adopting deletion when target does not exist in source skips gracefully and returns True."""
+        from drift.adopt_repo import handle_single_deletion
+
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # File does NOT exist in source, but is deleted in install pkg
+        rel_path = Path("dot-missing.txt")
+
+        resolved = handle_single_deletion(
+            self.workspace_config,
+            pkg,
+            pkg_install_dir,
+            rel_path,
+            interactive=False
+        )
+        self.assertTrue(resolved)
+
+    def test_adopt_rename_unstage_on_skip(self) -> None:
+        """Verifies that if a rename is skipped or failed, both old and new paths get unstaged at the end."""
+        from drift.adopt_repo import adopt_single_package
+
+        pkg = "pkg_a"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup old template in src/ and committed file in install/
+        src_old_file = src_pkg_dir / "dot-old.txt"
+        src_old_file.write_text("old content", encoding="utf-8")
+        install_old_file = pkg_install_dir / "dot-old.txt"
+        install_old_file.write_text("old content", encoding="utf-8")
+        
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "commit", "-m", "init old"], cwd=str(self.install_dir), check=True)
+
+        # 2. Rename on disk in install/ (but target_existing_src will trigger a conflict in non-interactive mode!)
+        install_new_file = pkg_install_dir / "dot-new.txt"
+        install_old_file.rename(install_new_file)
+        
+        # Create dot-new.txt in src/ to cause a target collision conflict, forcing the rename to skip/fail
+        src_new_file = src_pkg_dir / "dot-new.txt"
+        src_new_file.write_text("collision", encoding="utf-8")
+
+        # 3. Run adopt_single_package non-interactively
+        adopt_single_package(self.workspace_config, pkg, interactive=False)
+
+        # 4. Check git status. Both pkg_a/dot-old.txt and pkg_a/dot-new.txt should be unstaged (not in staged index)
+        # because the rename conflicted and was skipped, triggering selective git restore --staged.
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        # They should appear as unstaged (M, D, ?, etc.) but NOT staged (staged would be in the first column)
+        # We can check that there are no staged changes (staged changes start with 'M ', 'D ', 'R ', 'A ', etc.)
+        for line in res.stdout.splitlines():
+            if len(line) >= 2:
+                # The first character is for staged index changes. It should be empty/space or untracked '??'
+                self.assertIn(line[0], [" ", "?"])
 
 
 if __name__ == "__main__":

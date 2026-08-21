@@ -220,7 +220,7 @@ def get_git_status_porcelain(repo_path: Path, pkg_path: Optional[str] = None) ->
         cmd.append(pkg_path)
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return res.stdout.strip().splitlines()
+        return res.stdout.splitlines()
     except subprocess.CalledProcessError:
         return []
 
