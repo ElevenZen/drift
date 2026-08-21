@@ -19,11 +19,8 @@ from drift.adopt_repo import (
     resolve_source_file_path,
     adopt_addition,
     ignore_addition,
-    discard_addition,
     adopt_deletion,
-    discard_deletion,
     adopt_modification,
-    discard_modification,
     fallback_over_render,
     run_primitive_adopt_drifts,
 )
@@ -248,9 +245,6 @@ class TestAdopt(unittest.TestCase):
         self.assertTrue(expected_src.exists())
         self.assertEqual(expected_src.read_text(encoding="utf-8"), "some configuration")
 
-        # No longer exists inside install/
-        self.assertFalse(install_file.exists())
-
     def test_ignore_addition(self) -> None:
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -275,22 +269,6 @@ class TestAdopt(unittest.TestCase):
         ignore_content = (src_pkg_dir / ".drift_ignore").read_text(encoding="utf-8")
         self.assertIn("untracked.txt", ignore_content)
 
-    def test_discard_addition(self) -> None:
-        pkg = "pkg_a"
-        pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
-
-        rel_path = Path("wild.txt")
-        install_file = pkg_install_dir / rel_path
-        install_file.write_text("trash", encoding="utf-8")
-
-        # Discard addition stages the file in install repo
-        discard_addition(pkg_install_dir, rel_path)
-
-        # Check git status shows it staged (A index status)
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn("A  pkg_a/wild.txt", res.stdout)
-
     def test_adopt_deletion(self) -> None:
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -306,28 +284,6 @@ class TestAdopt(unittest.TestCase):
 
         # File should be removed from src/
         self.assertFalse(src_file.exists())
-
-    def test_discard_deletion(self) -> None:
-        pkg = "pkg_a"
-        pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create and commit tracked file
-        rel_path = Path("file.txt")
-        install_file = pkg_install_dir / rel_path
-        install_file.write_text("original", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Commit file"], cwd=str(self.install_dir), check=True)
-
-        # Symmetrically delete on system (which reverse_sync mirrored by deleting from installpkg)
-        install_file.unlink()
-
-        # Discard deletion stages deletion to index
-        discard_deletion(pkg_install_dir, rel_path)
-
-        # Check git status shows it staged as deleted (D status)
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn("D  pkg_a/file.txt", res.stdout)
 
     def test_adopt_rename(self) -> None:
         """Verifies that adopting a rename correctly renames the template file inside src/ and applies any content diff."""
@@ -370,31 +326,6 @@ class TestAdopt(unittest.TestCase):
         src_new_file = src_pkg_dir / "dot-new_name.envst.txt"
         self.assertTrue(src_new_file.exists())
         self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content\ntemplate content modified\n")
-
-    def test_discard_rename(self) -> None:
-        """Verifies that discarding a rename stages both old and new paths in the state index."""
-        from drift.adopt_repo import discard_rename
-
-        pkg = "pkg_a"
-        pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
-
-        # 1. Setup tracked old file
-        install_old_file = pkg_install_dir / "old_name.txt"
-        install_old_file.write_text("hello", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "add old"], cwd=str(self.install_dir), check=True)
-
-        # 2. Rename on disk
-        install_new_file = pkg_install_dir / "new_name.txt"
-        install_old_file.rename(install_new_file)
-
-        # 3. Run discard rename
-        discard_rename(pkg_install_dir, Path("old_name.txt"), Path("new_name.txt"))
-
-        # Git status should show both staged as a staged rename (R status)
-        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn("R  pkg_a/old_name.txt -> pkg_a/new_name.txt", res.stdout)
 
     def test_adopt_rename_missing_old_source_file(self) -> None:
         """Verifies that adopting a rename when the old source file does not exist correctly creates a new file and applies the full content."""

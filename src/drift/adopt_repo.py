@@ -176,18 +176,6 @@ def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None
     dest = pkg_dir / rel_path
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(install_pkg_dir / rel_path, dest)
-    
-    # Remove from install base Git staging cache
-    install_base = install_pkg_dir.parent
-    rel_install_base = Path(install_pkg_dir.name) / rel_path
-    subprocess.run(["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)], capture_output=True)
-    
-    install_file = install_pkg_dir / rel_path
-    if install_file.exists():
-        if install_file.is_dir():
-            shutil.rmtree(install_file)
-        else:
-            install_file.unlink()
 
 
 def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
@@ -211,13 +199,6 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
         f.write(content)
 
 
-def discard_addition(install_pkg_dir: Path, rel_path: Path) -> None:
-    """Stages the added file to the local state repository so that the next deploy deletes it."""
-    pkg = install_pkg_dir.name
-    install_base = install_pkg_dir.parent
-    subprocess.run(["git", "-C", str(install_base), "add", str(Path(pkg) / rel_path)], check=True)
-
-
 def adopt_deletion(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> None:
     """Symmetrically deletes the corresponding file from declarative source folder."""
     pkg_dir = workspace_config.source_path / pkg
@@ -229,26 +210,12 @@ def adopt_deletion(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) 
             src_file.unlink()
 
 
-def discard_deletion(install_pkg_dir: Path, rel_path: Path) -> None:
-    """Stages the deleted file in install/ base, preserving source files while restoring state cleanliness."""
-    pkg = install_pkg_dir.name
-    install_base = install_pkg_dir.parent
-    subprocess.run(["git", "-C", str(install_base), "add", str(Path(pkg) / rel_path)], check=True)
-
-
 def adopt_modification(src_file: Path, patch_content: str) -> bool:
     """Directly applies clean patch or overwrites the modified configuration file."""
     success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
     if not success:
         logger.error(f"Failed to apply patch to template file {src_file.name}. Please check manually.")
     return success
-
-
-def discard_modification(install_pkg_dir: Path, rel_path: Path) -> None:
-    """Stages the modification in install/ to discard the system drift and restore state database cleanliness."""
-    pkg = install_pkg_dir.name
-    install_base = install_pkg_dir.parent
-    subprocess.run(["git", "-C", str(install_base), "add", str(Path(pkg) / rel_path)], check=True)
 
 
 def generate_adjusted_patch(
@@ -315,14 +282,6 @@ def adopt_rename(
             logger.error(f"Failed to apply patch to renamed template file {new_src_file.name}. Please check manually.")
 
 
-def discard_rename(install_pkg_dir: Path, old_rel_path: Path, new_rel_path: Path) -> None:
-    """Stages both old and new sides of the rename inside install/ to restore state database cleanliness."""
-    pkg = install_pkg_dir.name
-    install_base = install_pkg_dir.parent
-    subprocess.run(["git", "-C", str(install_base), "add", str(Path(pkg) / old_rel_path)], check=True)
-    subprocess.run(["git", "-C", str(install_base), "add", str(Path(pkg) / new_rel_path)], check=True)
-
-
 def fallback_over_render(src_file: Path, static_file: Path) -> None:
     """Backs up the original template to .bak and overwrites it with static file content (freezing template)."""
     bak_file = src_file.with_suffix(src_file.suffix + ".bak")
@@ -342,8 +301,10 @@ def fallback_conflict_editor(src_file: Path, patch_content: str) -> None:
 def fallback_side_by_side(src_file: Path, install_file: Path) -> None:
     """Launches editor to display both template and the final compiled/static drift as side-by-side reference."""
     editor = os.environ.get("EDITOR", "vim")
-    if editor in ["vim", "nvim"]:
-        cmd = [editor, "-O", str(src_file), str(install_file)]
+    if editor in ["vim", "nvim", "code"]:
+        cmd = [editor, "-d", str(src_file), str(install_file)]
+    elif editor == 'emacs':
+        cmd = ['emacs', '--eval', f'(ediff-files "{str(src_file)}" "{str(install_file)}")']
     else:
         cmd = [editor, str(src_file), str(install_file)]
     logger.info(f"📝 Launching editor '{editor}' for side-by-side template edit...")
@@ -406,15 +367,32 @@ def dry_run_adopt(
 # --- The Main Dispatcher ---
 
 def handle_single_addition(
-    pkg_dir: Path,
+    workspace_config: WorkspaceConfig,
+    pkg: str,
     install_pkg_dir: Path,
     rel_path: Path,
     interactive: bool
-) -> None:
+) -> bool:
     """Handles drift reconciliation for a single file addition."""
-    # TODO: we need to resolve source name and check if it exists
+    target_existing_src = resolve_source_file_path(workspace_config, pkg, rel_path)
+    if target_existing_src is not None:
+        if not interactive:
+            logger.error(f"❌ [CONFLICT] Cannot adopt addition '{rel_path}' because the target already exists in source. Skipping.")
+            return False
+        else:
+            print(f"\n⚠️  [CONFLICT] Target file '{rel_path}' already exists in source!")
+            print("Reconciliation options:")
+            print("[1] Discard addition / Restore (restores original on host next deployment)")
+            print("[2] Skip file")
+            choice = input("Select option [1-2]: ").strip()
+            if choice == "1":
+                return True
+        return False
+
+    pkg_dir: Path = workspace_config.source_path / pkg
     if not interactive:
         adopt_addition(pkg_dir, install_pkg_dir, rel_path)
+        return True
     else:
         print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
         print("Reconciliation options:")
@@ -425,10 +403,14 @@ def handle_single_addition(
         choice = input("Select option [1-4]: ").strip()
         if choice == "1":
             adopt_addition(pkg_dir, install_pkg_dir, rel_path)
+            return True
         elif choice == "2":
             ignore_addition(pkg_dir, install_pkg_dir, rel_path)
+            return True
         elif choice == "3":
-            discard_addition(install_pkg_dir, rel_path)
+            return True
+        else:
+            return False
 
 
 def handle_single_deletion(
@@ -437,11 +419,19 @@ def handle_single_deletion(
     install_pkg_dir: Path,
     rel_path: Path,
     interactive: bool
-) -> None:
+) -> bool:
     """Handles drift reconciliation for a single file deletion."""
-    # TODO: we need to resolve source name and check if it exists
+    target_existing_src = resolve_source_file_path(workspace_config, pkg, rel_path)
+    if target_existing_src is None:
+        if not interactive:
+            logger.warning(f"⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
+        else:
+            print(f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
+        return True
+
     if not interactive:
         adopt_deletion(workspace_config, pkg, rel_path)
+        return True
     else:
         print(f"\nFound host file deletion: {rel_path}")
         print("Reconciliation options:")
@@ -451,8 +441,11 @@ def handle_single_deletion(
         choice = input("Select option [1-3]: ").strip()
         if choice == "1":
             adopt_deletion(workspace_config, pkg, rel_path)
+            return True
         elif choice == "2":
-            discard_deletion(install_pkg_dir, rel_path)
+            return True
+        else:
+            return False
 
 
 def handle_rename_non_interactive(
@@ -465,18 +458,20 @@ def handle_rename_non_interactive(
     patch_content: str,
     has_patch_conflict: bool,
     accept_conflicts: bool
-) -> None:
+) -> bool:
     """Processes a rename drift non-interactively."""
     if not has_patch_conflict:
-        adopt_rename(workspace_config, pkg, install_pkg_dir,
-                     old_rel_path, new_rel_path, patch_content)
-    elif accept_conflicts:
-        logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{old_src_file.name if old_src_file else ''}'")
-        adopt_rename(workspace_config, pkg, install_pkg_dir,
-                         old_rel_path, new_rel_path, patch_content, accept_conflicts=True)
+        adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content)
+        return True
     else:
-        logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{old_src_file.name if old_src_file else ''}'. Skipping.")
-        logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
+        if accept_conflicts:
+            logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{old_src_file.name if old_src_file else ''}'")
+            adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content, accept_conflicts=True)
+            return True
+        else:
+            logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{old_src_file.name if old_src_file else ''}'. Skipping.")
+            logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
+            return False
 
 
 def handle_rename_interactive(
@@ -489,7 +484,7 @@ def handle_rename_interactive(
     old_src_file: Optional[Path],
     patch_content: str,
     has_patch_conflict: bool
-) -> None:
+) -> bool:
     """Processes a rename drift interactively."""
     print(f"\nFound host file rename: {old_rel_path} -> {new_rel_path}")
     if not has_patch_conflict:
@@ -500,8 +495,11 @@ def handle_rename_interactive(
         choice = input("Select option [1-3]: ").strip()
         if choice == "1":
             adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content)
+            return True
         elif choice == "2":
-            discard_rename(install_pkg_dir, old_rel_path, new_rel_path)
+            return True
+        else:
+            return False
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto renamed template file '{old_src_file.name if old_src_file else ''}'!")
         print("Choose fallback resolution strategy:")
@@ -537,9 +535,11 @@ def handle_rename_interactive(
                 fallback_conflict_editor(new_src_file, adjusted_patch)
             elif choice == "3":
                 fallback_side_by_side(new_src_file, install_pkg_dir / new_rel_path)
-
+            return True
         elif choice == "4":
-            discard_rename(install_pkg_dir, old_rel_path, new_rel_path)
+            return True
+        else:
+            return False
 
 
 def handle_single_rename(
@@ -551,7 +551,7 @@ def handle_single_rename(
     new_rel_path: Path,
     interactive: bool,
     accept_conflicts: bool
-) -> None:
+) -> bool:
     """Handles drift reconciliation for a single file/template rename."""
     # Check if the target already exists in source
     target_existing_src = resolve_source_file_path(workspace_config, pkg, new_rel_path)
@@ -565,8 +565,8 @@ def handle_single_rename(
             print("[2] Skip file")
             choice = input("Select option [1-2]: ").strip()
             if choice == "1":
-                discard_rename(install_pkg_dir, old_rel_path, new_rel_path)
-        return
+                return True
+        return False
 
     old_src_file = resolve_source_file_path(workspace_config, pkg, old_rel_path)
     has_patch_conflict = False
@@ -591,12 +591,12 @@ def handle_single_rename(
         has_patch_conflict = False
 
     if not interactive:
-        handle_rename_non_interactive(
+        return handle_rename_non_interactive(
             workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path,
             old_src_file, patch_content, has_patch_conflict, accept_conflicts
         )
     else:
-        handle_rename_interactive(
+        return handle_rename_interactive(
             workspace_config, pkg, pkg_dir, install_pkg_dir, old_rel_path, new_rel_path,
             old_src_file, patch_content, has_patch_conflict
         )
@@ -609,20 +609,23 @@ def handle_modification_non_interactive(
     is_templated: bool,
     has_conflict: bool,
     accept_conflicts: bool
-) -> None:
+) -> bool:
     """Processes a modification drift non-interactively."""
     if not has_conflict:
         if is_templated:
             adopt_modification(src_file, patch_content)
         else:
             shutil.copy2(install_file, src_file)
+        return True
     else:
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into file: '{src_file.name}'")
             apply_source_patch(src_file, patch_content, accept_conflicts=True)
+            return True
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto file '{src_file.name}'. Skipping.")
             logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
+            return False
 
 
 def handle_modification_interactive(
@@ -633,7 +636,7 @@ def handle_modification_interactive(
     patch_content: str,
     is_templated: bool,
     has_conflict: bool
-) -> None:
+) -> bool:
     """Processes a modification drift interactively."""
     if not has_conflict:
         if is_templated:
@@ -645,8 +648,11 @@ def handle_modification_interactive(
             choice = input("Select option [1-3]: ").strip()
             if choice == "1":
                 adopt_modification(src_file, patch_content)
+                return True
             elif choice == "2":
-                discard_modification(install_pkg_dir, rel_path)
+                return True
+            else:
+                return False
         else:
             print(f"\nFound modified static config file (Patch applies cleanly): {rel_path}")
             print("Reconciliation options:")
@@ -656,8 +662,11 @@ def handle_modification_interactive(
             choice = input("Select option [1-3]: ").strip()
             if choice == "1":
                 shutil.copy2(install_file, src_file)
+                return True
             elif choice == "2":
-                discard_modification(install_pkg_dir, rel_path)
+                return True
+            else:
+                return False
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto file '{src_file.name}'!")
         print("Choose a fallback resolution strategy:")
@@ -669,12 +678,17 @@ def handle_modification_interactive(
         choice = input("Select option [1-5]: ").strip()
         if choice == "1":
             fallback_over_render(src_file, install_file)
+            return True
         elif choice == "2":
             fallback_conflict_editor(src_file, patch_content)
+            return True
         elif choice == "3":
             fallback_side_by_side(src_file, install_file)
+            return True
         elif choice == "4":
-            discard_modification(install_pkg_dir, rel_path)
+            return True
+        else:
+            return False
 
 
 def handle_single_modification(
@@ -685,29 +699,27 @@ def handle_single_modification(
     rel_path: Path,
     interactive: bool,
     accept_conflicts: bool
-) -> None:
+) -> bool:
     """Handles drift reconciliation for a single file/template modification."""
     src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
     pkg_rel_path = Path(pkg) / rel_path
     patch_content = generate_unified_patch(workspace_config.install_path, pkg_rel_path)
 
     if not src_file:
-        # Symmetrically copy static file
-        # TODO: do not adopt here, we still need to let user to choose, we can generate a patch for the static file
-        # and let user choose to adopt or discard. Just log a warning here.
-        adopt_addition(pkg_dir, install_pkg_dir, rel_path)
-        return
+        # Symmetrically handle static file as an addition so the user has full choice in interactive mode.
+        return handle_single_addition(workspace_config, pkg,
+                                      install_pkg_dir, rel_path, interactive)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
     has_conflict = check_patch_conflicts(src_file, patch_content)
     install_file = install_pkg_dir / rel_path
 
     if not interactive:
-        handle_modification_non_interactive(
+        return handle_modification_non_interactive(
             src_file, install_file, patch_content, is_templated, has_conflict, accept_conflicts
         )
     else:
-        handle_modification_interactive(
+        return handle_modification_interactive(
             src_file, install_file, install_pkg_dir, rel_path, patch_content, is_templated, has_conflict
         )
 
@@ -720,6 +732,10 @@ def adopt_single_package(
     dry_run: bool = False
 ) -> None:
     """Adopt drifts for a single package according to interactive or non-interactive choices."""
+    if not dry_run:
+        # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
+        subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
+
     additions, deletions, modifications, renames = get_package_drifts(workspace_config.install_path, pkg)
     
     if not additions and not deletions and not modifications and not renames:
@@ -733,26 +749,45 @@ def adopt_single_package(
     pkg_dir = workspace_config.source_path / pkg
     install_pkg_dir = workspace_config.install_path / pkg
 
+    skipped_files = []
+
     # 1. Process Additions
     for rel_path in additions:
-        handle_single_addition(pkg_dir, install_pkg_dir, rel_path, interactive)
+        resolved = handle_single_addition(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
+        if not resolved:
+            skipped_files.append(rel_path)
 
     # 2. Process Deletions
     for rel_path in deletions:
-        handle_single_deletion(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
+        resolved = handle_single_deletion(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
+        if not resolved:
+            skipped_files.append(rel_path)
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in renames:
-        handle_single_rename(
+        resolved = handle_single_rename(
             workspace_config, pkg, pkg_dir, install_pkg_dir,
             old_rel_path, new_rel_path, interactive, accept_conflicts
         )
+        if not resolved:
+            skipped_files.append(old_rel_path)
+            skipped_files.append(new_rel_path)
 
     # 4. Process Modifications
     for rel_path in modifications:
-        handle_single_modification(
+        resolved = handle_single_modification(
             workspace_config, pkg, pkg_dir, install_pkg_dir, rel_path, interactive, accept_conflicts
         )
+        if not resolved:
+            skipped_files.append(rel_path)
+
+    # Unstage any skipped/failed files so they remain as uncommitted local drift in install/
+    if skipped_files:
+        for rel_path in skipped_files:
+            subprocess.run([
+                "git", "-C", str(workspace_config.install_path),
+                "restore", "--staged", "--", str(Path(pkg) / rel_path)
+            ], capture_output=True)
 
 
 def run_primitive_adopt_drifts(
