@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Optional, List
 
 from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
-from ..workspace_config import load_workspace_config
+from ..workspace_config import WorkspaceConfig, load_workspace_config
 from ..workspace_init import init_drift_workspace
 from ..git_utils import get_drift_root
 
@@ -15,6 +15,12 @@ logger = logging.getLogger(__name__)
 _ = get_drift_root
 
 
+def load_workspace_config_default(drift_root: Path) -> WorkspaceConfig:
+    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    workspace_config = load_workspace_config(config_path)
+    return workspace_config
+
+
 def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
     init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
@@ -22,14 +28,9 @@ def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = Fals
 
 def execute_render(drift_root: Path, package_names: Optional[List[str]] = None) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
     from ..render_package import run_primitive_2_render_packages
+
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_2_render_packages(workspace_config, target_pkgs=package_names)
 
 
@@ -37,13 +38,7 @@ def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, f
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..stage_repo import run_primitive_4_stage_render_to_install
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
+    workspace_config = load_workspace_config_default(drift_root)
     changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=package_names, force=force)
     if not changes:
         logger.info("No changes staged. All files are up-to-date.")
@@ -62,9 +57,7 @@ def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, f
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..install_repo import run_primitive_5_install_deployment
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=package_names,
@@ -78,13 +71,7 @@ def execute_render_commit(drift_root: Path, message: str, package_names: Optiona
     """Core function to execute committing render repository changes, shared by both CLI backends."""
     from ..render_package import run_primitive_3_commit_render_repo
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_3_commit_render_repo(workspace_config, commit_message=message, target_pkgs=package_names)
 
 
@@ -92,13 +79,7 @@ def execute_install_commit(drift_root: Path, message: str, package_names: Option
     """Core function to execute committing install repository changes, shared by both CLI backends."""
     from ..install_repo import run_primitive_6_commit_install_repo
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_6_commit_install_repo(workspace_config, commit_message=message, target_pkgs=package_names)
 
 
@@ -106,13 +87,7 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
     """Core function to execute reverse sync (System -> install/), shared by both CLI backends."""
     from ..reverse_sync import run_primitive_1_reverse_sync
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
-    # Convert single string to a list for robustness
-    if isinstance(package_names, str):
-        package_names = [package_names]
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
 
 
@@ -127,9 +102,7 @@ def execute_new(
     """Core function to create a new package, shared by both CLI backends."""
     from ..new_package import run_primitive_10_create_new_package
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_10_create_new_package(
         workspace_config,
         package_name,
@@ -144,9 +117,7 @@ def execute_uninstall(drift_root: Path, package_names: List[str], force: bool = 
     """Core function to uninstall or detach packages, shared by both CLI backends."""
     from ..uninstall_repo import run_primitive_7_uninstall_packages
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_7_uninstall_packages(workspace_config, package_names=package_names, force=force, dry_run=dry_run, detach=detach)
 
 
@@ -154,9 +125,7 @@ def execute_status(drift_root: Path, package_names: Optional[List[str]] = None) 
     """Core function to audit workspace status, shared by both CLI backends."""
     from ..workspace_status import run_primitive_status
     
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     results = run_primitive_status(workspace_config, target_pkgs=package_names)
     
     # We use a simple print here, which can be enhanced by CLI backends if needed
@@ -191,9 +160,7 @@ def execute_gc(drift_root: Path, dry_run: bool = False) -> None:
     """Core function to garbage collect orphans and purge databases, shared by both CLI backends."""
     from ..workspace_gc import run_primitive_9_purge_workspace_garbage
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run)
 
 
@@ -208,9 +175,7 @@ def execute_adopt(
     """Core function to adopt system drifts back to source templates, shared by both CLI backends."""
     from ..adopt_repo import run_primitive_adopt_drifts
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_adopt_drifts(
         workspace_config=workspace_config,
         package_names=package_names,
@@ -231,9 +196,7 @@ def execute_diff(
     """Core function to visualize changes, shared by both CLI backends."""
     from ..workspace_diff import run_primitive_diff
     
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_diff(workspace_config, package_names=package_names, diff_type=diff_type, side_by_side=side_by_side, stat=stat)
 
 
@@ -246,9 +209,7 @@ def execute_add(
     """Core function to import resources into a package, shared by both CLI backends."""
     from ..add_resource import run_primitive_11_add_resources
     
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-    
+    workspace_config = load_workspace_config_default(drift_root)
     paths = [Path(p) for p in import_paths]
     run_primitive_11_add_resources(workspace_config, package_name, paths, dry_run=dry_run)
 
@@ -261,9 +222,7 @@ def execute_rollback(
     """Core function to rollback failed deployments, shared by both CLI backends."""
     from ..rollback_repo import run_primitive_8_rollback_recovery
     
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_8_rollback_recovery(
         workspace_config=workspace_config,
         package_names=package_names,
@@ -279,9 +238,7 @@ def execute_deploy(
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..deploy_repo import run_primitive_deploy_pipeline
 
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-
+    workspace_config = load_workspace_config_default(drift_root)
     run_primitive_deploy_pipeline(
         workspace_config=workspace_config,
         packages_to_deploy=package_names,

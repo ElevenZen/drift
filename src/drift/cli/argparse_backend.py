@@ -1,3 +1,4 @@
+import argparse
 import sys
 from pathlib import Path
 
@@ -22,9 +23,7 @@ from .actions import (
     execute_help
 )
 
-
-def run_argparse_cli(argv=None) -> None:
-    import argparse
+def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager"
     )
@@ -345,7 +344,11 @@ def run_argparse_cli(argv=None) -> None:
         nargs="?",
         help="Specific topic to display (package, src, render, install, package.toml, drift.toml)"
     )
+    return parser
 
+
+def run_argparse_cli(argv=None) -> None:
+    parser = make_parser()
     args = parser.parse_args(argv)
 
     if args.verbose:
