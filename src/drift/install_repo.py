@@ -440,7 +440,9 @@ def deploy_package_impl(
             f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
         )
     
-    is_first_time = (current_state is None)
+    # stage-repo will set state to 'staged'.
+    pkg_state = state_registry.packages.get(pkg)
+    is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
     
     # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
