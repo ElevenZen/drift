@@ -1158,6 +1158,114 @@ class TestRenderPackage(unittest.TestCase):
         # Verify SKIP warning message was logged
         self.assertTrue(any("Skipping hidden file" in log_msg for log_msg in log_capture.output))
 
+    def test_secret_env_load_and_unload_helpers(self) -> None:
+        from drift.workspace_config import parse_secret_env, load_env_settings, unload_env_settings
+
+        # Setup temporary secrets.env file
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        secrets_file = config_dir / "secrets.env"
+
+        secrets_file.write_text(
+            "# This is a comment\n"
+            "MY_SECRET_VAR=secret_value\n"
+            "PRE_EXISTING_SECRET=new_secret_value\n",
+            encoding="utf-8"
+        )
+
+        # Set a pre-existing value in environment to check restoration
+        os.environ["PRE_EXISTING_SECRET"] = "old_value"
+
+        # 1. Parse secrets file
+        secrets = parse_secret_env(self.drift_root)
+        self.assertEqual(len(secrets), 2)
+        self.assertEqual(secrets[0], ("MY_SECRET_VAR", "secret_value"))
+        self.assertEqual(secrets[1], ("PRE_EXISTING_SECRET", "new_secret_value"))
+
+        # 2. Load env settings
+        saved_envs = load_env_settings(secrets)
+        self.assertIsNotNone(saved_envs)
+        self.assertEqual(len(saved_envs), 2)
+
+        # Verify values loaded into os.environ
+        self.assertEqual(os.environ["MY_SECRET_VAR"], "secret_value")
+        self.assertEqual(os.environ["PRE_EXISTING_SECRET"], "new_secret_value")
+
+        # 3. Unload env settings
+        unload_env_settings(saved_envs)
+
+        # Verify environment is restored
+        self.assertNotIn("MY_SECRET_VAR", os.environ)
+        self.assertEqual(os.environ["PRE_EXISTING_SECRET"], "old_value")
+
+        # Cleanup pre-existing env
+        os.environ.pop("PRE_EXISTING_SECRET", None)
+
+    def test_run_primitive_2_renders_package_with_secrets(self) -> None:
+        from drift.render_package import run_primitive_2_render_packages
+        from drift.workspace_config import WorkspaceConfig
+
+        # Setup config
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write secrets.env
+        secrets_file = config_dir / "secrets.env"
+        secrets_file.write_text("PRIMITIVE_SECRET_VAR=ultimate_secret\n", encoding="utf-8")
+
+        # Write a dummy envsubst.sh file so it can be resolved as non-empty
+        envsubst_sh = config_dir / "envsubst.sh"
+        envsubst_sh.write_text("#!/bin/bash\n", encoding="utf-8")
+
+        # Setup drift.toml configuration
+        drift_toml = config_dir / "drift.toml"
+        drift_toml.write_text(
+            "[workspace]\n"
+            "source_directory = \"src\"\n"
+            "render_directory = \"render\"\n",
+            encoding="utf-8"
+        )
+
+        # Write package config
+        pkg_dir = self.drift_root / "src" / "pkg_sec"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_toml = pkg_dir / "drift_package.toml"
+        pkg_toml.write_text("[package]\nname = \"pkg_sec\"\n", encoding="utf-8")
+
+        # Write a file that references the secret
+        tpl_file = pkg_dir / "secret_file.envst"
+        tpl_file.write_text("The secret is: ${PRIMITIVE_SECRET_VAR}\n", encoding="utf-8")
+
+        # Define workspace config
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render")
+        )
+        from drift.workspace_config import RenderEngineConfig
+        workspace_config.render_engine_config = {
+            "envsubst": RenderEngineConfig(
+                name="envsubst",
+                input_file=Path("envsubst.sh"),
+                suffix="envst",
+                render_command="bash -c 'envsubst < %s # %i'"
+            )
+        }
+
+        # Assert environment variable is NOT in current env
+        self.assertNotIn("PRIMITIVE_SECRET_VAR", os.environ)
+
+        # Execute render packages primitive 2
+        run_primitive_2_render_packages(workspace_config, ["pkg_sec"])
+
+        # Check that the secret was populated inside the rendered file
+        rendered_file = self.drift_root / "render" / "pkg_sec" / "secret_file"
+        self.assertTrue(rendered_file.is_file())
+        self.assertIn("The secret is: ultimate_secret", rendered_file.read_text(encoding="utf-8"))
+
+        # Assert environment variable is cleaned up from current environment
+        self.assertNotIn("PRIMITIVE_SECRET_VAR", os.environ)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .constants import DRIFT_IGNORE_FILE_NAME, PACKAGE_CONFIG_FILE_NAME
-from .workspace_config import WorkspaceConfig, RenderEngineConfig
+from .workspace_config import WorkspaceConfig, RenderEngineConfig, parse_secret_env, load_env_settings, unload_env_settings
 from .package_config import (
     load_package_config_from_source_dir,
     PackageConfig,
@@ -183,20 +183,26 @@ def run_primitive_2_render_packages(
         workspace_config: WorkspaceConfig,
         target_pkgs: Optional[List[str]] = None) -> None:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
-    render_input_templates(
-        engines=list(workspace_config.render_engine_configs.values()),
-        drift_root=workspace_config.drift_root,
-        workspace_config=workspace_config
-    )
+    # Parse the secrets from secrets.env file and load them, keeping track of original values to restore them on exit/failure.
+    secrets = parse_secret_env(workspace_config.drift_root)
+    saved_envs = load_env_settings(secrets)
+    try:
+        # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
+        render_input_templates(
+            engines=list(workspace_config.render_engine_configs.values()),
+            drift_root=workspace_config.drift_root,
+            workspace_config=workspace_config
+        )
 
-    # 2. Identify and render packages
-    candidates = workspace_config.get_package_names_from_source_dir()
-    active_packages = workspace_config.get_packages(
-            candidates, target_pkgs, custom_dir=workspace_config.source_path)
-    for package_name in active_packages:
-        package_dir = workspace_config.source_path / package_name
-        render_package(workspace_config, package_dir)
+        # 2. Identify and render packages
+        candidates = workspace_config.get_package_names_from_source_dir()
+        active_packages = workspace_config.get_packages(
+                candidates, target_pkgs, custom_dir=workspace_config.source_path)
+        for package_name in active_packages:
+            package_dir = workspace_config.source_path / package_name
+            render_package(workspace_config, package_dir)
+    finally:
+        unload_env_settings(saved_envs)
 
 
 def run_primitive_3_commit_render_repo(

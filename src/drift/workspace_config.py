@@ -501,9 +501,71 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     # Load and apply [env] variables to os.environ immediately
     env_dict = combined_dict.get("env", {})
     if isinstance(env_dict, dict):
-        for k, v in env_dict.items():
-            os.environ[str(k)] = str(v)
-            logger.debug(f"Environment variable loaded: {k}={v}")
+        load_env_settings(list(env_dict.items()))
 
     return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
+
+
+def parse_secret_env(drift_root: Path) -> List[Tuple[str, str]]:
+    """Reads and parses the config/secrets.env file.
+
+    Returns a list of (key, value) tuples representing the parsed secrets.
+    """
+    secrets_file = drift_root / "config" / "secrets.env"
+    if not secrets_file.exists():
+        return []
+
+    try:
+        content = secrets_file.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to read secrets file at '{secrets_file}': {e}")
+        return []
+
+    parsed_secrets = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            # Strip quotes
+            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+                v = v[1:-1]
+            if (k.startswith('"') and k.endswith('"')) or (k.startswith("'") and k.endswith("'")):
+                k = k[1:-1]
+            parsed_secrets.append((k, v))
+    return parsed_secrets
+
+
+def load_env_settings(envs: List[Tuple[str, str]]) -> Optional[List[Tuple[str, Optional[str]]]]:
+    """Loads a list of environment settings (key, value) into os.environ.
+
+    Returns a list of (key, original_value) or None if no envs are loaded.
+    """
+    if not envs:
+        return None
+
+    original_envs = []
+    for k, v in envs:
+        original_envs.append((k, os.environ.get(k)))
+        os.environ[k] = v
+        logger.debug(f"Environment variable loaded: {k}={v}")
+    return original_envs
+
+
+def unload_env_settings(original_envs: Optional[List[Tuple[str, Optional[str]]]]) -> None:
+    """Restores the original environment values using the list returned by load_env_settings."""
+    if original_envs is None:
+        return
+
+    for k, original_val in original_envs:
+        if original_val is None:
+            os.environ.pop(k, None)
+            logger.debug(f"Environment variable unloaded: popped {k}")
+        else:
+            os.environ[k] = original_val
+            logger.debug(f"Environment variable unloaded: restored {k}={original_val}")
+
 
