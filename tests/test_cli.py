@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import subprocess
 from io import StringIO
+from unittest.mock import patch
 
 from drift.cli import main
 
@@ -324,6 +325,58 @@ class TestCLI(unittest.TestCase):
             content = f.read()
             self.assertIn('target_directory = "/tmp/argparse_target"', content)
             self.assertIn('install_method = "copy"', content)
+
+    @patch("os.environ", {"SUDO_USER": "testuser"})
+    def test_cli_sudo_user_prohibited(self) -> None:
+        """Verifies that running under sudo is prohibited and exits with 1."""
+        stderr = StringIO()
+        original_stderr = sys.stderr
+        sys.stderr = stderr
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                main(["--help"])
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertIn("Running under 'sudo' is strictly prohibited", stderr.getvalue())
+
+    @patch("os.getuid", return_value=0, create=True)
+    @patch("getpass.getuser", return_value="testuser")
+    @patch("os.environ", {})
+    def test_cli_root_privilege_prohibited(self, mock_getuser, mock_getuid) -> None:
+        """Verifies that running with root privilege for a non-root user is prohibited."""
+        stderr = StringIO()
+        original_stderr = sys.stderr
+        sys.stderr = stderr
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                main(["--help"])
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            sys.stderr = original_stderr
+
+        self.assertIn("Running with root privilege is prohibited unless you are the actual 'root' user.", stderr.getvalue())
+
+    @patch("os.getuid", return_value=0, create=True)
+    @patch("getpass.getuser", return_value="root")
+    @patch("os.environ", {})
+    def test_cli_real_root_allowed(self, mock_getuser, mock_getuid) -> None:
+        """Verifies that the actual 'root' user (without sudo) is allowed to run the program."""
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                main(["--help"])
+            self.assertEqual(cm.exception.code, 0)
+        finally:
+            sys.stdout = original_stdout
+
+        self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", stdout.getvalue())
 
 
 if __name__ == "__main__":

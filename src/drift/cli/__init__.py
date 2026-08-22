@@ -1,5 +1,7 @@
 import sys
 import logging
+import os
+import getpass
 
 from .argparse_backend import run_argparse_cli
 
@@ -9,6 +11,35 @@ try:
     HAS_TYPER = True
 except ImportError:
     HAS_TYPER = False
+
+
+def check_sudo_and_root() -> None:
+    """Ensures that the user is not running the program under sudo (which pollutes expand_home),
+    and check that the user does not have root privilege unless they are actually the root user.
+    """
+    # 1. Check if running under sudo (SUDO_USER or SUDO_UID environment variables exist)
+    is_sudo = "SUDO_USER" in os.environ or "SUDO_UID" in os.environ
+
+    # 2. Check if running with root privilege (UID 0)
+    has_root_privilege = False
+    try:
+        has_root_privilege = (os.getuid() == 0)
+    except AttributeError:
+        # Windows / non-POSIX platforms
+        pass
+
+    if is_sudo:
+        print("❌ [ERROR] Running under 'sudo' is strictly prohibited as it pollutes configuration paths and home expansions.", file=sys.stderr)
+        sys.exit(1)
+
+    if has_root_privilege:
+        try:
+            current_user = getpass.getuser()
+        except Exception:
+            current_user = os.environ.get("USER", "root")
+        if current_user != "root":
+            print("❌ [ERROR] Running with root privilege is prohibited unless you are the actual 'root' user.", file=sys.stderr)
+            sys.exit(1)
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -42,6 +73,7 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 
 def main(argv=None) -> None:
+    check_sudo_and_root()
     setup_logging()
     if HAS_TYPER:
         from .typer_backend import app
