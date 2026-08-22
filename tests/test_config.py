@@ -26,7 +26,7 @@ from drift.workspace_config import (
 from drift.package_config import (
     PackageConfig,
     locate_load_package_config_file_static,
-    load_package_config_static,
+    load_package_config_rendered,
     load_package_config_from_source_dir,
     get_package_config_file_info,
     PackageConfigFileInfo,
@@ -436,20 +436,20 @@ class TestConfigLoaders(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_load_workspace_config(self) -> None:
+        # Test nonexistent file (raises FileNotFoundError)
+        with self.assertRaises(FileNotFoundError):
+            load_workspace_config(self.drift_root)
+
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
         config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
-        
-        # Test nonexistent file (raises FileNotFoundError)
-        with self.assertRaises(FileNotFoundError):
-            load_workspace_config(config_path)
 
         # Test valid file
         config_path.write_text("""
             [workspace]
             render_directory = "sandbox"
             """, encoding="utf-8")
-        config = load_workspace_config(config_path)
+        config = load_workspace_config(self.drift_root)
         self.assertEqual(config.render_directory, Path("sandbox"))
         # Verify absolute drift_root_path computation
         self.assertEqual(config.drift_root_path, self.drift_root)
@@ -459,11 +459,11 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Nonexistent without default_name raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            load_package_config_static(pkg_config_path)
+            load_package_config_rendered(pkg_config_path)
 
         # Nonexistent with default_name raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            load_package_config_static(pkg_config_path, default_name="my_default")
+            load_package_config_rendered(pkg_config_path, default_name="my_default")
 
         # Valid file
         pkg_config_path.write_text("""
@@ -471,7 +471,7 @@ class TestConfigLoaders(unittest.TestCase):
             name = "my_actual_package"
             install_method = "copy"
             """, encoding="utf-8")
-        config = load_package_config_static(pkg_config_path)
+        config = load_package_config_rendered(pkg_config_path)
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
 
@@ -555,7 +555,7 @@ class TestConfigLoaders(unittest.TestCase):
         env_sh_path.write_text("export MY_PKG_METHOD='copy'\nexport MY_PKG_SUDO='true'", encoding="utf-8")
 
         # Load WorkspaceConfig
-        workspace_config = load_workspace_config(drift_toml_path)
+        workspace_config = load_workspace_config(self.drift_root)
         self.assertEqual(workspace_config.drift_root_path, self.drift_root)
 
         # 3. Create package template: src/my_pkg/package.envst.toml
@@ -602,7 +602,7 @@ class TestConfigLoaders(unittest.TestCase):
             install_directory = "overridden_install"
             """, encoding="utf-8")
 
-        config = load_workspace_config(config_path)
+        config = load_workspace_config(self.drift_root)
         self.assertEqual(config.render_directory, Path("my_render"))
         self.assertEqual(config.install_directory, Path("overridden_install"))
 
@@ -640,7 +640,7 @@ class TestConfigLoaders(unittest.TestCase):
             [workspace]
             render_directory = "my_render"
             """, encoding="utf-8")
-        workspace_config = load_workspace_config(config_path)
+        workspace_config = load_workspace_config(self.drift_root)
 
         pkg_dir = self.drift_root / "src" / "my_pkg_merge_ws"
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -668,6 +668,47 @@ class TestConfigLoaders(unittest.TestCase):
         # Ensure the combined file gets rendered correctly in render/ sandbox
         expected_rendered_path = self.drift_root / "my_render" / "my_pkg_merge_ws" / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(expected_rendered_path.is_file())
+
+    def test_workspace_config_env_loading(self) -> None:
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        local_path = config_dir / "drift.local.toml"
+
+        config_path.write_text("""
+            [workspace]
+            render_directory = "my_render"
+
+            [env]
+            TEST_DRIFT_VAR = "hello"
+            TEST_DRIFT_OVERRIDE = "from_base"
+            """, encoding="utf-8")
+
+        local_path.write_text("""
+            [env]
+            TEST_DRIFT_OVERRIDE = "from_local"
+            TEST_DRIFT_LOCAL_ONLY = "local_only"
+            """, encoding="utf-8")
+
+        # Ensure they are not in os.environ initially (or clean them up first)
+        for var in ["TEST_DRIFT_VAR", "TEST_DRIFT_OVERRIDE", "TEST_DRIFT_LOCAL_ONLY"]:
+            os.environ.pop(var, None)
+
+        config = load_workspace_config(self.drift_root)
+        
+        # Verify stored in WorkspaceConfig object
+        self.assertEqual(config.env.get("TEST_DRIFT_VAR"), "hello")
+        self.assertEqual(config.env.get("TEST_DRIFT_OVERRIDE"), "from_local")
+        self.assertEqual(config.env.get("TEST_DRIFT_LOCAL_ONLY"), "local_only")
+
+        # Verify propagated to os.environ immediately
+        self.assertEqual(os.environ.get("TEST_DRIFT_VAR"), "hello")
+        self.assertEqual(os.environ.get("TEST_DRIFT_OVERRIDE"), "from_local")
+        self.assertEqual(os.environ.get("TEST_DRIFT_LOCAL_ONLY"), "local_only")
+
+        # Clean up
+        for var in ["TEST_DRIFT_VAR", "TEST_DRIFT_OVERRIDE", "TEST_DRIFT_LOCAL_ONLY"]:
+            os.environ.pop(var, None)
 
 
 class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
@@ -744,8 +785,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             """)
 
         # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml
-        toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME))
-        config = load_workspace_config(Path(toml_path))
+        config = load_workspace_config(Path(self.temp_dir.name))
 
         self.assertEqual(config.drift_root_path, Path(self.temp_dir.name).resolve())
         self.assertEqual(config.render_directory, Path("templated_render"))

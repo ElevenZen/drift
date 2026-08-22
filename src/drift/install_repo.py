@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
-from .package_config import PackageConfig, load_package_config_static
+from .package_config import PackageConfig, load_package_config_rendered
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
@@ -62,7 +62,7 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     if not install_config_file.exists():
         raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
     try:
-        return load_package_config_static(install_config_file, default_name=pkg)
+        return load_package_config_rendered(install_config_file, default_name=pkg)
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 

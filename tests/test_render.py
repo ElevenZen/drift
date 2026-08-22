@@ -29,6 +29,64 @@ class TestRenderEngine(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    def test_env_settings_passed_to_envsubst_render_engine(self) -> None:
+        import shutil
+        # Check if envsubst is available on the system
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        from drift.workspace_config import load_workspace_config
+        from drift.render_core import render_template
+
+        # Create config directory and files
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        drift_toml_path = config_dir / "drift.toml"
+        drift_toml_path.write_text("""
+            [workspace]
+            render_directory = "my_render"
+
+            [env]
+            MY_CUSTOM_ENV_VAR = "hello_from_drift_toml"
+            """, encoding="utf-8")
+
+        # Load workspace configuration (this also updates os.environ with env section!)
+        workspace_config = load_workspace_config(self.drift_root)
+
+        # Confirm the environment variable is loaded and present in os.environ
+        self.assertEqual(os.environ.get("MY_CUSTOM_ENV_VAR"), "hello_from_drift_toml")
+
+        # Create a template file that uses envsubst
+        template_path = self.drift_root / "test_envsubst_template.envst"
+        template_path.write_text("Greeting: $MY_CUSTOM_ENV_VAR", encoding="utf-8")
+
+        # Create an empty dummy input file to satisfy %i validation
+        dummy_input = self.drift_root / "dummy.sh"
+        dummy_input.write_text("", encoding="utf-8")
+
+        # Set up an envsubst engine config with both %i and %s
+        engine_config = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("dummy.sh"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+
+        # Call render_template
+        output = render_template(
+            engine_config=engine_config,
+            drift_root=self.drift_root,
+            template_file_path=template_path,
+            input_file_path=dummy_input
+        )
+
+        # Verify that envsubst successfully substituted the variable defined under [env] in drift.toml
+        self.assertEqual(output.strip(), "Greeting: hello_from_drift_toml")
+
+        # Clean up os.environ to avoid leaking to other tests
+        os.environ.pop("MY_CUSTOM_ENV_VAR", None)
+
     def test_render_template_success_with_input_file(self) -> None:
         # Create an input file (shell script defining a variable)
         input_path = self.drift_root / "env.sh"

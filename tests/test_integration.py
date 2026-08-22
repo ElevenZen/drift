@@ -32,9 +32,7 @@ class TestIntegration(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True)
         
         # 2. Load workspace config
-        config_path = self.drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-        # We need to manually inject the enable for tests since drift.toml is generated fresh
-        self.workspace_config = load_workspace_config(config_path)
+        self.workspace_config = load_workspace_config(self.drift_root)
         self.workspace_config.default_target_directory = self.system_target_dir
         
         self.source_dir = self.workspace_config.source_path

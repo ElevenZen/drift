@@ -61,7 +61,7 @@ pkg_a = true
 
         # Build workspace config
         from drift.workspace_config import load_workspace_config
-        self.workspace_config = load_workspace_config(self.config_file)
+        self.workspace_config = load_workspace_config(self.drift_root)
         self.workspace_config.default_target_directory = self.system_target_dir
 
         # Set up a clean source package

@@ -16,9 +16,7 @@ _ = get_drift_root
 
 
 def load_workspace_config_default(drift_root: Path) -> WorkspaceConfig:
-    config_path = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    workspace_config = load_workspace_config(config_path)
-    return workspace_config
+    return load_workspace_config(drift_root)
 
 
 def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:

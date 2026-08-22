@@ -6,9 +6,8 @@ from .workspace_config import (
 )
 from .package_config import (
     PackageConfig,
-    load_package_config_static,
+    load_package_config_rendered,
     load_package_config_from_source_dir,
-    locate_load_package_config_file_static,
 )
 from .render_core import (
     render_template,

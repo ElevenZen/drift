@@ -8,7 +8,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .constants import in_test_mode, PACKAGE_CONFIG_FILE_NAME
+from .constants import (
+        in_test_mode,
+        CONFIG_DIR_NAME,
+        GLOBAL_CONFIG_FILE_NAME,
+        PACKAGE_CONFIG_FILE_NAME,
+)
 from .toml_utils import parse_toml, merge_toml
 
 logger = logging.getLogger(__name__)
@@ -75,6 +80,7 @@ class WorkspaceConfig:
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
     render_engine_config: Dict[str, RenderEngineConfig] = field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Coerces any string path fields to pathlib.Path objects for absolute safety."""
@@ -113,6 +119,8 @@ class WorkspaceConfig:
             if not isinstance(v, RenderEngineConfig):
                 raise TypeError("render_engine_config values must be RenderEngineConfig instances.")
             v.validate()
+        if not isinstance(self.env, dict):
+            raise TypeError("env must be a dictionary.")
 
     @property
     def drift_root(self) -> Path:
@@ -330,7 +338,7 @@ class WorkspaceConfig:
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         # Warning for unknown top-level sections
-        known_top_sections = {"workspace", "packages", "render"}
+        known_top_sections = {"workspace", "packages", "render", "env"}
         for key in data:
             if key not in known_top_sections:
                 logger.warning(f"Unknown top-level config section: '{key}'")
@@ -392,6 +400,13 @@ class WorkspaceConfig:
                     render_command=str(config_dict.get("render_command", ""))
                 )
 
+        # Parse [env]
+        env_data = data.get("env", {})
+        env = {}
+        if isinstance(env_data, dict):
+            for k, v in env_data.items():
+                env[str(k)] = str(v)
+
         # Expand home directory for default_target_directory on load
         default_target_dir = Path(workspace_data.get("default_target_directory", "~")).expanduser()
 
@@ -406,6 +421,7 @@ class WorkspaceConfig:
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_config=render_engine_config,
+            env=env,
         )
         config.validate()
         return config
@@ -462,8 +478,11 @@ def render_envst_load_toml(path: Path) -> dict:
     return parse_toml(content)
 
 
-def load_workspace_config(file_path: Path) -> WorkspaceConfig:
+def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     """Loads and parses the workspace configuration, merging drift.toml and drift.local.toml if present."""
+    drift_root_path = Path(drift_root_path).resolve()
+    file_path = drift_root_path / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+
     main_dict = render_envst_load_toml(file_path)
 
     # Search for the *.local.toml override (e.g. drift.local.toml)
@@ -479,7 +498,12 @@ def load_workspace_config(file_path: Path) -> WorkspaceConfig:
 
     combined_dict = merge_toml(main_dict, local_dict)
 
-    # Compute drift_root_path (parent of 'config' directory containing drift.toml)
-    drift_root_path = file_path.resolve().parent.parent
+    # Load and apply [env] variables to os.environ immediately
+    env_dict = combined_dict.get("env", {})
+    if isinstance(env_dict, dict):
+        for k, v in env_dict.items():
+            os.environ[str(k)] = str(v)
+            logger.debug(f"Environment variable loaded: {k}={v}")
+
     return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
 

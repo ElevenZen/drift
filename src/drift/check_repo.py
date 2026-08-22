@@ -31,7 +31,7 @@ def check_existing_workspace_status(drift_root: Path) -> bool:
         if "workspace" not in data or "packages" not in data:
             return False
         # Validate workspace_config validation
-        load_workspace_config(config_file)
+        load_workspace_config(drift_root)
     except Exception:
         return False
 

@@ -158,7 +158,7 @@ class PackageConfig:
         return config
 
 
-def load_package_config_static(
+def load_package_config_rendered(
     file_path: Path,
     default_name: Optional[str] = None
 ) -> PackageConfig:
