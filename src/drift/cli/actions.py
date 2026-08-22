@@ -91,10 +91,9 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
     run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
 
 
-def execute_new(
+def execute_new_package(
     drift_root: Path,
     package_name: str,
-    config_filename: Optional[str] = None,
     force: bool = False,
     target_directory: Optional[str] = None,
     install_method: Optional[str] = None
@@ -106,7 +105,6 @@ def execute_new(
     run_primitive_10_create_new_package(
         workspace_config,
         package_name,
-        config_filename=config_filename,
         force=force,
         target_directory=target_directory,
         install_method=install_method

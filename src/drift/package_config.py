@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PackageConfig:
-    """Represents the package-specific configuration inside src/<pkg>/package.toml."""
+    """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
     name: str
     source_files: List[Path] = field(default_factory=list)
     enable_render: bool = True
@@ -162,7 +162,7 @@ def load_package_config_static(
     file_path: Path,
     default_name: Optional[str] = None
 ) -> PackageConfig:
-    """Loads and parses a package configuration from drift_package.toml or package.toml."""
+    """Loads and parses a package configuration from drift_package.toml."""
     if not file_path.exists():
         raise FileNotFoundError(f"Package configuration file not found: {file_path}")
     content = file_path.read_text(encoding="utf-8")
@@ -181,7 +181,6 @@ class PackageConfigFileInfo:
     type: str  # 'static' or 'template'
     path: Path  # path to the file/template
     engine: Optional[RenderEngineConfig] = None  # RenderEngineConfig instance (if 'template', otherwise None)
-    target_name: str = "package.toml"  # 'drift_package.toml' or 'package.toml'
 
 
 def get_package_config_file_info(
@@ -202,7 +201,6 @@ def get_package_config_file_info(
             type="static" if base_res.engine is None else "template",
             path=base_res.path,
             engine=base_res.engine,
-            target_name=base_res.target_name
         )
 
     # 2. Local config check
@@ -214,7 +212,6 @@ def get_package_config_file_info(
             type="static" if local_res.engine is None else "template",
             path=local_res.path,
             engine=local_res.engine,
-            target_name=local_res.target_name
         )
 
     return base_info, local_info

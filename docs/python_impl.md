@@ -13,7 +13,7 @@ The implementation of the 7 core primitives and workflows outlined in `@design.m
     *   `os`, `sys`, `shutil`: For core filesystem manipulation and paths management.
     *   `pathlib`: For robust object-oriented path traversals and comparisons.
     *   `subprocess`: For executing surgical command elevations (`sudo`) and external compiler/stow triggers.
-    *   `json` or hand-rolled parse helpers: For configuration formats. *Note on Python < 3.11 compatibility*: Since Python 3.11 introduced `tomllib` natively, for compatibility with older Python 3.x installations on target machines, a lightweight, hand-rolled TOML reader (regular expression/line-by-line parser) should be implemented to read `package.toml` and `drift.toml` without external pip dependencies.
+    *   `json` or hand-rolled parse helpers: For configuration formats. *Note on Python < 3.11 compatibility*: Since Python 3.11 introduced `tomllib` natively, for compatibility with older Python 3.x installations on target machines, a lightweight, hand-rolled TOML reader (regular expression/line-by-line parser) should be implemented to read `drift_package.toml` and `drift.toml` without external pip dependencies.
 
 ---
 
@@ -23,7 +23,7 @@ The implementation of the 7 core primitives and workflows outlined in `@design.m
 *   **The Blueprint**:
     1.  The engine must always start and run under the **unprivileged active user account**.
     2.  User home directories must be resolved dynamically using `os.path.expanduser("~")` or `pathlib.Path.home()`, which guarantees resolving the correct unprivileged host paths.
-    3.  When a file copy or link operation requires root access (`sudo = true` in `package.toml`):
+    3.  When a file copy or link operation requires root access (`sudo = true` in `drift_package.toml`):
         *   Do not write files directly. Instead, write to a temp file in unprivileged space (e.g. `render/` or `/tmp/`), and then invoke a surgical sub-process:
             ```python
             subprocess.run(["sudo", "cp", temp_file, target_path], check=True)

@@ -30,7 +30,6 @@ target_directory = "{target_directory}"   # Destination for this package
 def run_primitive_10_create_new_package(
     workspace_config: WorkspaceConfig,
     package_name: str,
-    config_filename: Optional[str] = None,
     force: bool = False,
     target_directory: Optional[str] = None,
     install_method: Optional[str] = None
@@ -38,21 +37,15 @@ def run_primitive_10_create_new_package(
     """Scaffolds a new package directory and a default package configuration file."""
     package_dir = workspace_config.source_path / package_name
     
-    # If config_filename is given, we ONLY check if any file will render to THAT specific name.
-    # Otherwise, we check if ANY valid package configuration file exists.
-    targets_to_probe = [config_filename] if config_filename else PACKAGE_CONFIG_FILE_NAME_LIST
-    
     package_dir.mkdir(parents=True, exist_ok=True)
-    existing_info = workspace_config.find_source_file_for_rendered_names(package_dir, targets_to_probe)
+    existing_info = workspace_config.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
     if existing_info and not force:
         raise FileExistsError(
             f"Configuration file already exists: {existing_info.path}. "
             "Use --force to overwrite."
         )
 
-    # Use specified config_filename or default to 'package.toml' (per spec)
-    # Note: PACKAGE_CONFIG_FILE_NAME is 'drift_package.toml', but spec says default is 'package.toml'
-    final_config_name = config_filename if config_filename else "package.toml"
+    final_config_name = PACKAGE_CONFIG_FILE_NAME
     config_file = package_dir / final_config_name
     
     final_target_dir: str = target_directory or str(workspace_config.default_target_path)

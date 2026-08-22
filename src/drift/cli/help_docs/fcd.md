@@ -19,9 +19,9 @@ Drift's FCD engine solves this by turning specific directories into fully-audite
 total-governance zones.
 
 ## 2. Declaring FCDs
-To declare an FCD, use the `fully_controlled_dirs` option under `[package]` in your `package.toml`:
+To declare an FCD, use the `fully_controlled_dirs` option under `[package]` in your `drift_package.toml`:
 ```toml
-# src/qbittorrent/package.toml
+# src/qbittorrent/drift_package.toml
 [package]
 name = "qbittorrent"
 install_method = "copy"

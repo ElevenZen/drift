@@ -60,7 +60,7 @@ class TestUninstall(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/package.toml
+        # 1. Setup install/pkg/drift_package.toml
         with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
@@ -109,7 +109,7 @@ class TestUninstall(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/package.toml
+        # 1. Setup install/pkg/drift_package.toml
         with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
@@ -190,7 +190,7 @@ class TestUninstall(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/package.toml
+        # 1. Setup install/pkg/drift_package.toml
         with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]

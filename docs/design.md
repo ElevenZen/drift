@@ -185,13 +185,13 @@ Restores the system configuration and the local state database to the last known
 ### Primitive 9: Workspace Garbage Collection [Low-level: `drift gc`]
 Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories:
 1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift.toml`.
-2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml` or `package.toml`), which prevents database pollution from historical directories.
+2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml`), which prevents database pollution from historical directories.
 3.  **Auto-Commit Database changes**: Auto-stages and commits zombie removal operations inside `render/` and `install/` databases.
 
 ### Primitive 10: Package Creation [High-level: `drift new`]
 Scaffolds a new declarative package inside the `src/` directory.
 1.  Creates the `src/<package_name>` directory.
-2.  Generates a default `package.toml` (or designated config file) with standard safe defaults (e.g. `install_method = "stow"`).
+2.  Generates a default `drift_package.toml` (or designated config file) with standard safe defaults (e.g. `install_method = "stow"`).
 3.  Features built-in probing guards to prevent accidental overwriting of existing package configurations unless `--force` is used.
 
 ### Primitive 11: Resource Import [High-level: `drift add`]
@@ -344,27 +344,27 @@ If a registered engine's `input_file` is not specified, is empty, or is missing 
 *   **Initialization Warning**: During the workspace bootstrapping phase (`render_input_templates`), instead of raising a fatal crash, the engine logs a clear, descriptive warning and sets the engine's resolved input file to `Path("")` (an empty path). This allows other independent render processes to initialize and compile normally.
 *   **Deferred Runtime Check**: The safety safeguard is deferred to actual template rendering. If any template file in the repository relies on a gracefully disabled engine, the core rendering pipeline (`resolve_render_template_args`) checks for the empty `Path("")` input path. If found, it halts compilation immediately with a descriptive `ValueError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
 
-### C. Package Configuration: `package.toml` Specification
-A package configuration file—named either `package.toml` or `drift_package.toml`—is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
+### C. Package Configuration: `drift_package.toml` Specification
+A package configuration file — named  `drift_package.toml` — is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/drift_package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
 
 #### Layered Overrides and Unified Rendering Code Flow
 To handle machine-specific overrides and secrets at the package level, Drift implements a layered override merge system and a unified rendered target name pattern:
 1. **Hierarchical Merging (`package.local.toml` / `drift_package.local.toml`)**:
-   - The primary package configuration (`package.toml` or `drift_package.toml`) is committed to the version-controlled repository.
+   - The primary package configuration (`drift_package.toml`) is committed to the version-controlled repository.
    - Users can create a local-only machine override file (`package.local.toml` or `drift_package.local.toml`) which is gitignored (using `*.local.toml` patterns).
    - During rendering, the engine locates and reads the base configuration, locates and reads the local override configuration (if present), and recursively merges their dictionary trees.
 2. **On-the-Fly Template Rendering**:
    - For both the base and local configurations, if they are templates (e.g. `package.envst.toml`), they are rendered on-the-fly to temporary files before being parsed to dictionary structures.
 3. **Unified Render Target Name (`drift_package.toml`)**:
-   - Regardless of whether the original source files are named `package.toml`, `drift_package.toml`, or their template/local override counterparts, the final merged TOML dictionary is **always serialized and rendered as `drift_package.toml`** inside the sandbox directory at `render/<package_name>/drift_package.toml`.
+   - Regardless of whether the original source files are named `drift_package.toml`, or their template/local override counterparts, the final merged TOML dictionary is **always serialized and rendered as `drift_package.toml`** inside the sandbox directory at `render/<package_name>/drift_package.toml`.
    - All subsequent package inspections, change visualizations, and staging processes read from this standardized `render/<package_name>/drift_package.toml` file, ensuring perfect downstream modularity and zero ambiguity.
 4. **Exclusion Guard**: The final rendered `drift_package.toml` is strictly marked as a metadata file. It is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/drift_package.toml`.
 
 #### Default Config Template:
 ```toml
 # =====================================================================
-# package.toml Template & Specification
-# Place this file in: src/<package_name>/package.toml
+# drift_package.toml Template & Specification
+# Place this file in: src/<package_name>/drift_package.toml
 # =====================================================================
 
 [package]
@@ -464,7 +464,7 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
         *   *Without Slashes*: If a pattern does not contain a slash, it is matched directly against the file's `basename` (e.g., `\.bak$`).
     *   **Match Timing Guard**: The ignore engine matches file patterns against the native repository filenames **before** any prefix conversion or suffix extraction takes place.
         *   *Important*: To ignore a file named `dot-bashrc`, your `.drift_ignore` file must list `dot-bashrc`, not `.bashrc`. Listing `.bashrc` will fail to match on disk, and the file will still be processed.
-    *   **Implicit Exclusions**: Package configurations (such as `package.toml` and `drift_package.toml`) are automatically excluded by the compilation engine without requiring manual entries.
+    *   **Implicit Exclusions**: Package configurations (`drift_package.toml`) are automatically excluded by the compilation engine without requiring manual entries.
     *   An extra `.stow-local-ignore` is dynamically generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as an active package.
 
     #### PCRE `.drift_ignore` File Example:
@@ -551,15 +551,15 @@ To enable granular control over modular configurations, the deployment pipeline 
     *   The package is skipped during *render*, *stage*, and *deploy* tasks if the package name is not explicitly mentioned in commands.
     *   **Self-Cleaning**: If a package was previously installed but is now toggled to `false` in this table, running a bulk `make deploy` will automatically detect the orphan status and invoke **Primitive 7 (Uninstall)** to cleanly remove it from the system.
 
-#### 2. Sandbox Compilation Switch: `package.toml -> enable_render`
-*   **Location**: Package configuration file (`src/<pkg>/package.toml`).
+#### 2. Sandbox Compilation Switch: `drift_package.toml -> enable_render`
+*   **Location**: Package configuration file (`src/<pkg>/drift_package.toml`).
 *   **Affected Phase**: **Primitive 2: Render Packages** (Sandbox Rendering).
 *   **How it works**: Controls whether templates inside `src/` are compiled and output into the `render/` sandbox directory.
     *   Defaults to `true`. If explicitly set to `false`, the rendering engine skips compiling the package directory entirely.
     *   This is useful for local static packages where no template processing is required and the developer wants to bypass rendering and installing completely.
 
-#### 3. State Promotion Switch: `package.toml -> enable_install`
-*   **Location**: Package configuration file (`src/<pkg>/package.toml`).
+#### 3. State Promotion Switch: `drift_package.toml -> enable_install`
+*   **Location**: Package configuration file (`src/<pkg>/drift_package.toml`).
 *   **Affected Phase**: **Primitive 4: Stage Render to Install** (Staging Promotion).
 *   **How it works**: Controls whether compiled files in the `render/` sandbox are promoted to the staging state database `install/` for eventual deployment to the system.
     *   Defaults to `true`. If set to `false`, the sync engine **completely skips copying its files from `render/` to `install/`**.
@@ -568,7 +568,7 @@ To enable granular control over modular configurations, the deployment pipeline 
 ### F. Orphan Package Garbage Collection & Uninstall Protection
 To maintain parity between declarations and system states, the deployer enforces two robust policies:
 1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
-    *   When executing a **Bulk All-Packages Deployment** (`make deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift.toml` (and respects `enable_install = false` in `package.toml`).
+    *   When executing a **Bulk All-Packages Deployment** (`make deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift.toml` (and respects `enable_install = false` in `drift_package.toml`).
     *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the deployment script **automatically executes Primitive 7 (Uninstall) on this orphan package** before initiating Stage 2 deployment.
     *   This ensures decommissioned packages are automatically and cleanly purged from the host system.
 2.  **Uninstall Protection Safeguard**:
@@ -675,7 +675,7 @@ The active configuration engine and orchestrator follow a strict sequence design
 
 #### 1. Discovery and Registry Check
 Deployment can be triggered in **Bulk Mode** (evaluating all declared active packages) or **Targeted Mode** (focusing on a specific package).
-*   **Discovery**: The orchestrator checks workspace declarations in `config/drift.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `package.toml`.
+*   **Discovery**: The orchestrator checks workspace declarations in `config/drift.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `drift_package.toml`.
 *   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"deploying"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
 
 #### 2. Stage 1: Alignment Safeguard (System -> Install)
@@ -844,7 +844,7 @@ def cli_uninstall_utility(target_pkg, force=False):
     active_declared_packages = get_discovered_active_packages()
     if (target_pkg in active_declared_packages) and (not force):
         print(f"[ERROR] Safeguard: Package '{target_pkg}' is still active/enabled inside config/drift.toml.")
-        print("To safely uninstall, please first disable it in config/drift.toml (or set enable_install=false in package.toml),")
+        print("To safely uninstall, please first disable it in config/drift.toml (or set enable_install=false in drift_package.toml),")
         print("or use 'make uninstall package=xxx force=true' to bypass this shield.")
         exit(3)
         

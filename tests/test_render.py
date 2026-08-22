@@ -496,7 +496,7 @@ class TestRenderPackage(unittest.TestCase):
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # 4. Write static package config
-        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+        with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
             name = "my_pkg"
@@ -524,7 +524,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((render_pkg_dir / "templated.txt").is_file())
         self.assertEqual((render_pkg_dir / "templated.txt").read_text(encoding="utf-8"), "Rendered: drift_render_test")
 
-        # Verify package.toml was dumped to drift_package.toml since it is static
+        # Verify drift_package.toml was dumped to drift_drift_package.toml since it is static
         self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
         rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(rendered_config.get("package", {}).get("name"), "my_pkg")
@@ -545,7 +545,7 @@ class TestRenderPackage(unittest.TestCase):
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # package config with enable_render = false
-        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+        with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
             name = "my_pkg"
@@ -558,7 +558,7 @@ class TestRenderPackage(unittest.TestCase):
         # Run render_package
         render_package(workspace_config, pkg_dir)
 
-        # Verify render dir contains only the 'drift_package.toml' (loaded from package.toml) and no other files
+        # Verify render dir contains only the 'drift_drift_package.toml' (loaded from drift_package.toml) and no other files
         render_pkg_dir = drift_root / "render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(render_pkg_dir.exists())
         rendered_config = parse_toml(render_pkg_dir.read_text(encoding="utf-8"))
@@ -606,7 +606,7 @@ class TestRenderPackage(unittest.TestCase):
         # Verify output in render/my_pkg/
         render_pkg_dir = drift_root / "render" / "my_pkg"
 
-        # package.toml was rendered (loaded from package.envst.toml) and renamed to drift_package.toml
+        # drift_package.toml was rendered (loaded from package.envst.toml) and renamed to drift_drift_package.toml
         rendered_config_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(rendered_config_path.is_file())
         content = rendered_config_path.read_text(encoding="utf-8")
@@ -657,7 +657,7 @@ class TestRenderPackage(unittest.TestCase):
         # Verify output in render/my_pkg/
         render_pkg_dir = drift_root / "render" / "my_pkg"
 
-        # package.toml was rendered (loaded from package.envst.toml) and renamed to drift_package.toml
+        # drift_package.toml was rendered (loaded from package.envst.toml) and renamed to drift_drift_package.toml
         rendered_config_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(rendered_config_path.is_file())
         content = rendered_config_path.read_text(encoding="utf-8")
@@ -692,7 +692,7 @@ class TestRenderPackage(unittest.TestCase):
         for pkg_name in ("pkg_a", "pkg_b", "pkg_c"):
             pkg_dir = drift_root / "src" / pkg_name
             pkg_dir.mkdir(parents=True, exist_ok=True)
-            with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+            with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
                 f.write(f"""
                 [package]
                 name = "{pkg_name}"
@@ -807,7 +807,7 @@ class TestRenderPackage(unittest.TestCase):
         for pkg_name in ("pkg_one", "pkg_two", "pkg_three"):
             pkg_dir = drift_root / "src" / pkg_name
             pkg_dir.mkdir(parents=True, exist_ok=True)
-            with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+            with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
                 f.write(f"""
                 [package]
                 name = "{pkg_name}"
@@ -893,7 +893,7 @@ class TestRenderPackage(unittest.TestCase):
         # 3. Create a package that uses mustache
         pkg_dir = drift_root / "src" / "my_pkg"
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_dir / "package.toml").write_text('[package]\nname = "my_pkg"\nenable_render = true', encoding="utf-8")
+        (pkg_dir / "drift_package.toml").write_text('[package]\nname = "my_pkg"\nenable_render = true', encoding="utf-8")
         (pkg_dir / "file.mustache.txt").write_text("Template content", encoding="utf-8")
 
         # 4. Run rendering
@@ -983,7 +983,7 @@ class TestRenderPackage(unittest.TestCase):
         pkg_dir = self.drift_root / "src" / "dot-my_pkg"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+        with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
             name = "dot-my_pkg"
@@ -1017,7 +1017,7 @@ class TestRenderPackage(unittest.TestCase):
         pkg_dir = self.drift_root / "src" / "pkg_h"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(pkg_dir / "package.toml", "w", encoding="utf-8") as f:
+        with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
             name = "pkg_h"

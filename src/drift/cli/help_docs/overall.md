@@ -29,7 +29,7 @@ audits active system drifts, and executes deployments using atomic, transactiona
 
 ## 🚀 High-Level User Commands (Frequently Used)
 *   `drift init`              Initializes a new Git-backed Drift workspace & databases.
-*   `drift new <pkg>`         Scaffolds a new package directory with `package.toml` metadata.
+*   `drift new <pkg>`         Scaffolds a new package directory with `drift_package.toml` metadata.
 *   `drift add <pkg> <paths>` Imports external target-system configurations into package source.
 *   `drift adopt <pkg>`       Backports uncommitted system drifts back into package templates.
 *   `drift deploy [pkgs]`     Sandbox-compiles, stages, and deploys declarative configs to host.
@@ -45,5 +45,5 @@ audits active system drifts, and executes deployments using atomic, transactiona
     `drift help install`               Understand the state database and deployment (install/).
     `drift help fcd`                   Understand Fully-Controlled Directories (FCDs) and file tracking.
     `drift help ignore`                Understand .drift_ignore syntax, install ignore logic, and FCD ignore mechanics.
-    `drift help package.toml`          View a complete, commented package.toml configuration template.
+    `drift help drift_package.toml`    View a complete, commented drift_package.toml configuration template.
     `drift help drift.toml`            View a complete, commented drift.toml global template.

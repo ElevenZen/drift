@@ -18,7 +18,7 @@ src/nvim/
 
 ## 📝 Package Configurations
 Each package is controlled by a dedicated configuration file named either `drift_package.toml` 
-or `package.toml`. This file dictates:
+or `drift_package.toml`. This file dictates:
 1.  **`install_method`**: How configurations are written to the host system:
     *   `stow`: Symmetric symlinking from `install/` state DB (uses GNU Stow logic).
     *   `copy`: Secure, physical file copying.
@@ -29,4 +29,4 @@ or `package.toml`. This file dictates:
 4.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during installation and update sequences 
     (`pre_install`, `post_install`, `pre_update`, `post_update`, `post_render`).
 
-👉 Run `drift help package.toml` to view the comprehensive configuration reference.
+👉 Run `drift help drift_package.toml` to view the comprehensive configuration reference.

@@ -47,7 +47,7 @@ class TestStatus(unittest.TestCase):
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
         
         # 1. Initial render, stage, apply
@@ -78,7 +78,7 @@ class TestStatus(unittest.TestCase):
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("original content")
         
         # Initial state setup

@@ -89,35 +89,33 @@ Only works if the directory is empty or tracked by git.
     📝 Generated config/envsubst.bash and config/mustache.envst.json.
     ```
 
-### B. Package Creation: `drift new <package> [config_filename] [--force] [--target <dir>] [--method <stow|copy>]` (Implemented)  
+### B. Package Creation: `drift new <package> [--force] [--target <dir>] [--method <stow|copy>]` (Implemented)  
 #### **Common Usage**
-Create a new package directory with the default `package.toml` configuration file:
+Create a new package directory with the default `drift_package.toml` configuration file:
 ```bash
 $ drift new nvim --target ~/.config/nvim --method copy
 ✨ Package 'nvim' created successfully!
-📝 Generated package.toml at src/nvim/package.toml.
+📝 Generated drift_package.toml at src/nvim/drift_package.toml.
 ```
 
 #### **Details & Deep Probing Logic**
-*   **Command Signature**: `drift new <package> [config_filename] [--force / -f] [--target / -t <target_directory>] [--method / -m <install_method>]`
+*   **Command Signature**: `drift new <package> [--force / -f] [--target / -t <target_directory>] [--method / -m <install_method>]`
 *   **Optional Arguments & Flags**:
-    - `<config_filename>`: Explicitly name the config file as `drift_package.toml` or `package.toml` (defaults to `package.toml`).
     - `--force / -f`: Forcefully overwrites any existing config file inside the package.
-    - `--target / -t <target_directory>`: Explicitly configures the deployment target directory field inside the generated `package.toml`. Defaults to `default_target_directory` in `drift.toml`.
-    - `--method / -m <install_method>`: Explicitly configures the deployment installation method (`stow` or `copy`) field inside the generated `package.toml`. Defaults to `default_install_method` in `drift.toml`.
+    - `--target / -t <target_directory>`: Explicitly configures the deployment target directory field inside the generated `drift_package.toml`. Defaults to `default_target_directory` in `drift.toml`.
+    - `--method / -m <install_method>`: Explicitly configures the deployment installation method (`stow` or `copy`) field inside the generated `drift_package.toml`. Defaults to `default_install_method` in `drift.toml`.
 *   **Probing Guard**:
     - The CLI first checks if *any* configuration file already exists inside the package directory `src/<package>/`.
-    - Specifically, it probes following files if `<config_filename>` is not present:
+    - Specifically, it probes following files:
       1. `drift_package.toml`
-      2. `package.toml`
-      3. Any engine-templated configuration such as `package.<engine>.toml` or `drift_package.<engine>.toml`.  
+      2. Any engine-templated configuration such as `drift_package.<engine>.toml`.  
 
     - If any configuration file exists:  
       - If `--force` is **not** supplied: The command halts and prints an error, preventing you from accidentally losing an existing configuration.
       - If `--force` **is** supplied: Overwrites the configuration with the default template.
 *   **Default Configuration Output**:
     ```toml
-    # src/<package>/package.toml
+    # src/<package>/drift_package.toml
     [package]
     name = "<package>"
     install_method = "stow"  # Options: "stow" (symlink) or "copy" (physical)
@@ -141,7 +139,7 @@ $ drift new nvim --target ~/.config/nvim --method copy
 #### **Machine-Specific Override Layering (`*.local.toml`)**:
 To support machine-specific configuration overrides (e.g. unique target home directories, or customized parameters per machine), Drift supports a layered TOML system:
 - **Global Layer**: `config/drift.local.toml` automatically overrides properties in global `config/drift.toml`.
-- **Package Layer**: `src/<pkg>/package.local.toml` (or `drift_package.local.toml`) automatically overrides properties in `src/<pkg>/package.toml` / `drift_package.toml`.
+- **Package Layer**: `src/<pkg>/package.local.toml` (or `drift_package.local.toml`) automatically overrides properties in `src/<pkg>/drift_package.toml`.
 - **Git Isolation**: Files matching `*.local.toml` are gitignored by default. During rendering, Drift recursively merges the local TOML overrides on top of the base version and always outputs the unified standardized metadata file as `drift_package.toml` in the `render/` sandbox.
 
 ---
@@ -438,7 +436,7 @@ Provides a rich, interactive, built-in mini user manual for Drift using pager-fa
     - `install`: Explains the state database (`install/`), differential delta calculations, and proactive collision safeguards.
     - `fcd`: Explains Fully-Controlled Directories (FCDs), dynamic file creation, and interactive tracking mechanics.
     - `ignore`: Explains the Syntax of `.drift_ignore` PCRE patterns, install-ignore skipping logic, and interactive Fully-Controlled Directory (FCD) auto-ignoring mechanics.
-    - `package.toml` (or `drift_package.toml`): A complete, fully documented template with package option explanations.
+    - `drift_package.toml`: A complete, fully documented template with package option explanations.
     - `drift.toml`: A complete, fully documented template for global workspace settings.
 *   **Pager Mechanics**: If run inside an interactive terminal (TTY), help text is dynamically piped to the system `PAGER` utility (like `less` or `more`) via Python's built-in `pydoc.pager` library. If output is piped or redirected, it falls back cleanly to a raw print to `stdout`.
 

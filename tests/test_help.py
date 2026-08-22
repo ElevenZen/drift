@@ -30,13 +30,13 @@ class TestHelpDocs(unittest.TestCase):
         install = get_help_page("install")
         self.assertIn("Local State Database & Installation: `install/`", install)
 
-        # package.toml
-        pkg_toml = get_help_page("package.toml")
-        self.assertIn("package.toml Complete Configuration Reference", pkg_toml)
+        # drift_package.toml
+        pkg_toml = get_help_page("drift_package.toml")
+        self.assertIn("drift_package.toml Complete Configuration Reference", pkg_toml)
 
         # drift_package.toml fallback
         drift_pkg_toml = get_help_page("drift_package.toml")
-        self.assertIn("package.toml Complete Configuration Reference", drift_pkg_toml)
+        self.assertIn("drift_package.toml Complete Configuration Reference", drift_pkg_toml)
 
         # drift.toml
         drift_toml = get_help_page("drift.toml")

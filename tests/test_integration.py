@@ -107,9 +107,7 @@ class TestIntegration(unittest.TestCase):
         target_file.write_text("original config")
         
         # 2. Setup package with copy method
-        run_primitive_10_create_new_package(self.workspace_config, pkg)
-        with open(self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME, "a") as f:
-            f.write('install_method = "copy"\n')
+        run_primitive_10_create_new_package(self.workspace_config, pkg, install_method="copy")
         (self.source_dir / pkg / "config.ini").write_text("drift managed config")
         
         # 3. Full Deployment
@@ -118,8 +116,8 @@ class TestIntegration(unittest.TestCase):
         run_primitive_5_install_deployment(self.workspace_config)
         
         # Verify overwritten and backed up
-        self.assertEqual(target_file.read_text(), "drift managed config")
         backup_file = self.workspace_config.backup_path / pkg / "overwritten" / "config.ini"
+        self.assertEqual(target_file.read_text(), "drift managed config")
         self.assertTrue(backup_file.exists())
         self.assertEqual(backup_file.read_text(), "original config")
         

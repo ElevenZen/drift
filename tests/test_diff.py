@@ -50,7 +50,7 @@ class TestDiff(unittest.TestCase):
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("initial content")
         
         from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
@@ -72,7 +72,7 @@ class TestDiff(unittest.TestCase):
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
         
         from drift.render_package import run_primitive_2_render_packages
@@ -96,7 +96,7 @@ class TestDiff(unittest.TestCase):
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
         (pkg_src_dir / "file.txt").write_text("content")
         
         from drift.render_package import run_primitive_2_render_packages

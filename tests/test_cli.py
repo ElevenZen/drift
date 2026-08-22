@@ -43,7 +43,7 @@ class TestCLI(unittest.TestCase):
         for pkg in ("pkg_a", "pkg_b"):
             pkg_path = os.path.join(self.src_dir, pkg)
             os.makedirs(pkg_path, exist_ok=True)
-            with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
+            with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
                 f.write(f"""
                 [package]
                 name = "{pkg}"
@@ -209,11 +209,11 @@ class TestCLI(unittest.TestCase):
 
     def test_cli_apply(self) -> None:
         """Verifies that running 'apply' deploys files to target directories."""
-        # Write a package.toml with target_directory outside drift_root
+        # Write a drift_package.toml with target_directory outside drift_root
         pkg_path = os.path.join(self.src_dir, "pkg_a")
         target_dir = os.path.join(self.temp_dir.name, "system_home")
         os.makedirs(target_dir, exist_ok=True)
-        with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "pkg_a"
@@ -268,7 +268,7 @@ class TestCLI(unittest.TestCase):
         pkg_path = os.path.join(self.src_dir, "pkg_a")
         target_dir = os.path.join(self.temp_dir.name, "system_home_reverse")
         os.makedirs(target_dir, exist_ok=True)
-        with open(os.path.join(pkg_path, "package.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "pkg_a"
@@ -309,7 +309,7 @@ class TestCLI(unittest.TestCase):
 
         # 1. Test Typer Backend (main)
         main(["-C", self.drift_root, "new", "typer_pkg", "--target", "/tmp/typer_target", "--method", "copy"])
-        typer_config_file = os.path.join(self.src_dir, "typer_pkg", "package.toml")
+        typer_config_file = os.path.join(self.src_dir, "typer_pkg", "drift_package.toml")
         self.assertTrue(os.path.isfile(typer_config_file))
         with open(typer_config_file, "r", encoding="utf-8") as f:
             content = f.read()
@@ -318,7 +318,7 @@ class TestCLI(unittest.TestCase):
 
         # 2. Test Argparse Backend fallback
         run_argparse_cli(["-C", self.drift_root, "new", "argparse_pkg", "--target", "/tmp/argparse_target", "--method", "copy"])
-        argparse_config_file = os.path.join(self.src_dir, "argparse_pkg", "package.toml")
+        argparse_config_file = os.path.join(self.src_dir, "argparse_pkg", "drift_package.toml")
         self.assertTrue(os.path.isfile(argparse_config_file))
         with open(argparse_config_file, "r", encoding="utf-8") as f:
             content = f.read()

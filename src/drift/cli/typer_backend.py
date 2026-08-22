@@ -14,7 +14,7 @@ from .actions import (
     execute_apply,
     execute_install_commit,
     execute_reverse_sync,
-    execute_new,
+    execute_new_package,
     execute_uninstall,
     execute_status,
     execute_gc,
@@ -247,10 +247,6 @@ def typer_new(
         ...,
         help="Name of the new package to create"
     ),
-    config_filename: Optional[str] = typer.Argument(
-        None,
-        help="Explicitly name the config file (defaults to package.toml)"
-    ),
     force: bool = typer.Option(
         False,
         "--force",
@@ -261,23 +257,22 @@ def typer_new(
         None,
         "--target",
         "-t",
-        help="Explicitly configure the deployment target directory inside package.toml"
+        help="Explicitly configure the deployment target directory inside drift_package.toml"
     ),
     method: Optional[str] = typer.Option(
         None,
         "--method",
         "-m",
-        help="Explicitly configure the installation method ('stow' or 'copy') inside package.toml"
+        help="Explicitly configure the installation method ('stow' or 'copy') inside drift_package.toml"
     )
 ) -> None:
-    """Scaffold a new package directory and package.toml."""
+    """Scaffold a new package directory and drift_package.toml."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_new(
+        execute_new_package(
             drift_root,
             package_name,
-            config_filename=config_filename,
             force=force,
             target_directory=target,
             install_method=method
@@ -529,7 +524,7 @@ def typer_deploy(
 def typer_help(
     topic: Optional[str] = typer.Argument(
         None,
-        help="Specific topic to display (package, src, render, install, package.toml, drift.toml)"
+        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml)"
     )
 ) -> None:
     """Show overall model of drift and its detailed manual pages."""

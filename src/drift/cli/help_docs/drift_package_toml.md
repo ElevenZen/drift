@@ -1,6 +1,6 @@
-# 📝 package.toml Complete Configuration Reference
+# 📝 drift_package.toml Complete Configuration Reference
 
-Below is a complete, fully documented template for `package.toml` (or `drift_package.toml`):
+Below is a complete, fully documented template for `drift_package.toml` (or `drift_package.local.toml`):
 
 ```toml
 [package]

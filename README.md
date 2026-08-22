@@ -91,7 +91,7 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 *When you want to manage a new configuration file (e.g., Neovim config) with declarative templates.*
 
 1.  **Scaffold**: Run `drift new nvim -t ~/.config/nvim` to create a package directory.
-    *   **Folder Structure Relieved**: By setting `target_directory = "~/.config/nvim"` inside `src/nvim/package.toml`, you no longer need nested directories like `dot-config/nvim/` on disk. Files are put directly inside `src/nvim/`.
+    *   **Folder Structure Relieved**: By setting `target_directory = "~/.config/nvim"` inside `src/nvim/drift_package.toml`, you no longer need nested directories like `dot-config/nvim/` on disk. Files are put directly inside `src/nvim/`.
 2.  **Author**: Add template or files into `src/nvim/` (e.g., `src/nvim/init.envst.lua` containing `${ENV_VAR}`).
 3.  **Deploy**: Run `drift deploy` (which triggers the functions: Render $\rightarrow$ Commit Render $\rightarrow$ Stage $\rightarrow$ Install Deployment $\rightarrow$ Commit Install).
     *   All templates are compiled inside the sandbox, changes staged into the local state database, and configurations safely copied/linked onto your target active host target path (`~/.config/nvim/init.lua`).
@@ -124,7 +124,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | Command | Description |
 | :--- | :--- |
 | `drift init` | Initializes a new Git-backed Drift workspace, databases, and configuration settings. |
-| `drift new <pkg>` | Scaffolds a new package directory with `package.toml` metadata config. |
+| `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
 | `drift add <pkg>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt <pkg>` | Backports uncommitted system drifts safely into package source templates. |
 | `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
@@ -148,7 +148,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 ---
 
 ## 🪝 Robust Lifecycle Hook Integration
-Packages can declare automated hook scripts inside `package.toml` to integrate with external packages:
+Packages can declare automated hook scripts inside `drift_package.toml` to integrate with external packages:
 ```toml
 [package]
 name = "nvim"

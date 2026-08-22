@@ -16,11 +16,11 @@ install_directory = "install"
 # Backup directory path for overwritten or deleted files
 backup_directory = "backup"
 
-# Global default target directory for packages if unspecified in package.toml
+# Global default target directory for packages if unspecified in drift_package.toml
 # Supports home expansion (~).
 default_target_directory = "~"
 
-# Global default installation method if unspecified in package.toml
+# Global default installation method if unspecified in drift_package.toml
 # Options: "stow" (symlinks) or "copy" (physical copies)
 default_install_method = "stow"
 

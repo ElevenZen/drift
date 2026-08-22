@@ -11,7 +11,7 @@ from .actions import (
     execute_apply,
     execute_install_commit,
     execute_reverse_sync,
-    execute_new,
+    execute_new_package,
     execute_uninstall,
     execute_status,
     execute_gc,
@@ -151,11 +151,6 @@ def make_parser() -> argparse.ArgumentParser:
         help="Name of the new package to create"
     )
     new_parser.add_argument(
-        "config_filename",
-        nargs="?",
-        help="Explicitly name the config file (defaults to package.toml)"
-    )
-    new_parser.add_argument(
         "-f", "--force",
         action="store_true",
         help="Forcefully overwrite any existing config file inside the package"
@@ -163,12 +158,12 @@ def make_parser() -> argparse.ArgumentParser:
     new_parser.add_argument(
         "-t", "--target",
         dest="target",
-        help="Explicitly configure the deployment target directory inside package.toml"
+        help="Explicitly configure the deployment target directory inside drift_package.toml"
     )
     new_parser.add_argument(
         "-m", "--method",
         dest="method",
-        help="Explicitly configure the installation method ('stow' or 'copy') inside package.toml"
+        help="Explicitly configure the installation method ('stow' or 'copy') inside drift_package.toml"
     )
 
     # uninstall subcommand
@@ -342,7 +337,7 @@ def make_parser() -> argparse.ArgumentParser:
     help_parser.add_argument(
         "topic",
         nargs="?",
-        help="Specific topic to display (package, src, render, install, package.toml, drift.toml)"
+        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml)"
     )
     return parser
 
@@ -453,10 +448,9 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_new(
+            execute_new_package(
                 drift_root,
                 args.package_name,
-                config_filename=args.config_filename,
                 force=args.force,
                 target_directory=args.target,
                 install_method=args.method
