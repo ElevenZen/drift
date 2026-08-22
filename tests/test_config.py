@@ -522,6 +522,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(res.type, "template")
         self.assertEqual(res.path, template_drift_path)
         self.assertEqual(res.engine, engine)
+        self.assertIsNone(local_res)
 
         # 3. drift_package.toml exists (takes precedence over drift_package.envst.toml)
         drift_package_toml_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -532,6 +533,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(res.type, "static")
         self.assertEqual(res.path, drift_package_toml_path)
         self.assertIsNone(res.engine)
+        self.assertIsNone(local_res)
 
     def test_package_toml_template_rendering(self) -> None:
         # 1. Create config/drift.toml
@@ -581,6 +583,90 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Verify that the expected rendered config file exists inside the render/ sandbox
         expected_rendered_path = self.drift_root / "my_render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
+        self.assertTrue(expected_rendered_path.is_file())
+
+    def test_workspace_local_config_merge(self) -> None:
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        local_path = config_dir / "drift.local.toml"
+
+        config_path.write_text("""
+            [workspace]
+            render_directory = "my_render"
+            install_directory = "my_install"
+            """, encoding="utf-8")
+
+        local_path.write_text("""
+            [workspace]
+            install_directory = "overridden_install"
+            """, encoding="utf-8")
+
+        config = load_workspace_config(config_path)
+        self.assertEqual(config.render_directory, Path("my_render"))
+        self.assertEqual(config.install_directory, Path("overridden_install"))
+
+    def test_package_local_config_merge_without_workspace(self) -> None:
+        pkg_dir = self.drift_root / "my_pkg_merge"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        base_config_path = pkg_dir / "drift_package.toml"
+        base_config_path.write_text("""
+            [package]
+            name = "my_pkg_merge"
+            install_method = "copy"
+            sudo = false
+            """, encoding="utf-8")
+
+        local_config_path = pkg_dir / "drift_package.local.toml"
+        local_config_path.write_text("""
+            [package]
+            install_method = "stow"
+            sudo = true
+            """, encoding="utf-8")
+
+        # Passing workspace_config=None triggers static loading path
+        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg_merge")
+        self.assertEqual(pkg_config.name, "my_pkg_merge")
+        self.assertEqual(pkg_config.install_method, "stow")
+        self.assertEqual(pkg_config.sudo, True)
+
+    def test_package_local_config_merge_with_workspace(self) -> None:
+        # Create workspace config structure
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        config_path.write_text("""
+            [workspace]
+            render_directory = "my_render"
+            """, encoding="utf-8")
+        workspace_config = load_workspace_config(config_path)
+
+        pkg_dir = self.drift_root / "src" / "my_pkg_merge_ws"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        base_config_path = pkg_dir / "drift_package.toml"
+        base_config_path.write_text("""
+            [package]
+            name = "my_pkg_merge_ws"
+            install_method = "copy"
+            sudo = false
+            """, encoding="utf-8")
+
+        local_config_path = pkg_dir / "drift_package.local.toml"
+        local_config_path.write_text("""
+            [package]
+            install_method = "stow"
+            sudo = true
+            """, encoding="utf-8")
+
+        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg_merge_ws", workspace_config)
+        self.assertEqual(pkg_config.name, "my_pkg_merge_ws")
+        self.assertEqual(pkg_config.install_method, "stow")
+        self.assertEqual(pkg_config.sudo, True)
+
+        # Ensure the combined file gets rendered correctly in render/ sandbox
+        expected_rendered_path = self.drift_root / "my_render" / "my_pkg_merge_ws" / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(expected_rendered_path.is_file())
 
 
