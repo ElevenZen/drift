@@ -176,3 +176,83 @@ def parse_toml(content: str) -> dict:
     if HAS_TOMLLIB:
         return tomllib.loads(content)
     return _parse_toml_fallback(content)
+
+
+def merge_toml(dict_a: dict, dict_b: dict) -> dict:
+    """Recursively merges dictionary dict_b into dict_a, returning a new dictionary."""
+    result = {}
+    for key, value in dict_a.items():
+        if key in dict_b:
+            if isinstance(value, dict) and isinstance(dict_b[key], dict):
+                result[key] = merge_toml(value, dict_b[key])
+            else:
+                result[key] = dict_b[key]
+        else:
+            result[key] = value
+    for key, value in dict_b.items():
+        if key not in result:
+            result[key] = value
+    return result
+
+
+def dump_toml(data: dict) -> str:
+    """Serializes a dictionary of basic package/workspace settings back to TOML format."""
+    lines = []
+    
+    # 1. First, serialize any top-level key-values (outside tables)
+    for k, v in data.items():
+        if not isinstance(v, dict):
+            if isinstance(v, bool):
+                lines.append(f"{k} = {str(v).lower()}")
+            elif isinstance(v, int):
+                lines.append(f"{k} = {v}")
+            elif isinstance(v, list):
+                items = [f'"{str(i)}"' for i in v]
+                lines.append(f"{k} = [{', '.join(items)}]")
+            elif v is None:
+                continue
+            else:
+                escaped_val = str(v).replace("\\", "\\\\").replace('"', '\\"')
+                lines.append(f'{k} = "{escaped_val}"')
+
+    # 2. Then, serialize nested tables (like [package] or [workspace])
+    for table_name, table_dict in data.items():
+        if isinstance(table_dict, dict):
+            if lines:
+                lines.append("")  # Empty line separator
+            lines.append(f"[{table_name}]")
+            for k, v in table_dict.items():
+                if isinstance(v, dict):
+                    # For nested tables (e.g. [packages.enable] or [render.envsubst])
+                    # We can support one level of nested sub-table simply
+                    sub_lines = []
+                    sub_lines.append(f"[{table_name}.{k}]")
+                    for sk, sv in v.items():
+                        if isinstance(sv, bool):
+                            sub_lines.append(f"{sk} = {str(sv).lower()}")
+                        elif isinstance(sv, int):
+                            sub_lines.append(f"{sk} = {sv}")
+                        elif isinstance(sv, list):
+                            items = [f'"{str(si)}"' for si in sv]
+                            sub_lines.append(f"{sk} = [{', '.join(items)}]")
+                        elif sv is None:
+                            continue
+                        else:
+                            escaped_val = str(sv).replace("\\", "\\\\").replace('"', '\\"')
+                            sub_lines.append(f'{sk} = "{escaped_val}"')
+                    lines.append("\n".join(sub_lines))
+                else:
+                    if isinstance(v, bool):
+                        lines.append(f"{k} = {str(v).lower()}")
+                    elif isinstance(v, int):
+                        lines.append(f"{k} = {v}")
+                    elif isinstance(v, list):
+                        items = [f'"{str(i)}"' for i in v]
+                        lines.append(f"{k} = [{', '.join(items)}]")
+                    elif v is None:
+                        continue
+                    else:
+                        escaped_val = str(v).replace("\\", "\\\\").replace('"', '\\"')
+                        lines.append(f'{k} = "{escaped_val}"')
+
+    return "\n".join(lines) + "\n"

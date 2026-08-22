@@ -1,5 +1,5 @@
 # engine/drift/__init__.py
-from .toml_parser import parse_toml
+from .toml_utils import parse_toml
 from .workspace_config import (
     WorkspaceConfig,
     load_workspace_config,
@@ -8,7 +8,7 @@ from .package_config import (
     PackageConfig,
     load_package_config_static,
     load_package_config_from_source_dir,
-    locate_package_config_file_static,
+    locate_load_package_config_file_static,
 )
 from .render_core import (
     render_template,

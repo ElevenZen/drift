@@ -138,6 +138,12 @@ $ drift new nvim --target ~/.config/nvim --method copy
     # enable_install = true
     ```
 
+#### **Machine-Specific Override Layering (`*.local.toml`)**:
+To support machine-specific configuration overrides (e.g. unique target home directories, or customized parameters per machine), Drift supports a layered TOML system:
+- **Global Layer**: `config/drift.local.toml` automatically overrides properties in global `config/drift.toml`.
+- **Package Layer**: `src/<pkg>/package.local.toml` (or `drift_package.local.toml`) automatically overrides properties in `src/<pkg>/package.toml` / `drift_package.toml`.
+- **Git Isolation**: Files matching `*.local.toml` are gitignored by default. During rendering, Drift recursively merges the local TOML overrides on top of the base version and always outputs the unified standardized metadata file as `drift_package.toml` in the `render/` sandbox.
+
 ---
 
 ### C. Resource Import: `drift add <package> <paths...> [--dry-run]` (Implemented)

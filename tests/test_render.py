@@ -18,6 +18,7 @@ from drift.render_input import (
     check_cyclic_dependencies,
     render_input_templates,
 )
+from drift.toml_utils import parse_toml
 
 
 class TestRenderEngine(unittest.TestCase):
@@ -523,8 +524,11 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((render_pkg_dir / "templated.txt").is_file())
         self.assertEqual((render_pkg_dir / "templated.txt").read_text(encoding="utf-8"), "Rendered: drift_render_test")
 
-        # Verify package.toml was copied to drift_package.toml since it is static
+        # Verify package.toml was dumped to drift_package.toml since it is static
         self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
+        rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertEqual(rendered_config.get("package", {}).get("name"), "my_pkg")
+        self.assertEqual(rendered_config.get("package", {}).get("enable_render"), True)
 
     def test_render_package_disabled(self) -> None:
         from drift.render_package import render_package
@@ -554,11 +558,14 @@ class TestRenderPackage(unittest.TestCase):
         # Run render_package
         render_package(workspace_config, pkg_dir)
 
-        # Verify render dir does not contain the package since rendering is disabled
-        render_pkg_dir = drift_root / "render" / "my_pkg"
-        self.assertFalse(render_pkg_dir.exists())
+        # Verify render dir contains only the 'drift_package.toml' (loaded from package.toml) and no other files
+        render_pkg_dir = drift_root / "render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
+        self.assertTrue(render_pkg_dir.exists())
+        rendered_config = parse_toml(render_pkg_dir.read_text(encoding="utf-8"))
+        self.assertEqual(rendered_config.get("package", {}).get("name"), "my_pkg")
+        self.assertEqual(rendered_config.get("package", {}).get("enable_render"), False)
 
-    def test_render_package_templated_config(self) -> None:
+    def test_render_package_templated_config_package_toml(self) -> None:
         from drift.render_package import render_package
         from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
 
@@ -607,6 +614,58 @@ class TestRenderPackage(unittest.TestCase):
 
         # There shouldn't be any package.envst.toml in render dir
         self.assertFalse((render_pkg_dir / "package.envst.toml").exists())
+        self.assertFalse((render_pkg_dir / "drift_package.envst.toml").exists())
+
+    def test_render_package_templated_config_package_toml(self) -> None:
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+
+        drift_root = self.drift_root
+
+        config_dir = drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        with open(config_dir / "env.sh", "w", encoding="utf-8") as f:
+            f.write("export PKG_NAME='rendered_pkg_name'\n")
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+        )
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+
+        pkg_dir = drift_root / "src" / "my_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write templated package config
+        with open(pkg_dir / "drift_package.envst.toml", "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            name = "$PKG_NAME"
+            enable_render = true
+            """)
+
+        # Run render_package
+        render_package(workspace_config, pkg_dir)
+
+        # Verify output in render/my_pkg/
+        render_pkg_dir = drift_root / "render" / "my_pkg"
+
+        # package.toml was rendered (loaded from package.envst.toml) and renamed to drift_package.toml
+        rendered_config_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
+        self.assertTrue(rendered_config_path.is_file())
+        content = rendered_config_path.read_text(encoding="utf-8")
+        self.assertIn('name = "rendered_pkg_name"', content)
+
+        # There shouldn't be any package.envst.toml in render dir
+        self.assertFalse((render_pkg_dir / "package.envst.toml").exists())
+        self.assertFalse((render_pkg_dir / "drift_package.envst.toml").exists())
 
     def test_render_all_packages(self) -> None:
         from drift.render_package import run_primitive_2_render_packages

@@ -23,7 +23,7 @@ def check_existing_workspace_status(drift_root: Path) -> bool:
         return False
 
     # Validate drift.toml syntax & load it
-    from .toml_parser import parse_toml
+    from .toml_utils import parse_toml
     from .workspace_config import load_workspace_config
     try:
         content = config_file.read_text(encoding="utf-8")

@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, List
-from .toml_parser import parse_toml
+from .toml_utils import parse_toml
 
 
 @dataclass

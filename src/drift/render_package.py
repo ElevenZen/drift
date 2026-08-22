@@ -45,19 +45,6 @@ def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: st
             render_pkg_dir.unlink()
 
 
-def copy_static_package_config(render_pkg_dir: Path, pkg_config: PackageConfig) -> None:
-    """Copies the package config file to the render package folder only if it is static."""
-    src_path = pkg_config.config_template_path
-    if not pkg_config.is_static():
-        raise ValueError(f"Package config is not static: {pkg_config.name}")
-    if not src_path or not src_path.is_file():
-        raise FileNotFoundError(f"Package config file not found: {src_path}")
-    dest_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src_path, dest_path)
-    logger.debug(f"Copied static package config from '{src_path}' to '{dest_path}'")
-
-
 def render_or_copy_file(
     file_path: Path,
     package_dir: Path,
@@ -93,7 +80,11 @@ def render_or_copy_file(
 
 
 def prepare_package_config(package_dir: Path, package_name: str, workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> Optional[PackageConfig]:
-    """Loads package config and handles static copying. Returns None if rendering is disabled."""
+    """Loads package config and checks if rendering is enabled.
+
+    Since load_package_config_from_source_dir always renders/writes the config file to render_pkg_dir,
+    we no longer need to check is_static() or copy it manually here.
+    """
     pkg_config = load_package_config_from_source_dir(
         package_dir=package_dir,
         package_name=package_name,
@@ -103,9 +94,6 @@ def prepare_package_config(package_dir: Path, package_name: str, workspace_confi
     if not pkg_config.enable_render:
         logger.info(f"Rendering is disabled for package '{package_name}'. Skipping.")
         return None
-
-    if pkg_config.is_static():
-        copy_static_package_config(render_pkg_dir, pkg_config)
 
     return pkg_config
 

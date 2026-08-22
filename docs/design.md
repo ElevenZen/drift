@@ -347,16 +347,18 @@ If a registered engine's `input_file` is not specified, is empty, or is missing 
 ### C. Package Configuration: `package.toml` Specification
 A package configuration file—named either `package.toml` or `drift_package.toml`—is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
 
-#### Loading and Rendering Code Flow
-The engine evaluates and loads package configurations during compilation using the following deterministic sequence:
-1. **Discovery & Probing**: The config loader checks the package root for any valid configuration file or template. The file detection order is:
-   - `drift_package.toml`
-   - `package.toml`
-   - Templated configs matching registered render engines (e.g. `drift_package.<engine_suffix>.toml`, `package.<engine_suffix>.toml`).
+#### Layered Overrides and Unified Rendering Code Flow
+To handle machine-specific overrides and secrets at the package level, Drift implements a layered override merge system and a unified rendered target name pattern:
+1. **Hierarchical Merging (`package.local.toml` / `drift_package.local.toml`)**:
+   - The primary package configuration (`package.toml` or `drift_package.toml`) is committed to the version-controlled repository.
+   - Users can create a local-only machine override file (`package.local.toml` or `drift_package.local.toml`) which is gitignored (using `*.local.toml` patterns).
+   - During rendering, the engine locates and reads the base configuration, locates and reads the local override configuration (if present), and recursively merges their dictionary trees.
 2. **On-the-Fly Template Rendering**:
-   - If a static `.toml` file is matched, it is loaded directly.
-   - If a templated `.toml` configuration is found, the engine compiles it on-the-fly using the matched template engine. The rendered output is saved in the sandbox at `render/<package_name>/drift_package.toml` and then loaded from there.
-3. **Exclusion Guard**: Regardless of its original name, the package configuration file is strictly marked as a metadata file. It is **never copied** or symlinked into the `install/` directory or deployed to the active target system.
+   - For both the base and local configurations, if they are templates (e.g. `package.envst.toml`), they are rendered on-the-fly to temporary files before being parsed to dictionary structures.
+3. **Unified Render Target Name (`drift_package.toml`)**:
+   - Regardless of whether the original source files are named `package.toml`, `drift_package.toml`, or their template/local override counterparts, the final merged TOML dictionary is **always serialized and rendered as `drift_package.toml`** inside the sandbox directory at `render/<package_name>/drift_package.toml`.
+   - All subsequent package inspections, change visualizations, and staging processes read from this standardized `render/<package_name>/drift_package.toml` file, ensuring perfect downstream modularity and zero ambiguity.
+4. **Exclusion Guard**: The final rendered `drift_package.toml` is strictly marked as a metadata file. It is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/drift_package.toml`.
 
 #### Default Config Template:
 ```toml

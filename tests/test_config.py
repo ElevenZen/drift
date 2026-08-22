@@ -11,7 +11,7 @@ from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     set_test_mode,
 )
-from drift.toml_parser import (
+from drift.toml_utils import (
     parse_toml,
     _parse_toml_fallback,
     parse_toml_value,
@@ -25,10 +25,9 @@ from drift.workspace_config import (
 )
 from drift.package_config import (
     PackageConfig,
-    locate_package_config_file_static,
+    locate_load_package_config_file_static,
     load_package_config_static,
-    load_package_config_from_source_dir
-,
+    load_package_config_from_source_dir,
     get_package_config_file_info,
     PackageConfigFileInfo,
 )
@@ -324,18 +323,15 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""
-        config = PackageConfig(
-            name="my_pkg",
-            config_template_path=Path("/src/my_pkg/package.toml"),
-            config_rendered_path=Path("/render/my_pkg/package.toml")
-        )
+        config = PackageConfig(name="my_pkg",
+                               source_files=[
+                                   Path("/src/my_pkg/package.toml"),
+                                   Path("/src/my_pkg/package.local.toml"),
+                               ])
         self.assertTrue(config.is_package_config_file(Path("/src/my_pkg/package.toml")))
-        self.assertTrue(config.is_package_config_file(Path("/render/my_pkg/package.toml")))
+        self.assertFalse(config.is_package_config_file(Path("/render/my_pkg/package.toml")))
+        self.assertTrue(config.is_package_config_file(Path("/src/my_pkg/package.local.toml")))
         self.assertFalse(config.is_package_config_file(Path("/other/file.toml")))
-
-        # Test when paths are None
-        empty_config = PackageConfig(name="empty")
-        self.assertFalse(empty_config.is_package_config_file(Path("/src/my_pkg/package.toml")))
 
     def test_get_discovered_packages(self) -> None:
         """Verifies WorkspaceConfig.get_discovered_packages discovers, validates, and filters packages correctly."""
@@ -481,12 +477,13 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
 
-    def test_find_package_config_file_and_load_from_dir(self) -> None:
+    def test_locate_package_config_file_and_load_from_dir(self) -> None:
         pkg_dir = self.drift_root / "my_pkg_folder"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # No config file exists yet (raises FileNotFoundError)
-        self.assertIsNone(locate_package_config_file_static(pkg_dir))
+        self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
+                         ({}, None))
         with self.assertRaises(FileNotFoundError):
             load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
 
@@ -496,14 +493,12 @@ class TestConfigLoaders(unittest.TestCase):
             [package]
             install_method = "copy"
             """, encoding="utf-8")
-        self.assertEqual(locate_package_config_file_static(pkg_dir), alt_config_path)
+        self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
+                        ({ "package" : { "install_method": "copy" } }, alt_config_path))
         
         config = load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
         self.assertEqual(config.name, "my_pkg_folder")
         self.assertEqual(config.install_method, "copy")
-        # Static path fields are identical
-        self.assertEqual(config.config_template_path, alt_config_path)
-        self.assertEqual(config.config_rendered_path, alt_config_path)
 
     def test_get_package_config_file_info(self) -> None:
         from drift.workspace_config import RenderEngineConfig
@@ -515,14 +510,16 @@ class TestConfigLoaders(unittest.TestCase):
         engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
         workspace_config.render_engine_config = {"envsubst": engine}
 
-        # 1. No files exist - should return None
-        res = get_package_config_file_info(pkg_dir, workspace_config)
-        self.assertIsNone(res)
+        # 1. No files exist - should return (None, None)
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        self.assertIsNone(base_res)
+        self.assertIsNone(local_res)
 
         # 2. package.envst.toml exists
         template_pkg_path = pkg_dir / alter_package_config_template_name
         template_pkg_path.write_text("", encoding="utf-8")
-        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "template")
         self.assertEqual(res.path, template_pkg_path)
@@ -532,7 +529,8 @@ class TestConfigLoaders(unittest.TestCase):
         # 3. drift_package.envst.toml exists (takes precedence over package.envst.toml)
         template_drift_path = pkg_dir / package_config_template_name
         template_drift_path.write_text("", encoding="utf-8")
-        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "template")
         self.assertEqual(res.path, template_drift_path)
@@ -542,7 +540,8 @@ class TestConfigLoaders(unittest.TestCase):
         # 4. package.toml exists (takes precedence over templates)
         pkg_toml_path = pkg_dir / alter_package_config_file_name
         pkg_toml_path.write_text("", encoding="utf-8")
-        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "static")
         self.assertEqual(res.path, pkg_toml_path)
@@ -552,7 +551,8 @@ class TestConfigLoaders(unittest.TestCase):
         # 5. drift_package.toml exists (takes precedence over package.toml)
         drift_package_toml_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
         drift_package_toml_path.write_text("", encoding="utf-8")
-        res = cast(PackageConfigFileInfo, get_package_config_file_info(pkg_dir, workspace_config))
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "static")
         self.assertEqual(res.path, drift_package_toml_path)
@@ -605,10 +605,8 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(pkg_config.install_method, "copy")
         self.assertEqual(pkg_config.sudo, True)
 
-        # Verify path trackers are set correctly (and are different since it was rendered)
+        # Verify that the expected rendered config file exists inside the render/ sandbox
         expected_rendered_path = self.drift_root / "my_render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
-        self.assertEqual(pkg_config.config_template_path, pkg_template_path)
-        self.assertEqual(pkg_config.config_rendered_path, expected_rendered_path)
         self.assertTrue(expected_rendered_path.is_file())
 
 

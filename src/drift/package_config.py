@@ -1,11 +1,13 @@
 """Package-specific configuration loading and metadata parsing using pathlib."""
 
 import logging
+import os
+import tempfile
 from pathlib import Path
-from typing import List, Optional
-from .toml_parser import parse_toml
+from typing import List, Sequence, Optional, Tuple, Dict
+from .toml_utils import parse_toml, merge_toml, dump_toml
 
-from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST
+from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 
 from dataclasses import dataclass, field
@@ -17,8 +19,7 @@ logger = logging.getLogger(__name__)
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/package.toml."""
     name: str
-    config_template_path: Optional[Path] = None
-    config_rendered_path: Optional[Path] = None
+    source_files: List[Path] = field(default_factory=list)
     enable_render: bool = True
     enable_install: bool = True
     install_method: Optional[str] = None
@@ -37,15 +38,15 @@ class PackageConfig:
         if self.target_directory:
             self.target_directory = Path(self.target_directory).expanduser()
 
-    def is_static(self) -> bool:
-        return (self.config_template_path is not None
-            and self.config_rendered_path is not None
-            and self.config_template_path == self.config_rendered_path)
-
     def validate(self) -> None:
         """Validates configuration values."""
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Package config must have a non-empty 'name'.")
+        if not isinstance(self.source_files, list):
+            raise TypeError(f"source_files must be a list for package '{self.name}'.")
+        for file in self.source_files:
+            if not isinstance(file, Path):
+                raise TypeError(f"source_files entries must be Path objects for package '{self.name}'.")
         if self.install_method is not None and self.install_method not in ("stow", "copy"):
             raise ValueError(
                 f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
@@ -68,12 +69,8 @@ class PackageConfig:
             raise ValueError(f"hook_timeout must be a positive integer for package '{self.name}'.")
 
     def is_package_config_file(self, file_path: Path) -> bool:
-        """Checks if the given file path is the package config file or its template."""
-        is_template = (self.config_template_path is not None
-                       and file_path.resolve() == self.config_template_path.resolve())
-        is_rendered = (self.config_rendered_path is not None
-                       and file_path.resolve() == self.config_rendered_path.resolve())
-        return is_template or is_rendered
+        """Checks if the given file path is a package config file, its local override, or their template versions."""
+        return file_path in self.source_files
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         return (self.target_directory or workspace_config.default_target_path).expanduser()
@@ -82,7 +79,10 @@ class PackageConfig:
         return self.install_method or workspace_config.default_install_method
 
     @classmethod
-    def from_dict(cls, data: dict, default_name: Optional[str] = None) -> "PackageConfig":
+    def from_dict(cls,
+                  data: dict,
+                  default_name: Optional[str] = None,
+                  source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary."""
         # Warning for unknown top-level sections
         known_top_sections = {"package"}
@@ -152,6 +152,8 @@ class PackageConfig:
             post_render=package_data.get("post_render"),
             hook_timeout=raw_timeout
         )
+        if source_files:
+            config.source_files = [x for x in source_files if isinstance(x, Path)]
         config.validate()
         return config
 
@@ -165,19 +167,8 @@ def load_package_config_static(
         raise FileNotFoundError(f"Package configuration file not found: {file_path}")
     content = file_path.read_text(encoding="utf-8")
     data = parse_toml(content)
-    config = PackageConfig.from_dict(data, default_name=default_name)
-    config.config_template_path = file_path.resolve()
-    config.config_rendered_path = file_path.resolve()
+    config = PackageConfig.from_dict(data, default_name=default_name, source_files=[file_path])
     return config
-
-
-def locate_package_config_file_static(package_dir: Path) -> Optional[Path]:
-    """Finds the drift_package.toml or package.toml in a given package directory."""
-    for filename in PACKAGE_CONFIG_FILE_NAME_LIST:
-        path = package_dir / filename
-        if path.is_file():
-            return path
-    return None
 
 
 @dataclass
@@ -195,26 +186,92 @@ class PackageConfigFileInfo:
 
 def get_package_config_file_info(
     package_dir: Path,
-    workspace_config: "WorkspaceConfig"
-) -> Optional[PackageConfigFileInfo]:
-    """Finds the package config file (or template) in the given package directory.
+    workspace_config: WorkspaceConfig
+) -> Tuple[Optional[PackageConfigFileInfo], Optional[PackageConfigFileInfo]]:
+    """Finds the package config file (or template) and its local override file (or template) in the given package directory.
 
-    Returns a PackageConfigFileInfo instance with:
-    - type: 'static' or 'template'
-    - path: path to the file/template
-    - engine: RenderEngineConfig instance (if 'template', otherwise None)
-    - target_name: 'drift_package.toml' or 'package.toml' (PACKAGE_CONFIG_FILE_NAMES)
+    Returns a Tuple containing:
+    1. Base PackageConfigFileInfo or None
+    2. Local override PackageConfigFileInfo or None
     """
-    res = workspace_config.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
-    if not res:
-        return None
+    # 1. Base config check
+    base_res = workspace_config.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    base_info = None
+    if base_res:
+        base_info = PackageConfigFileInfo(
+            type="static" if base_res.engine is None else "template",
+            path=base_res.path,
+            engine=base_res.engine,
+            target_name=base_res.target_name
+        )
 
-    return PackageConfigFileInfo(
-        type="static" if res.engine is None else "template",
-        path=res.path,
-        engine=res.engine,
-        target_name=res.target_name
-    )
+    # 2. Local config check
+    local_names = ["drift_package.local.toml", "package.local.toml"]
+    local_res = workspace_config.find_source_file_for_rendered_names(package_dir, local_names)
+    local_info = None
+    if local_res:
+        local_info = PackageConfigFileInfo(
+            type="static" if local_res.engine is None else "template",
+            path=local_res.path,
+            engine=local_res.engine,
+            target_name=local_res.target_name
+        )
+
+    return base_info, local_info
+
+
+def render_or_load_toml(
+    info: PackageConfigFileInfo,
+    workspace_config: WorkspaceConfig,
+    package_name: str
+) -> dict:
+    """Renders the package config file info to a temporary file (if it is a template)
+
+    and returns its parsed TOML dictionary.
+    """
+    if info.type == "static":
+        content = info.path.read_text(encoding="utf-8")
+        return parse_toml(content)
+    else:
+        # It's a template, we need to render it!
+        engine = info.engine
+        if engine is None:
+            raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
+
+        # Create a temporary file
+        fd, temp_path = tempfile.mkstemp(suffix=".toml", prefix=f"{package_name}_pkg_")
+        temp_path_obj = Path(temp_path)
+        os.close(fd) # Close immediately so render_template_to_file can write to it safely
+
+        try:
+            from .render_core import render_template_to_file
+            render_template_to_file(
+                engine_config=engine,
+                drift_root=workspace_config.drift_root,
+                template_file_path=info.path,
+                output_file_path=temp_path_obj
+            )
+            content = temp_path_obj.read_text(encoding="utf-8")
+            data = parse_toml(content)
+        finally:
+            if temp_path_obj.exists():
+                temp_path_obj.unlink()
+
+        return data
+
+
+def locate_load_package_config_file_static(package_dir: Path, names: Sequence[str]) -> Tuple[dict, Optional[Path]]:
+    """Locates and loads the local static package config override file if present.
+
+    Propagates any read/parse errors if the file is found.
+    """
+    for filename in names:
+        local_path = package_dir / filename
+        if not local_path.is_file():
+            continue 
+        content = local_path.read_text(encoding="utf-8")
+        return parse_toml(content), local_path
+    return {}, None
 
 
 def load_package_config_from_source_dir(
@@ -224,38 +281,40 @@ def load_package_config_from_source_dir(
 ) -> PackageConfig:
     """Loads package configuration from a package directory, optionally rendering it if it is a template."""
     if workspace_config is None:
-        # Fallback for backward compatibility/static loading without workspace
-        config_file = locate_package_config_file_static(package_dir)
-        if not config_file:
+        logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
+        # Fallback for backward compatibility/static loading without workspace settings
+        base_dict, base_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+        if not base_dict:
             raise FileNotFoundError(f"No package configuration file found in directory: {package_dir}")
-        return load_package_config_static(config_file, default_name=package_name)
+        local_dict, local_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
+        combined_dict = merge_toml(base_dict, local_dict)
+        return PackageConfig.from_dict(combined_dict,
+                                       default_name=package_name,
+                                       source_files=[base_path, local_path])
 
-    info = get_package_config_file_info(package_dir, workspace_config)
-    if not info:
+    base_info, local_info = get_package_config_file_info(package_dir, workspace_config)
+    logger.debug(f"Base package config info: {base_info}")
+    logger.debug(f"Local package config info: {local_info}")
+    if not base_info:
         raise FileNotFoundError(f"No package configuration file found in directory: {package_dir}")
-
-    if info.type == "static":
-        return load_package_config_static(info.path, default_name=package_name)
+    base_dict = render_or_load_toml(base_info, workspace_config, package_name)
+    source_files = [base_info.path]
+    if local_info:
+        local_dict = render_or_load_toml(local_info, workspace_config, package_name)
+        source_files.append(local_info.path)
     else:
-        # It is a template, we need to render it!
-        engine = info.engine
-        if engine is None:
-            raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
+        local_dict = {}
+    combined_dict = merge_toml(base_dict, local_dict)
 
-        # Determine output path: render/<package_name>/drift_package.toml
-        output_file_path = workspace_config.render_path / package_name / PACKAGE_CONFIG_FILE_NAME
+    # Determine output path: render/<package_name>/drift_package.toml
+    output_file_path = workspace_config.render_path / package_name / PACKAGE_CONFIG_FILE_NAME
+    output_file_path.parent.mkdir(parents=True, exist_ok=True)
+    toml_str = dump_toml(combined_dict)
+    output_file_path.write_text(toml_str, encoding="utf-8")
 
-        # Perform rendering using standard render function
-        from .render_core import render_template_to_file
-        render_template_to_file(
-            engine_config=engine,
-            drift_root=workspace_config.drift_root,
-            template_file_path=info.path,
-            output_file_path=output_file_path
-        )
+    # Load from the rendered path
+    config = PackageConfig.from_dict(combined_dict,
+                                     default_name=package_name,
+                                     source_files=source_files)
+    return config
 
-        # Load from the rendered path
-        config = load_package_config_static(output_file_path, default_name=package_name)
-        config.config_template_path = info.path.resolve()
-        config.config_rendered_path = output_file_path.resolve()
-        return config
