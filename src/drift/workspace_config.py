@@ -426,8 +426,7 @@ def render_workspace_config_toml(envst_path: Path) -> str:
 
     returning the path to the temporary file.
     """
-    p_envst = Path(envst_path)
-    content = p_envst.read_text(encoding="utf-8")
+    content = envst_path.read_text(encoding="utf-8")
     
     # Perform envsubst rendering
     rendered_content = render_envsubst_string(content)
@@ -441,13 +440,13 @@ def render_workspace_config_toml(envst_path: Path) -> str:
 
 def load_workspace_config(file_path: Path) -> WorkspaceConfig:
     """Loads and parses the workspace configuration from drift.toml."""
-    p_file = Path(file_path)
-    actual_path = p_file
-    if not p_file.exists():
+    actual_path = file_path
+    if not file_path.exists():
         # Look for .envst.toml alternative
-        envst_path = p_file.with_name(p_file.stem + ".envst" + p_file.suffix)
+        envst_path = file_path.with_name(file_path.stem + ".envst" + file_path.suffix)
         if envst_path.exists():
             actual_path = Path(render_workspace_config_toml(envst_path))
+            logger.info(f"Workspace config is rendered from template: '{envst_path}' to temporary file: '{actual_path}'")
         else:
             raise FileNotFoundError(
                 f"Workspace configuration file not found: {file_path} or {envst_path}"
@@ -458,5 +457,6 @@ def load_workspace_config(file_path: Path) -> WorkspaceConfig:
     data = parse_toml(content)
     
     # Compute drift_root_path (parent of 'config' directory containing drift.toml)
-    drift_root_path = p_file.resolve().parent.parent
+    drift_root_path = file_path.resolve().parent.parent
     return WorkspaceConfig.from_dict(data, drift_root_path=drift_root_path)
+
