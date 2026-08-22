@@ -76,8 +76,8 @@ The implementation of the 7 core primitives and workflows outlined in `@design.m
 
 *   **The Hazard**: Network drops, power failures, or `Ctrl+C` interruptions during deployment (Primitive 5) can leave application directories in an inconsistent or corrupt state.
 *   **The Blueprint**:
-    *   **Atomic Copies**: When performing `copy` installations, copy the file to a temporary location on the target filesystem first, then run a surgical `mv` to overwrite. This prevents partial writes if the process is terminated mid-execution.
-    *   **Incremental Checklist**: Primitive 4 must write a JSON file (`install/.changelist.json`) detailing files slated for deployment. If execution is interrupted, the next run can read this changelist to resume incrementally.
+    *   **Atomic Copies**: When performing `copy` installations, copy the file to a temporary location on the target filesystem first, then run a surgical `mv` to overwrite. This prevents partial writes if the process is terminated mid-execution. (No, way too complicated)
+    *   **Incremental Checklist**: Primitive 4 must write a JSON file (`install/.changelist.json`) detailing files slated for deployment. If execution is interrupted, the next run can read this changelist to resume incrementally. (The changelist is ephemeral, so I implemented it as a variable not a file)
     *   **Fail-Fast Hook Isolation**: If a lifecycle hook (e.g. `pre_install` or `post_update` script) returns a non-zero exit status, the script must halt immediately. It must print the exact failure log and halt Stage 2 to prevent subsequent state corruption.
 
 ---

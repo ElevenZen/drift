@@ -73,7 +73,8 @@ def get_default_drift_toml_content() -> str:
         print("⚠️ Warning: Default drift.toml template file is missing. Using minimal fallback configuration.", file=sys.stderr)
 
     # Fallback to hardcoded minimal content to ensure self-containment
-    return """# =====================================================================
+    return (
+"""# =====================================================================
 # drift.toml Minimal Configuration
 # =====================================================================
 
@@ -101,7 +102,7 @@ render_command = "jinja2 %s %i"
 
 [workspace]
 default_target_directory = "~"
-"""
+""")
 
 
 def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:

@@ -429,52 +429,46 @@ class WorkspaceConfig:
 
 def render_envsubst_string(template_content: str) -> str:
     """Renders envsubst template content using environment variables."""
+    pattern = r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)'
     def replace_var(match: re.Match) -> str:
         var_name = match.group(1) or match.group(2)
         return os.environ.get(var_name, "")
 
-    pattern = r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)'
     return re.sub(pattern, replace_var, template_content)
 
 
 def render_workspace_config_toml(envst_path: Path) -> str:
-    """Renders the drift.envst.toml template using env variables and writes to a temporary file,
-
-    returning the path to the temporary file.
+    """
+    Renders the drift.envst.toml template using env variables.
+    returning the rendered output.
     """
     content = envst_path.read_text(encoding="utf-8")
-    
-    # Perform envsubst rendering
     rendered_content = render_envsubst_string(content)
+    logger.debug(f"Rendered workspace config from template '{envst_path}':\n{rendered_content}")
+    return rendered_content
     
-    # Create temporary file
-    fd, temp_path = tempfile.mkstemp(suffix=".toml", prefix="drift_")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(rendered_content)
-    return temp_path
+
+def add_envst(file: Path) -> Path:
+    return file.with_name(file.stem + ".envst" + file.suffix)
 
 
-def render_envst_load_toml(path: Path) -> dict:
+def render_envst_load_toml(config_path: Path) -> Optional[dict]:
     """Loads and parses the TOML file at path.
 
     Checks the static file first, then falls back to rendering its .envst.toml counterpart.
     Propagates FileNotFoundError if neither exists.
     """
-    envst_path = path.with_name(path.stem + ".envst" + path.suffix)
-    actual_path = None
+    envst_path = add_envst(config_path)
 
-    if path.exists():
-        actual_path = path
+    if config_path.exists():
+        logger.info(f"Workspace config is loaded from: '{config_path}'")
+        content = config_path.read_text(encoding="utf-8")
     elif envst_path.exists():
-        actual_path = Path(render_workspace_config_toml(envst_path))
-        logger.info(f"Workspace config is rendered from template: '{envst_path}' to temporary file: '{actual_path}'")
+        content = render_workspace_config_toml(envst_path)
+        logger.info(f"Workspace config is rendered from template: '{envst_path}'")
     else:
-        raise FileNotFoundError(
-            f"Workspace configuration file not found: {path} or {envst_path}"
-        )
+        return None
 
-    logger.info(f"Workspace config is loaded from: '{actual_path}'")
-    content = actual_path.read_text(encoding="utf-8")
     return parse_toml(content)
 
 
@@ -484,19 +478,20 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     file_path = drift_root_path / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
 
     main_dict = render_envst_load_toml(file_path)
+    if main_dict is None:
+        raise FileNotFoundError(
+            f"Workspace main configuration file not found in '{file_path}' or its template '{add_envst(file_path)}'."
+        )
 
     # Search for the *.local.toml override (e.g. drift.local.toml)
     local_path = file_path.with_name(file_path.stem + ".local" + file_path.suffix)
-    local_dict = {}
-    local_envst_path = local_path.with_name(local_path.stem + ".envst" + local_path.suffix)
-    if local_path.exists() or local_envst_path.exists():
-        try:
-            local_dict = render_envst_load_toml(local_path)
-            logger.info(f"Loaded workspace config override from '{local_path}'")
-        except Exception as e:
-            logger.warning(f"Failed to load workspace local override config from '{local_path}': {e}")
-
-    combined_dict = merge_toml(main_dict, local_dict)
+    local_dict = render_envst_load_toml(local_path)
+    if local_dict is None:
+        logger.info(f"No local workspace config override found at '{local_path}'")
+        combined_dict = main_dict
+    else:
+        logger.info(f"Loaded workspace config override from '{local_path}'")
+        combined_dict = merge_toml(main_dict, local_dict)
 
     # Load and apply [env] variables to os.environ immediately
     env_dict = combined_dict.get("env", {})
