@@ -432,15 +432,59 @@ class TestDependencyResolver(unittest.TestCase):
         render_input_templates([envsubst_engine], self.drift_root)
         self.assertEqual(envsubst_engine.input_file, Path(""))
 
-    def test_multi_level_dependency_raises_error(self) -> None:
-        engines = [
-            RenderEngineConfig(name="engine_c", input_file=Path("c.sh"), suffix="c_suf", render_command="cmd"),
-            RenderEngineConfig(name="engine_b", input_file=Path("b.c_suf.sh"), suffix="b_suf", render_command="cmd"),
-            RenderEngineConfig(name="engine_a", input_file=Path("a.b_suf.sh"), suffix="a_suf", render_command="cmd")
-        ]
-        with self.assertRaises(ValueError) as ctx:
-            render_input_templates(engines, self.drift_root)
-        self.assertIn("Multi-level dependency chain detected", str(ctx.exception))
+    def test_multi_level_dependency_tree(self) -> None:
+        # Create config directory
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write files
+        static_file = config_dir / "static.txt"
+        static_file.write_text("Hello A", encoding="utf-8")
+
+        template_b = config_dir / "b.suf_a"
+        template_b.write_text("Hello B from A", encoding="utf-8")
+
+        template_c = config_dir / "c.suf_a"
+        template_c.write_text("Hello C from A", encoding="utf-8")
+
+        template_d = config_dir / "d.suf_c"
+        template_d.write_text("Hello D from C", encoding="utf-8")
+
+        # 4 engines: A, B, C, D representing:
+        # A -> B
+        # A -> C -> D
+        engine_a = RenderEngineConfig(name="engine_a", input_file=Path("static.txt"), suffix="suf_a", render_command="cat %s # %i")
+        engine_b = RenderEngineConfig(name="engine_b", input_file=Path("b.suf_a"), suffix="suf_b", render_command="cat %s # %i")
+        engine_c = RenderEngineConfig(name="engine_c", input_file=Path("c.suf_a"), suffix="suf_c", render_command="cat %s # %i")
+        engine_d = RenderEngineConfig(name="engine_d", input_file=Path("d.suf_c"), suffix="suf_d", render_command="cat %s # %i")
+
+        engines = [engine_a, engine_b, engine_c, engine_d]
+
+        # 1. Resolve and check dependencies
+        from drift.render_input import resolve_dependencies
+        dep_map = resolve_dependencies(engines)
+
+        # Assert correct 1-to-1 dependency resolution mapping
+        self.assertEqual(dep_map["engine_a"], None)
+        self.assertEqual(dep_map["engine_b"], "engine_a")
+        self.assertEqual(dep_map["engine_c"], "engine_a")
+        self.assertEqual(dep_map["engine_d"], "engine_c")
+
+        # 2. Run transitive template input rendering
+        render_input_templates(engines, self.drift_root)
+
+        # 3. Check that the transitive files compiled successfully inside the sandbox
+        rendered_b_input = self.drift_root / "render" / "config" / "b"
+        rendered_c_input = self.drift_root / "render" / "config" / "c"
+        rendered_d_input = self.drift_root / "render" / "config" / "d"
+
+        self.assertTrue(rendered_b_input.is_file())
+        self.assertTrue(rendered_c_input.is_file())
+        self.assertTrue(rendered_d_input.is_file())
+
+        self.assertEqual(rendered_b_input.read_text(encoding="utf-8").strip(), "Hello B from A")
+        self.assertEqual(rendered_c_input.read_text(encoding="utf-8").strip(), "Hello C from A")
+        self.assertEqual(rendered_d_input.read_text(encoding="utf-8").strip(), "Hello D from C")
 
     def test_render_input_templates_custom_render_directory(self) -> None:
         # Setup config files:

@@ -324,14 +324,14 @@ Under the `[render.<engine_name>]` tables in `drift.toml`, developers can define
 #### 2. Template Input Dependencies
 Render engines often require dynamic input parameters (such as `mustache` needing a static JSON configuration constructed from variable environment templates). To support this cleanly, the drift engine natively implements **Template Input Dependencies**:
 *   An engine's `input_file` can itself be a template matching another registered render engine.
-*   **The Single-Level Resolution Chain**: 
-    If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first.
+*   **The Transitive Resolution Chain**: 
+    If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first. This resolution is fully transitive/recursive: a multi-level dependency chain (e.g., Engine A -> Engine B -> Engine C -> Engine D) is allowed and gets compiled in topological order from leaf to root.
     *   *Example*: The `mustache` engine registers `input_file = "mustache.envst.json"`. Since `.envst.json` matches the `envsubst` suffix (`envst`), the compiler first renders `config/mustache.envst.json` via the `envsubst` engine.
     *   The compiled static output is saved inside the sandbox under `render/config/mustache.json`.
     *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/config/mustache.json`).
 
-#### 3. Single-Level Suffix Resolution Constraint
-The template resolution engine resolves exactly **one level** of input template compilation. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:
+#### 3. Single-Dependency Constraint per Engine
+While multi-level transitive chains are fully supported, each engine's input file can match at most one other engine's suffix pattern. Thus, every engine is limited to a single direct dependency (a 1-to-1 matching relationship per level), forming a dependency tree/forest (without cycles) rather than a complex multi-parent DAG. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:
 *   An input named `file.<engine1>.<engine2>.suffix` is evaluated as a template for `engine2` only. The `<engine1>` portion of the name remains treated as passive text, and `file.<engine1>.suffix` is forwarded as the final compiled input file to the parent engine.
 
 #### 4. Directed Acyclic Graph (DAG) Cyclic Detection

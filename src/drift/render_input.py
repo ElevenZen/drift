@@ -71,17 +71,6 @@ def check_cyclic_dependencies(dependency_map: Mapping[str, Optional[str]]) -> No
             dfs(node)
 
 
-def check_multi_level_dependencies(dependency_map: Mapping[str, Optional[str]]) -> None:
-    for name, dep_name in dependency_map.items():
-        if dep_name is not None:
-            if dependency_map.get(dep_name) is not None:
-                raise ValueError(
-                    f"Multi-level dependency chain detected: engine '{name}' depends on '{dep_name}', "
-                    f"which itself depends on '{dependency_map.get(dep_name)}'. "
-                    f"Only one level of rendering is allowed."
-                )
-
-
 def resolve_static_input_file(
     input_file: Path,
     drift_root: Path,
@@ -109,7 +98,7 @@ def render_input_templates(
     drift_root: Path,
     workspace_config: Optional[WorkspaceConfig] = None
 ) -> None:
-    """Resolves engine input dependencies, checks for cycles and multi-level dependency chains,
+    """Resolves engine input dependencies, checks for cycles,
 
     renders input templates, prints progress, and updates each RenderEngineConfig.input_file path.
 
@@ -119,7 +108,7 @@ def render_input_templates(
         workspace_config: Optional WorkspaceConfig instance to read the render directory name from.
 
     Raises:
-        ValueError: If a cyclic dependency or multi-level dependency is detected.
+        ValueError: If a cyclic dependency is detected.
         FileNotFoundError: If any required template or static file is missing.
         RuntimeError: If subprocess template rendering fails.
     """
@@ -129,10 +118,7 @@ def render_input_templates(
     # 2. Check for cycles
     check_cyclic_dependencies(dependency_map)
 
-    # 3. Enforce only one level of dependency
-    check_multi_level_dependencies(dependency_map)
-
-    # 4. Render templates using the dependency map directly
+    # 3. Render templates using the dependency map directly
     engines_by_name = {e.name: e for e in engines}
     render_dir = workspace_config.render_directory if workspace_config else "render"
     memo: Dict[str, Path] = {}
@@ -144,10 +130,9 @@ def render_input_templates(
         dep_name = dependency_map[engine.name]
         if dep_name:
             dep_engine = engines_by_name[dep_name]
-            # Since only one level of dependency is allowed, dep_engine's input file is resolved as static without recursion
-            dep_input_file = resolve_static_input_file(dep_engine.input_file, drift_root, dep_engine.name)
+            dep_input_file = get_or_render_input_file(dep_engine)
             if dep_input_file == Path(""):
-                logger.warning(f"Dependency engine '{dep_name}' has an invalid input file, skipping rendering for '{engine.name}'.")
+                logger.warning(f"Dependency engine '{dep_name}' has an invalid input file, rendering for '{engine.name}' may fail.")
                 memo[engine.name] = Path("")
                 return Path("")
 
