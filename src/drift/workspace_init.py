@@ -77,8 +77,8 @@ def get_default_drift_toml_content() -> str:
 # drift.toml Minimal Configuration
 # =====================================================================
 
-[workspace]
-default_target_directory = "~"
+[packages.enable]
+DEFAULT = false
 
 [render.envsubst]
 input_file = "envsubst.bash"
@@ -90,8 +90,8 @@ input_file = "mustache.envst.json"
 suffix = "mustache"
 render_command = "mustache %i %s"
 
-[packages.enable]
-DEFAULT = false
+[workspace]
+default_target_directory = "~"
 """
 
 
