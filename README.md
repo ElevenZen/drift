@@ -32,7 +32,7 @@ Drift fundamentally resolves this mismatch by recognizing configuration as a **c
 *   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply commit the deletion or modifications in the `install/` base and redeploy. Drift's engine will recognize the clean baseline and restore your files exactly as defined in `src/`.
 
 ### 🔗 3. Directed Acyclic Graph (DAG) Template Pipelines
-Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst.sh` or `.mustache`). 
+Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
 *   **Template Input Dependencies**: A render engine's input variables can itself be a template compiled by another engine (e.g., `mustache` needing a static JSON config generated from environment variables).
 *   **Cycle Detection**: Drift constructs a compiler dependency graph and executes cycle-detection validation, throwing `CyclicDependencyError` to prevent compilation loops.
 *   **Deferred Render Compilation**: If variables or templates are missing during boot, Drift gracefully logs a warning. Compilation is only blocked if a file in the active workspace *actually* relies on the disabled engine, preventing unrelated package bottlenecks.

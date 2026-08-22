@@ -94,7 +94,7 @@ def typer_init(
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created render/ sandbox Git database.[/bold green]")
         rprint("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]")
         rprint("[bold yellow]📝[/bold yellow] [bold green]Generated drift.toml template.[/bold green]")
-        rprint("[bold yellow]📝[/bold yellow] [bold green]Generated config/envsubst.bash and config/mustache.envst.json.[/bold green]")
+        rprint("[bold yellow]📝[/bold yellow] [bold green]Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.[/bold green]")
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)

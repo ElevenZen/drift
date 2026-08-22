@@ -3,6 +3,16 @@
 # =====================================================================
 
 # ---------------------------------------------------------------------
+# Workspace Environment Variables Propagation
+# ---------------------------------------------------------------------
+# Variables defined under the [env] table are automatically parsed
+# and populated into the execution environment (os.environ).
+# They can then be referenced dynamically by your template engines.
+[env]
+DRIFT_SAMPLE_ENV_THEME = "nord-dark"
+DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
+# ---------------------------------------------------------------------
 # Enabled Packages Registry
 # ---------------------------------------------------------------------
 # Key: package folder name under src/
@@ -37,6 +47,16 @@ input_file = "mustache.envst.json"
 # Files with name "file.mustache.suffix" or "file.mustache" will be rendered using mustache.
 suffix = "mustache"
 render_command = "mustache %i %s"
+
+[render.jinja2]
+# JSON configuration file as the input to jinja2 template engine.
+# This filename ends with "mustache.json", so it matches the 'mustache' suffix and will be rendered with mustache first.
+# This showcases a multi-level dependency tree: envsubst -> mustache -> jinja2.
+input_file = "jinja2.mustache.json"
+
+# Files with name "file.j2" or "file.jinja" will be rendered using jinja2.
+suffix = "j2"
+render_command = "jinja2 %s %i"
 
 # ---------------------------------------------------------------------
 # Workspace Configuration

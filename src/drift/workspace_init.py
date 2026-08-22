@@ -77,6 +77,10 @@ def get_default_drift_toml_content() -> str:
 # drift.toml Minimal Configuration
 # =====================================================================
 
+[env]
+DRIFT_SAMPLE_ENV_THEME = "nord-dark"
+DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
 [packages.enable]
 DEFAULT = false
 
@@ -89,6 +93,11 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 input_file = "mustache.envst.json"
 suffix = "mustache"
 render_command = "mustache %i %s"
+
+[render.jinja2]
+input_file = "jinja2.mustache.json"
+suffix = "j2"
+render_command = "jinja2 %s %i"
 
 [workspace]
 default_target_directory = "~"
@@ -160,19 +169,39 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     config_file = config_dir / "drift.toml"
     config_file.write_text(get_default_drift_toml_content(), encoding="utf-8")
 
-    # Create empty envsubst.bash and mustache.envst.json as referenced in default drift.toml
+    # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift.toml
     envsubst_input = config_dir / "envsubst.bash"
     if not envsubst_input.exists():
-        envsubst_input.write_text("#!/bin/bash\nexport TEST_STRING='Hello, Drift!'\n", encoding="utf-8")
+        env_content = (
+            "#!/bin/bash\n"
+            "# Propagates variables defined in the workspace config [env] section\n"
+            "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-default-theme}\"\n"
+            "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-default-editor}\"\n"
+        )
+        envsubst_input.write_text(env_content, encoding="utf-8")
     else:
         logger.warning(f"envsubst.bash already exists at '{envsubst_input}', skipping creation.")
 
     mustache_input = config_dir / "mustache.envst.json"
-    mustache_input_json = { "TEST_STRING": "${TEST_STRING}" }
+    mustache_input_json = {
+        "sample_theme": "${TEMPLATE_THEME}",
+        "sample_editor": "${TEMPLATE_EDITOR}"
+    }
     if not mustache_input.exists():
         mustache_input.write_text(json.dumps(mustache_input_json, indent=4), encoding="utf-8")
     else:
         logger.warning(f"mustache.envst.json already exists at '{mustache_input}', skipping creation.")
+
+    jinja2_input = config_dir / "jinja2.mustache.json"
+    jinja2_input_json = {
+        "sample_theme": "{{theme}}",
+        "sample_editor": "{{editor}}",
+        "sample_tool": "git"
+    }
+    if not jinja2_input.exists():
+        jinja2_input.write_text(json.dumps(jinja2_input_json, indent=4), encoding="utf-8")
+    else:
+        logger.warning(f"jinja2.mustache.json already exists at '{jinja2_input}', skipping creation.")
 
     # Write install/state.toml
     state_file = install_dir / "state.toml"

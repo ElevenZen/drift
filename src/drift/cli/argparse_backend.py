@@ -363,7 +363,7 @@ def run_argparse_cli(argv=None) -> None:
             print("📁 Created render/ sandbox Git database.")
             print("📁 Created install/ local state Git database.")
             print("📝 Generated drift.toml template.")
-            print("📝 Generated config/envsubst.bash and config/mustache.envst.json.")
+            print("📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.")
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
