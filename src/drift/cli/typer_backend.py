@@ -23,6 +23,7 @@ from .actions import (
     execute_adopt,
     execute_rollback,
     execute_deploy,
+    execute_repair,
     execute_help
 )
 
@@ -517,6 +518,22 @@ def typer_deploy(
         execute_deploy(drift_root, packages, force=force)
     except Exception as e:
         rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+@app.command("repair")
+def typer_repair(
+    ctx: typer.Context,
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Show repair actions without executing them"
+    )
+) -> None:
+    """Repair missing, damaged, or partially-initialized components in the drift workspace."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_repair(drift_root, dry_run=dry_run)
+    except Exception as e:
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
 
 
@@ -529,3 +546,4 @@ def typer_help(
 ) -> None:
     """Show overall model of drift and its detailed manual pages."""
     execute_help(topic)
+

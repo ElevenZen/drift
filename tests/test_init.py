@@ -12,9 +12,10 @@ from drift.git_utils import (
     is_bare_repository,
     is_detached_head,
     is_merge_or_rebase_in_progress,
+    git_init_repo,
+    append_to_gitignore,
 )
 from drift.workspace_init import (
-    git_init_repo,
     init_drift_workspace,
 )
 from drift.cli import main
@@ -64,6 +65,10 @@ class TestInitWorkspace(unittest.TestCase):
             drift_toml = f.read()
         self.assertIn("[workspace]", drift_toml)
         self.assertIn("source_directory = \"src\"", drift_toml)
+
+        # Check config/drift.local.toml template was created
+        local_config_file = os.path.join(self.drift_root, "config", "drift.local.toml")
+        self.assertTrue(os.path.isfile(local_config_file))
 
         # Check envsubst.bash, mustache.envst.json, and jinja2.mustache.json were created
         envsubst_bash = os.path.join(self.drift_root, "config", "envsubst.bash")
@@ -144,8 +149,11 @@ class TestInitWorkspace(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as cm:
             init_drift_workspace(self.drift_root)
-        self.assertIn("corrupt configuration", str(cm.exception))
-        self.assertIn("--force to overwrite", str(cm.exception))
+        self.assertTrue(
+            "broken components" in str(cm.exception) or "corrupt configuration" in str(cm.exception)
+        )
+        self.assertIn("drift repair", str(cm.exception))
+        self.assertIn("--force", str(cm.exception))
 
     def test_init_non_empty_non_git_with_force_succeeds(self) -> None:
         """Verifies that init with force works on a non-empty, non-git directory."""

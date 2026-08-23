@@ -242,6 +242,29 @@ def execute_deploy(
     )
 
 
+def execute_repair(drift_root: Path, dry_run: bool = False) -> None:
+    """Core function to repair a damaged or partially-initialized drift workspace."""
+    from ..workspace_repair import repair_drift_workspace
+    from ..check_repo import check_existing_workspace_status
+
+    report = check_existing_workspace_status(drift_root)
+    if report.is_healthy():
+        logger.info(f"✨ Workspace at '{drift_root}' is already complete and healthy. No repairs needed.")
+        return
+
+    logger.info(f"🔧 Repairing workspace at '{drift_root}'...")
+    actions = repair_drift_workspace(drift_root, dry_run=dry_run)
+    if actions:
+        for action in actions:
+            logger.info(f"  ✨ {action}")
+        if not dry_run:
+            logger.info("✨ Workspace repair complete!")
+        else:
+            logger.info("✨ [Dry-Run] Workspace repair simulation complete.")
+    else:
+        logger.info("No repair actions were required.")
+
+
 def execute_help(topic: Optional[str] = None) -> None:
     """Core function to display help documentation pages with paging fallback support."""
     from .help_docs import print_help_document

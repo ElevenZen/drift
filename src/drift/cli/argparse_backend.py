@@ -20,6 +20,7 @@ from .actions import (
     execute_adopt,
     execute_rollback,
     execute_deploy,
+    execute_repair,
     execute_help
 )
 
@@ -329,6 +330,17 @@ def make_parser() -> argparse.ArgumentParser:
         help="Forcefully deploy and bypass system drift sentinel safeguards"
     )
 
+    # repair subcommand
+    repair_parser = subparsers.add_parser(
+        "repair",
+        help="Repair missing, damaged, or partially-initialized components in the drift workspace."
+    )
+    repair_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show repair actions without executing them"
+    )
+
     # help subcommand
     help_parser = subparsers.add_parser(
         "help",
@@ -556,6 +568,17 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_deploy(drift_root, args.packages, force=args.force)
+        except Exception as e:
+            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "repair":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_repair(drift_root, dry_run=args.dry_run)
         except Exception as e:
             print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)

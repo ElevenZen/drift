@@ -8,6 +8,17 @@ from .workspace_config import (
 )
 from .constants import (
     CONFIG_DIR_NAME,
+    GLOBAL_CONFIG_FILE_NAME,
+    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    DEFAULT_DRIFT_LOCAL_TOML_CONTENT,
+    DEFAULT_ENVSUBST_BASH_CONTENT,
+    DEFAULT_MUSTACHE_ENVST_JSON_CONTENT,
+    DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT,
+    get_default_drift_toml_content,
+    get_default_drift_local_toml_content,
+    get_default_envsubst_content,
+    get_default_mustache_content,
+    get_default_jinja2_content,
     INITIAL_ENV,
     update_initial_env,
     set_initial_env,
@@ -30,6 +41,18 @@ from .reverse_sync import (
 )
 from .workspace_init import (
     init_drift_workspace,
+)
+from .git_utils import (
+    git_init_repo,
+    append_to_gitignore,
+)
+from .workspace_repair import (
+    repair_drift_workspace,
+)
+from .check_repo import (
+    check_existing_workspace_status,
+    ComponentStatus,
+    WorkspaceHealthReport,
 )
 from .stage_repo import (
     run_primitive_4_stage_render_to_install,

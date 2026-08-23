@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .constants import (
-        in_test_mode,
         CONFIG_DIR_NAME,
         GLOBAL_CONFIG_FILE_NAME,
         PACKAGE_CONFIG_FILE_NAME,
@@ -382,7 +381,7 @@ class WorkspaceConfig:
                 packages[pkg] = False
 
         packages_enable_default = bool(packages_enable_data.get("DEFAULT", False))
-        if not in_test_mode() and not packages_enable_default and len(packages) == 0:
+        if not packages_enable_default and len(packages) == 0:
             logger.warning("No packages are enabled in the workspace configuration. "
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages].")
 
@@ -463,11 +462,11 @@ def render_envst_load_toml(config_path: Path) -> Optional[dict]:
     envst_path = add_envst(config_path)
 
     if config_path.exists():
-        logger.info(f"Workspace config is loaded from: '{config_path}'")
+        logger.debug(f"Workspace config is loaded from: '{config_path}'")
         content = config_path.read_text(encoding="utf-8")
     elif envst_path.exists():
         content = render_workspace_config_toml(envst_path)
-        logger.info(f"Workspace config is rendered from template: '{envst_path}'")
+        logger.debug(f"Workspace config is rendered from template: '{envst_path}'")
     else:
         return None
 
@@ -489,10 +488,10 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     local_path = file_path.with_name(file_path.stem + ".local" + file_path.suffix)
     local_dict = render_envst_load_toml(local_path)
     if local_dict is None:
-        logger.info(f"No local workspace config override found at '{local_path}'")
+        logger.debug(f"No local workspace config override at '{local_path}'")
         combined_dict = main_dict
     else:
-        logger.info(f"Loaded workspace config override from '{local_path}'")
+        logger.debug(f"Loaded workspace config override from '{local_path}'")
         combined_dict = merge_toml(main_dict, local_dict)
 
     # Load and apply [env] variables to os.environ immediately

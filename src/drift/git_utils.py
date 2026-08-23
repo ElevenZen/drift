@@ -254,3 +254,47 @@ def check_repo_can_commit(repo_path: Path) -> None:
             "Please run: git config --global user.email \"you@example.com\""
         ) from e
 
+
+def git_init_repo(dir_path: Path, name: str) -> bool:
+    """Initializes a git repository at dir_path.
+
+    Raises RuntimeError if initialization fails, returns True on success.
+    """
+    dir_path.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run(
+            ["git", "init"],
+            cwd=str(dir_path),
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to initialize {name} git repository: {e.stderr}")
+
+
+def append_to_gitignore(drift_root: Path, folders_to_ignore: list) -> None:
+    """Appends folders to .gitignore if they are not already ignored."""
+    gitignore_path = drift_root / ".gitignore"
+    existing_content = ""
+    if gitignore_path.exists():
+        existing_content = gitignore_path.read_text(encoding="utf-8")
+
+    new_ignores = []
+    lines = existing_content.splitlines()
+    normalized_lines = {line.strip() for line in lines if line.strip() and not line.strip().startswith("#")}
+
+    for folder in folders_to_ignore:
+        if folder not in normalized_lines and folder.rstrip("/") not in normalized_lines:
+            new_ignores.append(folder)
+
+    if new_ignores:
+        with gitignore_path.open("a", encoding="utf-8") as f:
+            if existing_content and not existing_content.endswith("\n"):
+                f.write("\n")
+            f.write("# drift workspace folders\n")
+            for folder in new_ignores:
+                f.write(f"{folder}\n")
+
+

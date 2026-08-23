@@ -10,104 +10,26 @@ from .constants import (
     CONFIG_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
     GLOBAL_CONFIG_FILE_NAME,
+    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    DEFAULT_DRIFT_LOCAL_TOML_CONTENT,
+    DEFAULT_ENVSUBST_BASH_CONTENT,
+    DEFAULT_MUSTACHE_ENVST_JSON_CONTENT,
+    DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT,
+    get_default_drift_toml_content,
+    get_default_drift_local_toml_content,
 )
-from .check_repo import check_existing_workspace_status
+from .check_repo import check_existing_workspace_status, ComponentStatus
 from .git_utils import (
     is_git_tracked,
     get_drift_root,
     ensure_git_repository_health,
+    git_init_repo,
+    append_to_gitignore,
 )
 from .file_utils import ensure_directory_writable
 
 
 logger = logging.getLogger(__name__)
-
-
-def git_init_repo(dir_path: Path, name: str) -> bool:
-    """Initializes a git repository at dir_path.
-
-    Raises RuntimeError if initialization fails, returns True on success.
-    """
-    dir_path.mkdir(parents=True, exist_ok=True)
-    try:
-        subprocess.run(
-            ["git", "init"],
-            cwd=str(dir_path),
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(f"Failed to initialize {name} git repository: {e.stderr}")
-
-
-def append_to_gitignore(drift_root: Path, folders_to_ignore: list) -> None:
-    """Appends folders to .gitignore if they are not already ignored."""
-    gitignore_path = drift_root / ".gitignore"
-    existing_content = ""
-    if gitignore_path.exists():
-        existing_content = gitignore_path.read_text(encoding="utf-8")
-
-    new_ignores = []
-    lines = existing_content.splitlines()
-    normalized_lines = {line.strip() for line in lines if line.strip() and not line.strip().startswith("#")}
-
-    for folder in folders_to_ignore:
-        if folder not in normalized_lines and folder.rstrip("/") not in normalized_lines:
-            new_ignores.append(folder)
-
-    if new_ignores:
-        with gitignore_path.open("a", encoding="utf-8") as f:
-            if existing_content and not existing_content.endswith("\n"):
-                f.write("\n")
-            f.write("# drift workspace folders\n")
-            for folder in new_ignores:
-                f.write(f"{folder}\n")
-
-
-def get_default_drift_toml_content() -> str:
-    """Gets the default drift.toml template content, with an embedded fallback."""
-    template_path = Path(__file__).resolve().parent / "templates" / "drift_default.toml"
-    if template_path.exists():
-        try:
-            return template_path.read_text(encoding="utf-8")
-        except Exception as e:
-            print(f"⚠️ Warning: Default drift.toml template file is unreadable: {e}. Using minimal fallback configuration.", file=sys.stderr)
-    else:
-        print("⚠️ Warning: Default drift.toml template file is missing. Using minimal fallback configuration.", file=sys.stderr)
-
-    # Fallback to hardcoded minimal content to ensure self-containment
-    return (
-"""# =====================================================================
-# drift.toml Minimal Configuration
-# =====================================================================
-
-[env]
-DRIFT_SAMPLE_ENV_THEME = "nord-dark"
-DRIFT_SAMPLE_ENV_EDITOR = "vim"
-
-[packages.enable]
-DEFAULT = false
-
-[render.envsubst]
-input_file = "envsubst.bash"
-suffix = "envst"
-render_command = "bash -c 'source %i && envsubst < %s'"
-
-[render.mustache]
-input_file = "mustache.envst.json"
-suffix = "mustache"
-render_command = "mustache %i %s"
-
-[render.jinja2]
-input_file = "jinja2.mustache.json"
-suffix = "j2"
-render_command = "jinja2 %s %i"
-
-[workspace]
-default_target_directory = "~"
-""")
 
 
 def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:
@@ -139,18 +61,15 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     # Check if already initialized or partially initialized
     if not force:
-        if check_existing_workspace_status(drift_root):
+        report = check_existing_workspace_status(drift_root)
+        if report.overall_status == ComponentStatus.GOOD:
             raise RuntimeError(f"drift workspace is already initialized in '{drift_root}'.")
-
-        # Check if partially initialized (any of the core files or folders exist)
-        config_file = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-        render_dir = drift_root / "render"
-        install_dir = drift_root / "install"
-
-        if config_file.exists() or render_dir.is_dir() or install_dir.is_dir():
+        elif report.overall_status == ComponentStatus.BROKEN:
             raise RuntimeError(
-                f"drift workspace exists at '{drift_root}' but has an invalid or corrupt configuration. "
-                f"Use --force to overwrite and re-initialize."
+                f"drift workspace at '{drift_root}' is partially initialized or has broken components:\n"
+                f"{report.format_diagnostic_summary()}\n\n"
+                f"👉 Run 'drift repair' to safely fix missing or broken components.\n"
+                f"👉 Run 'drift init --force' to completely overwrite and re-initialize."
             )
 
     # 4. Creates .gitignore entries to isolate render/ and install/ folders and local-only config overrides.
@@ -172,45 +91,35 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     stow_ignore_path = install_dir / ".stow-local-ignore"
     stow_ignore_path.write_text("state.toml\n", encoding="utf-8")
 
-    # 6. Creates default directory templates (src/, config/drift.toml, install/state.toml)
+    # 6. Creates default directory templates (src/, config/drift.toml, config/drift.local.toml, install/state.toml)
     (drift_root / "src").mkdir(parents=True, exist_ok=True)
     config_dir = drift_root / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    config_file = config_dir / "drift.toml"
+    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
     config_file.write_text(get_default_drift_toml_content(), encoding="utf-8")
+
+    # Create drift.local.toml template
+    local_config_file = config_dir / GLOBAL_CONFIG_LOCAL_FILE_NAME
+    if not local_config_file.exists() or force:
+        local_config_file.write_text(DEFAULT_DRIFT_LOCAL_TOML_CONTENT, encoding="utf-8")
 
     # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift.toml
     envsubst_input = config_dir / "envsubst.bash"
     if not envsubst_input.exists():
-        env_content = (
-            "#!/bin/bash\n"
-            "# Propagates variables defined in the workspace config [env] section\n"
-            "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-default-theme}\"\n"
-            "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-default-editor}\"\n"
-        )
-        envsubst_input.write_text(env_content, encoding="utf-8")
+        envsubst_input.write_text(DEFAULT_ENVSUBST_BASH_CONTENT, encoding="utf-8")
     else:
         logger.warning(f"envsubst.bash already exists at '{envsubst_input}', skipping creation.")
 
     mustache_input = config_dir / "mustache.envst.json"
-    mustache_input_json = {
-        "sample_theme": "${TEMPLATE_THEME}",
-        "sample_editor": "${TEMPLATE_EDITOR}"
-    }
     if not mustache_input.exists():
-        mustache_input.write_text(json.dumps(mustache_input_json, indent=4), encoding="utf-8")
+        mustache_input.write_text(DEFAULT_MUSTACHE_ENVST_JSON_CONTENT, encoding="utf-8")
     else:
         logger.warning(f"mustache.envst.json already exists at '{mustache_input}', skipping creation.")
 
     jinja2_input = config_dir / "jinja2.mustache.json"
-    jinja2_input_json = {
-        "sample_theme": "{{theme}}",
-        "sample_editor": "{{editor}}",
-        "sample_tool": "git"
-    }
     if not jinja2_input.exists():
-        jinja2_input.write_text(json.dumps(jinja2_input_json, indent=4), encoding="utf-8")
+        jinja2_input.write_text(DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT, encoding="utf-8")
     else:
         logger.warning(f"jinja2.mustache.json already exists at '{jinja2_input}', skipping creation.")
 

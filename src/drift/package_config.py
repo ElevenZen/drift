@@ -133,7 +133,6 @@ class PackageConfig:
         if not isinstance(raw_timeout, int):
             raise TypeError(f"hook_timeout must be an integer for package '{name}'.")
 
-        # Mapping for backward compatibility
         post_install = package_data.get("post_install")
         post_update = package_data.get("post_update")
 
