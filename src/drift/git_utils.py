@@ -32,16 +32,18 @@ def commit_repo_changes(
             if pkg_path.exists():
                 add_cmd.append(f"{pkg}/")
                 added_any = True
-            else:
-                # Check if it was tracked by git (to stage deletion)
-                ls_cmd = ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"]
-                try:
-                    res = run_command(ls_cmd, capture_output=True, text=True)
-                    if res.stdout.strip():
-                        add_cmd.append(f"{pkg}/")
-                        added_any = True
-                except Exception:
-                    pass
+                continue
+            # add for deletion
+            # check if it was tracked by git
+            ls_cmd = ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"]
+            try:
+                res = run_command(ls_cmd, capture_output=True, text=True)
+                if res.stdout.strip():
+                    add_cmd.append(f"{pkg}/")
+                    added_any = True
+            except Exception:
+                pass
+
         if (repo_path / "state.toml").exists():
             add_cmd.append("state.toml")
             added_any = True

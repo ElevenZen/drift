@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-209%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-321%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility. 
 
@@ -48,8 +48,12 @@ Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package i
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
-### 🧹 6. Autonomous Garbage Collection (Self-Cleaning)
-When you toggle packages to `false` in `drift.toml`, or delete source files, Drift's **Garbage Collection** automatically uninstalls them, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
+### 🧹 6. Autonomous Garbage Collection (Self-Cleaning)  
+Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
+
+When you toggle packages to `false` in `drift.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
+*   **Automatic Trigger on Global Deploy**: Running `drift deploy` without package arguments automatically sweeps and purges stale database packages at the end of the deployment cycle.
+*   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
 
 ### 🔌 7. Decouple & Eject Packages on Demand (Detach Mode)
