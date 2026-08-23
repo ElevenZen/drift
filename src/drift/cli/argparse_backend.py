@@ -23,6 +23,7 @@ from .actions import (
     execute_repair,
     execute_help
 )
+from ..result_models import DiffType
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -42,6 +43,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enable verbose (DEBUG) logging output"
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
 
@@ -55,6 +61,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force re-initialization and overwrite existing files"
     )
+    init_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # render subcommand
     render_parser = subparsers.add_parser(
@@ -65,6 +76,11 @@ def make_parser() -> argparse.ArgumentParser:
         "packages",
         nargs="*",
         help="Optional package name(s) to render specifically"
+    )
+    render_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # stage subcommand
@@ -82,6 +98,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force staging and bypass uncommitted modifications check"
     )
+    stage_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # apply subcommand
     apply_parser = subparsers.add_parser(
@@ -97,6 +118,11 @@ def make_parser() -> argparse.ArgumentParser:
         "-f", "--force",
         action="store_true",
         help="Force deployment and bypass check"
+    )
+    apply_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # render-commit subcommand
@@ -141,6 +167,11 @@ def make_parser() -> argparse.ArgumentParser:
         nargs="*",
         help="Optional package name(s) to reverse-sync specifically"
     )
+    reverse_sync_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # new subcommand
     new_parser = subparsers.add_parser(
@@ -165,6 +196,11 @@ def make_parser() -> argparse.ArgumentParser:
         "-m", "--method",
         dest="method",
         help="Explicitly configure the installation method ('stow' or 'copy') inside drift_package.toml"
+    )
+    new_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # uninstall subcommand
@@ -191,6 +227,11 @@ def make_parser() -> argparse.ArgumentParser:
         "--detach",
         action="store_true",
         help="Remove management relationship but keep configurations as actual physical files on host system"
+    )
+    uninstall_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # adopt subcommand
@@ -223,6 +264,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Simulate the adoption, previewing changes and conflict results"
     )
+    adopt_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # status subcommand
     status_parser = subparsers.add_parser(
@@ -234,6 +280,11 @@ def make_parser() -> argparse.ArgumentParser:
         nargs="*",
         help="Optional package name(s) to audit specifically"
     )
+    status_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # gc subcommand
     gc_parser = subparsers.add_parser(
@@ -244,6 +295,11 @@ def make_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Simulate the garbage collection without making changes"
+    )
+    gc_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # diff subcommand
@@ -277,6 +333,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show concise summary of changes (diffstat)"
     )
+    diff_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # add subcommand
     add_parser = subparsers.add_parser(
@@ -297,6 +358,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Preview the import without making changes"
     )
+    add_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # rollback subcommand
     rollback_parser = subparsers.add_parser(
@@ -312,6 +378,11 @@ def make_parser() -> argparse.ArgumentParser:
         "-f", "--force",
         action="store_true",
         help="Force the rollback and skip failed interlock checking"
+    )
+    rollback_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # deploy subcommand
@@ -329,6 +400,11 @@ def make_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Forcefully deploy and bypass system drift sentinel safeguards"
     )
+    deploy_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
 
     # repair subcommand
     repair_parser = subparsers.add_parser(
@@ -339,6 +415,11 @@ def make_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="Show repair actions without executing them"
+    )
+    repair_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
     )
 
     # help subcommand
@@ -363,21 +444,24 @@ def run_argparse_cli(argv=None) -> None:
         import logging
         setup_logging(level=logging.DEBUG)
 
+    json_mode = getattr(args, "json", False)
+
     # Resolve literal base directory path
     base_dir = Path(args.directory).resolve() if args.directory else Path.cwd().resolve()
 
     if args.command == "init":
-        # Bypassing show-toplevel check for init, using raw directory/cwd as root
         drift_root = base_dir
         try:
-            execute_init(drift_root, force=args.force, no_git_root=args.no_git_root)
-            print("✨ Initialized drift workspace!")
-            print("📁 Created render/ sandbox Git database.")
-            print("📁 Created install/ local state Git database.")
-            print("📝 Generated drift.toml template.")
-            print("📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.")
+            execute_init(drift_root, force=args.force, no_git_root=args.no_git_root, json_mode=json_mode)
+            if not json_mode:
+                print("✨ Initialized drift workspace!")
+                print("📁 Created render/ sandbox Git database.")
+                print("📁 Created install/ local state Git database.")
+                print("📝 Generated drift.toml template.")
+                print("📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.")
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "render":
         if args.no_git_root:
@@ -386,13 +470,15 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_render(drift_root, args.packages)
-            if args.packages:
-                print(f"✨ Successfully rendered package(s) '{', '.join(args.packages)}'!")
-            else:
-                print("✨ Successfully rendered all enabled packages!")
+            execute_render(drift_root, args.packages, json_mode=json_mode)
+            if not json_mode:
+                if args.packages:
+                    print(f"✨ Successfully rendered package(s) '{', '.join(args.packages)}'!")
+                else:
+                    print("✨ Successfully rendered all enabled packages!")
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "stage":
         if args.no_git_root:
@@ -401,9 +487,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_stage(drift_root, args.packages, force=args.force)
+            execute_stage(drift_root, args.packages, force=args.force, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "apply":
         if args.no_git_root:
@@ -412,9 +499,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_apply(drift_root, args.packages, force=args.force)
+            execute_apply(drift_root, args.packages, force=args.force, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "render-commit":
         if args.no_git_root:
@@ -425,7 +513,8 @@ def run_argparse_cli(argv=None) -> None:
         try:
             execute_render_commit(drift_root, args.message, args.packages)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "install-commit":
         if args.no_git_root:
@@ -436,7 +525,8 @@ def run_argparse_cli(argv=None) -> None:
         try:
             execute_install_commit(drift_root, args.message, args.packages)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "reverse-sync":
         if args.no_git_root:
@@ -445,13 +535,15 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_reverse_sync(drift_root, args.packages)
-            if args.packages:
-                print(f"✨ Successfully reverse-synced package(s) '{', '.join(args.packages)}'!")
-            else:
-                print("✨ Successfully reverse-synced all enabled packages!")
+            execute_reverse_sync(drift_root, args.packages, json_mode=json_mode)
+            if not json_mode:
+                if args.packages:
+                    print(f"✨ Successfully reverse-synced package(s) '{', '.join(args.packages)}'!")
+                else:
+                    print("✨ Successfully reverse-synced all enabled packages!")
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "new":
         if args.no_git_root:
@@ -465,10 +557,12 @@ def run_argparse_cli(argv=None) -> None:
                 args.package_name,
                 force=args.force,
                 target_directory=args.target,
-                install_method=args.method
+                install_method=args.method,
+                json_mode=json_mode
             )
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "uninstall":
         if args.no_git_root:
@@ -477,9 +571,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach)
+            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "adopt":
         if args.no_git_root:
@@ -494,10 +589,12 @@ def run_argparse_cli(argv=None) -> None:
                 interactive=args.interactive,
                 accept_conflicts=args.accept_conflicts,
                 force=args.force,
-                dry_run=args.dry_run
+                dry_run=args.dry_run,
+                json_mode=json_mode
             )
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "status":
         if args.no_git_root:
@@ -506,9 +603,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_status(drift_root, args.packages)
+            execute_status(drift_root, args.packages, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "gc":
         if args.no_git_root:
@@ -517,9 +615,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_gc(drift_root, dry_run=args.dry_run)
+            execute_gc(drift_root, dry_run=args.dry_run, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "diff":
         if args.no_git_root:
@@ -527,16 +626,17 @@ def run_argparse_cli(argv=None) -> None:
         else:
             drift_root = get_drift_root(base_dir)
 
-        diff_type = "pending"
+        diff_type = DiffType.PENDING
         if args.template:
-            diff_type = "template"
+            diff_type = DiffType.TEMPLATE
         elif args.system:
-            diff_type = "system"
+            diff_type = DiffType.SYSTEM
 
         try:
-            execute_diff(drift_root, args.packages, diff_type=diff_type, side_by_side=args.side_by_side, stat=args.stat)
+            execute_diff(drift_root, args.packages, diff_type=diff_type, side_by_side=args.side_by_side, stat=args.stat, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "add":
         if args.no_git_root:
@@ -545,9 +645,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run)
+            execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "rollback":
         if args.no_git_root:
@@ -556,9 +657,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_rollback(drift_root, args.packages, force=args.force)
+            execute_rollback(drift_root, args.packages, force=args.force, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "deploy":
         if args.no_git_root:
@@ -567,9 +669,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_deploy(drift_root, args.packages, force=args.force)
+            execute_deploy(drift_root, args.packages, force=args.force, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "repair":
         if args.no_git_root:
@@ -578,9 +681,10 @@ def run_argparse_cli(argv=None) -> None:
             drift_root = get_drift_root(base_dir)
 
         try:
-            execute_repair(drift_root, dry_run=args.dry_run)
+            execute_repair(drift_root, dry_run=args.dry_run, json_mode=json_mode)
         except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "help":
         try:

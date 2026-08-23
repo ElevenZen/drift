@@ -75,6 +75,38 @@ from .render_input import (
     check_cyclic_dependencies,
     render_input_templates,
 )
-from .constants import (
-    CONFIG_DIR_NAME,
+from .result_models import (
+    NextActionType,
+    FileOperations,
+    PackageReverseSyncResult,
+    ReverseSyncResult,
+    PackageRenderResult,
+    RenderResult,
+    StageResult,
+    PackageInstallResult,
+    InstallDeploymentResult,
+    RestoredBackup,
+    PackageUninstallResult,
+    UninstallResult,
+    PackageAdoptResult,
+    AdoptResult,
+    GcResult,
+    NewPackageResult,
+    AddResourceResult,
+    DeployFailure,
+    DeployResult,
+    RollbackResult,
+    StatusResult,
+    PackageStatusSummary,
+    DiffType,
+    DiffResult,
+    RepairResult,
+)
+from .workspace_status import (
+    PackageStatus,
+    WorkspaceStatusResult,
+    run_primitive_status,
+)
+from .workspace_diff import (
+    run_primitive_diff,
 )

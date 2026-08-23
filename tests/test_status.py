@@ -110,11 +110,29 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(s.system_status, "DRIFTED")
         self.assertEqual(s.pending_status, "STAGED")
         
-        # Verify changes detail
-        self.assertTrue(any("file.txt" in c for c in s.template_changes))
-        self.assertTrue(any("file.txt" in c for c in s.system_changes))
-        self.assertEqual(len(s.pending_changes.modified), 1)
-        self.assertEqual(s.pending_changes.modified[0], Path("file.txt"))
+        # 5. Verify formatting methods
+        text = results.format_text()
+        self.assertIn("Package: pkg_a", text)
+        self.assertIn("[A] Template: MODIFIED", text)
+        self.assertIn("[B] System:   DRIFTED", text)
+        self.assertIn("[Δ] Pending:  STAGED", text)
+
+        status_model = results.to_status_result()
+        self.assertEqual(status_model.overall_status, "DRIFTED")
+        self.assertEqual(len(status_model.packages), 1)
+
+        diff_model = results.to_diff_result()
+        self.assertEqual(diff_model.command, "diff")
+        self.assertEqual(len(diff_model.packages), 1)
+        self.assertTrue(diff_model.packages[0].has_changes)
+
+    def test_status_empty(self):
+        """Verifies empty workspace status format."""
+        from drift.workspace_status import WorkspaceStatusResult
+        empty_res = WorkspaceStatusResult(packages=[])
+        self.assertEqual(len(empty_res), 0)
+        self.assertEqual(empty_res.format_text(), "")
+        self.assertEqual(empty_res.overall_status, "CLEAN")
 
 if __name__ == "__main__":
     unittest.main()

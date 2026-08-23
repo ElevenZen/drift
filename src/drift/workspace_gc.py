@@ -10,6 +10,7 @@ from .state_registry import load_state_registry
 from .uninstall_repo import run_primitive_7_uninstall_packages
 from .constants import PACKAGE_CONFIG_FILE_NAME_LIST, CONFIG_DIR_NAME
 from .git_utils import commit_repo_changes
+from .result_models import GcResult
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ def purge_zombie_folders(
 def run_primitive_9_purge_workspace_garbage(
     workspace_config: WorkspaceConfig,
     dry_run: bool = False
-) -> None:
+) -> GcResult:
     """
     Identifies and removes garbage from the drift workspace databases.
     1. Uninstalls orphan packages (present in state but disabled in config).
@@ -78,22 +79,38 @@ def run_primitive_9_purge_workspace_garbage(
         dry_run=dry_run
     )
 
+    render_commit_msg: Optional[str] = None
+    install_commit_msg: Optional[str] = None
+
     # --- Part 3: Commit Database Changes ---
     if not dry_run:
         if render_zombies:
+            render_commit_msg = f"GC Purge: Removed zombie folder(s) {', '.join(render_zombies)}"
             commit_repo_changes(
                 workspace_config.render_path,
-                f"GC Purge: Removed zombie folder(s) {', '.join(render_zombies)}",
+                render_commit_msg,
                 target_pkgs=render_zombies,
                 repo_name="render repo"
             )
         if install_zombies:
+            install_commit_msg = f"GC Purge: Removed zombie folder(s) {', '.join(install_zombies)}"
             commit_repo_changes(
                 workspace_config.install_path,
-                f"GC Purge: Removed zombie folder(s) {', '.join(install_zombies)}",
+                install_commit_msg,
                 target_pkgs=install_zombies,
                 repo_name="install repo"
             )
     
     if not uninstalled_orphans and not render_zombies and not install_zombies:
         logger.info("✨ Workspace is clean. No garbage detected.")
+
+    return GcResult(
+        command="gc",
+        status="SUCCESS",
+        dry_run=dry_run,
+        uninstalled_orphans=list(uninstalled_orphans),
+        purged_render_zombies=render_zombies,
+        purged_install_zombies=install_zombies,
+        render_commit_message=render_commit_msg,
+        install_commit_message=install_commit_msg
+    )

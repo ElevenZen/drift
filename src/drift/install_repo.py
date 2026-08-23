@@ -30,6 +30,7 @@ from .file_utils import (
         run_command,
 )
 from .sync_ops import backup_file_or_dir_external
+from .result_models import FileOperations, PackageInstallResult, InstallDeploymentResult
 
 logger = logging.getLogger(__name__)
 
@@ -402,14 +403,20 @@ def deploy_package_impl(
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None
-) -> None:
+) -> PackageInstallResult:
     """Core function to deploy a single package configuration."""
     install_base = workspace_config.install_path
     
     metadata = load_config_for_install(install_base, pkg)
     if not (force or metadata.enable_install):
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
-        return
+        return PackageInstallResult(
+            package=pkg,
+            install_method=metadata.get_install_method(workspace_config),
+            target_directory=str(metadata.get_target_directory(workspace_config)),
+            status="SKIPPED",
+            error="enable_install is False"
+        )
         
     target_dir = metadata.get_target_directory(workspace_config)
     # target dir should be absolute.
@@ -451,7 +458,13 @@ def deploy_package_impl(
     install_pkg_dir = install_base / pkg
     if not install_pkg_dir.is_dir():
         logger.warning(f"⚠️  Package installation directory '{install_pkg_dir}' does not exist. Skipping.")
-        return
+        return PackageInstallResult(
+            package=pkg,
+            install_method=metadata.get_install_method(workspace_config),
+            target_directory=str(target_dir),
+            status="SKIPPED",
+            error=f"Package installation directory '{install_pkg_dir}' does not exist."
+        )
         
     logger.info(f"🚀 Deploying package: {pkg}")
     
@@ -546,6 +559,23 @@ def deploy_package_impl(
 
     logger.info(f"✨ Package '{pkg}' deployed successfully.")
 
+    ops = FileOperations()
+    if package_changes is not None:
+        ops.added = [str(p) for p in package_changes.added_files]
+        ops.modified = [str(p) for p in package_changes.modified_files]
+        ops.deleted = [str(p) for p in package_changes.deleted_files]
+    else:
+        ops.added = [str(p) for p in current_files]
+
+    return PackageInstallResult(
+        package=pkg,
+        install_method=metadata.get_install_method(workspace_config),
+        target_directory=str(target_dir),
+        operations=ops,
+        is_first_time=is_first_time,
+        status="SUCCESS"
+    )
+
 
 def deploy_package(
     workspace_config: WorkspaceConfig,
@@ -555,10 +585,10 @@ def deploy_package(
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None
-) -> None:
+) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     try:
-        deploy_package_impl(
+        return deploy_package_impl(
             workspace_config=workspace_config,
             pkg=pkg,
             state_registry=state_registry,
@@ -589,7 +619,7 @@ def run_primitive_5_install_deployment(
     resolve_symlinks: bool = True,
     force: bool = False,
     package_changes: Optional[List[PackageStageChanges]] = None
-) -> None:
+) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5)."""
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
@@ -601,13 +631,14 @@ def run_primitive_5_install_deployment(
         target_pkgs=packages_to_redeploy,
     )
     
+    results: List[PackageInstallResult] = []
     for pkg in discovered_packages:
         # find corresponding PackageStageChanges for this package if provided
         if package_changes:
             pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
         else:
             pkg_change = None
-        deploy_package(
+        pkg_res = deploy_package(
             workspace_config=workspace_config,
             pkg=pkg,
             state_registry=state_registry,
@@ -616,6 +647,12 @@ def run_primitive_5_install_deployment(
             force=force,
             package_changes=pkg_change
         )
+        results.append(pkg_res)
+
+    return InstallDeploymentResult(
+        status="SUCCESS",
+        packages=results
+    )
 
 
 def run_primitive_6_commit_install_repo(

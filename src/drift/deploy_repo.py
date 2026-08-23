@@ -1,9 +1,9 @@
-"""Core high-level transactional deployment pipeline and system drift sentinel safeguards."""
+from __future__ import annotations
 
 import sys
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .workspace_config import WorkspaceConfig
 from .git_utils import get_git_status_porcelain, check_repo_can_commit
@@ -12,6 +12,14 @@ from .render_package import run_primitive_2_render_packages, run_primitive_3_com
 from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
 from .install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
+from .result_models import (
+    NextActionType,
+    CompletedStep,
+    DeployFailure,
+    DeployResult,
+    PackageInstallResult,
+    GcResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,10 +28,11 @@ def check_and_prevent_system_drifts(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
     force: bool = False
-) -> None:
+) -> Tuple[List[str], List[str]]:
     """Stage 1: Safety Guard (Sentinel)
     Runs a silent reverse-sync and checks if any targeted package has drifted.
     If drift is detected and force is False, aborts execution instantly with instructions.
+    Returns (drifted_packages, drifted_files).
     """
     logger.info("🔍 [STAGE 1] Triggering silent reverse synchronization audit...")
     
@@ -38,8 +47,8 @@ def check_and_prevent_system_drifts(
         run_primitive_1_reverse_sync(workspace_config, package_names=syncable_pkgs)
 
     drifted_packages = []
+    drifted_files = []
     for pkg in syncable_pkgs:
-        # Check uncommitted changes inside the install base under the package subfolder
         pkg_rel_path = f"{pkg}/"
         git_status = get_git_status_porcelain(workspace_config.install_path, pkg_rel_path)
         if git_status:
@@ -47,9 +56,9 @@ def check_and_prevent_system_drifts(
             logger.warning(f"🛡️  System drift detected for package '{pkg}'!")
             for line in git_status:
                 logger.debug(f"   Drift: {line}")
+                drifted_files.append(line)
 
     if drifted_packages and not force:
-        # Abort deployment immediately and show error details
         first_pkg = drifted_packages[0]
         err_msg = (
             f"❌ [DEPLOY ABORTED] System drift detected in package '{first_pkg}'!\n"
@@ -59,6 +68,8 @@ def check_and_prevent_system_drifts(
             f"👉 Run 'drift deploy {first_pkg} --force' to discard system drifts and overwrite."
         )
         raise RuntimeError(err_msg)
+
+    return drifted_packages, drifted_files
 
 
 def print_emergency_recovery_card(failed_step: str, error_msg: str, package_names: List[str]) -> None:
@@ -91,15 +102,17 @@ def execute_sequential_compile_and_apply(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
     force: bool = False
-) -> None:
+) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
+    completed_steps: List[CompletedStep] = []
     
     # 1. Render raw templates to sandbox
     failed_step = "Step 1 (Template Rendering)"
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
         run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs)
+        completed_steps.append(CompletedStep(1, "template_rendering"))
     except Exception as e:
         logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
         logger.info("👉 You can resolve the template issues and simply try 'drift deploy' again.")
@@ -115,6 +128,7 @@ def execute_sequential_compile_and_apply(
             commit_message=f"Deploy Render: Automatically compile templates for {pkgs_label}",
             target_pkgs=target_pkgs
         )
+        completed_steps.append(CompletedStep(2, "render_commit"))
     except Exception as e:
         logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
         logger.info("👉 Please resolve any render sandbox repository Git issues and try 'drift deploy' again.")
@@ -129,6 +143,7 @@ def execute_sequential_compile_and_apply(
             target_pkgs=target_pkgs,
             force=force
         )
+        completed_steps.append(CompletedStep(3, "sandbox_staging"))
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
@@ -137,13 +152,14 @@ def execute_sequential_compile_and_apply(
     failed_step = "Step 4 (Physical Deploy/Install)"
     try:
         logger.info("   [4/5] Deploying and copying/linking configurations to active host paths ...")
-        run_primitive_5_install_deployment(
+        install_res = run_primitive_5_install_deployment(
             workspace_config,
             packages_to_redeploy=target_pkgs,
             resolve_symlinks=True,
             force=force,
             package_changes=package_changes
         )
+        completed_steps.append(CompletedStep(4, "physical_install"))
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
@@ -157,6 +173,7 @@ def execute_sequential_compile_and_apply(
             commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_label}",
             target_pkgs=target_pkgs
         )
+        completed_steps.append(CompletedStep(5, "install_commit"))
     except Exception as e:
         logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
         msg = (
@@ -167,12 +184,14 @@ def execute_sequential_compile_and_apply(
         print(msg, file=sys.stderr)
         raise RuntimeError(f"{failed_step} failed.") from e
 
+    return install_res.packages, completed_steps
+
 
 def run_primitive_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Optional[List[str]] = None,
     force: bool = False
-) -> None:
+) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply."""
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
     logger.info("🔍 Running pre-flight Git configuration checks...")
@@ -186,17 +205,34 @@ def run_primitive_deploy_pipeline(
     )
     if not target_pkgs:
         logger.info("No active packages selected or enabled for deployment. Skipping.")
-        return
+        return DeployResult(
+            command="deploy",
+            status="SUCCESS",
+            is_global_deploy=(packages_to_deploy is None),
+            target_packages=[],
+            deployed_packages=[]
+        )
 
     # Stage 1: Sentinel Drift Auditing
     check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
 
     # Stage 2: Deploy Pipeline Execution
-    execute_sequential_compile_and_apply(workspace_config, target_pkgs, force=force)
+    deployed_packages, completed_steps = execute_sequential_compile_and_apply(workspace_config, target_pkgs, force=force)
 
     # Stage 3: Call garbage collection on global deploy
+    gc_res: Optional[GcResult] = None
     if not packages_to_deploy:
         logger.info("🧹 Performing global deployment garbage collection...")
-        run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False)
+        gc_res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False)
 
     logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(target_pkgs)}")
+
+    return DeployResult(
+        command="deploy",
+        status="SUCCESS",
+        is_global_deploy=(packages_to_deploy is None),
+        target_packages=target_pkgs,
+        deployed_packages=deployed_packages,
+        gc=gc_res,
+        completed_steps=completed_steps
+    )

@@ -3,7 +3,7 @@
 import logging
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from .workspace_config import WorkspaceConfig
 from .state_registry import load_state_registry, save_state_registry, PackageState, StateRegistry
@@ -15,7 +15,7 @@ from .file_utils import (
     resolve_system_target,
 )
 from .constants import PACKAGE_CONFIG_FILE_NAME
-from typing import List, Optional, Tuple, Dict
+from .result_models import PackageUninstallResult, RestoredBackup, UninstallResult
 
 logger = logging.getLogger(__name__)
 
@@ -248,12 +248,12 @@ def run_primitive_7_uninstall_packages(
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False
-) -> List[str]:
+) -> UninstallResult:
     """
     Uninstalls or detaches one or more packages from the system.
     Safeguard: Aborts if the package is still enabled in workspace config unless force=True.
     If package_names is None, uninstalls all orphans.
-    Returns the list of successfully uninstalled package names.
+    Returns the UninstallResult containing details of uninstalled packages.
     """
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
@@ -274,18 +274,35 @@ def run_primitive_7_uninstall_packages(
     if not safe_map:
         if package_names is not None:
              logger.info("Nothing to uninstall.")
-        return []
+        return UninstallResult(status="SUCCESS", detach_mode=detach, packages=[])
 
-    successfully_uninstalled = []
+    package_results: List[PackageUninstallResult] = []
+    successfully_uninstalled: List[str] = []
 
     for pkg, pkg_state in safe_map.items():
+        target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
         if uninstall_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run, detach=detach):
             if not dry_run:
                 registry.remove_package(pkg)
                 successfully_uninstalled.append(pkg)
+            package_results.append(
+                PackageUninstallResult(
+                    package=pkg,
+                    install_method=pkg_state.install_method or "stow",
+                    target_directory=str(target_dir),
+                    detach_mode=detach,
+                    removed_files=list(pkg_state.deployed_files) if not detach else [],
+                    converted_symlinks=list(pkg_state.deployed_files) if detach else [],
+                    status="SUCCESS"
+                )
+            )
 
     if dry_run:
-        return list(safe_map.keys())
+        return UninstallResult(
+            status="SUCCESS",
+            detach_mode=detach,
+            packages=package_results
+        )
 
     # 3. Save state registry
     save_state_registry(state_file, registry)
@@ -303,4 +320,8 @@ def run_primitive_7_uninstall_packages(
     else:
         logger.info("Nothing was uninstalled.")
         
-    return successfully_uninstalled
+    return UninstallResult(
+        status="SUCCESS",
+        detach_mode=detach,
+        packages=package_results
+    )

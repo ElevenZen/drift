@@ -5,9 +5,10 @@ import subprocess
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from .workspace_config import WorkspaceConfig
+from .result_models import DiffType
 
 logger = logging.getLogger(__name__)
 
@@ -98,10 +99,11 @@ def run_pending_delta_diff(
     finally:
         os.chdir(old_cwd)
 
+
 def run_primitive_diff(
     workspace_config: WorkspaceConfig,
     package_names: Optional[List[str]] = None,
-    diff_type: str = "pending",  # "template" (A), "system" (B), "pending" (C)
+    diff_type: DiffType = DiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False
 ) -> None:
@@ -124,10 +126,14 @@ def run_primitive_diff(
     from .reverse_sync import run_primitive_1_reverse_sync
     from .render_package import run_primitive_2_render_packages
     
-    if diff_type in ("system", "pending"):
-        run_primitive_1_reverse_sync(workspace_config, package_names=packages)
-    if diff_type in ("template", "pending"):
-        run_primitive_2_render_packages(workspace_config, target_pkgs=packages)
+    if diff_type in (DiffType.SYSTEM, DiffType.PENDING):
+        syncable = [pkg for pkg in packages if (workspace_config.install_path / pkg).is_dir()]
+        if syncable:
+            run_primitive_1_reverse_sync(workspace_config, package_names=syncable)
+    if diff_type in (DiffType.TEMPLATE, DiffType.PENDING):
+        renderable = [pkg for pkg in packages if (workspace_config.source_path / pkg).is_dir()]
+        if renderable:
+            run_primitive_2_render_packages(workspace_config, target_pkgs=renderable)
 
     # Prepare git options
     git_options = ["--color=always"]
@@ -138,14 +144,14 @@ def run_primitive_diff(
 
     from .constants import MANAGED_CONFIG_FILES
 
-    if diff_type == "template":
+    if diff_type == DiffType.TEMPLATE:
         logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
         run_repo_diff(workspace_config.render_path, packages, git_options, MANAGED_CONFIG_FILES, "render repo")
             
-    elif diff_type == "system":
+    elif diff_type == DiffType.SYSTEM:
         logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
         run_repo_diff(workspace_config.install_path, packages, git_options, MANAGED_CONFIG_FILES, "install repo")
             
-    elif diff_type == "pending":
+    elif diff_type == DiffType.PENDING:
         logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
         run_pending_delta_diff(workspace_config, packages, git_options, MANAGED_CONFIG_FILES)

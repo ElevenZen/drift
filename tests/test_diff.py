@@ -64,9 +64,10 @@ class TestDiff(unittest.TestCase):
         # 2. Modify Template
         (pkg_src_dir / "file.txt").write_text("modified content")
         
+        from drift.result_models import DiffType
         # 3. Run Diff A
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type="template")
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             self.assertIn("modified content", stdout.getvalue())
 
     def test_diff_system(self):
@@ -80,6 +81,7 @@ class TestDiff(unittest.TestCase):
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -92,7 +94,7 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff B
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type="system")
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
             self.assertIn("drifted content", stdout.getvalue())
 
     def test_diff_pending(self):
@@ -106,6 +108,7 @@ class TestDiff(unittest.TestCase):
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
@@ -118,8 +121,22 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff Δ
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type="pending")
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
             self.assertIn("new version content", stdout.getvalue())
+
+    def test_diff_enum_types(self):
+        """Verifies run_primitive_diff accepts DiffType enum members."""
+        from drift.result_models import DiffType
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
+
+    def test_invalid_diff_type_casting(self):
+        """Verifies invalid diff_type strings fail with ValueError during cast."""
+        from drift.cli.actions import execute_diff
+        with self.assertRaises(ValueError):
+            execute_diff(self.drift_root, diff_type="invalid_type")
 
 if __name__ == "__main__":
     unittest.main()

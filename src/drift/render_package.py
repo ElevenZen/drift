@@ -5,7 +5,7 @@ from __future__ import annotations
 import shutil
 import logging
 from pathlib import Path
-from typing import List, Optional, TYPE_CHECKING
+from typing import List, Tuple, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig, RenderEngineConfig
@@ -17,6 +17,7 @@ from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file
 from .lifecycle_hooks import trigger_pre_source_hook, trigger_post_render_hook
+from .result_models import PackageRenderResult, RenderResult
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +37,11 @@ def render_or_copy_file(
     package_dir: Path,
     render_pkg_dir: Path,
     workspace_config: WorkspaceConfig
-) -> None:
+) -> Tuple[str, bool]:
     """Renders a single file using a matched engine, or copies it if no engine matches.
 
     Rendered files will have the engine suffix stripped in the output path.
+    Returns (relative_dest_path, is_rendered).
     """
     relative_path = file_path.relative_to(package_dir)
     engines = list(workspace_config.render_engine_configs.values())
@@ -56,12 +58,14 @@ def render_or_copy_file(
             template_file_path=file_path,
             output_file_path=dest_path
         )
+        return (stripped_relative_path, True)
     else:
         dest_path = render_pkg_dir / relative_path
         logger.info(f"📄 Copying: {relative_path}")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(file_path, dest_path)
+        return (relative_path.as_posix(), False)
 
 
 
@@ -110,7 +114,7 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path, package_nam
         shutil.copy2(misspelled_path, dest_correct)
 
 
-def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None:
+def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> PackageRenderResult:
     """Renders all templates and copies static files in a package folder into the render directory."""
     package_name = package_dir.name
 
@@ -121,7 +125,10 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
 
     pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
     if not pkg_config:
-        return
+        return PackageRenderResult(
+            package=package_name,
+            status="SKIPPED"
+        )
 
     # Trigger pre_source hook before reading / processing source files
     trigger_pre_source_hook(workspace_config, package_name, pkg_config)
@@ -136,6 +143,9 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
     from .folder_diff import compare_folders
     # Use compare_folders to walk every file in package_dir, resolving symlinks to directories
     diff = compare_folders(package_dir, render_pkg_dir, resolve_symlinks=True, src_only=True)
+
+    rendered_files: List[str] = []
+    copied_files: List[str] = []
 
     for file in diff.added:
         file_path = package_dir / file
@@ -156,25 +166,37 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
                 and file_path.parent != package_dir):
             raise ValueError("Ignore config '.drift_ignore' must be located at the root of the package directory.")
 
-        render_or_copy_file(
+        dest_rel, was_rendered = render_or_copy_file(
             file_path=file_path,
             package_dir=package_dir,
             render_pkg_dir=render_pkg_dir,
             workspace_config=workspace_config
         )
+        if was_rendered:
+            rendered_files.append(dest_rel)
+        else:
+            copied_files.append(dest_rel)
 
     # Trigger post_render hook
     trigger_post_render_hook(workspace_config, pkg_config)
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
+    return PackageRenderResult(
+        package=package_name,
+        status="SUCCESS",
+        rendered_files=rendered_files,
+        copied_static_files=copied_files
+    )
+
 
 def run_primitive_2_render_packages(
         workspace_config: WorkspaceConfig,
-        target_pkgs: Optional[List[str]] = None) -> None:
+        target_pkgs: Optional[List[str]] = None) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
     # Parse the secrets from secrets.env file and load them, keeping track of original values to restore them on exit/failure.
     secrets = parse_secrets_env(workspace_config.drift_root)
     saved_envs = load_env_settings(secrets, overwrite=True, env_keep=INITIAL_ENV)
+    results: List[PackageRenderResult] = []
     try:
         # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
         render_input_templates(
@@ -189,7 +211,13 @@ def run_primitive_2_render_packages(
                 candidates, target_pkgs, custom_dir=workspace_config.source_path)
         for package_name in active_packages:
             package_dir = workspace_config.source_path / package_name
-            render_package(workspace_config, package_dir)
+            pkg_res = render_package(workspace_config, package_dir)
+            results.append(pkg_res)
+
+        return RenderResult(
+            status="SUCCESS",
+            packages=results
+        )
     finally:
         unload_env_settings(saved_envs)
 
