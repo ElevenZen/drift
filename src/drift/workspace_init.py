@@ -6,6 +6,11 @@ import sys
 import subprocess
 from pathlib import Path
 
+from .constants import (
+    CONFIG_DIR_NAME,
+    SECRETS_ENV_FILE_NAME,
+    GLOBAL_CONFIG_FILE_NAME,
+)
 from .check_repo import check_existing_workspace_status
 from .git_utils import (
     is_git_tracked,
@@ -138,7 +143,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
             raise RuntimeError(f"drift workspace is already initialized in '{drift_root}'.")
 
         # Check if partially initialized (any of the core files or folders exist)
-        config_file = drift_root / "config" / "drift.toml"
+        config_file = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
         render_dir = drift_root / "render"
         install_dir = drift_root / "install"
 
@@ -149,7 +154,12 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
             )
 
     # 4. Creates .gitignore entries to isolate render/ and install/ folders and local-only config overrides.
-    append_to_gitignore(drift_root, ["render/", "install/", "*.local.toml", "secret.env"])
+    append_to_gitignore(drift_root, [
+        "render/",
+        "install/",
+        "*.local.toml",
+        f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}"
+        ])
 
     # 5. Initializes render/ and install/ as independent, untracked local Git repositories.
     render_dir = drift_root / "render"
