@@ -743,6 +743,22 @@ def adopt_single_package(
     pkg_dir = workspace_config.source_path / pkg
     install_pkg_dir = workspace_config.install_path / pkg
 
+    if pkg_dir.exists():
+        try:
+            from .package_config import load_package_config_from_source_dir
+            from .lifecycle_hooks import trigger_package_lifecycle_hook
+            pkg_config = load_package_config_from_source_dir(pkg_dir, pkg, workspace_config)
+            if pkg_config and pkg_config.pre_source:
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name="pre_source",
+                    metadata=pkg_config,
+                    hook_dir=pkg_dir,
+                    cwd=pkg_dir
+                )
+        except Exception as e:
+            logger.debug(f"Could not trigger pre_source hook during adopt for '{pkg}': {e}")
+
     skipped_files = []
 
     # 1. Process Additions

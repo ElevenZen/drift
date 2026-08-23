@@ -1265,6 +1265,47 @@ class TestRenderPackage(unittest.TestCase):
         # Assert environment variable is cleaned up from current environment
         self.assertNotIn("PRIMITIVE_SECRET_VAR", os.environ)
 
+    def test_render_pre_source_hook_generates_dynamic_files(self) -> None:
+        """Verifies that pre_source hook executes in src/pkg before rendering and can dynamically generate source templates."""
+        pkg_dir = self.drift_root / "src" / "pkg_dynamic"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_dir / "scripts"
+        scripts_dir.mkdir()
+
+        hook_script = scripts_dir / "gen_dynamic.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo 'DYNAMIC_OUTPUT=123' > dynamic_file.txt\n",
+            encoding="utf-8"
+        )
+        hook_script.chmod(0o755)
+
+        pkg_toml = pkg_dir / "drift_package.toml"
+        pkg_toml.write_text(
+            "[package]\n"
+            "name = \"pkg_dynamic\"\n"
+            "pre_source = \"scripts/gen_dynamic.sh\"\n",
+            encoding="utf-8"
+        )
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render")
+        )
+
+        from drift.render_package import run_primitive_2_render_packages
+        run_primitive_2_render_packages(workspace_config, ["pkg_dynamic"])
+
+        # Check that the dynamic file was created in src by the hook and then copied/rendered into render
+        dynamic_src = pkg_dir / "dynamic_file.txt"
+        self.assertTrue(dynamic_src.is_file())
+        self.assertEqual(dynamic_src.read_text(encoding="utf-8").strip(), "DYNAMIC_OUTPUT=123")
+
+        dynamic_render = self.drift_root / "render" / "pkg_dynamic" / "dynamic_file.txt"
+        self.assertTrue(dynamic_render.is_file())
+        self.assertEqual(dynamic_render.read_text(encoding="utf-8").strip(), "DYNAMIC_OUTPUT=123")
+
 
 if __name__ == "__main__":
     unittest.main()

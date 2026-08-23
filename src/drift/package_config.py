@@ -26,6 +26,7 @@ class PackageConfig:
     target_directory: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
+    pre_source: Optional[str] = None
     pre_install: Optional[str] = None
     post_install: Optional[str] = None
     pre_update: Optional[str] = None
@@ -63,6 +64,10 @@ class PackageConfig:
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
+        for hook_field in ("pre_source", "pre_install", "post_install", "pre_update", "post_update", "post_render"):
+            val = getattr(self, hook_field)
+            if val is not None and not isinstance(val, str):
+                raise TypeError(f"{hook_field} must be a string for package '{self.name}'.")
         if not isinstance(self.hook_timeout, int):
             raise TypeError(f"hook_timeout must be an integer for package '{self.name}'.")
         if self.hook_timeout <= 0:
@@ -105,6 +110,7 @@ class PackageConfig:
             "target_directory",
             "sudo",
             "fully_controlled_dirs",
+            "pre_source",
             "pre_install",
             "post_install",
             "pre_update",
@@ -144,6 +150,7 @@ class PackageConfig:
             target_directory=target_dir,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
+            pre_source=package_data.get("pre_source"),
             pre_install=package_data.get("pre_install"),
             post_install=post_install,
             pre_update=package_data.get("pre_update"),

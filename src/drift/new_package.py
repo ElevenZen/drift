@@ -13,6 +13,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 target_directory = "{target_directory}"   # Destination for this package
 
 # Lifecycle Hooks (Optional)
+# pre_source   = ""
 # pre_install  = ""
 # post_install = ""
 # pre_update   = ""

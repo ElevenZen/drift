@@ -39,6 +39,10 @@ fully_controlled_dirs = [
 # Timeout in seconds before hook processes are aborted (defaults to 120)
 hook_timeout = 120
 
+# Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
+# Executed from src/ package root
+pre_source = "scripts/generate_dynamic_templates.sh"
+
 # Run before a first-time installation (executed from install/ package root)
 pre_install = "scripts/bootstrap.sh"
 

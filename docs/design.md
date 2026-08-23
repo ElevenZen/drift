@@ -440,6 +440,9 @@ fully_controlled_dirs = [
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
 # Executable scripts located inside the package directory.
+# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg)
+pre_source = "pre-source.bash"
+
 # Run before first-time installation (CWD: install/pkg)
 pre_install = "pre-install.bash"
 
@@ -708,9 +711,10 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Rendering Execution Flow (`render_package.py`)**:
         1. *Sandbox Cleansing*: Clears any pre-existing package folder in `render/` using `shutil.rmtree` to maintain clean state while preserving the underlying `render/.git` repo.
         2. *Metadata Compiling*: Loads and compiles package config from the source folder (supporting on-the-fly parsing of `package.envst.toml` templates). If `enable_render` is false, rendering is skipped.
-        3. *Misspelled Ignore Warning*: Checks for a misspelled `.driftignore` and if found (without `.drift_ignore`), logs a warning and automatically copies it under correct name `.drift_ignore`.
-        4. *Surgical File Walk*: Traverses the source package directory. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
-        5. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to `render/<package>`.
+        3. *Pre-Source Lifecycle Hook*: Triggers the `pre_source` hook script (if defined) running with working directory set to `src/<package>` to dynamically generate/update source templates or dynamic system files prior to compilation.
+        4. *Misspelled Ignore Warning*: Checks for a misspelled `.driftignore` and if found (without `.drift_ignore`), logs a warning and automatically copies it under correct name `.drift_ignore`.
+        5. *Surgical File Walk*: Traverses the source package directory. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
+        6. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to `render/<package>`.
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:

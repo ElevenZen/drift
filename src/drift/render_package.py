@@ -17,6 +17,19 @@ from .render_core import render_template_to_file
 logger = logging.getLogger(__name__)
 
 
+def trigger_pre_source_hook(pkg_config: PackageConfig, package_dir: Path) -> None:
+    """Trigger the pre_source hook if it exists."""
+    from .lifecycle_hooks import trigger_package_lifecycle_hook
+    pkg = pkg_config.name
+    trigger_package_lifecycle_hook(
+        pkg=pkg,
+        hook_name="pre_source",
+        metadata=pkg_config,
+        hook_dir=package_dir,
+        cwd=package_dir
+    )
+
+
 def trigger_post_render_hook(pkg_config: PackageConfig, workspace_config: WorkspaceConfig) -> None:
     """Trigger the post_render hook if it exists."""
     from .lifecycle_hooks import trigger_package_lifecycle_hook
@@ -136,6 +149,9 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
     pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
     if not pkg_config:
         return
+
+    # Trigger pre_source hook before reading / processing source files
+    trigger_pre_source_hook(pkg_config, package_dir)
 
     handle_driftignore_file(package_dir, render_pkg_dir, package_name)
 

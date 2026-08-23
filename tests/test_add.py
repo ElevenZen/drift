@@ -203,5 +203,35 @@ class TestAddResource(unittest.TestCase):
         self.assertIn("Conflict detected", str(ctx.exception))
         self.assertIn("dot-bashrc", str(ctx.exception))
 
+    def test_add_triggers_pre_source_hook(self):
+        """Verifies that pre_source hook is triggered in src/pkg before importing resources."""
+        pkg = "pkg_add_hook"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir()
+        hook_script = scripts_dir / "pre_add.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo 'ADD_HOOK_RAN' > add_hook_out.txt\n"
+        )
+        hook_script.chmod(0o755)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname="{pkg}"\npre_source="scripts/pre_add.sh"\n'
+        )
+
+        target_file = self.system_target_dir / "imported_file.txt"
+        target_file.write_text("imported content")
+
+        run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+
+        # Hook must have run and generated add_hook_out.txt
+        hook_out = pkg_src_dir / "add_hook_out.txt"
+        self.assertTrue(hook_out.is_file())
+        self.assertEqual(hook_out.read_text().strip(), "ADD_HOOK_RAN")
+
+
 if __name__ == "__main__":
     unittest.main()

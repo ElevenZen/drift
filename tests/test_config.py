@@ -273,11 +273,13 @@ class TestConfigClasses(unittest.TestCase):
             "package": {
                 "name": "my_pkg",
                 "install_method": "stow",
+                "pre_source": "scripts/gen.sh",
                 "hook_timeout": 60
             }
         }
         config = PackageConfig.from_dict(data, default_name="fallback_name")
         self.assertEqual(config.name, "my_pkg")
+        self.assertEqual(config.pre_source, "scripts/gen.sh")
         self.assertEqual(config.hook_timeout, 60)
 
         # Test string casting for hook_timeout
@@ -315,6 +317,8 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", hook_timeout=0).validate()
         with self.assertRaises(ValueError):
             PackageConfig(name="foo", hook_timeout=-10).validate()
+        with self.assertRaises(TypeError):
+            PackageConfig(name="foo", pre_source=123).validate() # type: ignore
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""

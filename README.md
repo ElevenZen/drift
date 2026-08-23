@@ -153,11 +153,12 @@ Packages can declare automated hook scripts inside `drift_package.toml` to integ
 [package]
 name = "nvim"
 install_method = "stow"
+pre_source = "scripts/generate_dynamic_templates.sh"
 pre_install = "scripts/bootstrap.sh"
 post_update = "scripts/reload_plugins.sh"
 hook_timeout = 60
 ```
-*   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths.
+*   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths (e.g. `src/<pkg>` for `pre_source`, `install/<pkg>` for `pre_install`, and `render/<pkg>` for `post_render`).
 
 ---
 
