@@ -489,6 +489,37 @@ class TestAdopt(unittest.TestCase):
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "HOOK_RAN")
 
+    def test_adopt_pre_source_hook_failure_aborts_adopt(self) -> None:
+        """Verifies that an error in pre_source hook is not suppressed and aborts adopt."""
+        pkg = "pkg_adopt_failing_hook"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        scripts_dir = src_pkg_dir / "scripts"
+        scripts_dir.mkdir()
+        hook_script = scripts_dir / "failing.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo 'Fatal error' >&2\n"
+            "exit 1\n",
+            encoding="utf-8"
+        )
+        hook_script.chmod(0o755)
+
+        pkg_toml = src_pkg_dir / "drift_package.toml"
+        pkg_toml.write_text(
+            f"[package]\nname = \"{pkg}\"\npre_source = \"scripts/failing.sh\"\n",
+            encoding="utf-8"
+        )
+
+        (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            adopt_single_package(self.workspace_config, pkg, interactive=False)
+        self.assertIn("failed with exit code 1", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

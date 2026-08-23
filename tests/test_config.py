@@ -25,6 +25,7 @@ from drift.workspace_config import (
 )
 from drift.package_config import (
     PackageConfig,
+    PackageHooks,
     locate_load_package_config_file_static,
     load_package_config_rendered,
     load_package_config_from_source_dir,
@@ -319,6 +320,23 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", hook_timeout=-10).validate()
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", pre_source=123).validate() # type: ignore
+
+    def test_package_hooks_dataclass(self) -> None:
+        hooks = PackageHooks(
+            pre_source="scripts/gen.sh",
+            pre_install="scripts/pre.sh",
+            post_install="scripts/post.sh",
+            timeout=30
+        )
+        config = PackageConfig(name="test_pkg", hooks=hooks)
+        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.hook_timeout, 30)
+        self.assertIs(config.hooks.package_config, config)
+
+        # Direct property modification forwards to hooks
+        config.post_render = "scripts/render.sh"
+        self.assertEqual(config.hooks.post_render, "scripts/render.sh")
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""

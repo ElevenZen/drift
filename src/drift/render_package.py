@@ -1,51 +1,24 @@
 """Renders packages and compiles templates using pathlib."""
 
+from __future__ import annotations
+
 import shutil
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
-from .constants import DRIFT_IGNORE_FILE_NAME, PACKAGE_CONFIG_FILE_NAME, INITIAL_ENV
-from .workspace_config import WorkspaceConfig, RenderEngineConfig, parse_secrets_env, load_env_settings, unload_env_settings
-from .package_config import (
-    load_package_config_from_source_dir,
-    PackageConfig,
-)
+if TYPE_CHECKING:
+    from .workspace_config import WorkspaceConfig, RenderEngineConfig
+    from .package_config import PackageConfig
+
+from .constants import DRIFT_IGNORE_FILE_NAME, INITIAL_ENV
+from .workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
+from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file
+from .lifecycle_hooks import trigger_pre_source_hook, trigger_post_render_hook
 
 logger = logging.getLogger(__name__)
-
-
-def trigger_pre_source_hook(pkg_config: PackageConfig, package_dir: Path) -> None:
-    """Trigger the pre_source hook if it exists."""
-    from .lifecycle_hooks import trigger_package_lifecycle_hook
-    pkg = pkg_config.name
-    trigger_package_lifecycle_hook(
-        pkg=pkg,
-        hook_name="pre_source",
-        metadata=pkg_config,
-        hook_dir=package_dir,
-        cwd=package_dir
-    )
-
-
-def trigger_post_render_hook(pkg_config: PackageConfig, workspace_config: WorkspaceConfig) -> None:
-    """Trigger the post_render hook if it exists."""
-    from .lifecycle_hooks import trigger_package_lifecycle_hook
-    pkg = pkg_config.name
-    render_pkg_dir = workspace_config.render_path / pkg
-    
-    if not render_pkg_dir.exists():
-        return
-        
-    trigger_package_lifecycle_hook(
-        pkg=pkg,
-        hook_name="post_render",
-        metadata=pkg_config,
-        hook_dir=render_pkg_dir,
-        cwd=render_pkg_dir
-    )
 
 
 def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
@@ -151,7 +124,7 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
         return
 
     # Trigger pre_source hook before reading / processing source files
-    trigger_pre_source_hook(pkg_config, package_dir)
+    trigger_pre_source_hook(workspace_config, package_name, pkg_config)
 
     handle_driftignore_file(package_dir, render_pkg_dir, package_name)
 
@@ -191,7 +164,7 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> None
         )
 
     # Trigger post_render hook
-    trigger_post_render_hook(pkg_config, workspace_config)
+    trigger_post_render_hook(workspace_config, pkg_config)
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
 

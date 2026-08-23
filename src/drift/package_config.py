@@ -16,6 +16,84 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class PackageHooks:
+    """Encapsulates lifecycle hook configurations and execution methods for a package."""
+    pre_source: Optional[str] = None
+    pre_install: Optional[str] = None
+    post_install: Optional[str] = None
+    pre_update: Optional[str] = None
+    post_update: Optional[str] = None
+    post_render: Optional[str] = None
+    timeout: int = 120
+    _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
+
+    @property
+    def package_config(self) -> Optional["PackageConfig"]:
+        return self._package_config
+
+    @package_config.setter
+    def package_config(self, value: Optional["PackageConfig"]) -> None:
+        self._package_config = value
+
+    def validate(self, package_name: str = "") -> None:
+        """Validates hook configurations."""
+        for hook_name in ("pre_source", "pre_install", "post_install", "pre_update", "post_update", "post_render"):
+            val = getattr(self, hook_name)
+            if val is not None and not isinstance(val, str):
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise TypeError(f"{hook_name} must be a string{name_str}.")
+        if not isinstance(self.timeout, int):
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise TypeError(f"hook_timeout must be an integer{name_str}.")
+        if self.timeout <= 0:
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise ValueError(f"hook_timeout must be a positive integer{name_str}.")
+
+    def trigger(self, hook_name: str, hook_dir: Path, cwd: Path) -> None:
+        """Executes a package lifecycle hook script if specified and found."""
+        from .lifecycle_hooks import trigger_package_lifecycle_hook
+        if self._package_config is None:
+            raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
+        trigger_package_lifecycle_hook(
+            pkg=self._package_config.name,
+            hook_name=hook_name,
+            metadata=self._package_config,
+            hook_dir=hook_dir,
+            cwd=cwd
+        )
+
+    def trigger_pre_source(self, source_dir: Path) -> None:
+        """Triggers the pre_source hook inside source_dir."""
+        if self.pre_source:
+            self.trigger("pre_source", hook_dir=source_dir, cwd=source_dir)
+
+    def trigger_post_render(self, render_dir: Path) -> None:
+        """Triggers the post_render hook inside render_dir."""
+        if self.post_render:
+            self.trigger("post_render", hook_dir=render_dir, cwd=render_dir)
+
+    def trigger_pre_install(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the pre_install hook."""
+        if self.pre_install:
+            self.trigger("pre_install", hook_dir=install_dir, cwd=cwd)
+
+    def trigger_post_install(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the post_install hook."""
+        if self.post_install:
+            self.trigger("post_install", hook_dir=install_dir, cwd=cwd)
+
+    def trigger_pre_update(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the pre_update hook."""
+        if self.pre_update:
+            self.trigger("pre_update", hook_dir=install_dir, cwd=cwd)
+
+    def trigger_post_update(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the post_update hook."""
+        if self.post_update:
+            self.trigger("post_update", hook_dir=install_dir, cwd=cwd)
+
+
+@dataclass
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
     name: str
@@ -26,18 +104,119 @@ class PackageConfig:
     target_directory: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
-    pre_source: Optional[str] = None
-    pre_install: Optional[str] = None
-    post_install: Optional[str] = None
-    pre_update: Optional[str] = None
-    post_update: Optional[str] = None
-    post_render: Optional[str] = None
-    hook_timeout: int = 120
+    hooks: PackageHooks = field(default_factory=PackageHooks)
 
-    def __post_init__(self) -> None:
-        """Handles path expansion on load/initialization."""
-        if self.target_directory:
-            self.target_directory = Path(self.target_directory).expanduser()
+    def __init__(
+        self,
+        name: str,
+        source_files: Optional[List[Path]] = None,
+        enable_render: bool = True,
+        enable_install: bool = True,
+        install_method: Optional[str] = None,
+        target_directory: Optional[Path] = None,
+        sudo: bool = False,
+        fully_controlled_dirs: Optional[List[Path]] = None,
+        hooks: Optional[PackageHooks] = None,
+        pre_source: Optional[str] = None,
+        pre_install: Optional[str] = None,
+        post_install: Optional[str] = None,
+        pre_update: Optional[str] = None,
+        post_update: Optional[str] = None,
+        post_render: Optional[str] = None,
+        hook_timeout: Optional[int] = None
+    ) -> None:
+        self.name = name
+        self.source_files = source_files if source_files is not None else []
+        self.enable_render = enable_render
+        self.enable_install = enable_install
+        self.install_method = install_method
+        self.target_directory = Path(target_directory).expanduser() if target_directory else None
+        self.sudo = sudo
+        self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
+
+        if hooks is not None:
+            self.hooks = hooks
+            if pre_source is not None:
+                self.hooks.pre_source = pre_source
+            if pre_install is not None:
+                self.hooks.pre_install = pre_install
+            if post_install is not None:
+                self.hooks.post_install = post_install
+            if pre_update is not None:
+                self.hooks.pre_update = pre_update
+            if post_update is not None:
+                self.hooks.post_update = post_update
+            if post_render is not None:
+                self.hooks.post_render = post_render
+            if hook_timeout is not None:
+                self.hooks.timeout = hook_timeout
+        else:
+            self.hooks = PackageHooks(
+                pre_source=pre_source,
+                pre_install=pre_install,
+                post_install=post_install,
+                pre_update=pre_update,
+                post_update=post_update,
+                post_render=post_render,
+                timeout=hook_timeout if hook_timeout is not None else 120
+            )
+        self.hooks.package_config = self
+
+    @property
+    def pre_source(self) -> Optional[str]:
+        return self.hooks.pre_source
+
+    @pre_source.setter
+    def pre_source(self, val: Optional[str]) -> None:
+        self.hooks.pre_source = val
+
+    @property
+    def pre_install(self) -> Optional[str]:
+        return self.hooks.pre_install
+
+    @pre_install.setter
+    def pre_install(self, val: Optional[str]) -> None:
+        self.hooks.pre_install = val
+
+    @property
+    def post_install(self) -> Optional[str]:
+        return self.hooks.post_install
+
+    @post_install.setter
+    def post_install(self, val: Optional[str]) -> None:
+        self.hooks.post_install = val
+
+    @property
+    def pre_update(self) -> Optional[str]:
+        return self.hooks.pre_update
+
+    @pre_update.setter
+    def pre_update(self, val: Optional[str]) -> None:
+        self.hooks.pre_update = val
+
+    @property
+    def post_update(self) -> Optional[str]:
+        return self.hooks.post_update
+
+    @post_update.setter
+    def post_update(self, val: Optional[str]) -> None:
+        self.hooks.post_update = val
+
+    @property
+    def post_render(self) -> Optional[str]:
+        return self.hooks.post_render
+
+    @post_render.setter
+    def post_render(self, val: Optional[str]) -> None:
+        self.hooks.post_render = val
+
+    @property
+    def hook_timeout(self) -> int:
+        return self.hooks.timeout
+
+    @hook_timeout.setter
+    def hook_timeout(self, val: int) -> None:
+        self.hooks.timeout = val
 
     def validate(self) -> None:
         """Validates configuration values."""
@@ -64,14 +243,9 @@ class PackageConfig:
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
-        for hook_field in ("pre_source", "pre_install", "post_install", "pre_update", "post_update", "post_render"):
-            val = getattr(self, hook_field)
-            if val is not None and not isinstance(val, str):
-                raise TypeError(f"{hook_field} must be a string for package '{self.name}'.")
-        if not isinstance(self.hook_timeout, int):
-            raise TypeError(f"hook_timeout must be an integer for package '{self.name}'.")
-        if self.hook_timeout <= 0:
-            raise ValueError(f"hook_timeout must be a positive integer for package '{self.name}'.")
+        if not isinstance(self.hooks, PackageHooks):
+            raise TypeError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
+        self.hooks.validate(self.name)
 
     def is_package_config_file(self, file_path: Path) -> bool:
         """Checks if the given file path is a package config file, its local override, or their template versions."""
@@ -139,8 +313,15 @@ class PackageConfig:
         if not isinstance(raw_timeout, int):
             raise TypeError(f"hook_timeout must be an integer for package '{name}'.")
 
-        post_install = package_data.get("post_install")
-        post_update = package_data.get("post_update")
+        hooks = PackageHooks(
+            pre_source=package_data.get("pre_source"),
+            pre_install=package_data.get("pre_install"),
+            post_install=package_data.get("post_install"),
+            pre_update=package_data.get("pre_update"),
+            post_update=package_data.get("post_update"),
+            post_render=package_data.get("post_render"),
+            timeout=raw_timeout
+        )
 
         config = cls(
             name=str(name),
@@ -150,13 +331,7 @@ class PackageConfig:
             target_directory=target_dir,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
-            pre_source=package_data.get("pre_source"),
-            pre_install=package_data.get("pre_install"),
-            post_install=post_install,
-            pre_update=package_data.get("pre_update"),
-            post_update=post_update,
-            post_render=package_data.get("post_render"),
-            hook_timeout=raw_timeout
+            hooks=hooks
         )
         if source_files:
             config.source_files = [x for x in source_files if isinstance(x, Path)]

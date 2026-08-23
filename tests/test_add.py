@@ -232,6 +232,33 @@ class TestAddResource(unittest.TestCase):
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text().strip(), "ADD_HOOK_RAN")
 
+    def test_add_pre_source_hook_failure_aborts_add(self):
+        """Verifies that an error in pre_source hook is not suppressed and aborts add."""
+        pkg = "pkg_add_failing_hook"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir()
+        hook_script = scripts_dir / "failing.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo 'Fatal add hook error' >&2\n"
+            "exit 1\n"
+        )
+        hook_script.chmod(0o755)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname="{pkg}"\npre_source="scripts/failing.sh"\n'
+        )
+
+        target_file = self.system_target_dir / "imported_file.txt"
+        target_file.write_text("imported content")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+        self.assertIn("failed with exit code 1", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

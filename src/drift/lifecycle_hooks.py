@@ -4,11 +4,54 @@ import logging
 import shlex
 import subprocess
 from pathlib import Path
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .workspace_config import WorkspaceConfig
 
 from .package_config import PackageConfig
 from .file_utils import run_command
 
 logger = logging.getLogger(__name__)
+
+
+def trigger_pre_source_hook(
+    workspace_config: "WorkspaceConfig",
+    package_name: str,
+    pkg_config: Optional[PackageConfig] = None
+) -> None:
+    """Triggers the pre_source lifecycle hook for a package in the source directory."""
+    src_pkg_dir = workspace_config.source_path / package_name
+    if not src_pkg_dir.exists():
+        return
+
+    if pkg_config is None:
+        try:
+            from .package_config import load_package_config_from_source_dir
+            pkg_config = load_package_config_from_source_dir(
+                package_dir=src_pkg_dir,
+                package_name=package_name,
+                workspace_config=workspace_config
+            )
+        except FileNotFoundError:
+            logger.warning(f"Configuration file 'drift_package.toml' not found in '{src_pkg_dir}'. Skipping pre_source hook.")
+            return
+
+    if pkg_config and pkg_config.hooks:
+        pkg_config.hooks.trigger_pre_source(src_pkg_dir)
+
+
+def trigger_post_render_hook(
+    workspace_config: "WorkspaceConfig",
+    pkg_config: PackageConfig
+) -> None:
+    """Triggers the post_render lifecycle hook for a package in the render directory."""
+    render_pkg_dir = workspace_config.render_path / pkg_config.name
+    if not render_pkg_dir.exists():
+        return
+
+    if pkg_config and pkg_config.hooks:
+        pkg_config.hooks.trigger_post_render(render_pkg_dir)
 
 
 def trigger_package_lifecycle_hook(
@@ -22,7 +65,7 @@ def trigger_package_lifecycle_hook(
 
     The hook file is searched inside hook_dir.
     The script executes with working directory cwd.
-    If the hook execution fails or times out, detailed output logs are printed and a RuntimeError is raised.
+    If the hook execution fails, times out, or the specified script is missing, a detailed error is raised.
     """
     hook_file = getattr(metadata, hook_name, None)
     if not hook_file:
@@ -31,8 +74,9 @@ def trigger_package_lifecycle_hook(
     hook_path = hook_dir / hook_file
 
     if not hook_path.exists():
-        logger.warning(f"Lifecycle hook file specified but not found: {hook_path}")
-        return
+        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
+        logger.error(err_msg)
+        raise FileNotFoundError(err_msg)
 
     try:
         hook_path.chmod(0o755)

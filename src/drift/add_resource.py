@@ -112,27 +112,11 @@ def run_primitive_11_add_resources(
         raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
 
     # Trigger pre_source hook before reading/writing source directory
-    pkg_config = None
-    try:
-        from .package_config import load_package_config_from_source_dir
-        from .lifecycle_hooks import trigger_package_lifecycle_hook
-        pkg_config = load_package_config_from_source_dir(src_pkg_dir, package_name, workspace_config)
-        if pkg_config and pkg_config.pre_source:
-            trigger_package_lifecycle_hook(
-                pkg=package_name,
-                hook_name="pre_source",
-                metadata=pkg_config,
-                hook_dir=src_pkg_dir,
-                cwd=src_pkg_dir
-            )
-    except Exception as e:
-        logger.debug(f"Could not trigger pre_source hook during add for '{package_name}': {e}")
+    from .lifecycle_hooks import trigger_pre_source_hook
+    trigger_pre_source_hook(workspace_config, package_name)
 
     # 2. Resolve target directory and ignores
-    if pkg_config is not None:
-        target_base = pkg_config.get_target_directory(workspace_config).resolve()
-    else:
-        target_base = get_package_target_directory_from_source(workspace_config, src_pkg_dir, package_name)
+    target_base = get_package_target_directory_from_source(workspace_config, src_pkg_dir, package_name)
     ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir)
 
     # 3. Generate global worklist of files to import

@@ -490,21 +490,9 @@ def deploy_package_impl(
     
     # 3. Lifecycle Hooks & State registry update
     if is_first_time:
-        trigger_package_lifecycle_hook(
-            pkg=pkg,
-            hook_name="pre_install",
-            metadata=metadata,
-            hook_dir=install_pkg_dir,
-            cwd=install_pkg_dir
-        )
+        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir)
     else:
-        trigger_package_lifecycle_hook(
-            pkg=pkg,
-            hook_name="pre_update",
-            metadata=metadata,
-            hook_dir=install_pkg_dir,
-            cwd=install_pkg_dir
-        )
+        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir)
 
     # 2. Physical Deployment Execution
     stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
@@ -535,21 +523,9 @@ def deploy_package_impl(
     
     # Post Hooks
     if is_first_time:
-        trigger_package_lifecycle_hook(
-            pkg=pkg,
-            hook_name="post_install",
-            metadata=metadata,
-            hook_dir=install_pkg_dir,
-            cwd=target_dir
-        )
+        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir)
     else:
-        trigger_package_lifecycle_hook(
-            pkg=pkg,
-            hook_name="post_update",
-            metadata=metadata,
-            hook_dir=install_pkg_dir,
-            cwd=target_dir
-        )
+        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir)
         
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.get_install_method(workspace_config))

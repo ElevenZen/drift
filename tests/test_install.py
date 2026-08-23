@@ -362,6 +362,22 @@ class TestInstallRepo(unittest.TestCase):
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
             self.assertIn("Standard timeout stderr", str(ctx.exception))
 
+        # 3. Test missing hook script raises FileNotFoundError
+        config_missing = PackageConfig(
+            name=pkg,
+            target_directory=Path(self.system_target_dir),
+            post_install="non_existent_script.sh"
+        )
+        with self.assertRaises(FileNotFoundError) as ctx:
+            trigger_package_lifecycle_hook(
+                pkg=pkg,
+                hook_name="post_install",
+                metadata=config_missing,
+                hook_dir=hook_dir,
+                cwd=cwd
+            )
+        self.assertIn("not found", str(ctx.exception))
+
     def test_install_copy_respects_ignore(self) -> None:
         """Verifies that 'copy' installation method respects .drift_ignore patterns."""
         pkg = "pkg_copy_ignore"

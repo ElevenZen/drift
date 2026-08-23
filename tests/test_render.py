@@ -1306,6 +1306,41 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue(dynamic_render.is_file())
         self.assertEqual(dynamic_render.read_text(encoding="utf-8").strip(), "DYNAMIC_OUTPUT=123")
 
+    def test_render_pre_source_hook_failure_aborts_render(self) -> None:
+        """Verifies that an error in pre_source hook is not suppressed and aborts rendering."""
+        pkg_dir = self.drift_root / "src" / "pkg_failing_hook"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_dir / "scripts"
+        scripts_dir.mkdir()
+
+        hook_script = scripts_dir / "failing.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo 'Fatal generation error' >&2\n"
+            "exit 1\n",
+            encoding="utf-8"
+        )
+        hook_script.chmod(0o755)
+
+        pkg_toml = pkg_dir / "drift_package.toml"
+        pkg_toml.write_text(
+            "[package]\n"
+            "name = \"pkg_failing_hook\"\n"
+            "pre_source = \"scripts/failing.sh\"\n",
+            encoding="utf-8"
+        )
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render")
+        )
+
+        from drift.render_package import run_primitive_2_render_packages
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
+        self.assertIn("failed with exit code 1", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
