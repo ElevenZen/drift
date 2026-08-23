@@ -13,12 +13,9 @@ from .constants import (
     GLOBAL_CONFIG_FILE_NAME,
     GLOBAL_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
-    DEFAULT_DRIFT_LOCAL_TOML_CONTENT,
-    DEFAULT_ENVSUBST_BASH_CONTENT,
-    DEFAULT_MUSTACHE_ENVST_JSON_CONTENT,
-    DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT,
     get_default_drift_toml_content,
     get_default_drift_local_toml_content,
+    get_default_secrets_env_content,
     get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
@@ -207,7 +204,21 @@ def repair_workspace_local_config(drift_root: Path, dry_run: bool = False) -> Li
         actions.append(f"Generated '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_LOCAL_FILE_NAME}' template.")
         if not dry_run:
             config_dir.mkdir(parents=True, exist_ok=True)
-            local_config_file.write_text(DEFAULT_DRIFT_LOCAL_TOML_CONTENT, encoding="utf-8")
+            local_config_file.write_text(get_default_drift_local_toml_content(), encoding="utf-8")
+    return actions
+
+
+def repair_secrets_env(drift_root: Path, dry_run: bool = False) -> List[str]:
+    """Repairs config/secrets.env template if missing."""
+    actions: List[str] = []
+    config_dir = drift_root / CONFIG_DIR_NAME
+    secrets_file = config_dir / SECRETS_ENV_FILE_NAME
+
+    if not secrets_file.exists():
+        actions.append(f"Generated '{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}' template.")
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            secrets_file.write_text(get_default_secrets_env_content(), encoding="utf-8")
     return actions
 
 
@@ -244,25 +255,25 @@ def repair_engine_inputs(
                     actions.append(f"Created default '{CONFIG_DIR_NAME}/envsubst.bash'.")
                     if not dry_run:
                         config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(DEFAULT_ENVSUBST_BASH_CONTENT, encoding="utf-8")
+                        input_path.write_text(get_default_envsubst_content(), encoding="utf-8")
                 elif filename == "mustache.envst.json":
                     actions.append(f"Created default '{CONFIG_DIR_NAME}/mustache.envst.json'.")
                     if not dry_run:
                         config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(DEFAULT_MUSTACHE_ENVST_JSON_CONTENT, encoding="utf-8")
+                        input_path.write_text(get_default_mustache_content(), encoding="utf-8")
                 elif filename == "jinja2.mustache.json":
                     actions.append(f"Created default '{CONFIG_DIR_NAME}/jinja2.mustache.json'.")
                     if not dry_run:
                         config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT, encoding="utf-8")
+                        input_path.write_text(get_default_jinja2_content(), encoding="utf-8")
                 else:
                     actions.append(f"⚠️ Warning: Missing custom engine input file '{engine.input_file}'. Manual creation required.")
     else:
         # Fallback to checking default engine files if config is not loadable
         default_templates = [
-            ("envsubst.bash", DEFAULT_ENVSUBST_BASH_CONTENT),
-            ("mustache.envst.json", DEFAULT_MUSTACHE_ENVST_JSON_CONTENT),
-            ("jinja2.mustache.json", DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT),
+            ("envsubst.bash", get_default_envsubst_content()),
+            ("mustache.envst.json", get_default_mustache_content()),
+            ("jinja2.mustache.json", get_default_jinja2_content()),
         ]
         for fname, content in default_templates:
             fpath = config_dir / fname
@@ -313,6 +324,7 @@ def repair_drift_workspace(
     actions.extend(repair_state_registry(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_workspace_config(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_workspace_local_config(drift_root, dry_run=dry_run))
+    actions.extend(repair_secrets_env(drift_root, dry_run=dry_run))
     actions.extend(repair_engine_inputs(drift_root, dry_run=dry_run, workspace_config=ws_config))
 
     return actions

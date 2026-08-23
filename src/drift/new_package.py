@@ -28,6 +28,11 @@ target_directory = "{target_directory}"   # Destination for this package
 # enable_install = true
 """
 
+def get_default_package_config_template() -> str:
+    """Gets the default drift_package.toml template string."""
+    return DEFAULT_PACKAGE_CONFIG_TEMPLATE
+
+
 def run_primitive_10_create_new_package(
     workspace_config: WorkspaceConfig,
     package_name: str,
@@ -54,7 +59,7 @@ def run_primitive_10_create_new_package(
     if final_install_method not in ("stow", "copy"):
         raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
 
-    config_content = DEFAULT_PACKAGE_CONFIG_TEMPLATE.format(
+    config_content = get_default_package_config_template().format(
         package_name=package_name,
         config_filename=final_config_name,
         target_directory=final_target_dir,

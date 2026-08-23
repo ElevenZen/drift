@@ -11,12 +11,12 @@ from .constants import (
     SECRETS_ENV_FILE_NAME,
     GLOBAL_CONFIG_FILE_NAME,
     GLOBAL_CONFIG_LOCAL_FILE_NAME,
-    DEFAULT_DRIFT_LOCAL_TOML_CONTENT,
-    DEFAULT_ENVSUBST_BASH_CONTENT,
-    DEFAULT_MUSTACHE_ENVST_JSON_CONTENT,
-    DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT,
     get_default_drift_toml_content,
     get_default_drift_local_toml_content,
+    get_default_secrets_env_content,
+    get_default_envsubst_content,
+    get_default_mustache_content,
+    get_default_jinja2_content,
 )
 from .check_repo import check_existing_workspace_status, ComponentStatus
 from .git_utils import (
@@ -102,24 +102,29 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     # Create drift.local.toml template
     local_config_file = config_dir / GLOBAL_CONFIG_LOCAL_FILE_NAME
     if not local_config_file.exists() or force:
-        local_config_file.write_text(DEFAULT_DRIFT_LOCAL_TOML_CONTENT, encoding="utf-8")
+        local_config_file.write_text(get_default_drift_local_toml_content(), encoding="utf-8")
+
+    # Create secrets.env template
+    secrets_file = config_dir / SECRETS_ENV_FILE_NAME
+    if not secrets_file.exists() or force:
+        secrets_file.write_text(get_default_secrets_env_content(), encoding="utf-8")
 
     # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift.toml
     envsubst_input = config_dir / "envsubst.bash"
     if not envsubst_input.exists():
-        envsubst_input.write_text(DEFAULT_ENVSUBST_BASH_CONTENT, encoding="utf-8")
+        envsubst_input.write_text(get_default_envsubst_content(), encoding="utf-8")
     else:
         logger.warning(f"envsubst.bash already exists at '{envsubst_input}', skipping creation.")
 
     mustache_input = config_dir / "mustache.envst.json"
     if not mustache_input.exists():
-        mustache_input.write_text(DEFAULT_MUSTACHE_ENVST_JSON_CONTENT, encoding="utf-8")
+        mustache_input.write_text(get_default_mustache_content(), encoding="utf-8")
     else:
         logger.warning(f"mustache.envst.json already exists at '{mustache_input}', skipping creation.")
 
     jinja2_input = config_dir / "jinja2.mustache.json"
     if not jinja2_input.exists():
-        jinja2_input.write_text(DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT, encoding="utf-8")
+        jinja2_input.write_text(get_default_jinja2_content(), encoding="utf-8")
     else:
         logger.warning(f"jinja2.mustache.json already exists at '{jinja2_input}', skipping creation.")
 

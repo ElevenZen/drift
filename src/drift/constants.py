@@ -34,6 +34,18 @@ DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 """
 )
 
+DEFAULT_SECRETS_ENV_CONTENT = (
+    "# =====================================================================\n"
+    "# config/secrets.env - Environment Secret Vault (Gitignored)\n"
+    "# =====================================================================\n"
+    "# Place private secrets, tokens, or environment keys in this file.\n"
+    "# They will be temporarily injected into os.environ before compiling templates.\n"
+    "# ---------------------------------------------------------------------\n"
+    "# GITHUB_TOKEN=\"ghp_xxxxxxxxxxxxxxxxxxxx\"\n"
+    "# OPENAI_API_KEY=\"sk-xxxxxxxxxxxxxxxxxxxx\"\n"
+    "# PRIVATE_EMAIL=\"user@example.com\"\n"
+)
+
 DEFAULT_ENVSUBST_BASH_CONTENT = (
     "#!/bin/bash\n"
     "# Propagates variables defined in the workspace config [env] section\n"
@@ -56,6 +68,11 @@ DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
 def get_default_drift_local_toml_content() -> str:
     """Gets default drift.local.toml template content."""
     return DEFAULT_DRIFT_LOCAL_TOML_CONTENT
+
+
+def get_default_secrets_env_content() -> str:
+    """Gets default secrets.env template content."""
+    return DEFAULT_SECRETS_ENV_CONTENT
 
 
 def get_default_envsubst_content() -> str:

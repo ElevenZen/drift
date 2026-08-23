@@ -71,6 +71,13 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         local_config_file = os.path.join(self.drift_root, "config", "drift.local.toml")
         self.assertTrue(os.path.isfile(local_config_file))
 
+        # Check config/secrets.env template was created and is gitignored
+        secrets_file = os.path.join(self.drift_root, "config", "secrets.env")
+        self.assertTrue(os.path.isfile(secrets_file))
+        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=str(self.drift_root), capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("config/secrets.env", res.stdout.strip())
+
         # Check envsubst.bash, mustache.envst.json, and jinja2.mustache.json were created
         envsubst_bash = os.path.join(self.drift_root, "config", "envsubst.bash")
         self.assertTrue(os.path.isfile(envsubst_bash))

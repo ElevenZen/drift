@@ -258,6 +258,19 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertTrue(any("drift.local.toml" in a for a in actions))
         self.assertTrue((self.drift_root / "config" / "drift.local.toml").is_file())
 
+    def test_repair_recovers_missing_secrets_env(self) -> None:
+        """Repair creates missing config/secrets.env template and ensures it is gitignored."""
+        init_drift_workspace(self.drift_root)
+        (self.drift_root / "config" / "secrets.env").unlink()
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("secrets.env" in a for a in actions))
+        self.assertTrue((self.drift_root / "config" / "secrets.env").is_file())
+
+        res = subprocess.run(["git", "check-ignore", "config/secrets.env"], cwd=str(self.drift_root), capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("config/secrets.env", res.stdout.strip())
+
     def test_cli_repair_command_executes_cleanly(self) -> None:
         """Verifies that 'drift repair' CLI command runs and heals damaged workspaces."""
         init_drift_workspace(self.drift_root)
