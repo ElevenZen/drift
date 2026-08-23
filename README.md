@@ -10,6 +10,17 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 ---
 
+## ⚡ TL;DR
+
+> **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
+
+* 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
+* 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
+* 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
+* 📦 **Modular & Pluggable**: Pure standard-library core with DAG template pipelines, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
+
+---
+
 ## ✨ Why Drift? (The Killer Selling Points)
 
 ### 🛡️ 1. Absolute Sandbox Isolation (Dual-Git Architecture)
@@ -28,8 +39,8 @@ In traditional dotfile managers, **these GUI-driven updates are silently lost—
 
 Drift fundamentally resolves this mismatch by recognizing configuration as a **continuous, two-way loop**:
 *   **Active Host Monitoring**: Drift's **Reverse-Sync** automatically scans active host paths, detects these silent GUI-driven or system-tool updates, and mirrors them back into the `install/` state base.
-*   **Interactive Review & Adoption**: You can run a diff to inspect the changes written by your system's GUI utilities. If you want to keep them, simply commit the changes in `install/` and backport the settings to your source templates in `src/`.
-*   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply commit the deletion or modifications in the `install/` base and redeploy. Drift's engine will recognize the clean baseline and restore your files exactly as defined in `src/`.
+*   **Interactive Review & Adoption**: You can run a diff to inspect the changes written by your system's GUI utilities. If you want to keep them, run `drift adopt <pkg>` to extract the changes as a patch and cleanly backport them into your source templates under `src/`.
+*   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply run `drift deploy <pkg> --force`. Drift's engine will overwrite the active drift and restore your files exactly as defined in `src/`.
 
 ### 🔗 3. Directed Acyclic Graph (DAG) Template Pipelines
 Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
@@ -83,8 +94,8 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
                                  ▲
                         Diff     │ (drift status / drift diff -s)
                        (Live)    ▼ (Symmetric path translation)
-                    [ 4. SYSTEM ACTIVE HOST ]
-                       ~/* or /etc/* (Active system configurations)
+                     [ 4. SYSTEM ACTIVE HOST ]
+                        ~/* or /etc/* (Active system configurations)
 ```
 
 ---
@@ -108,7 +119,7 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 3.  **Adopt & Merge**: Run `drift adopt nvim --interactive`.
     *   Drift pre-stages all changes in `install/` to activate Git's rename detection.
     *   It extracts system edits as a programmatic patch and cleanly applies them onto your templates in `src/`, avoiding placeholder collisions.
-    *   If you choose to **Skip** a file, it is selectively unstaged (`git restore --staged`) to remain as uncommitted local drift, preserving the unresolved issues.
+    *   If you choose to **Skip** a file, it is selectively unstaged (`git restore --staged`) to remain as uncommitted local drift, preserving unresolved issues.
 
 ### Scenario C: Midway Deployment Recovery (Rollback Flow)
 *When a deployment template compilation, file permission error, or hook script crashes midway, leaving your host system in an inconsistent, half-written state.*
@@ -121,33 +132,35 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 
 ## 🛠️ Operational Commands & Functions
 
-Drift's actions are cleanly categorized into **High-Level User Commands** (frequently used workflows) and **Low-Level Control Commands** (under-the-hood troubleshooting & continuous integration).
+Drift's actions are cleanly categorized into **High-Level User Commands** (frequently used workflows) and **Low-Level Control Commands** (under-the-hood troubleshooting & continuous integration). All commands support `--json` for machine-readable automation.
 
 ### 🚀 High-Level User Commands (Frequently Used)
 
 | Command | Description |
 | :--- | :--- |
-| `drift init` | Initializes a new Git-backed Drift workspace, databases, and configuration settings. |
+| `drift init` | Initializes a new Git-backed Drift workspace, databases, templates, and `secrets.env`. |
 | `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
-| `drift add <pkg>` | Imports external target-system configurations into the package source directory. |
-| `drift adopt <pkg>` | Backports uncommitted system drifts safely into package source templates. |
+| `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
+| `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
 | `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
-| `drift uninstall [pkgs]` | Removes stowed/copied mappings on host target paths, reverting backups. |
+| `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
-| `drift status` | Audits and inspects current workspace template, staging, and system-drift status. |
-| `drift diff` | Compares and visualizes template, deployment, or active system layers. |
+| `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |
+| `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers. |
+| `drift gc` | Purges orphan packages and zombie database directories in `render/` and `install/`. |
+| `drift repair` | Audits and self-heals workspace structure, repositories, config templates, and secrets. |
+| `drift help [topic]` | Interactive mini user manual with pager fallback support. |
 
 ### 🔧 Low-Level Control Commands (Troubleshooting & Automation)
 
 | Command | Description |
 | :--- | :--- |
-| `drift reverse-sync` | Force-syncs the active host system changes back into the `install/` state base. |
+| `drift reverse-sync` | Force-syncs active host system changes back into the `install/` state base. |
 | `drift render` | Sandbox-compiles raw source package templates into `render/`. |
 | `drift render-commit` | Manually commits compiled sandbox changes to the `render/` repository. |
 | `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
-| `drift apply` | Install files from `install/` to package target directories. |
+| `drift apply` | Installs files from `install/` to package target directories. |
 | `drift install-commit` | Manually commits deployment state database changes inside `install/`. |
-| `drift gc` | Garbage collects and purges unreferenced/disabled package data from repos. |
 
 ---
 
