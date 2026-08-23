@@ -73,6 +73,8 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 
 def main(argv=None) -> None:
+    from ..constants import update_initial_env
+    update_initial_env()
     check_sudo_and_root()
     setup_logging()
     if HAS_TYPER:

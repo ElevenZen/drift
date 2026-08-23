@@ -14,6 +14,7 @@ from .constants import (
         GLOBAL_CONFIG_FILE_NAME,
         PACKAGE_CONFIG_FILE_NAME,
         SECRETS_ENV_FILE_NAME,
+        INITIAL_ENV,
 )
 from .toml_utils import parse_toml, merge_toml
 
@@ -497,7 +498,7 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     # Load and apply [env] variables to os.environ immediately
     env_dict = combined_dict.get("env", {})
     if isinstance(env_dict, dict):
-        load_env_settings(list(env_dict.items()))
+        load_env_settings(list(env_dict.items()), overwrite=False, env_keep=INITIAL_ENV)
 
     return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
 
@@ -535,20 +536,44 @@ def parse_secrets_env(drift_root: Path) -> List[Tuple[str, str]]:
     return parsed_secrets
 
 
-def load_env_settings(envs: List[Tuple[str, str]]) -> Optional[List[Tuple[str, Optional[str]]]]:
+def load_env_settings(
+    envs: List[Tuple[str, str]],
+    overwrite: bool = True,
+    env_keep: Optional[List[str]] = None,
+) -> Optional[List[Tuple[str, Optional[str]]]]:
     """Loads a list of environment settings (key, value) into os.environ.
 
-    Returns a list of (key, original_value) or None if no envs are loaded.
+    Args:
+        envs: List of (key, value) tuples to load.
+        overwrite: If True, overwrite existing keys in os.environ (unless in env_keep).
+                   If False, do not overwrite any keys already in os.environ.
+        env_keep: Optional list of keys that must NOT be overwritten.
+
+    Returns:
+        A list of (key, original_value) for modified variables, or None if no envs were modified.
     """
     if not envs:
         return None
 
-    original_envs = []
+    keep_set = set(env_keep) if env_keep is not None else set()
+    original_envs: List[Tuple[str, Optional[str]]] = []
+    modified_keys = set()
+
     for k, v in envs:
-        original_envs.append((k, os.environ.get(k)))
+        if k in keep_set:
+            logger.debug(f"Environment variable skipped (in env_keep): {k}")
+            continue
+        if not overwrite and k in os.environ:
+            logger.debug(f"Environment variable skipped (already set and overwrite=False): {k}")
+            continue
+
+        if k not in modified_keys:
+            original_envs.append((k, os.environ.get(k)))
+            modified_keys.add(k)
         os.environ[k] = v
         logger.debug(f"Environment variable loaded: {k}={v}")
-    return original_envs
+
+    return original_envs if original_envs else None
 
 
 def unload_env_settings(original_envs: Optional[List[Tuple[str, Optional[str]]]]) -> None:
