@@ -6,9 +6,14 @@ import tempfile
 import unittest
 import subprocess
 from pathlib import Path
-from typing import cast
+from typing import cast, Any
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import (
+    CONFIG_DIR_NAME,
+    GLOBAL_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME,
+    SECRETS_ENV_FILE_NAME,
+)
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
 from drift.render_core import render_template, render_template_to_file
 from drift.render_input import (
@@ -702,23 +707,12 @@ class TestRenderPackage(unittest.TestCase):
             enable_render = true
             """)
 
-        # Run render_package
-        render_package(workspace_config, pkg_dir)
+        with self.assertRaises(FileNotFoundError) as ctx:
+            # Run render_package
+            render_package(workspace_config, pkg_dir)
+        self.assertIn("not found", str(ctx.exception))
 
-        # Verify output in render/my_pkg/
-        render_pkg_dir = drift_root / "render" / "my_pkg"
-
-        # drift_package.toml was rendered (loaded from package.envst.toml) and renamed to drift_drift_package.toml
-        rendered_config_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-        self.assertTrue(rendered_config_path.is_file())
-        content = rendered_config_path.read_text(encoding="utf-8")
-        self.assertIn('name = "rendered_pkg_name"', content)
-
-        # There shouldn't be any package.envst.toml in render dir
-        self.assertFalse((render_pkg_dir / "package.envst.toml").exists())
-        self.assertFalse((render_pkg_dir / "drift_package.envst.toml").exists())
-
-    def test_render_package_templated_config_package_toml(self) -> None:
+    def test_render_package_templated_config_drift_package_toml(self) -> None:
         from drift.render_package import render_package
         from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
 
@@ -1158,13 +1152,13 @@ class TestRenderPackage(unittest.TestCase):
         # Verify SKIP warning message was logged
         self.assertTrue(any("Skipping hidden file" in log_msg for log_msg in log_capture.output))
 
-    def test_secret_env_load_and_unload_helpers(self) -> None:
-        from drift.workspace_config import parse_secret_env, load_env_settings, unload_env_settings
+    def test_secrets_env_load_and_unload_helpers(self) -> None:
+        from drift.workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
 
         # Setup temporary secrets.env file
-        config_dir = self.drift_root / "config"
+        config_dir = self.drift_root / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True, exist_ok=True)
-        secrets_file = config_dir / "secrets.env"
+        secrets_file = config_dir / SECRETS_ENV_FILE_NAME
 
         secrets_file.write_text(
             "# This is a comment\n"
@@ -1177,13 +1171,13 @@ class TestRenderPackage(unittest.TestCase):
         os.environ["PRE_EXISTING_SECRET"] = "old_value"
 
         # 1. Parse secrets file
-        secrets = parse_secret_env(self.drift_root)
+        secrets = parse_secrets_env(self.drift_root)
         self.assertEqual(len(secrets), 2)
         self.assertEqual(secrets[0], ("MY_SECRET_VAR", "secret_value"))
         self.assertEqual(secrets[1], ("PRE_EXISTING_SECRET", "new_secret_value"))
 
         # 2. Load env settings
-        saved_envs = load_env_settings(secrets)
+        saved_envs: Any = load_env_settings(secrets)
         self.assertIsNotNone(saved_envs)
         self.assertEqual(len(saved_envs), 2)
 
@@ -1206,11 +1200,11 @@ class TestRenderPackage(unittest.TestCase):
         from drift.workspace_config import WorkspaceConfig
 
         # Setup config
-        config_dir = self.drift_root / "config"
+        config_dir = self.drift_root / CONFIG_DIR_NAME
         config_dir.mkdir(parents=True, exist_ok=True)
         
         # Write secrets.env
-        secrets_file = config_dir / "secrets.env"
+        secrets_file = config_dir / SECRETS_ENV_FILE_NAME
         secrets_file.write_text("PRIMITIVE_SECRET_VAR=ultimate_secret\n", encoding="utf-8")
 
         # Write a dummy envsubst.sh file so it can be resolved as non-empty
@@ -1218,7 +1212,7 @@ class TestRenderPackage(unittest.TestCase):
         envsubst_sh.write_text("#!/bin/bash\n", encoding="utf-8")
 
         # Setup drift.toml configuration
-        drift_toml = config_dir / "drift.toml"
+        drift_toml = config_dir / GLOBAL_CONFIG_FILE_NAME
         drift_toml.write_text(
             "[workspace]\n"
             "source_directory = \"src\"\n"

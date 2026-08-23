@@ -149,7 +149,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
             )
 
     # 4. Creates .gitignore entries to isolate render/ and install/ folders and local-only config overrides.
-    append_to_gitignore(drift_root, ["render/", "install/", "*.local.toml"])
+    append_to_gitignore(drift_root, ["render/", "install/", "*.local.toml", "secret.env"])
 
     # 5. Initializes render/ and install/ as independent, untracked local Git repositories.
     render_dir = drift_root / "render"

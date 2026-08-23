@@ -30,10 +30,12 @@ def get_help_page(topic: Optional[str]) -> str:
             topic_file_name = "drift_package_toml"
         elif topic_lower == "drift.toml":
             topic_file_name = "drift_toml"
+        elif topic_lower == "workspace":
+            topic_file_name = "workspace"
         else:
             raise ValueError(
                 f"Unknown help topic: '{topic}'.\n"
-                "Available topics are: 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml', 'drift.toml'."
+                "Available topics are: 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml', 'drift.toml', 'workspace'."
             )
 
     md_file_path = help_dir / f"{topic_file_name}.md"

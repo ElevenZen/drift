@@ -282,7 +282,7 @@ def load_package_config_from_source_dir(
         # Fallback for backward compatibility/static loading without workspace settings
         base_dict, base_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
         if not base_dict:
-            raise FileNotFoundError(f"No package configuration file found in directory: {package_dir}")
+            raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
         local_dict, local_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
         combined_dict = merge_toml(base_dict, local_dict)
         return PackageConfig.from_dict(combined_dict,
@@ -293,7 +293,7 @@ def load_package_config_from_source_dir(
     logger.debug(f"Base package config info: {base_info}")
     logger.debug(f"Local package config info: {local_info}")
     if not base_info:
-        raise FileNotFoundError(f"No package configuration file found in directory: {package_dir}")
+        raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
     base_dict = render_or_load_toml(base_info, workspace_config, package_name)
     source_files = [base_info.path]
     if local_info:

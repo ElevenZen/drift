@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .constants import DRIFT_IGNORE_FILE_NAME, PACKAGE_CONFIG_FILE_NAME
-from .workspace_config import WorkspaceConfig, RenderEngineConfig, parse_secret_env, load_env_settings, unload_env_settings
+from .workspace_config import WorkspaceConfig, RenderEngineConfig, parse_secrets_env, load_env_settings, unload_env_settings
 from .package_config import (
     load_package_config_from_source_dir,
     PackageConfig,
@@ -184,7 +184,7 @@ def run_primitive_2_render_packages(
         target_pkgs: Optional[List[str]] = None) -> None:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
     # Parse the secrets from secrets.env file and load them, keeping track of original values to restore them on exit/failure.
-    secrets = parse_secret_env(workspace_config.drift_root)
+    secrets = parse_secrets_env(workspace_config.drift_root)
     saved_envs = load_env_settings(secrets)
     try:
         # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)

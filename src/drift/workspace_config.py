@@ -13,6 +13,7 @@ from .constants import (
         CONFIG_DIR_NAME,
         GLOBAL_CONFIG_FILE_NAME,
         PACKAGE_CONFIG_FILE_NAME,
+        SECRETS_ENV_FILE_NAME,
 )
 from .toml_utils import parse_toml, merge_toml
 
@@ -501,12 +502,12 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
 
 
-def parse_secret_env(drift_root: Path) -> List[Tuple[str, str]]:
+def parse_secrets_env(drift_root: Path) -> List[Tuple[str, str]]:
     """Reads and parses the config/secrets.env file.
 
     Returns a list of (key, value) tuples representing the parsed secrets.
     """
-    secrets_file = drift_root / "config" / "secrets.env"
+    secrets_file = drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME
     if not secrets_file.exists():
         return []
 

@@ -4,6 +4,7 @@ import sys
 from unittest.mock import patch
 
 from drift.cli.help_docs import get_help_page, print_help_document
+from drift.constants import CONFIG_DIR_NAME, SECRETS_ENV_FILE_NAME
 
 
 class TestHelpDocs(unittest.TestCase):
@@ -50,6 +51,12 @@ class TestHelpDocs(unittest.TestCase):
         fcd_doc = get_help_page("fcd")
         self.assertIn("Fully-Controlled Directories (FCDs): Tracking Active File Creation", fcd_doc)
 
+        # workspace
+        workspace_doc = get_help_page("workspace")
+        self.assertIn("drift Workspace & Configuration Overrides", workspace_doc)
+        self.assertIn("Dual-Layered Configuration Merging", workspace_doc)
+        self.assertIn(f"Environment Secret Vault (`{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}`)", workspace_doc)
+
     def test_get_help_page_invalid_topic_raises_error(self) -> None:
         """Verifies that querying an unknown/invalid help topic raises ValueError."""
         with self.assertRaises(ValueError) as context:
@@ -57,6 +64,7 @@ class TestHelpDocs(unittest.TestCase):
         self.assertIn("Unknown help topic: 'invalid_topic'", str(context.exception))
         self.assertIn("'fcd'", str(context.exception))
         self.assertIn("'ignore'", str(context.exception))
+        self.assertIn("'workspace'", str(context.exception))
 
     @patch("sys.stdout.isatty")
     def test_print_help_document_falls_back_to_print_when_not_tty(self, mock_isatty) -> None:

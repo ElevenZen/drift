@@ -3,6 +3,7 @@
 CONFIG_DIR_NAME = "config"
 GLOBAL_CONFIG_FILE_NAME = "drift.toml"
 PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
+SECRETS_ENV_FILE_NAME = "secrets.env"
 PACKAGE_CONFIG_FILE_NAME_LIST = [PACKAGE_CONFIG_FILE_NAME]
 PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST = ["drift_package.local.toml"]
 DRIFT_IGNORE_FILE_NAME = ".drift_ignore"

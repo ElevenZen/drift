@@ -310,6 +310,21 @@ To allow complete bootstrapping of workspaces under different environment parame
     echo "Workspace config is loaded from: $tempfile"
     ```
 
+#### Private Dotenv Vault: `config/secrets.env`
+To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.
+
+1. **Strict Variable Precedence**:
+   During template parsing and compiling, variables are resolved in a strict order of precedence:
+   - **System Host Environment**: Host-level environment variables (e.g. active shell exports).
+   - **Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides.
+   - **Global Workspace Environment**: Shared, non-sensitive environment defaults (defined under the `[env]` table section inside `drift.toml`).
+
+2. **Transient, Clean-Room Isolation**:
+   To prevent credentials from leaking to other processes, secrets are loaded with transient isolation:
+   - At the very beginning of **Render Package Primitive 2** (before template input compiling and package rendering begin), the engine parses `config/secrets.env` (stripping comments and quotes) and loads them into `os.environ`.
+   - It records the original state of all loaded keys.
+   - Once all rendering operations are finished, a secure `finally` block runs, unloading the secrets and completely restoring the parent shell's original environment variables. This guarantees zero credential contamination.
+
 ### B. Custom Render Engines & Template Input Dependencies
 Rather than utilizing closed/hardcoded compilation scripts, the drift workspace supports registering flexible, custom-defined template render engines.
 
