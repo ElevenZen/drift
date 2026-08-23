@@ -67,7 +67,7 @@ def compare_folders(
             return translate_dot_prefixes(rel)
         return rel
 
-    def add_all_as_deleted(p_dst: Path, rel: Path):
+    def add_children_as_deleted(p_dst: Path, rel: Path):
         """rel is relative to src_dir."""
         if p_dst.is_symlink() or p_dst.is_file():
             diff.deleted.append(rel)
@@ -82,9 +82,9 @@ def compare_folders(
                 # Compute dst_rel and then untranslate to get src_rel
                 dst_rel = _translate(rel) / child.name
                 new_src_rel = _untranslate(dst_rel)
-                add_all_as_deleted(child, new_src_rel)
+                add_children_as_deleted(child, new_src_rel)
 
-    def add_all_as_added(p_src: Path, rel: Path):
+    def add_children_as_added(p_src: Path, rel: Path):
         """rel is relative to src_dir."""
         repo_rel = rel
         if translate_mode == "reverse":
@@ -102,7 +102,7 @@ def compare_folders(
                     if not real_target.exists():
                         diff.added.append(rel)
                     else:
-                        add_all_as_added(real_target, rel)
+                        add_children_as_added(real_target, rel)
                 except Exception:
                     diff.added.append(rel)
         elif p_src.is_file():
@@ -115,7 +115,7 @@ def compare_folders(
                 except Exception:
                     pass
             for child in p_src.iterdir():
-                add_all_as_added(child, rel / child.name)
+                add_children_as_added(child, rel / child.name)
 
     def _compare_recursive(p_src: Path, p_dst: Path, rel: Path):
         # rel is relative to src_dir
@@ -142,16 +142,16 @@ def compare_folders(
 
         if is_src_ignored:
             if dst_exists:
-                add_all_as_deleted(p_dst, rel)
+                add_children_as_deleted(p_dst, rel)
             return
 
         if not src_exists:
             if dst_exists:
-                add_all_as_deleted(p_dst, rel)
+                add_children_as_deleted(p_dst, rel)
             return
 
         if not dst_exists:
-            add_all_as_added(p_src, rel)
+            add_children_as_added(p_src, rel)
             return
 
         # Both exist
@@ -177,10 +177,10 @@ def compare_folders(
         # Type mismatch check
         if p_src.is_dir() and p_dst.is_file():
             diff.deleted.append(rel)
-            add_all_as_added(p_src, rel)
+            add_children_as_added(p_src, rel)
             return
         elif p_src.is_file() and p_dst.is_dir():
-            add_all_as_deleted(p_dst, rel)
+            add_children_as_deleted(p_dst, rel)
             diff.added.append(rel)
             return
 

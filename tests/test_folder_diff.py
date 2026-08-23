@@ -636,7 +636,7 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, translate_mode="forward")
         self.assertEqual(diff.matches, [Path("dot-/dot-bashrc")])
 
-    def test_broken_symlink_in_add_all_as_added(self) -> None:
+    def test_broken_symlink_in_add_children_as_added(self) -> None:
         # Non-existent dst root, src has a broken symlink
         nonexistent_target = self.base / "ghost.txt"
         os.symlink(nonexistent_target, self.src / "broken_link.txt")
@@ -645,7 +645,7 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertEqual(diff.added, [Path("broken_link.txt")])
 
-    def test_broken_symlink_in_add_all_as_deleted(self) -> None:
+    def test_broken_symlink_in_add_children_as_deleted(self) -> None:
         # Non-existent src root, dst has a broken symlink
         nonexistent_target = self.base / "ghost.txt"
         os.symlink(nonexistent_target, self.dst / "broken_link.txt")
