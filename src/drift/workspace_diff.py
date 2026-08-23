@@ -3,6 +3,7 @@
 import logging
 import subprocess
 import os
+import sys
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -27,7 +28,11 @@ def run_repo_diff(
         cmd = ["git", "-C", str(repo_path), "diff"] + git_options + ["--", f"{pkg}/"]
         for f in managed_files:
             cmd.append(f":!{pkg}/{f}")
-        subprocess.run(cmd, check=False)
+        res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.stdout:
+            sys.stdout.write(res.stdout)
+        if res.stderr:
+            sys.stderr.write(res.stderr)
 
 def get_pending_delta_worklist(
     workspace_config: WorkspaceConfig,
@@ -85,7 +90,11 @@ def run_pending_delta_diff(
             cmd = base_cmd + [str(rel_install), str(rel_render), "--"]
             for f in managed_files:
                 cmd.append(f":!{f}")
-            subprocess.run(cmd, check=False)
+            res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            if res.stdout:
+                sys.stdout.write(res.stdout)
+            if res.stderr:
+                sys.stderr.write(res.stderr)
     finally:
         os.chdir(old_cwd)
 

@@ -110,11 +110,16 @@ class TestDriftIgnore(unittest.TestCase):
     def test_match_path_invalid_regex_logs_warning_and_does_not_crash(self) -> None:
         """Verifies that invalid regex pattern doesn't crash the manager but logs warning."""
         # [invalid pattern (missing closing bracket)
-        ignore = DriftIgnore(["[invalid_pattern"])
-        with self.assertLogs("drift.ignore", level="WARNING") as cm:
-            result = ignore.match_path(Path("somefile.txt"))
-            self.assertFalse(result)
-            self.assertTrue(any("Invalid regex pattern" in log for log in cm.output))
+        from drift.constants import set_test_mode
+        set_test_mode(True, enable_logging=True)
+        try:
+            ignore = DriftIgnore(["[invalid_pattern"])
+            with self.assertLogs("drift.ignore", level="WARNING") as cm:
+                result = ignore.match_path(Path("somefile.txt"))
+                self.assertFalse(result)
+                self.assertTrue(any("Invalid regex pattern" in log for log in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
 
     def test_load_from_dir_rejects_nested_ignores(self) -> None:
         """Verifies that load_from_dir raises ValueError when nested ignore files (.drift_ignore or .driftignore) are present in subdirectories."""

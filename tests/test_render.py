@@ -1133,8 +1133,13 @@ class TestRenderPackage(unittest.TestCase):
             f.write("normal content")
 
         # Setup logger spy to verify print info
-        with self.assertLogs("drift.render_package", level="INFO") as log_capture:
-            render_package(workspace_config, pkg_dir)
+        from drift.constants import set_test_mode
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.render_package", level="INFO") as log_capture:
+                render_package(workspace_config, pkg_dir)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
         # Verify output directory
         render_pkg_dir = self.drift_root / "render" / "pkg_h"

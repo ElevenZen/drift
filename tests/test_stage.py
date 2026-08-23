@@ -285,25 +285,16 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
-        # Custom logger spy to capture warnings
-        spy_log = []
-        class SpyHandler(logging.Handler):
-            def emit(self, record):
-                spy_log.append(record.getMessage())
-        
-        logger = logging.getLogger("drift.render_package")
-        handler = SpyHandler()
-        logger.addHandler(handler)
-
+        from drift.constants import set_test_mode
+        set_test_mode(True, enable_logging=True)
         try:
-            # Render pkg_misspelled
-            render_package(self.workspace_config, self.pkg_misspelled_src)
+            with self.assertLogs("drift.render_package", level="WARNING") as cm:
+                # Render pkg_misspelled
+                render_package(self.workspace_config, self.pkg_misspelled_src)
+                warning_found = any(".driftignore" in msg and "misspelled" in msg for msg in cm.output)
+                self.assertTrue(warning_found)
         finally:
-            logger.removeHandler(handler)
-
-        # Check that warning was printed
-        warning_found = any(".driftignore" in msg and "misspelled" in msg for msg in spy_log)
-        self.assertTrue(warning_found)
+            set_test_mode(True, enable_logging=False)
 
         # Check that it was written to render/pkg_misspelled as .drift_ignore, and .driftignore was skipped
         pkg_misspelled_render = os.path.join(self.render_dir, "pkg_misspelled")

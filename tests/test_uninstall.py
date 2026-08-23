@@ -85,8 +85,8 @@ class TestUninstall(unittest.TestCase):
         
         # Commit initial state so git tracks it
         # or it will say nothing to commit when we try to commit the uninstall changes
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
         
         # 4. Run uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
@@ -136,8 +136,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(state_file, registry)
 
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 5. Run uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg])
@@ -175,8 +175,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(state_file, registry)
         
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
         
@@ -220,8 +220,8 @@ class TestUninstall(unittest.TestCase):
         save_state_registry(state_file, registry)
         
         # Commit initial state so git tracks it
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
         
         # 5. Run uninstall with detach=True
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], detach=True)

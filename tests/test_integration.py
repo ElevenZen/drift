@@ -28,8 +28,8 @@ class TestIntegration(unittest.TestCase):
         # Configure git identity for commits in tests
         for repo in ["render", "install"]:
             repo_path = self.drift_root / repo
-            subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "test@example.com"], check=True)
-            subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True)
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "test@example.com"], check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True, capture_output=True)
         
         # 2. Load workspace config
         self.workspace_config = load_workspace_config(self.drift_root)
@@ -275,15 +275,6 @@ class TestIntegration(unittest.TestCase):
         
         # 4. Deploy
         run_primitive_2_render_packages(self.workspace_config)
-        
-        # DEBUG: Check rendered mustache input
-        mustache_json = self.render_dir / "config" / "mustache.json"
-        if mustache_json.exists():
-            print(f"DEBUG: rendered mustache.json content: {mustache_json.read_text()}")
-        else:
-            print("DEBUG: rendered mustache.json DOES NOT EXIST")
-            print(f"DEBUG: render/config contains: {os.listdir(self.render_dir / 'config') if (self.render_dir / 'config').exists() else 'N/A'}")
-            
         run_primitive_4_stage_render_to_install(self.workspace_config)
         run_primitive_5_install_deployment(self.workspace_config)
         

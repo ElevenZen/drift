@@ -43,24 +43,24 @@ class TestAdopt(unittest.TestCase):
         self.backup_dir.mkdir()
 
         # Initialize install repo as a git repository
-        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True, capture_output=True)
         # Commit a dummy state.toml to establish HEAD
         with open(self.install_dir / "state.toml", "w", encoding="utf-8") as f:
             f.write("# dummy")
-        subprocess.run(["git", "add", "state.toml"], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "state.toml"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Initialize main workspace repo as a git repository (for cleanliness check)
-        subprocess.run(["git", "init"], cwd=str(self.workspace_path), check=True)
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.workspace_path), check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.workspace_path), check=True)
+        subprocess.run(["git", "init"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.workspace_path), check=True, capture_output=True)
         # Commit a dummy file
         with open(self.workspace_path / ".gitignore", "w", encoding="utf-8") as f:
             f.write("install/\nbackup/\n")
-        subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_path), check=True)
-        subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=str(self.workspace_path), check=True)
+        subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=str(self.workspace_path), check=True, capture_output=True)
 
         from drift.workspace_config import RenderEngineConfig
         env_engine = RenderEngineConfig(
@@ -127,14 +127,14 @@ class TestAdopt(unittest.TestCase):
         # Setup a tracked file in Git HEAD
         tracked_file = pkg_install_dir / "tracked.txt"
         tracked_file.write_text("original content", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "Tracked files"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Tracked files"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Setup a Deletion
         deleted_file = pkg_install_dir / "deleted.txt"
         deleted_file.write_text("will be deleted", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "To delete"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "To delete"], cwd=str(self.install_dir), check=True, capture_output=True)
         deleted_file.unlink()
 
         # Setup an Addition (Untracked) at the very end
@@ -158,11 +158,11 @@ class TestAdopt(unittest.TestCase):
         # 1. Setup tracked file
         orig_file = pkg_install_dir / "old_name.txt"
         orig_file.write_text("hello", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 2. Perform git rename
-        subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Get package drifts
         additions, deletions, modifications, renames = get_package_drifts(self.install_dir, pkg)
@@ -181,8 +181,8 @@ class TestAdopt(unittest.TestCase):
         # 1. Create original file and commit
         tracked_file = pkg_install_dir / "file.txt"
         tracked_file.write_text("line 1\nline 2\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "original file"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "original file"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 2. Modify file in install base
         tracked_file.write_text("line 1 modified\nline 2\n", encoding="utf-8")
@@ -302,11 +302,11 @@ class TestAdopt(unittest.TestCase):
         # 2. Setup old file in install/ (matching repo format) and commit
         install_old_file = pkg_install_dir / "dot-old_name.txt"
         install_old_file.write_text("template content\ntemplate content\ntemplate content\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 3. Rename and modify file inside install/
-        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
 
         # 4. Adopt the rename
@@ -341,11 +341,11 @@ class TestAdopt(unittest.TestCase):
         # 1. Setup old file in install/ and commit, but NO template in src/
         install_old_file = pkg_install_dir / "dot-old_name.txt"
         install_old_file.write_text("template content\n", encoding="utf-8")
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add old_name"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 2. Rename and modify file inside install/
-        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "mv", "pkg_a/dot-old_name.txt", "pkg_a/dot-new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content modified\n", encoding="utf-8")
 
         # 3. Generate the patch (with old_rel_path=None to represent addition)
@@ -430,8 +430,8 @@ class TestAdopt(unittest.TestCase):
         install_old_file = pkg_install_dir / "dot-old.txt"
         install_old_file.write_text("old content", encoding="utf-8")
         
-        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True)
-        subprocess.run(["git", "commit", "-m", "init old"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init old"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # 2. Rename on disk in install/ (but target_existing_src will trigger a conflict in non-interactive mode!)
         install_new_file = pkg_install_dir / "dot-new.txt"

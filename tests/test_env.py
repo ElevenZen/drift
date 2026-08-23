@@ -4,8 +4,10 @@ import os
 import shutil
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from typing import Any, List
+from unittest.mock import patch
 
 from drift.constants import (
     CONFIG_DIR_NAME,
@@ -615,7 +617,8 @@ pkg_cli = true
         self._setup_package_with_template("pkg_cli", f"VAL=${{{var_name}}}\n")
 
         # Execute CLI render
-        main(["-C", str(self.drift_root), "render", "pkg_cli"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", str(self.drift_root), "render", "pkg_cli"])
 
         rendered_file = self.render_dir / "pkg_cli" / "dot-config.txt"
         self.assertTrue(rendered_file.exists())

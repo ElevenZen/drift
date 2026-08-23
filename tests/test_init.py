@@ -20,9 +20,10 @@ from drift.workspace_init import (
 )
 from drift.cli import main
 from drift.cli.argparse_backend import run_argparse_cli
+from tests.test_utils import TestCaseUtilityMixin
 
 
-class TestInitWorkspace(unittest.TestCase):
+class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
@@ -177,13 +178,13 @@ class TestInitWorkspace(unittest.TestCase):
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
         # We need an initial commit to detached checkout
         # Set config locally first
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.drift_root, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.drift_root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.drift_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.drift_root, check=True, capture_output=True)
         # Create commit
         with open(os.path.join(self.drift_root, "file.txt"), "w") as f:
             f.write("content")
-        subprocess.run(["git", "add", "file.txt"], cwd=self.drift_root, check=True)
-        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.drift_root, check=True)
+        subprocess.run(["git", "add", "file.txt"], cwd=self.drift_root, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.drift_root, check=True, capture_output=True)
         # Detach HEAD
         subprocess.run(["git", "checkout", "HEAD~0"], cwd=self.drift_root, check=True, capture_output=True)
 
@@ -228,11 +229,11 @@ class TestInitWorkspace(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("Initialized drift workspace!", stdout.getvalue())
-        self.assertIn("Created render/ sandbox Git database.", stdout.getvalue())
-        self.assertIn("Created install/ local state Git database.", stdout.getvalue())
-        self.assertIn("Generated drift.toml template.", stdout.getvalue())
-        self.assertIn("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
+        self.assertIn_stripped("Initialized drift workspace!", stdout.getvalue())
+        self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
+        self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
+        self.assertIn_stripped("Generated drift.toml template.", stdout.getvalue())
+        self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
 
         # Check drift.toml exists
         self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
@@ -248,18 +249,19 @@ class TestInitWorkspace(unittest.TestCase):
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("Initialized drift workspace!", stdout.getvalue())
-        self.assertIn("Created render/ sandbox Git database.", stdout.getvalue())
-        self.assertIn("Created install/ local state Git database.", stdout.getvalue())
-        self.assertIn("Generated drift.toml template.", stdout.getvalue())
-        self.assertIn("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
+        self.assertIn_stripped("Initialized drift workspace!", stdout.getvalue())
+        self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
+        self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
+        self.assertIn_stripped("Generated drift.toml template.", stdout.getvalue())
+        self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
 
         # Check drift.toml exists
         self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
 
     def test_cli_init_typer_with_force(self) -> None:
         """Verifies that typer_backend CLI successfully initializes with --force."""
-        main(["-C", str(self.drift_root), "init"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", str(self.drift_root), "init"])
         
         stdout = StringIO()
         original_stdout = sys.stdout
@@ -301,7 +303,8 @@ class TestInitWorkspace(unittest.TestCase):
         os.makedirs(sub_dir, exist_ok=True)
 
         # Run with --no-git-root
-        main(["-C", sub_dir, "--no-git-root", "init"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", sub_dir, "--no-git-root", "init"])
 
         # Workspace should be inside nested_typer_dir
         self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
@@ -317,7 +320,8 @@ class TestInitWorkspace(unittest.TestCase):
         os.makedirs(sub_dir, exist_ok=True)
 
         # Run with --no-git-root
-        run_argparse_cli(["-C", sub_dir, "--no-git-root", "init"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            run_argparse_cli(["-C", sub_dir, "--no-git-root", "init"])
 
         # Workspace should be inside nested_argparse_dir
         self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))

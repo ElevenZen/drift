@@ -1,8 +1,10 @@
 import unittest
 import os
+import io
 import tempfile
 import subprocess
 from pathlib import Path
+from unittest.mock import patch
 from drift.workspace_config import WorkspaceConfig
 from drift.workspace_diff import run_primitive_diff
 
@@ -63,9 +65,9 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("modified content")
         
         # 3. Run Diff A
-        # Since it runs transient render, we don't need to manual render first.
-        # We just check it doesn't crash. Capture output is hard because it uses subprocess.run.
-        run_primitive_diff(self.workspace_config, diff_type="template")
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type="template")
+            self.assertIn("modified content", stdout.getvalue())
 
     def test_diff_system(self):
         """Verifies Diff B (System Drift)."""
@@ -89,7 +91,9 @@ class TestDiff(unittest.TestCase):
         (self.system_target_dir / "file.txt").write_text("drifted content")
         
         # 3. Run Diff B
-        run_primitive_diff(self.workspace_config, diff_type="system")
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type="system")
+            self.assertIn("drifted content", stdout.getvalue())
 
     def test_diff_pending(self):
         """Verifies Diff Δ (Pending Delta)."""
@@ -113,7 +117,9 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("new version content")
         
         # 3. Run Diff Δ
-        run_primitive_diff(self.workspace_config, diff_type="pending")
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type="pending")
+            self.assertIn("new version content", stdout.getvalue())
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,7 +5,9 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from drift.constants import (
     CONFIG_DIR_NAME,
@@ -262,7 +264,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         shutil.rmtree(self.drift_root / "render" / ".git")
 
         # Run CLI repair
-        main(["-C", str(self.drift_root), "repair"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", str(self.drift_root), "repair"])
 
         self.assertTrue((self.drift_root / "render" / ".git").is_dir())
         report = check_existing_workspace_status(self.drift_root)

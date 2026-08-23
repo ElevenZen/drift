@@ -31,10 +31,7 @@ from drift.package_config import (
     get_package_config_file_info,
     PackageConfigFileInfo,
 )
-
-def add_envst(filename: str) -> str:
-    stem, suffix = os.path.splitext(filename)
-    return stem + '.envst' + suffix
+from tests.test_utils import add_envst
 
 package_config_template_name = add_envst(PACKAGE_CONFIG_FILE_NAME)
 

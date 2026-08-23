@@ -69,8 +69,6 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(len(results), 1)
         s = results[0]
         self.assertEqual(s.name, pkg)
-        if s.pending_status != "CLEAN":
-            print(f"Pending changes: Added={s.pending_changes.added}, Modified={s.pending_changes.modified}, Deleted={s.pending_changes.deleted}")
         self.assertEqual(s.pending_status, "CLEAN")
 
     def test_status_modified_drifted_staged(self):

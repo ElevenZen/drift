@@ -129,16 +129,30 @@ def update_initial_env() -> None:
     INITIAL_ENV.clear()
     INITIAL_ENV.extend(os.environ.keys())
 
+
 def set_initial_env(keys: List[str]) -> None:
     """Sets INITIAL_ENV explicitly (useful for testing)."""
     global INITIAL_ENV
     INITIAL_ENV.clear()
     INITIAL_ENV.extend(keys)
 
-def set_test_mode(enabled: bool) -> None:
+
+def set_test_mode(enabled: bool, enable_logging: bool = False) -> None:
+    """Configures test mode.
+
+    When test mode is enabled without enable_logging=True, Python logging is disabled
+    to prevent noisy log output during test execution.
+    """
     global IN_TEST_MODE
     IN_TEST_MODE = enabled
+    import logging
+    if enabled and not enable_logging:
+        logging.disable(logging.CRITICAL)
+    else:
+        logging.disable(logging.NOTSET)
+
 
 def in_test_mode() -> bool:
     return IN_TEST_MODE
+
 

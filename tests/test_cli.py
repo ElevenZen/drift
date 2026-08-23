@@ -7,14 +7,10 @@ from io import StringIO
 from unittest.mock import patch
 
 from drift.cli import main
+from tests.test_utils import TestCaseUtilityMixin
 
 
-class TestCLI(unittest.TestCase):
-    def assertIn_stripped(self, expected: str, actual: str) -> None:
-        import re
-        stripped = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', actual)
-        self.assertIn(expected, stripped)
-
+class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = os.path.join(self.temp_dir.name, "drift_workspace")
@@ -159,19 +155,18 @@ class TestCLI(unittest.TestCase):
             finally:
                 sys.stderr = original_stderr
 
-            self.assertIn("is not inside a Git repository", stderr.getvalue())
-            self.assertIn("drift requires a Git-backed workspace", stderr.getvalue())
-            self.assertIn("Run 'drift init' to initialize a new workspace", stderr.getvalue())
+            self.assertIn_stripped("is not inside a Git repository", stderr.getvalue())
+            self.assertIn_stripped("drift requires a Git-backed workspace", stderr.getvalue())
+            self.assertIn_stripped("Run 'drift init' to initialize a new workspace", stderr.getvalue())
         finally:
             non_git_dir.cleanup()
 
     def test_cli_stage(self) -> None:
         """Verifies that running 'stage' stages the package into install directory."""
         # 1. Initialize the workspace properly to setup directories and git repos
-        main(["-C", self.drift_root, "init", "--force"])
-
-        # 2. Render package a
-        main(["-C", self.drift_root, "render", "pkg_a"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
 
         # 3. Stage package a
         stdout = StringIO()
@@ -188,12 +183,13 @@ class TestCLI(unittest.TestCase):
 
     def test_cli_render_commit(self) -> None:
         """Verifies that running 'render-commit' commits sandbox changes."""
-        main(["-C", self.drift_root, "init", "--force"])
-        main(["-C", self.drift_root, "render", "pkg_a"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
 
         render_dir = os.path.join(self.drift_root, "render")
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, check=True, capture_output=True)
 
         stdout = StringIO()
         original_stdout = sys.stdout
@@ -223,9 +219,10 @@ class TestCLI(unittest.TestCase):
             """)
 
         # 1. Initialize, render, stage, then apply
-        main(["-C", self.drift_root, "init", "--force"])
-        main(["-C", self.drift_root, "render", "pkg_a"])
-        main(["-C", self.drift_root, "stage", "pkg_a"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
 
         # 2. Run apply CLI
         stdout = StringIO()
@@ -242,13 +239,14 @@ class TestCLI(unittest.TestCase):
 
     def test_cli_install_commit(self) -> None:
         """Verifies that running 'install-commit' commits install state changes."""
-        main(["-C", self.drift_root, "init", "--force"])
-        main(["-C", self.drift_root, "render", "pkg_a"])
-        main(["-C", self.drift_root, "stage", "pkg_a"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
 
         install_dir = os.path.join(self.drift_root, "install")
-        subprocess.run(["git", "config", "user.name", "Test User"], cwd=install_dir, check=True)
-        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=install_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=install_dir, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=install_dir, check=True, capture_output=True)
 
         stdout = StringIO()
         original_stdout = sys.stdout
@@ -278,10 +276,11 @@ class TestCLI(unittest.TestCase):
             target_directory = "{target_dir}"
             """)
 
-        main(["-C", self.drift_root, "init", "--force"])
-        main(["-C", self.drift_root, "render", "pkg_a"])
-        main(["-C", self.drift_root, "stage", "pkg_a"])
-        main(["-C", self.drift_root, "apply", "pkg_a"])
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
+            main(["-C", self.drift_root, "apply", "pkg_a"])
 
         # Simulate host change
         target_file = os.path.join(target_dir, "file.txt")
@@ -309,7 +308,8 @@ class TestCLI(unittest.TestCase):
         from drift.cli import run_argparse_cli
 
         # 1. Test Typer Backend (main)
-        main(["-C", self.drift_root, "new", "typer_pkg", "--target", "/tmp/typer_target", "--method", "copy"])
+        with patch("sys.stdout", StringIO()):
+            main(["-C", self.drift_root, "new", "typer_pkg", "--target", "/tmp/typer_target", "--method", "copy"])
         typer_config_file = os.path.join(self.src_dir, "typer_pkg", "drift_package.toml")
         self.assertTrue(os.path.isfile(typer_config_file))
         with open(typer_config_file, "r", encoding="utf-8") as f:
@@ -318,7 +318,8 @@ class TestCLI(unittest.TestCase):
             self.assertIn('install_method = "copy"', content)
 
         # 2. Test Argparse Backend fallback
-        run_argparse_cli(["-C", self.drift_root, "new", "argparse_pkg", "--target", "/tmp/argparse_target", "--method", "copy"])
+        with patch("sys.stdout", StringIO()):
+            run_argparse_cli(["-C", self.drift_root, "new", "argparse_pkg", "--target", "/tmp/argparse_target", "--method", "copy"])
         argparse_config_file = os.path.join(self.src_dir, "argparse_pkg", "drift_package.toml")
         self.assertTrue(os.path.isfile(argparse_config_file))
         with open(argparse_config_file, "r", encoding="utf-8") as f:
