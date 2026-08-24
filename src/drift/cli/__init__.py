@@ -55,8 +55,8 @@ def setup_logging(level: int = logging.INFO) -> None:
 
     try:
         from rich.logging import RichHandler
-        # We configure rich handler for high-signal formatted output
-        handler = RichHandler(rich_tracebacks=True, markup=True, show_path=False)
+        # We configure rich handler for high-signal formatted output (markup=False prevents swallowing [brackets])
+        handler = RichHandler(rich_tracebacks=True, markup=False, show_path=False)
         logging.basicConfig(
             level=level,
             format="%(message)s",
