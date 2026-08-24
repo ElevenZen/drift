@@ -176,6 +176,7 @@ post_update = "scripts/reload_plugins.sh"
 hook_timeout = 60
 ```
 *   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths (e.g. `src/<pkg>` for `pre_source`, `install/<pkg>` for `pre_install`, and `render/<pkg>` for `post_render`).
+*   **Privilege Model**: When `sudo = true`, installation and update hooks (`pre/post_install`, `pre/post_update`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always execute in user space without `sudo`.
 
 ---
 

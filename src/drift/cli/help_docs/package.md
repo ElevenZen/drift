@@ -27,6 +27,7 @@ or `drift_package.toml`. This file dictates:
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
     automatically synchronize and prune deleted files inside them (FCDs).
 4.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, and update sequences 
-    (`pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `post_render`).
+    (`pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `post_render`). 
+    If `sudo = true`, installation and update hooks (`pre/post_install`, `pre/post_update`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always run in user space without `sudo`.
 
 👉 Run `drift help drift_package.toml` to view the comprehensive configuration reference.

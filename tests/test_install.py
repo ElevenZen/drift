@@ -378,6 +378,92 @@ class TestInstallRepo(unittest.TestCase):
             )
         self.assertIn("not found", str(ctx.exception))
 
+    def test_lifecycle_hooks_sudo_privileges(self) -> None:
+        """Verifies that only pre/post_install and pre/post_update hooks run with sudo when sudo=True."""
+        from unittest.mock import patch
+        from drift.lifecycle_hooks import trigger_package_lifecycle_hook
+
+        pkg = "pkg_hooks_sudo"
+        pkg_install_dir = os.path.join(self.install_dir, pkg)
+        os.makedirs(pkg_install_dir, exist_ok=True)
+
+        config_sudo = PackageConfig(
+            name=pkg,
+            target_directory=Path(self.system_target_dir),
+            sudo=True,
+            pre_source="hook.sh",
+            pre_install="hook.sh",
+            post_install="hook.sh",
+            pre_update="hook.sh",
+            post_update="hook.sh",
+            post_render="hook.sh"
+        )
+
+        hook_path = os.path.join(pkg_install_dir, "hook.sh")
+        with open(hook_path, "w", encoding="utf-8") as f:
+            f.write("# dummy")
+
+        hook_dir = Path(pkg_install_dir)
+        cwd = Path(self.system_target_dir)
+
+        # 1. sudo=True: installation/update hooks MUST execute with sudo
+        sudo_eligible = ["pre_install", "post_install", "pre_update", "post_update"]
+        for hook_name in sudo_eligible:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name=hook_name,
+                    metadata=config_sudo,
+                    hook_dir=hook_dir,
+                    cwd=cwd
+                )
+                called_cmd = mock_run.call_args[0][0]
+                self.assertEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should run with sudo when sudo=True")
+                self.assertEqual(called_cmd[1], str(hook_path))
+
+        # 2. sudo=True: source/compilation hooks (pre_source, post_render) MUST NOT execute with sudo
+        sudo_ineligible = ["pre_source", "post_render"]
+        for hook_name in sudo_ineligible:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name=hook_name,
+                    metadata=config_sudo,
+                    hook_dir=hook_dir,
+                    cwd=cwd
+                )
+                called_cmd = mock_run.call_args[0][0]
+                self.assertNotEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should NOT run with sudo even when sudo=True")
+                self.assertEqual(called_cmd[0], str(hook_path))
+
+        # 3. sudo=False: NO hooks should run with sudo
+        config_no_sudo = PackageConfig(
+            name=pkg,
+            target_directory=Path(self.system_target_dir),
+            sudo=False,
+            pre_source="hook.sh",
+            pre_install="hook.sh",
+            post_install="hook.sh",
+            pre_update="hook.sh",
+            post_update="hook.sh",
+            post_render="hook.sh"
+        )
+        for hook_name in (sudo_eligible + sudo_ineligible):
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                trigger_package_lifecycle_hook(
+                    pkg=pkg,
+                    hook_name=hook_name,
+                    metadata=config_no_sudo,
+                    hook_dir=hook_dir,
+                    cwd=cwd
+                )
+                called_cmd = mock_run.call_args[0][0]
+                self.assertNotEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should NOT run with sudo when sudo=False")
+                self.assertEqual(called_cmd[0], str(hook_path))
+
     def test_install_copy_respects_ignore(self) -> None:
         """Verifies that 'copy' installation method respects .drift_ignore patterns."""
         pkg = "pkg_copy_ignore"

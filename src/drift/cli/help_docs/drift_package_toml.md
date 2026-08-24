@@ -19,7 +19,8 @@ target_directory = "~/.config/my_app"
 
 # Advanced Flags
 
-# Execute deployment operations with root privileges (sudo) if required
+# Execute physical file deployments and installation/update lifecycle hooks with root privileges (sudo).
+# Note: Source/compilation hooks (pre_source, post_render) always run in user space without sudo.
 sudo = false
 
 # Enable or disable template rendering for this package
@@ -40,21 +41,21 @@ fully_controlled_dirs = [
 hook_timeout = 120
 
 # Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
-# Executed from src/ package root
+# Executed from src/ package root (runs in user space, never with sudo)
 pre_source = "scripts/generate_dynamic_templates.sh"
 
-# Run before a first-time installation (executed from install/ package root)
+# Run before a first-time installation (executed from install/ package root; runs with sudo if sudo = true)
 pre_install = "scripts/bootstrap.sh"
 
-# Run after a first-time installation (executed from host target directory)
+# Run after a first-time installation (executed from host target directory; runs with sudo if sudo = true)
 post_install = "echo 'Completed installation!'"
 
-# Run before updating an already installed package (executed from install/ package root)
+# Run before updating an already installed package (executed from install/ package root; runs with sudo if sudo = true)
 pre_update = "scripts/backup_settings.sh"
 
-# Run after updating an already installed package (executed from host target directory)
+# Run after updating an already installed package (executed from host target directory; runs with sudo if sudo = true)
 post_update = "scripts/reload_service.sh"
 
-# Run immediately after sandbox rendering is complete (executed from render/ package root)
+# Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
 post_render = "scripts/generate_checksums.sh"
 ```

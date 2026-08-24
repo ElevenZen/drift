@@ -15,6 +15,10 @@ from .file_utils import run_command
 logger = logging.getLogger(__name__)
 
 
+# Only installation and update hooks are allowed to be executed with sudo elevation
+SUDO_ELIGIBLE_HOOKS = {"pre_install", "post_install", "pre_update", "post_update"}
+
+
 def trigger_pre_source_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
@@ -90,7 +94,7 @@ def trigger_package_lifecycle_hook(
     logger.debug(f"   CWD:    {cwd}")
 
     cmd = [str(hook_path)]
-    if metadata.sudo:
+    if metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS:
         cmd.insert(0, "sudo")
 
     timeout_seconds = metadata.hook_timeout

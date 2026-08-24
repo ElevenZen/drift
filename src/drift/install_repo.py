@@ -186,6 +186,9 @@ def run_collision_guard(
         if metadata.get_install_method(workspace_config) == "copy" and not is_first_time:
             continue
 
+        # conditions include:
+        # stow mode: target is normal file or symlink not pointing install_pkg_dir.
+        # copy mode: not first installation.
         handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
                                "Deployment collision", resolve_symlinks)
 

@@ -424,8 +424,10 @@ install_method = "stow"
 # Supports home expansion (~ at the beginning).
 target_directory = "~/.config/example"
 
-# If true, all file creation, copying, deletion, and symlinking operations
-# for this package will be executed utilizing "sudo" elevation.
+# If true, all physical file creation, copying, deletion, and symlinking operations
+# for this package, as well as installation/update lifecycle hooks (pre/post_install, pre/post_update),
+# will be executed utilizing "sudo" elevation.
+# Note: Source/compilation hooks (pre_source, post_render) always run in user space without sudo.
 sudo = false
 
 # ---------------------------------------------------------------------
@@ -456,23 +458,23 @@ fully_controlled_dirs = [
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
 # Executable scripts located inside the package directory.
-# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg)
+# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg). Always runs in user space without sudo.
 pre_source = "pre-source.bash"
 
-# Run before first-time installation (CWD: install/pkg)
+# Run after templates are rendered into sandbox (CWD: render/pkg). Always runs in user space without sudo.
+post_render = "post-render.bash"
+
+# Run before first-time installation (CWD: install/pkg). Runs with sudo if sudo = true.
 pre_install = "pre-install.bash"
 
-# Run after successful first-time installation (CWD: target_directory)
+# Run after successful first-time installation (CWD: target_directory). Runs with sudo if sudo = true.
 post_install = "post-install.bash"
 
-# Run before any update/deployment (CWD: install/pkg)
+# Run before any update/deployment (CWD: install/pkg). Runs with sudo if sudo = true.
 pre_update = "pre-update.bash"
 
-# Run after any successful update/deployment (CWD: target_directory)
+# Run after any successful update/deployment (CWD: target_directory). Runs with sudo if sudo = true.
 post_update = "post-update.bash"
-
-# Run after templates are rendered into sandbox (CWD: render/pkg)
-post_render = "post-render.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 hook_timeout = 120
@@ -749,7 +751,7 @@ For each redeployable package:
 *   **Collision Guard (Incremental/Full)**:
     - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
     - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` (or `deleted_files/` if matched by `.drift_ignore` patterns) and removed from the active system to clear the path.
-*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>`.
+*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>` (with `sudo` elevation if `sudo = true`).
 *   **File Delivery Phase**:
     - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
         1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
@@ -757,7 +759,7 @@ For each redeployable package:
     - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
         1.  Deletes files listed in `package_changes.deleted_files`.
         2.  Deploys individual files manually using precise symlink creation or copy operations.
-*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory.
+*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory (with `sudo` elevation if `sudo = true`).
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
 
 #### 5. Stage 2: Final State Commit (Primitive 6)
