@@ -10,7 +10,7 @@ DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
 [package]
 name = "{package_name}"
 install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
-target_directory = "{target_directory}"   # Destination for this package
+{target_directory_line}
 
 # Lifecycle Hooks (Optional)
 # pre_source   = ""
@@ -54,7 +54,11 @@ def run_primitive_10_create_new_package(
     final_config_name = PACKAGE_CONFIG_FILE_NAME
     config_file = package_dir / final_config_name
     
-    final_target_dir: str = target_directory or str(workspace_config.default_target_path)
+    if target_directory is None:
+        target_directory_line = '# target_directory = "~"   # Destination for this package'
+    else:
+        target_directory_line = f'target_directory = "{target_directory}"   # Destination for this package'
+
     final_install_method: str = install_method or workspace_config.default_install_method
     if final_install_method not in ("stow", "copy"):
         raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
@@ -62,7 +66,7 @@ def run_primitive_10_create_new_package(
     config_content = get_default_package_config_template().format(
         package_name=package_name,
         config_filename=final_config_name,
-        target_directory=final_target_dir,
+        target_directory_line=target_directory_line,
         install_method=final_install_method
     )
     config_file.write_text(config_content, encoding="utf-8")

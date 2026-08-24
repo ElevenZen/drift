@@ -28,6 +28,7 @@ class TestNewPackage(unittest.TestCase):
             
             content = config_file.read_text()
             self.assertIn(f'name = "{pkg_name}"', content)
+            self.assertIn('# target_directory = "~"', content)
 
     def test_run_primitive_10_create_new_package_already_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
