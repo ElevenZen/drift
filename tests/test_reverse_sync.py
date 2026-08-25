@@ -361,13 +361,18 @@ class TestReverseSync(unittest.TestCase):
         self.assertFalse(regular_file.exists(), "regular_file.txt should be deleted as it is missing on host!")
 
     def test_reverse_sync_ignored_file_in_target_dir_not_deleted_in_install(self) -> None:
-        """Verifies that if an ignored file exists (or does not exist) in target dir, reverse sync will NOT delete the ignored file in install/."""
+        """Verifies that:
+        1. An ignored file in install/ that does NOT exist in target dir is NOT deleted by reverse sync.
+        2. An ignored file in install/ that exists in target dir is NOT overwritten or deleted.
+        3. A non-ignored tracked file in install/ that is missing in target dir IS deleted.
+        4. A non-ignored tracked file in install/ that is modified in target dir IS updated.
+        """
         from drift.constants import DRIFT_IGNORE_FILE_NAME
         pkg = "pkg_ignored_reverse"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Setup install/ with config, .drift_ignore, an ignored script, and a tracked file
+        # 1. Setup install/ with config, .drift_ignore, ignored scripts, and tracked files
         (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
@@ -375,31 +380,48 @@ class TestReverseSync(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook.sh\n", encoding="utf-8")
-        ignored_hook_install = pkg_install_dir / "ignored_hook.sh"
-        ignored_hook_install.write_text("#!/bin/sh\necho 'hook'\n", encoding="utf-8")
+        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook_present.sh\nignored_hook_missing_on_target.sh\n", encoding="utf-8")
+        
+        ignored_present_install = pkg_install_dir / "ignored_hook_present.sh"
+        ignored_present_install.write_text("#!/bin/sh\necho 'hook present'\n", encoding="utf-8")
 
-        tracked_file_install = pkg_install_dir / "app.conf"
-        tracked_file_install.write_text("setting=1\n", encoding="utf-8")
+        ignored_missing_install = pkg_install_dir / "ignored_hook_missing_on_target.sh"
+        ignored_missing_install.write_text("#!/bin/sh\necho 'hook missing on target'\n", encoding="utf-8")
 
-        # 2. Setup target dir: ignored_hook.sh exists on host, app.conf is modified on host
-        ignored_hook_target = self.system_target_dir / "ignored_hook.sh"
-        ignored_hook_target.write_text("#!/bin/sh\necho 'different on host'\n", encoding="utf-8")
+        tracked_modified_install = pkg_install_dir / "app_modified.conf"
+        tracked_modified_install.write_text("setting=1\n", encoding="utf-8")
 
-        tracked_file_target = self.system_target_dir / "app.conf"
-        tracked_file_target.write_text("setting=2\n", encoding="utf-8")
+        tracked_deleted_install = pkg_install_dir / "app_deleted.conf"
+        tracked_deleted_install.write_text("delete_me=true\n", encoding="utf-8")
+
+        # 2. Setup target dir:
+        # - ignored_hook_present.sh exists on host with different content
+        # - ignored_hook_missing_on_target.sh does NOT exist on host
+        # - app_modified.conf is modified on host
+        # - app_deleted.conf does NOT exist on host
+        (self.system_target_dir / "ignored_hook_present.sh").write_text("#!/bin/sh\necho 'different on host'\n", encoding="utf-8")
+        self.assertFalse((self.system_target_dir / "ignored_hook_missing_on_target.sh").exists())
+        (self.system_target_dir / "app_modified.conf").write_text("setting=2\n", encoding="utf-8")
+        self.assertFalse((self.system_target_dir / "app_deleted.conf").exists())
 
         # 3. Run reverse sync
         res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # 4. Assert:
-        # A. ignored_hook.sh in install/ is NOT deleted and NOT overwritten
-        self.assertTrue(ignored_hook_install.exists(), "ignored_hook.sh in install/ must not be deleted!")
-        self.assertEqual(ignored_hook_install.read_text(encoding="utf-8"), "#!/bin/sh\necho 'hook'\n")
+        # A. ignored_hook_missing_on_target.sh in install/ is NOT deleted!
+        self.assertTrue(ignored_missing_install.exists(), "Ignored file missing on target must not be deleted from install/!")
+        self.assertEqual(ignored_missing_install.read_text(encoding="utf-8"), "#!/bin/sh\necho 'hook missing on target'\n")
 
-        # B. app.conf in install/ was updated from host
-        self.assertEqual(tracked_file_install.read_text(encoding="utf-8"), "setting=2\n")
+        # B. ignored_hook_present.sh in install/ is NOT deleted and NOT overwritten!
+        self.assertTrue(ignored_present_install.exists(), "Ignored file present on target must not be deleted from install/!")
+        self.assertEqual(ignored_present_install.read_text(encoding="utf-8"), "#!/bin/sh\necho 'hook present'\n")
+
+        # C. Non-ignored tracked file missing on host IS deleted
+        self.assertFalse(tracked_deleted_install.exists(), "Tracked file missing on host should be deleted from install/!")
+
+        # D. Non-ignored tracked file modified on host IS updated
+        self.assertEqual(tracked_modified_install.read_text(encoding="utf-8"), "setting=2\n")
 
 
 if __name__ == "__main__":

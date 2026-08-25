@@ -89,7 +89,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     # Generate extra .stow-local-ignore at root of install/
     stow_ignore_path = install_dir / ".stow-local-ignore"
-    stow_ignore_path.write_text("state.toml\n", encoding="utf-8")
+    stow_ignore_path.write_text("^/state.toml\n", encoding="utf-8")
 
     # 6. Creates default directory templates (src/, config/drift.toml, config/drift.local.toml, install/state.toml)
     (drift_root / "src").mkdir(parents=True, exist_ok=True)
