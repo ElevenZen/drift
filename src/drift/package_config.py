@@ -3,12 +3,13 @@
 import logging
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict
+from typing import List, Sequence, Optional, Tuple, Dict, Iterator
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST
-from .workspace_config import RenderEngineConfig, WorkspaceConfig
+from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 
 from dataclasses import dataclass, field
 
@@ -256,6 +257,56 @@ class PackageConfig:
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
         return self.install_method or workspace_config.default_install_method
+
+    def load_package_envs(
+        self,
+        workspace_config: Optional[WorkspaceConfig] = None,
+        overwrite: bool = True
+    ) -> Optional[List[Tuple[str, Optional[str]]]]:
+        """Loads default package-specific environment variables into os.environ.
+
+        Variables loaded:
+            drift_package_name: Name of the package (directory name).
+            drift_target_directory: Resolved target directory path on the host system.
+            drift_install_method: Resolved install method ('stow' or 'copy').
+
+        Returns:
+            A list of (key, original_value) tuples for modified variables.
+        """
+        if workspace_config is not None:
+            target_dir_str = str(self.get_target_directory(workspace_config))
+            install_method_str = self.get_install_method(workspace_config)
+        else:
+            target_dir_str = str(self.target_directory or Path("~").expanduser())
+            install_method_str = self.install_method or "stow"
+
+        envs = [
+            ("drift_package_name", self.name),
+            ("drift_target_directory", target_dir_str),
+            ("drift_install_method", install_method_str),
+        ]
+        return load_env_settings(envs, overwrite=overwrite)
+
+    def unload_package_envs(
+        self,
+        original_envs: Optional[List[Tuple[str, Optional[str]]]]
+    ) -> None:
+        """Restores original environment variables using the list returned by load_package_envs."""
+        from .workspace_config import unload_env_settings
+        unload_env_settings(original_envs)
+
+    @contextmanager
+    def package_envs(
+        self,
+        workspace_config: Optional[WorkspaceConfig] = None,
+        overwrite: bool = True
+    ) -> Iterator[None]:
+        """Context manager to activate package-specific environment variables in os.environ."""
+        saved_envs = self.load_package_envs(workspace_config=workspace_config, overwrite=overwrite)
+        try:
+            yield
+        finally:
+            self.unload_package_envs(saved_envs)
 
     @classmethod
     def from_dict(cls,

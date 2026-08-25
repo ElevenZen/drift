@@ -4,9 +4,10 @@ import os
 import re
 import tempfile
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Iterator
 
 from .constants import (
         CONFIG_DIR_NAME,
@@ -587,5 +588,27 @@ def unload_env_settings(original_envs: Optional[List[Tuple[str, Optional[str]]]]
         else:
             os.environ[k] = original_val
             logger.debug(f"Environment variable unloaded: restored {k}={original_val}")
+
+
+@contextmanager
+def env_scope(
+    envs: List[Tuple[str, str]],
+    overwrite: bool = True,
+    env_keep: Optional[List[str]] = None,
+) -> Iterator[None]:
+    """Context manager for loading and unloading environment settings."""
+    saved_envs = load_env_settings(envs, overwrite=overwrite, env_keep=env_keep)
+    try:
+        yield
+    finally:
+        unload_env_settings(saved_envs)
+
+
+@contextmanager
+def secrets_env_scope(drift_root: Path) -> Iterator[None]:
+    """Context manager for loading secrets from secrets.env into os.environ."""
+    secrets = parse_secrets_env(drift_root)
+    with env_scope(secrets, overwrite=True, env_keep=INITIAL_ENV):
+        yield
 
 

@@ -480,6 +480,19 @@ post_update = "post-update.bash"
 hook_timeout = 120
 ```
 
+#### Default Package Environment Variables
+After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)`:
+*   **`drift_package_name`**: Name / directory name of the package.
+*   **`drift_target_directory`**: Resolved destination target directory path on the host system.
+*   **`drift_install_method`**: Resolved deployment method (`stow` or `copy`).
+
+These variables are active during:
+1.  **Lifecycle Hook Script Executions** (`pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`).
+2.  **Template Compilations** (accessible as `${drift_package_name}`, `${drift_target_directory}`, `${drift_install_method}` in `.envst` / `envsubst` templates).
+3.  **Physical Deployment Operations**.
+
+Upon completion of the package's render or deployment phase, these variables are restored and unloaded via `PackageConfig.unload_package_envs()`, guaranteeing clean-room environment isolation between packages.
+
 ---
 
 ## 6. Execution Safeguards, Policies & Customization

@@ -860,6 +860,91 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # Non-matching remains unchanged
         self.assertEqual(engine.strip_suffix("normal_file.conf"), "normal_file.conf")
 
+    def test_package_config_load_unload_package_envs(self) -> None:
+        """Verifies PackageConfig.load_package_envs and unload_package_envs."""
+        from drift.package_config import PackageConfig
+        from drift.workspace_config import WorkspaceConfig
+
+        config = WorkspaceConfig(drift_root_path=Path("/dummy/root"), default_target_directory=Path("/global/target"))
+        pkg = PackageConfig(
+            name="my_pkg",
+            target_directory=Path("/custom/target"),
+            install_method="copy"
+        )
+
+        # 1. Load with workspace config
+        saved = pkg.load_package_envs(config)
+        self.assertEqual(os.environ.get("drift_package_name"), "my_pkg")
+        self.assertEqual(os.environ.get("drift_target_directory"), "/custom/target")
+        self.assertEqual(os.environ.get("drift_install_method"), "copy")
+
+        # 2. Unload
+        pkg.unload_package_envs(saved)
+        self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_install_method", os.environ)
+
+        # 4. Context manager usage with 'with'
+        with pkg.package_envs(config):
+            self.assertEqual(os.environ.get("drift_package_name"), "my_pkg")
+            self.assertEqual(os.environ.get("drift_target_directory"), "/custom/target")
+            self.assertEqual(os.environ.get("drift_install_method"), "copy")
+
+        self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_install_method", os.environ)
+
+    def test_package_envs_resolution_with_custom_workspace_target_and_install_method(self) -> None:
+        """Verifies environment variable resolution when workspace target != '~' and package has/has not explicit target."""
+        from drift.package_config import PackageConfig
+        from drift.workspace_config import WorkspaceConfig
+
+        # Workspace with non-default target directory != '~' and non-default install method
+        custom_global_target = Path("/opt/custom_drift_target")
+        workspace_config = WorkspaceConfig(
+            drift_root_path=Path("/dummy/root"),
+            default_target_directory=custom_global_target,
+            default_install_method="copy"
+        )
+
+        # 1. Package WITHOUT explicit target_directory and WITHOUT explicit install_method
+        pkg_inherited = PackageConfig(name="pkg_inherited")
+        with pkg_inherited.package_envs(workspace_config):
+            self.assertEqual(os.environ.get("drift_package_name"), "pkg_inherited")
+            self.assertEqual(os.environ.get("drift_target_directory"), str(custom_global_target.expanduser()))
+            self.assertEqual(os.environ.get("drift_install_method"), "copy")
+
+        self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_install_method", os.environ)
+
+        # 2. Package WITH explicit target_directory and explicit install_method
+        pkg_overridden = PackageConfig(
+            name="pkg_overridden",
+            target_directory=Path("/etc/custom_pkg_target"),
+            install_method="stow"
+        )
+        with pkg_overridden.package_envs(workspace_config):
+            self.assertEqual(os.environ.get("drift_package_name"), "pkg_overridden")
+            self.assertEqual(os.environ.get("drift_target_directory"), "/etc/custom_pkg_target")
+            self.assertEqual(os.environ.get("drift_install_method"), "stow")
+
+        self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_install_method", os.environ)
+
+        # 3. Package WITH explicit target_directory using home expansion (~)
+        pkg_home = PackageConfig(
+            name="pkg_home",
+            target_directory=Path("~/.config/my_app")
+        )
+        with pkg_home.package_envs(workspace_config):
+            self.assertEqual(os.environ.get("drift_package_name"), "pkg_home")
+            self.assertEqual(os.environ.get("drift_target_directory"), str(Path("~/.config/my_app").expanduser()))
+            self.assertEqual(os.environ.get("drift_install_method"), "copy")  # Inherited copy
+
+        self.assertNotIn("drift_package_name", os.environ)
+
 
 if __name__ == "__main__":
     unittest.main()

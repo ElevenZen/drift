@@ -66,6 +66,10 @@ render_command = "jinja2 %s %i"
 # Supports home expansion (~ at the beginning).
 default_target_directory = "~"
 
+# Global default installation method
+# Options: "stow" (symlinks) or "copy" (physical copies). Default is "stow".
+default_install_method = "stow"
+
 # Source directory for packages, default value is "src"
 source_directory = "src"
 

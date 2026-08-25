@@ -66,6 +66,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             drift_toml = f.read()
         self.assertIn("[workspace]", drift_toml)
         self.assertIn("source_directory = \"src\"", drift_toml)
+        self.assertIn("default_install_method = \"stow\"", drift_toml)
 
         # Check config/drift.local.toml template was created
         local_config_file = os.path.join(self.drift_root, "config", "drift.local.toml")

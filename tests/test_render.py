@@ -1341,6 +1341,62 @@ class TestRenderPackage(unittest.TestCase):
             run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
+    def test_default_package_envs_available_in_templates(self) -> None:
+        """Verifies drift_package_name, drift_target_directory, and drift_install_method are available in templates."""
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst is not available")
+
+        # 1. Setup workspace config
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "envsubst.bash").write_text("# dummy env", encoding="utf-8")
+
+        drift_toml = config_dir / "drift.toml"
+        drift_toml.write_text("""
+            [workspace]
+            default_target_directory = "/home/default_user"
+
+            [render.envsubst]
+            input_file = "envsubst.bash"
+            suffix = "envst"
+            render_command = "bash -c 'source %i && envsubst < %s'"
+        """, encoding="utf-8")
+
+        from drift.workspace_config import load_workspace_config
+        workspace_config = load_workspace_config(self.drift_root)
+
+        # 2. Setup package with template
+        pkg_dir = self.drift_root / "src" / "pkg_env_test"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_dir / "drift_package.toml").write_text("""
+            [package]
+            name = "pkg_env_test"
+            install_method = "copy"
+            target_directory = "/custom/target/dir"
+        """, encoding="utf-8")
+
+        template_file = pkg_dir / "config.envst.json"
+        template_file.write_text(
+            '{"name": "$drift_package_name", "target": "$drift_target_directory", "method": "$drift_install_method"}',
+            encoding="utf-8"
+        )
+
+        from drift.render_package import run_primitive_2_render_packages
+        run_primitive_2_render_packages(workspace_config, ["pkg_env_test"])
+
+        rendered_output = self.drift_root / "render" / "pkg_env_test" / "config.json"
+        self.assertTrue(rendered_output.exists())
+        content = rendered_output.read_text(encoding="utf-8")
+        self.assertIn('"name": "pkg_env_test"', content)
+        self.assertIn('"target": "/custom/target/dir"', content)
+        self.assertIn('"method": "copy"', content)
+
+        # Ensure envs are cleaned up after rendering
+        self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_install_method", os.environ)
+
 
 if __name__ == "__main__":
     unittest.main()

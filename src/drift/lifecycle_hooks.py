@@ -22,7 +22,8 @@ SUDO_ELIGIBLE_HOOKS = {"pre_install", "post_install", "pre_update", "post_update
 def trigger_pre_source_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
-    pkg_config: Optional[PackageConfig] = None
+    load_envs: bool,
+    pkg_config: Optional[PackageConfig] = None,
 ) -> None:
     """Triggers the pre_source lifecycle hook for a package in the source directory."""
     src_pkg_dir = workspace_config.source_path / package_name
@@ -38,11 +39,19 @@ def trigger_pre_source_hook(
                 workspace_config=workspace_config
             )
         except FileNotFoundError:
-            logger.warning(f"Configuration file 'drift_package.toml' not found in '{src_pkg_dir}'. Skipping pre_source hook.")
+            logger.error(f"Package Configuration file 'drift_package.toml' not found in '{src_pkg_dir}'. Skipping pre_source hook.")
             return
 
-    if pkg_config and pkg_config.hooks:
-        pkg_config.hooks.trigger_pre_source(src_pkg_dir)
+    if not pkg_config:
+        logger.error(f"Package configuration file cannot be loaded from '{src_pkg_dir}'. Skipping pre_source hook.")
+        return
+
+    if pkg_config.hooks:
+        if load_envs:
+            with pkg_config.package_envs(workspace_config):
+                pkg_config.hooks.trigger_pre_source(src_pkg_dir)
+        else:
+            pkg_config.hooks.trigger_pre_source(src_pkg_dir)
 
 
 def trigger_post_render_hook(

@@ -398,6 +398,152 @@ def run_incremental_file_delivery(
             )
 
 
+def update_state_registry_post_deployment(
+    state_registry: StateRegistry,
+    state_file: Path,
+    pkg: str,
+    install_method: str,
+    current_files: List[Path],
+    full_redeploy: bool,
+    package_changes: Optional[PackageStageChanges] = None
+) -> None:
+    """Updates and persists the package deployment state and deployed files manifest in state.toml."""
+    now_str = datetime.datetime.now().isoformat()
+    state_registry.set_package_state(
+        pkg, "installed", last_deployed=now_str, install_method=install_method
+    )
+
+    # Save the updated list of deployed files to state.toml
+    if full_redeploy:
+        state_registry.set_package_deployed_files(pkg, current_files)
+    else:
+        new_deployed = set(state_registry.get_package_deployed_files(pkg))
+        if package_changes:
+            for rel in package_changes.deleted_files:
+                new_deployed.discard(rel)
+            for rel in package_changes.added_files:
+                new_deployed.add(rel)
+        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
+
+    save_state_registry(state_file, state_registry)
+
+
+def execute_package_deployment(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    metadata: PackageConfig,
+    target_dir: Path,
+    install_pkg_dir: Path,
+    state_registry: StateRegistry,
+    state_file: Path,
+    resolve_symlinks: bool,
+    is_first_time: bool,
+    package_changes: Optional[PackageStageChanges] = None
+) -> PackageInstallResult:
+    """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
+    install_base = workspace_config.install_path
+    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
+    
+    # 1. Collision Guard
+    run_collision_guard(
+        workspace_config=workspace_config,
+        pkg=pkg,
+        install_pkg_dir=install_pkg_dir,
+        metadata=metadata,
+        ignore_handler=ignore_handler,
+        target_dir=target_dir,
+        is_first_time=is_first_time,
+        resolve_symlinks=resolve_symlinks,
+        install_base=install_base
+    )
+    
+    # Remove full_redeploy parameter and rely on package_changes to determine deployment mode
+    full_redeploy = (package_changes is None)
+    
+    # Calculate current desired files list
+    # Actually, this filter process is already done in stage_repo phase.
+    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+        
+    if full_redeploy:
+        reconcile_orphaned_files(
+            pkg=pkg,
+            target_dir=target_dir,
+            current_files=current_files,
+            state_registry=state_registry,
+            workspace_config=workspace_config,
+            metadata=metadata,
+            resolve_symlinks=resolve_symlinks
+        )
+    
+    # 3. Lifecycle Hooks & State registry update
+    if is_first_time:
+        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir)
+    else:
+        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir)
+
+    # 2. Physical Deployment Execution
+    stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
+    stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
+    
+    if full_redeploy:
+        run_full_file_delivery(
+            workspace_config=workspace_config,
+            pkg=pkg,
+            install_base=install_base,
+            install_pkg_dir=install_pkg_dir,
+            target_dir=target_dir,
+            metadata=metadata,
+            deployable_files=current_files,
+            stow_sufficient=stow_sufficient
+        )
+    else:
+        assert package_changes is not None
+        run_incremental_file_delivery(
+            workspace_config=workspace_config,
+            package_changes=package_changes,
+            install_pkg_dir=install_pkg_dir,
+            target_dir=target_dir,
+            metadata=metadata
+        )
+
+    logger.debug(f"   File delivery completed via {metadata.get_install_method(workspace_config)}")
+    
+    # Post Hooks
+    if is_first_time:
+        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir)
+    else:
+        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir)
+        
+    update_state_registry_post_deployment(
+        state_registry=state_registry,
+        state_file=state_file,
+        pkg=pkg,
+        install_method=metadata.get_install_method(workspace_config),
+        current_files=current_files,
+        full_redeploy=full_redeploy,
+        package_changes=package_changes
+    )
+
+    logger.info(f"✨ Package '{pkg}' deployed successfully.")
+
+    ops = FileOperations()
+    if package_changes is not None:
+        ops.added = [str(p) for p in package_changes.added_files]
+        ops.modified = [str(p) for p in package_changes.modified_files]
+        ops.deleted = [str(p) for p in package_changes.deleted_files]
+    else:
+        ops.added = [str(p) for p in current_files]
+
+    return PackageInstallResult(
+        package=pkg,
+        install_method=metadata.get_install_method(workspace_config),
+        target_directory=str(target_dir),
+        operations=ops,
+        is_first_time=is_first_time,
+        status="SUCCESS"
+    )
+
+
 def deploy_package_impl(
     workspace_config: WorkspaceConfig,
     pkg: str,
@@ -471,113 +617,19 @@ def deploy_package_impl(
         
     logger.info(f"🚀 Deploying package: {pkg}")
     
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
-    
-    # 1. Collision Guard
-    run_collision_guard(
-        workspace_config=workspace_config,
-        pkg=pkg,
-        install_pkg_dir=install_pkg_dir,
-        metadata=metadata,
-        ignore_handler=ignore_handler,
-        target_dir=target_dir,
-        is_first_time=is_first_time,
-        resolve_symlinks=resolve_symlinks,
-        install_base=install_base
-    )
-    
-    # Remove full_redeploy parameter and rely on package_changes to determine deployment mode
-    full_redeploy = (package_changes is None)
-    
-    # Calculate current desired files list
-    # Actually, this filter process is already done in stage_repo phase.
-    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
-        
-    if full_redeploy:
-        reconcile_orphaned_files(
+    with metadata.package_envs(workspace_config):
+        return execute_package_deployment(
+            workspace_config=workspace_config,
             pkg=pkg,
+            metadata=metadata,
             target_dir=target_dir,
-            current_files=current_files,
+            install_pkg_dir=install_pkg_dir,
             state_registry=state_registry,
-            workspace_config=workspace_config,
-            metadata=metadata,
-            resolve_symlinks=resolve_symlinks
+            state_file=state_file,
+            resolve_symlinks=resolve_symlinks,
+            is_first_time=is_first_time,
+            package_changes=package_changes
         )
-    
-    # 3. Lifecycle Hooks & State registry update
-    if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir)
-    else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir)
-
-    # 2. Physical Deployment Execution
-    stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
-    stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
-    
-    if full_redeploy:
-        run_full_file_delivery(
-            workspace_config=workspace_config,
-            pkg=pkg,
-            install_base=install_base,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata,
-            deployable_files=current_files,
-            stow_sufficient=stow_sufficient
-        )
-    else:
-        assert package_changes is not None
-        run_incremental_file_delivery(
-            workspace_config=workspace_config,
-            package_changes=package_changes,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata
-        )
-
-    logger.debug(f"   File delivery completed via {metadata.get_install_method(workspace_config)}")
-    
-    # Post Hooks
-    if is_first_time:
-        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir)
-    else:
-        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir)
-        
-    now_str = datetime.datetime.now().isoformat()
-    state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.get_install_method(workspace_config))
-    
-    # Save the updated list of deployed files to state.toml
-    if full_redeploy:
-        state_registry.set_package_deployed_files(pkg, current_files)
-    else:
-        new_deployed = set(state_registry.get_package_deployed_files(pkg))
-        if package_changes:
-            for rel in package_changes.deleted_files:
-                new_deployed.discard(rel)
-            for rel in package_changes.added_files:
-                new_deployed.add(rel)
-        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
-        
-    save_state_registry(state_file, state_registry)
-
-    logger.info(f"✨ Package '{pkg}' deployed successfully.")
-
-    ops = FileOperations()
-    if package_changes is not None:
-        ops.added = [str(p) for p in package_changes.added_files]
-        ops.modified = [str(p) for p in package_changes.modified_files]
-        ops.deleted = [str(p) for p in package_changes.deleted_files]
-    else:
-        ops.added = [str(p) for p in current_files]
-
-    return PackageInstallResult(
-        package=pkg,
-        install_method=metadata.get_install_method(workspace_config),
-        target_directory=str(target_dir),
-        operations=ops,
-        is_first_time=is_first_time,
-        status="SUCCESS"
-    )
 
 
 def deploy_package(

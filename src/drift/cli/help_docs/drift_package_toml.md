@@ -59,3 +59,14 @@ post_update = "scripts/reload_service.sh"
 # Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
 post_render = "scripts/generate_checksums.sh"
 ```
+
+## 🌐 Default Package Environment Variables
+
+When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
+
+*   **`$drift_package_name`**: Name / directory name of the package.
+*   **`$drift_target_directory`**: Resolved destination target directory path on the host system.
+*   **`$drift_install_method`**: Resolved deployment method (`stow` or `copy`).
+
+*(Note: These variables are loaded into the environment after the package configuration is parsed, so they are available inside templates and hook scripts, but cannot be used inside `drift_package.toml` itself.)*
+

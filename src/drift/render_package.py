@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from .package_config import PackageConfig
 
 from .constants import DRIFT_IGNORE_FILE_NAME, INITIAL_ENV
-from .workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
+from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file
@@ -114,33 +114,31 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path, package_nam
         shutil.copy2(misspelled_path, dest_correct)
 
 
-def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> PackageRenderResult:
-    """Renders all templates and copies static files in a package folder into the render directory."""
-    package_name = package_dir.name
-
-    # Clear the target package render directory first to avoid sequence issues with template-rendered config files
-    clear_render_package_dir(workspace_config, package_name)
-
-    render_pkg_dir = workspace_config.render_path / package_name
-
-    pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
-    if not pkg_config:
-        return PackageRenderResult(
-            package=package_name,
-            status="SKIPPED"
-        )
+def render_package_files(
+    workspace_config: WorkspaceConfig,
+    package_dir: Path,
+    package_name: str,
+    pkg_config: PackageConfig,
+    render_pkg_dir: Path
+) -> PackageRenderResult:
+    """Renders package source files, copies static assets, and triggers lifecycle hooks."""
+    from .ignore import DriftIgnore
+    from .folder_diff import compare_folders
 
     # Trigger pre_source hook before reading / processing source files
-    trigger_pre_source_hook(workspace_config, package_name, pkg_config)
+    trigger_pre_source_hook(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        load_envs=False,
+        pkg_config=pkg_config
+    )
 
     handle_driftignore_file(package_dir, render_pkg_dir, package_name)
 
     # 3. Recursively process all other files inside the package directory
-    from .ignore import DriftIgnore
     # Proactively check for nested ignore files and trigger clean validation
     DriftIgnore.load_from_dir(package_dir)
 
-    from .folder_diff import compare_folders
     # Use compare_folders to walk every file in package_dir, resolving symlinks to directories
     diff = compare_folders(package_dir, render_pkg_dir, resolve_symlinks=True, src_only=True)
 
@@ -189,15 +187,38 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> Pack
     )
 
 
+def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> PackageRenderResult:
+    """Renders all templates and copies static files in a package folder into the render directory."""
+    package_name = package_dir.name
+
+    # Clear the target package render directory first to avoid sequence issues with template-rendered config files
+    clear_render_package_dir(workspace_config, package_name)
+
+    render_pkg_dir = workspace_config.render_path / package_name
+
+    pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
+    if not pkg_config:
+        return PackageRenderResult(
+            package=package_name,
+            status="SKIPPED"
+        )
+
+    with pkg_config.package_envs(workspace_config):
+        return render_package_files(
+            workspace_config=workspace_config,
+            package_dir=package_dir,
+            package_name=package_name,
+            pkg_config=pkg_config,
+            render_pkg_dir=render_pkg_dir
+        )
+
+
 def run_primitive_2_render_packages(
         workspace_config: WorkspaceConfig,
         target_pkgs: Optional[List[str]] = None) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    # Parse the secrets from secrets.env file and load them, keeping track of original values to restore them on exit/failure.
-    secrets = parse_secrets_env(workspace_config.drift_root)
-    saved_envs = load_env_settings(secrets, overwrite=True, env_keep=INITIAL_ENV)
     results: List[PackageRenderResult] = []
-    try:
+    with secrets_env_scope(workspace_config.drift_root):
         # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
         render_input_templates(
             engines=list(workspace_config.render_engine_configs.values()),
@@ -218,8 +239,6 @@ def run_primitive_2_render_packages(
             status="SUCCESS",
             packages=results
         )
-    finally:
-        unload_env_settings(saved_envs)
 
 
 def run_primitive_3_commit_render_repo(
