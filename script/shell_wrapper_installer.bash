@@ -2,7 +2,7 @@
 # =============================================================================
 # Drift CLI - Shell Wrapper Installer
 # =============================================================================
-# Installs a lightweight executable wrapper script for Drift into ~/.config/bin.
+# Installs a lightweight executable wrapper script for Drift into ~/.local/bin.
 # This allows running 'drift' globally without requiring virtual environments
 # or third-party package managers.
 # =============================================================================
@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # Default configuration
-DEFAULT_BIN_DIR="${HOME}/.config/bin"
+DEFAULT_BIN_DIR="${HOME}/.local/bin"
 TARGET_BIN_DIR="${DEFAULT_BIN_DIR}"
 FORCE=false
 
@@ -18,11 +18,11 @@ print_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Installs a shell wrapper for the 'drift' command into ~/.config/bin.
+Installs a shell wrapper for the 'drift' command into ~/.local/bin.
 
 Options:
   -f, --force         Overwrite any existing 'drift' executable or wrapper
-  -d, --dir <DIR>     Custom destination directory (default: ~/.config/bin)
+  -d, --dir <DIR>     Custom destination directory (default: ~/.local/bin)
   -h, --help          Display this help message and exit
 
 EOF

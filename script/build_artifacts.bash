@@ -18,7 +18,8 @@ DIST_DIR="${REPO_ROOT}/dist"
 RUN_TESTS=true
 BUILD_WHEEL=true
 BUILD_ZIPAPP=true
-CLEAN=false
+CLEAN_ONLY=false
+REBUILD=false
 
 print_usage() {
     cat << EOF
@@ -27,8 +28,9 @@ Usage: $(basename "$0") [OPTIONS]
 Builds Drift release artifacts (Wheel and Standalone Zipapp) and verifies them.
 
 Options:
+  --clean             Clean previous build artifacts (dist/, build/, *.egg-info) and exit
+  --rebuild           Clean previous build artifacts before building
   --no-test           Skip verification tests on built artifacts
-  --clean             Clean previous build artifacts before building
   --wheel-only        Build and verify Python wheel only
   --zipapp-only       Build and verify standalone Zipapp executable only
   -h, --help          Display this help message and exit
@@ -39,12 +41,16 @@ EOF
 # Parse options
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --no-test)
-            RUN_TESTS=false
+        --clean|clean)
+            CLEAN_ONLY=true
             shift
             ;;
-        --clean)
-            CLEAN=true
+        --rebuild)
+            REBUILD=true
+            shift
+            ;;
+        --no-test)
+            RUN_TESTS=false
             shift
             ;;
         --wheel-only)
@@ -72,9 +78,17 @@ done
 cd "${REPO_ROOT}"
 
 # 1. Clean previous builds if requested
-if [[ "${CLEAN}" = true ]]; then
+if [[ "${CLEAN_ONLY}" = true ]]; then
     echo "🧹 Cleaning previous build artifacts..."
-    rm -rf "${DIST_DIR}" "${REPO_ROOT}/build" "${REPO_ROOT}/drift.egg-info"
+    rm -rf "${DIST_DIR}" "${REPO_ROOT}/build" "${REPO_ROOT}"/*.egg-info "${REPO_ROOT}/src"/*.egg-info
+    find "${REPO_ROOT}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    echo "✨ Clean complete. All build artifacts and caches removed."
+    exit 0
+fi
+
+if [[ "${REBUILD}" = true ]]; then
+    echo "🧹 Cleaning previous build artifacts before building..."
+    rm -rf "${DIST_DIR}" "${REPO_ROOT}/build" "${REPO_ROOT}"/*.egg-info "${REPO_ROOT}/src"/*.egg-info
 fi
 
 mkdir -p "${DIST_DIR}"

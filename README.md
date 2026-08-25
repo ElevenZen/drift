@@ -21,6 +21,76 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 ---
 
+## 📦 Installation & Packaging
+
+Drift requires **Python 3.8+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support). Choose the method that best fits your environment:
+
+### 1. ⚡ Quick Shell Wrapper Installer (*Recommended for restricted machines without `pip` access*)
+If you are on a machine without `pip`/`pipx` access, but have cloned or downloaded the Drift source repository, use the built-in installer to create a standalone executable wrapper in `~/.local/bin/drift`:
+```bash
+./script/shell_wrapper_installer.bash
+```
+*   Pass `--force` (`-f`) to overwrite an existing wrapper.
+*   Pass `--dir <path>` (`-d`) to install into a custom directory.
+
+### 2. 🐍 Python Package Managers (`pipx`, `uv`, or `pip`)
+
+#### A. Isolated Global CLI via `pipx` or `uv tool` (*Recommended*)
+Install Drift into an isolated environment and place it directly into your `$PATH`:
+```bash
+# Core standard-library mode (zero external dependencies)
+pipx install git+https://github.com/<your-username>/drift.git
+
+# Or with uv:
+uv tool install git+https://github.com/<your-username>/drift.git
+
+# With enhanced Rich console UI:
+pipx install "git+https://github.com/<your-username>/drift.git#egg=drift[rich]"
+```
+
+#### B. Standard `pip install`
+Install locally or from a Git repository via `pip`:
+```bash
+pip install --user git+https://github.com/<your-username>/drift.git
+
+# Or from a cloned local repository:
+pip install --user .
+```
+
+### 3. 📦 Standalone Executable (`zipapp`) & Release Artifacts
+Because Drift is self-contained with pure standard library support, it can be packaged into a single portable binary file with Python's built-in `zipapp`:
+
+#### Automated Build & Verification Pipeline
+Use the built-in pipeline script to build both the standalone Zipapp and Python Wheel (`.whl`), with automated isolated verification tests:
+```bash
+# Build all release artifacts (Wheel + Zipapp) and execute verification tests
+./script/build_artifacts.bash
+
+# Clean previous build artifacts and exit
+./script/build_artifacts.bash --clean
+
+# Clean first, then rebuild all artifacts
+./script/build_artifacts.bash --rebuild
+
+# Or build standalone zipapp only:
+./script/build_artifacts.bash --zipapp-only
+```
+Generated artifacts are placed in `dist/`:
+*   `dist/drift`: Standalone zero-dependency executable binary (ready to copy to `~/.local/bin` or remote servers).
+*   `dist/drift-0.1.0-py3-none-any.whl`: Standard Python distribution wheel.
+
+#### Manual Zipapp Build
+```bash
+# Build standalone executable manually
+python3 -m zipapp src -m "drift.cli:main" -o drift -p "/usr/bin/env python3"
+chmod +x drift
+
+# Move to your PATH or copy to remote servers
+mv drift ~/.local/bin/
+```
+
+---
+
 ## ✨ Why Drift? (The Killer Selling Points)
 
 ### 🛡️ 1. Absolute Sandbox Isolation (Dual-Git Architecture)
