@@ -398,6 +398,26 @@ def run_incremental_file_delivery(
             )
 
 
+def sync_deployed_files_manifest(
+    state_registry: StateRegistry,
+    pkg: str,
+    current_files: List[Path],
+    full_redeploy: bool,
+    package_changes: Optional[PackageStageChanges] = None
+) -> None:
+    """Updates the deployed_files manifest list for a package in the state registry."""
+    if full_redeploy:
+        state_registry.set_package_deployed_files(pkg, current_files)
+    else:
+        new_deployed = set(state_registry.get_package_deployed_files(pkg))
+        if package_changes:
+            for rel in package_changes.deleted_files:
+                new_deployed.discard(rel)
+            for rel in package_changes.added_files:
+                new_deployed.add(rel)
+        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
+
+
 def update_state_registry_post_deployment(
     state_registry: StateRegistry,
     state_file: Path,
@@ -413,17 +433,13 @@ def update_state_registry_post_deployment(
         pkg, "installed", last_deployed=now_str, install_method=install_method
     )
 
-    # Save the updated list of deployed files to state.toml
-    if full_redeploy:
-        state_registry.set_package_deployed_files(pkg, current_files)
-    else:
-        new_deployed = set(state_registry.get_package_deployed_files(pkg))
-        if package_changes:
-            for rel in package_changes.deleted_files:
-                new_deployed.discard(rel)
-            for rel in package_changes.added_files:
-                new_deployed.add(rel)
-        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
+    sync_deployed_files_manifest(
+        state_registry=state_registry,
+        pkg=pkg,
+        current_files=current_files,
+        full_redeploy=full_redeploy,
+        package_changes=package_changes
+    )
 
     save_state_registry(state_file, state_registry)
 
@@ -463,7 +479,7 @@ def execute_package_deployment(
     # Calculate current desired files list
     # Actually, this filter process is already done in stage_repo phase.
     current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
-        
+
     if full_redeploy:
         reconcile_orphaned_files(
             pkg=pkg,
@@ -474,6 +490,17 @@ def execute_package_deployment(
             metadata=metadata,
             resolve_symlinks=resolve_symlinks
         )
+
+    # Persist the full target file manifest to state.toml before hooks & physical delivery
+    # so that midway crashes have an authoritative list of files to restore or uninstall
+    sync_deployed_files_manifest(
+        state_registry=state_registry,
+        pkg=pkg,
+        current_files=current_files,
+        full_redeploy=full_redeploy,
+        package_changes=package_changes
+    )
+    save_state_registry(state_file, state_registry)
     
     # 3. Lifecycle Hooks & State registry update
     if is_first_time:
@@ -600,10 +627,6 @@ def deploy_package_impl(
     pkg_state = state_registry.packages.get(pkg)
     is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
     
-    # Set package state to "deploying" before actual deployment
-    state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
-    save_state_registry(state_file, state_registry)
-    
     install_pkg_dir = install_base / pkg
     if not install_pkg_dir.is_dir():
         logger.warning(f"⚠️  Package installation directory '{install_pkg_dir}' does not exist. Skipping.")
@@ -614,7 +637,11 @@ def deploy_package_impl(
             status="SKIPPED",
             error=f"Package installation directory '{install_pkg_dir}' does not exist."
         )
-        
+    
+    # Set package state to "deploying" before actual deployment
+    state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
+    save_state_registry(state_file, state_registry)
+    
     logger.info(f"🚀 Deploying package: {pkg}")
     
     with metadata.package_envs(workspace_config):

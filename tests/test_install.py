@@ -1139,6 +1139,72 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_name), "installed")
 
+    def test_skipped_package_not_set_to_deploying_state(self) -> None:
+        """Verifies that skipped packages (enable_install=False or missing dir) are not set to 'deploying' in state.toml."""
+        from drift.install_repo import deploy_package_impl
+        from drift.state_registry import load_state_registry
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+
+        # 1. Test package with enable_install = false
+        pkg_disabled = "pkg_disabled"
+        pkg_dir = self.install_dir / pkg_disabled
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_disabled}"
+        install_method = "copy"
+        enable_install = false
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        res_disabled = deploy_package_impl(
+            workspace_config=self.workspace_config,
+            pkg=pkg_disabled,
+            state_registry=registry,
+            state_file=state_file,
+            resolve_symlinks=True,
+            force=False
+        )
+        self.assertEqual(res_disabled.status, "SKIPPED")
+        # Check that state.toml did not transition this package into 'deploying'
+        reloaded = load_state_registry(state_file)
+        self.assertNotEqual(reloaded.get_package_state(pkg_disabled), "deploying")
+
+        # 2. Test package with missing install directory (corrupted stage)
+        pkg_missing = "pkg_missing_dir"
+        # Setup drift_package.toml in source only so load_config_for_install doesn't find it in install/
+        # Or place drift_package.toml in a file instead of directory
+        # If install/pkg_missing_dir doesn't exist, load_config_for_install raises error before deploy_package_impl
+        # If install/pkg_missing_dir has a config file but is not a dir for files:
+        pkg_missing_dir = self.install_dir / pkg_missing
+        pkg_missing_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_missing_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_missing}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        # Remove directory right after loading config or test missing install_pkg_dir
+        shutil.rmtree(pkg_missing_dir)
+
+        # Mock config loading to return metadata for missing dir
+        from drift.package_config import PackageConfig
+        metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=str(self.system_target_dir))
+        with unittest.mock.patch("drift.install_repo.load_config_for_install", return_value=metadata):
+            res_missing = deploy_package_impl(
+                workspace_config=self.workspace_config,
+                pkg=pkg_missing,
+                state_registry=registry,
+                state_file=state_file,
+                resolve_symlinks=True,
+                force=False
+            )
+            self.assertEqual(res_missing.status, "SKIPPED")
+            reloaded2 = load_state_registry(state_file)
+            self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "deploying")
+
 
 if __name__ == "__main__":
     unittest.main()

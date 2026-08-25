@@ -124,15 +124,150 @@ class TestRollback(unittest.TestCase):
         reloaded_registry = load_state_registry(state_file)
         self.assertEqual(reloaded_registry.get_package_state("pkg_a"), "installed")
 
-    def test_rollback_aborts_without_force_if_no_midway_failure(self) -> None:
-        # Attempt to run rollback under healthy conditions (pkg_a state is "installed")
-        # Should raise a RuntimeError unless force=True
-        with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
-        self.assertIn("The following packages are not in a failed midway/conflict state", str(ctx.exception))
+    def test_rollback_first_time_package_uninstalls_and_restores_backups(self) -> None:
+        """Verifies that a first-time package failing midway is cleanly uninstalled and backups restored on rollback."""
+        pkg_first = "pkg_first_time"
 
-        # With force=True, it should proceed and succeed
-        run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=True)
+        # 1. Setup in src/
+        pkg_src = self.source_dir / pkg_first
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        with open(pkg_src / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_first}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+
+        # 2. Setup in install/ (uncommitted, first-time stage)
+        pkg_install = self.install_dir / pkg_first
+        pkg_install.mkdir(parents=True, exist_ok=True)
+        with open(pkg_install / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_first}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """)
+        with open(pkg_install / "app_config.json", "w", encoding="utf-8") as f:
+            f.write('{"installed": true}')
+
+        # 3. Simulate state.toml having recorded the package as "deploying" with deployed_files
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg_first, "deploying", install_method="copy")
+        registry.set_package_deployed_files(pkg_first, [Path("app_config.json")])
+        save_state_registry(state_file, registry)
+
+        # 4. Simulate target host having the partially delivered file
+        (self.system_target_dir / "app_config.json").write_text('{"installed": true}', encoding="utf-8")
+
+        # 5. Simulate an existing host file that was backed up during collision guard
+        backup_overwritten = self.backup_dir / pkg_first / "overwritten"
+        backup_overwritten.mkdir(parents=True, exist_ok=True)
+        (backup_overwritten / "existing_host_file.txt").write_text("original user content", encoding="utf-8")
+
+        # Enable in workspace config
+        workspace_cfg = WorkspaceConfig(
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={
+                pkg_first: True,
+            },
+            packages_enable_default=False,
+            drift_root_path=self.drift_root,
+            default_target_directory=self.system_target_dir
+        )
+
+        # Execute rollback on first-time package
+        restored = run_primitive_8_rollback_recovery(workspace_cfg, [pkg_first], force=False)
+        self.assertIn(pkg_first, restored)
+
+        # Verify:
+        # 1. Newly delivered file on host target is removed
+        self.assertFalse((self.system_target_dir / "app_config.json").exists())
+
+        # 2. Original backed up file is restored to the host target
+        self.assertTrue((self.system_target_dir / "existing_host_file.txt").exists())
+        self.assertEqual(
+            (self.system_target_dir / "existing_host_file.txt").read_text(encoding="utf-8"),
+            "original user content"
+        )
+
+        # 3. install/pkg_first directory is removed
+        self.assertFalse(pkg_install.exists())
+
+        # 4. state.toml does not contain pkg_first
+        reloaded_registry = load_state_registry(state_file)
+        self.assertNotIn(pkg_first, reloaded_registry.packages)
+
+    def test_rollback_mixed_first_time_and_existing_packages(self) -> None:
+        """Verifies rollback correctly redeploys existing packages from HEAD while uninstalling first-time packages."""
+        pkg_first = "pkg_brand_new"
+
+        # Setup first-time package in src & install
+        pkg_src = self.source_dir / pkg_first
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_first}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        pkg_install = self.install_dir / pkg_first
+        pkg_install.mkdir(parents=True, exist_ok=True)
+        (pkg_install / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_first}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_install / "brand_new.txt").write_text("brand new", encoding="utf-8")
+
+        # Dirty existing pkg_a
+        (self.pkg_a_install / "file.txt").write_text("corrupted pkg_a", encoding="utf-8")
+        (self.system_target_dir / "file.txt").write_text("corrupted pkg_a on host", encoding="utf-8")
+
+        # Put new file on host
+        (self.system_target_dir / "brand_new.txt").write_text("brand new on host", encoding="utf-8")
+
+        # Set both packages to "deploying"
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "deploying")
+        registry.set_package_state(pkg_first, "deploying", install_method="copy")
+        registry.set_package_deployed_files(pkg_first, [Path("brand_new.txt")])
+        save_state_registry(state_file, registry)
+
+        workspace_cfg = WorkspaceConfig(
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={
+                "pkg_a": True,
+                pkg_first: True,
+            },
+            packages_enable_default=False,
+            drift_root_path=self.drift_root,
+            default_target_directory=self.system_target_dir
+        )
+
+        restored = run_primitive_8_rollback_recovery(workspace_cfg, ["pkg_a", pkg_first], force=False)
+        self.assertEqual(set(restored), {"pkg_a", pkg_first})
+
+        # Verify pkg_a is restored to clean committed state ("clean content")
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean content")
+        reloaded = load_state_registry(state_file)
+        self.assertEqual(reloaded.get_package_state("pkg_a"), "installed")
+
+        # Verify pkg_first is uninstalled
+        self.assertFalse((self.system_target_dir / "brand_new.txt").exists())
+        self.assertFalse(pkg_install.exists())
+        self.assertNotIn(pkg_first, reloaded.packages)
 
 
 if __name__ == "__main__":

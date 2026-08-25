@@ -200,11 +200,18 @@ target_directory = "{self.system_target_dir}"
         # Unconfigure user.name inside render repo temporarily
         subprocess.run(["git", "config", "--unset", "user.name"], cwd=str(self.render_dir), check=True)
         
-        # Deploy should fail on pre-flight checks
-        with self.assertRaises(RuntimeError) as context:
-            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
-        
-        self.assertIn("Git configuration error: 'user.name' is not configured", str(context.exception))
+        env_override = {
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_AUTHOR_NAME": "",
+            "GIT_COMMITTER_NAME": "",
+        }
+        with patch.dict(os.environ, env_override, clear=False):
+            # Deploy should fail on pre-flight checks
+            with self.assertRaises(RuntimeError) as context:
+                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+            
+            self.assertIn("Git configuration error: 'user.name' is not configured", str(context.exception))
 
 
 if __name__ == "__main__":
