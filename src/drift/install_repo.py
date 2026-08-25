@@ -18,10 +18,12 @@ from .folder_diff import compare_folders
 from .stage_repo import PackageStageChanges
 from .file_utils import (
         resolve_system_target,
+        translate_dot_prefixes_reverse,
         copy_file_contents_with_sudo,
         create_symlink_manually_with_sudo,
         get_relative_path,
         get_symlinked_parent,
+        find_links_pointing_into,
         ensure_directory_writable,
         ensure_dir_exists_with_sudo,
         remove_file_or_dir_with_sudo,
@@ -38,14 +40,15 @@ logger = logging.getLogger(__name__)
 def get_stow_version() -> Optional[str]:
     """Retrieves the installed GNU Stow version string if available."""
     try:
-        res = run_command(["stow", "--version"], text=True)
-        # stow (GNU Stow) version 2.3.1 or 2.4.1
-        m = re.search(r"(\d+\.\d+(?:\.\d+)?)", res.stdout)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return None
+        res = run_command("stow --version", text=True)
+        first_line = res.stdout.splitlines()[0]
+        match = re.search(r"(\d+(\.\d+)+)", first_line)
+        if match:
+            return match.group(1)
+        return first_line.strip()
+    except Exception as e:
+        logger.debug(f"GNU Stow is not found or failed to return version: {e}")
+        return None
 
 
 def is_stow_version_sufficient(version: str) -> bool:
@@ -73,7 +76,7 @@ from .lifecycle_hooks import trigger_package_lifecycle_hook
 
 def handle_collision_error(
     pkg: str,
-    rel_path: Path,
+    rel_path: Union[Path, str],
     system_target: Path,
     workspace_config: WorkspaceConfig,
     sudo: bool,
@@ -90,6 +93,59 @@ def handle_collision_error(
     
     # After backup, remove the colliding item to clear the way
     remove_file_or_dir_with_sudo(system_target, sudo)
+
+
+def handle_internal_symlink_conflicts(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    install_pkg_dir: Path,
+    metadata: PackageConfig,
+    ignore_handler: DriftIgnore,
+    target_dir: Path,
+    resolve_symlinks: bool,
+    processed_paths: set
+) -> None:
+    """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
+    links = find_links_pointing_into(target_dir, workspace_config.drift_root, follow_symlinks=False)
+    for link in links:
+        try:
+            rel_in_target = link.relative_to(target_dir)
+        except ValueError:
+            continue
+
+        repo_rel = translate_dot_prefixes_reverse(rel_in_target)
+        repo_path = install_pkg_dir / repo_rel
+
+        # Check if the relative path matches a non-ignored file/dir in install_pkg_dir
+        if not (repo_path.exists() or repo_path.is_symlink()):
+            continue
+        if ignore_handler.match_path(repo_rel):
+            continue
+
+        # If install method is stow and link points into our pkg install dir, it's valid for this package
+        if metadata.get_install_method(workspace_config) == "stow":
+            try:
+                link_target = (link.parent / os.readlink(link)).resolve()
+                if is_relative_to(link_target, install_pkg_dir.resolve()):
+                    continue
+            except Exception:
+                pass
+
+        # Otherwise, it is a link conflict and must be backed up & removed
+        processed_paths.add(repo_rel)
+        handle_collision_error(
+            pkg=pkg,
+            rel_path=repo_rel,
+            system_target=link,
+            workspace_config=workspace_config,
+            sudo=metadata.sudo,
+            reason="Internal symlink parent error",
+            resolve_symlinks=resolve_symlinks
+        )
+
+        # If repo expects a directory here, recreate it as physical to avoid cycles
+        if repo_path.is_dir() and not repo_path.is_symlink():
+            ensure_dir_exists_with_sudo(link, metadata.sudo)
 
 
 def run_collision_guard(
@@ -115,7 +171,21 @@ def run_collision_guard(
             f"Resolving this automatically is unsafe. Please resolve manually."
         )
 
-    # 1. Recursive Audit using FolderDiff
+    processed_paths = set()
+
+    # 1. Check and resolve internal symlink conflicts inside target_dir
+    handle_internal_symlink_conflicts(
+        workspace_config=workspace_config,
+        pkg=pkg,
+        install_pkg_dir=install_pkg_dir,
+        metadata=metadata,
+        ignore_handler=ignore_handler,
+        target_dir=target_dir,
+        resolve_symlinks=resolve_symlinks,
+        processed_paths=processed_paths
+    )
+
+    # 2. Recursive Audit using FolderDiff
     diff = compare_folders(
         src_dir=install_pkg_dir,
         dst_dir=target_dir,
@@ -123,31 +193,7 @@ def run_collision_guard(
         resolve_symlinks=resolve_symlinks,
         translate_mode="forward",
         src_only=True,
-        drift_root=workspace_config.drift_root
     )
-
-    processed_paths = set()
-
-    # 2. Handle Internal Symlinks INSIDE target_dir
-    for rel in diff.internal_symlinks:
-        system_target = resolve_system_target(rel, target_dir)
-        processed_paths.add(rel)
-        
-        # Internal symlinks are repo pollution; we backup and remove them to recover
-        handle_collision_error(
-            pkg=pkg,
-            rel_path=rel,
-            system_target=system_target,
-            workspace_config=workspace_config,
-            sudo=metadata.sudo,
-            reason="Internal symlink parent error",
-            resolve_symlinks=resolve_symlinks
-        )
-        
-        # If the repo expects a directory here, recreate it as physical to avoid cycles
-        repo_path = install_pkg_dir / rel
-        if repo_path.is_dir() and not repo_path.is_symlink():
-             ensure_dir_exists_with_sudo(system_target, metadata.sudo)
 
     # 3. Handle Deleted items (system files blocking repo dirs or now-ignored files)
     for rel in diff.deleted:

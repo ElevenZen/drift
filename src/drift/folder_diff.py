@@ -13,8 +13,6 @@ class FolderDiff:
     modified: List[Path] = field(default_factory=list)
     deleted: List[Path] = field(default_factory=list)
     matches: List[Path] = field(default_factory=list)
-    # internal_symlinks: paths in dst that are symlinks pointing into drift_root (for safety detection)
-    internal_symlinks: List[Path] = field(default_factory=list)
 
 def compare_folders(
     src_dir: Path,
@@ -22,8 +20,7 @@ def compare_folders(
     ignore_handler: Optional[DriftIgnore] = None,
     resolve_symlinks: bool = True,
     translate_mode: Optional[str] = None,
-    src_only: bool = False,
-    drift_root: Optional[Path] = None
+    src_only: bool = False
 ) -> FolderDiff:
     """
     Recursively compares src_dir against dst_dir. 
@@ -40,8 +37,6 @@ def compare_folders(
       
     src_only: If True, only paths that exist in src_dir are checked in dst_dir. 
               Loop 2 (dst items not in src) is skipped.
-              
-    drift_root: If provided, dst symlinks pointing into drift_root are tracked in internal_symlinks.
     """
     from .file_utils import (
         file_contents_differ, 
@@ -51,7 +46,6 @@ def compare_folders(
     )
 
     diff = FolderDiff()
-    abs_drift_root = drift_root.resolve() if drift_root else None
 
     def _translate(rel: Path) -> Path:
         if translate_mode == "forward":
@@ -124,28 +118,10 @@ def compare_folders(
             repo_rel = translate_dot_prefixes_reverse(rel)
             
         is_src_ignored = ignore_handler and ignore_handler.match_path(repo_rel)
-
         src_exists = p_src.exists() or p_src.is_symlink()
         dst_exists = p_dst.exists() or p_dst.is_symlink()
 
-        # Safety Check: Internal Symlink detection
-        if dst_exists and p_dst.is_symlink() and abs_drift_root:
-            try:
-                link_target = (p_dst.parent / os.readlink(p_dst)).resolve()
-                if is_relative_to(link_target, abs_drift_root):
-                    # It points into drift_root. 
-                    # If it's a correct stow-link (points to p_src), it's fine.
-                    if not (p_src.exists() and link_target == p_src.resolve()):
-                        diff.internal_symlinks.append(rel)
-            except Exception:
-                pass
-
-        if is_src_ignored:
-            if dst_exists:
-                add_children_as_deleted(p_dst, rel)
-            return
-
-        if not src_exists:
+        if not src_exists or is_src_ignored:
             if dst_exists:
                 add_children_as_deleted(p_dst, rel)
             return

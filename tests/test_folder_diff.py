@@ -32,7 +32,6 @@ class TestFolderDiffBasic(unittest.TestCase):
         self.assertEqual(diff.modified, [])
         self.assertEqual(diff.deleted, [])
         self.assertEqual(diff.matches, [])
-        self.assertEqual(diff.internal_symlinks, [])
 
     def test_identical_files_in_root_and_subdirs(self) -> None:
         (self.src / "file1.txt").write_text("hello", encoding="utf-8")
@@ -465,59 +464,6 @@ class TestFolderDiffSymlinks(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
         self.assertEqual(diff.modified, [Path("item.txt")])
-
-
-class TestFolderDiffInternalSymlinksSafety(unittest.TestCase):
-    """Tests for drift_root safety detection and internal_symlinks tracking."""
-
-    def setUp(self) -> None:
-        set_test_mode(True)
-        self.temp_dir = tempfile.TemporaryDirectory()
-        self.base = Path(self.temp_dir.name).resolve()
-        self.drift_root = self.base / "drift_workspace"
-        self.src = self.drift_root / "install" / "pkg_a"
-        self.dst = self.base / "system_target"
-        self.src.mkdir(parents=True, exist_ok=True)
-        self.dst.mkdir(parents=True, exist_ok=True)
-
-    def tearDown(self) -> None:
-        self.temp_dir.cleanup()
-
-    def test_valid_stow_link_pointing_to_src_is_not_flagged(self) -> None:
-        src_file = self.src / "file.txt"
-        src_file.write_text("content", encoding="utf-8")
-
-        # Valid stow symlink in system target pointing directly to src_file
-        os.symlink(src_file, self.dst / "file.txt")
-
-        diff = compare_folders(self.src, self.dst, drift_root=self.drift_root)
-        self.assertEqual(diff.internal_symlinks, [])
-
-    def test_rogue_internal_symlink_pointing_into_drift_root_is_flagged(self) -> None:
-        src_file = self.src / "file.txt"
-        src_file.write_text("content", encoding="utf-8")
-
-        other_internal_file = self.drift_root / "config" / "drift.toml"
-        other_internal_file.parent.mkdir(parents=True, exist_ok=True)
-        other_internal_file.write_text("config", encoding="utf-8")
-
-        # Rogue symlink in system target pointing to a different file in drift_root
-        os.symlink(other_internal_file, self.dst / "file.txt")
-
-        diff = compare_folders(self.src, self.dst, drift_root=self.drift_root)
-        self.assertEqual(diff.internal_symlinks, [Path("file.txt")])
-
-    def test_external_symlink_is_not_flagged(self) -> None:
-        src_file = self.src / "file.txt"
-        src_file.write_text("content", encoding="utf-8")
-
-        external_target = self.base / "outside_target.txt"
-        external_target.write_text("external", encoding="utf-8")
-
-        os.symlink(external_target, self.dst / "file.txt")
-
-        diff = compare_folders(self.src, self.dst, drift_root=self.drift_root)
-        self.assertEqual(diff.internal_symlinks, [])
 
 
 class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):

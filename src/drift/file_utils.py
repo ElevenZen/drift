@@ -164,6 +164,68 @@ def get_symlinked_parent(file_path: Path, link_target_range: Path) -> Optional[P
     return None
 
 
+def find_links_pointing_into(
+    search_path: Path,
+    target_dir: Path,
+    follow_symlinks: bool = False
+) -> List[Path]:
+    """
+    Recursively scans search_path for symlinks whose resolved targets lie within target_dir.
+
+    Args:
+        search_path: The file or directory path to scan.
+        target_dir: The target directory boundary to check if symlinks point inside.
+        follow_symlinks: If True, recursively traverses into directory symlinks (avoiding cycles).
+
+    Returns:
+        List of Path objects (symlinks) whose resolved target is inside target_dir.
+    """
+    results: List[Path] = []
+    abs_target = target_dir.resolve()
+    visited_dirs = set()
+
+    def _scan(current: Path):
+        if not current.exists() and not current.is_symlink():
+            return
+
+        if current.is_symlink():
+            try:
+                link_target = (current.parent / os.readlink(current)).resolve()
+                if is_relative_to(link_target, abs_target):
+                    results.append(current)
+            except Exception:
+                pass
+
+            if follow_symlinks:
+                try:
+                    real_path = current.resolve()
+                    if real_path.is_dir():
+                        real_stat = real_path.stat()
+                        dir_id = (real_stat.st_dev, real_stat.st_ino)
+                        if dir_id not in visited_dirs:
+                            visited_dirs.add(dir_id)
+                            for child in real_path.iterdir():
+                                _scan(child)
+                except Exception:
+                    pass
+            return
+
+        if current.is_dir():
+            try:
+                real_stat = current.stat()
+                dir_id = (real_stat.st_dev, real_stat.st_ino)
+                if dir_id in visited_dirs:
+                    return
+                visited_dirs.add(dir_id)
+                for child in current.iterdir():
+                    _scan(child)
+            except Exception:
+                pass
+
+    _scan(search_path)
+    return results
+
+
 def backup_and_delete_one_file(
     file_path: Path,
     backup_dest: Path,

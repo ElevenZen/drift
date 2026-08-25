@@ -1197,7 +1197,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Mock config loading to return metadata for missing dir
         from drift.package_config import PackageConfig
-        metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=str(self.system_target_dir))
+        metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=self.system_target_dir)
         with unittest.mock.patch("drift.install_repo.load_config_for_install", return_value=metadata):
             res_missing = deploy_package_impl(
                 workspace_config=self.workspace_config,
@@ -1259,6 +1259,136 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / "pre_hook.sh").exists())
         self.assertFalse((self.system_target_dir / DRIFT_IGNORE_FILE_NAME).exists())
         self.assertFalse((self.system_target_dir / PACKAGE_CONFIG_FILE_NAME).exists())
+
+    def test_collision_guard_ignored_file_matching_drift_root_symlink_not_collided(self) -> None:
+        """Verifies collision guard behavior:
+        1. Valid stow link pointing to this package's file is NOT removed.
+        2. Ignored file on system is cleaned up (deleted).
+        3. Rogue internal symlink pointing to another drift file is backed up and replaced.
+        """
+        pkg = "pkg_symlink_guard"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Package config
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        # 2. .drift_ignore and files
+        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook.sh\n", encoding="utf-8")
+        (pkg_install_dir / ".stow-local-ignore").write_text("ignored_hook.sh\n.drift_ignore\ndrift_package.toml\n", encoding="utf-8")
+        (pkg_install_dir / "ignored_hook.sh").write_text("#!/bin/sh\n", encoding="utf-8")
+        (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
+        (pkg_install_dir / "rogue_link.txt").write_text("rogue target content", encoding="utf-8")
+
+        drift_internal_target = self.drift_root / "config" / "drift.toml"
+        drift_internal_target.parent.mkdir(parents=True, exist_ok=True)
+        drift_internal_target.write_text("[workspace]\n", encoding="utf-8")
+
+        # 3. Setup system target directory:
+        # A. valid_file.txt already points to pkg_install_dir / valid_file.txt (valid stow link)
+        system_valid = self.system_target_dir / "valid_file.txt"
+        system_valid.symlink_to(pkg_install_dir / "valid_file.txt")
+
+        # B. ignored_hook.sh on system is an obsolete file
+        system_ignored = self.system_target_dir / "ignored_hook.sh"
+        system_ignored.symlink_to(drift_internal_target)
+
+        # C. rogue_link.txt points to wrong internal drift file
+        system_rogue = self.system_target_dir / "rogue_link.txt"
+        system_rogue.symlink_to(drift_internal_target)
+
+        # 4. Execute install deployment
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 5. Assertions:
+        # A. Valid stow link is preserved and not backed up as overwritten
+        self.assertTrue(system_valid.is_symlink())
+        self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_file.txt").resolve())
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / "valid_file.txt").exists())
+
+        # B. Ignored file on system is cleaned up (removed) and backed up to deleted_files
+        self.assertFalse(system_ignored.exists())
+        self.assertTrue((self.backup_dir / pkg / "deleted_files" / "ignored_hook.sh").exists())
+
+        # C. Rogue link was backed up and replaced with the correct stow link
+        self.assertTrue(system_rogue.is_symlink())
+        self.assertEqual(system_rogue.resolve(), (pkg_install_dir / "rogue_link.txt").resolve())
+        self.assertTrue((self.backup_dir / pkg / "overwritten" / "rogue_link.txt").exists())
+
+    def test_stow_link_pointing_to_different_file_in_same_pkg_updated_full_deploy(self) -> None:
+        """Verifies that under full deployment, if a host symlink points to a different file in the same package's install dir,
+        it is recognized as valid for this package and updated to the desired target file upon deployment.
+        """
+        pkg = "pkg_switch_target_full"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "file_a.txt").write_text("content A", encoding="utf-8")
+        (pkg_install_dir / "file_b.txt").write_text("content B", encoding="utf-8")
+
+        # Setup: file_a.txt on system currently points to file_b.txt in the same package install dir
+        system_file_a = self.system_target_dir / "file_a.txt"
+        system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
+
+        # Execute full deployment
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert:
+        # file_a.txt now points to file_a.txt in pkg_install_dir
+        self.assertTrue(system_file_a.is_symlink())
+        self.assertEqual(system_file_a.resolve(), (pkg_install_dir / "file_a.txt").resolve())
+
+        # file_b.txt is also properly deployed
+        system_file_b = self.system_target_dir / "file_b.txt"
+        self.assertTrue(system_file_b.is_symlink())
+        self.assertEqual(system_file_b.resolve(), (pkg_install_dir / "file_b.txt").resolve())
+
+    def test_stow_link_pointing_to_different_file_in_same_pkg_updated_partial_deploy(self) -> None:
+        """Verifies that under partial/incremental deployment (via PackageStageChanges),
+        a host symlink pointing to a different file in the same package is safely updated to the desired target file.
+        """
+        pkg = "pkg_switch_target_partial"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "file_a.txt").write_text("content A", encoding="utf-8")
+        (pkg_install_dir / "file_b.txt").write_text("content B", encoding="utf-8")
+
+        # Setup: file_a.txt on system currently points to file_b.txt in the same package install dir
+        system_file_a = self.system_target_dir / "file_a.txt"
+        system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
+
+        # Execute partial deployment modifying file_a.txt
+        from drift.stage_repo import PackageStageChanges
+        changes = [PackageStageChanges(package_name=pkg, modified_files=[Path("file_a.txt")])]
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=changes)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert:
+        # file_a.txt now points to file_a.txt in pkg_install_dir
+        self.assertTrue(system_file_a.is_symlink())
+        self.assertEqual(system_file_a.resolve(), (pkg_install_dir / "file_a.txt").resolve())
 
 
 if __name__ == "__main__":

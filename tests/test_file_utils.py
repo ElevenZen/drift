@@ -16,6 +16,7 @@ from drift.file_utils import (
     file_contents_differ,
     rmdir_parents,
     get_symlinked_parent,
+    find_links_pointing_into,
     backup_and_delete_one_file,
     copy_or_move_file_or_dir_external,
     ensure_directory_writable,
@@ -405,6 +406,46 @@ class TestFileUtils(unittest.TestCase):
         # It should copy the broken link itself
         self.assertTrue(dest_link.is_symlink())
         self.assertEqual(os.readlink(dest_link), "nested_non_existent")
+
+    def test_find_links_pointing_into(self) -> None:
+        """Verifies find_links_pointing_into finds symlinks whose targets lie inside target_dir."""
+        target_root = self.root / "drift_target"
+        target_root.mkdir()
+        drift_file = target_root / "internal.txt"
+        drift_file.write_text("internal", encoding="utf-8")
+
+        outside_dir = self.root / "outside"
+        outside_dir.mkdir()
+        outside_file = outside_dir / "external.txt"
+        outside_file.write_text("external", encoding="utf-8")
+
+        search_dir = self.root / "search_area"
+        search_dir.mkdir()
+
+        # 1. Symlink pointing into target_root
+        link_inside = search_dir / "link_inside.txt"
+        link_inside.symlink_to(drift_file)
+
+        # 2. Symlink pointing outside
+        link_outside = search_dir / "link_outside.txt"
+        link_outside.symlink_to(outside_file)
+
+        # 3. Regular file
+        normal_file = search_dir / "normal.txt"
+        normal_file.write_text("normal", encoding="utf-8")
+
+        # 4. Nested directory with symlink inside
+        nested = search_dir / "sub" / "deep"
+        nested.mkdir(parents=True)
+        nested_link_inside = nested / "deep_link.txt"
+        nested_link_inside.symlink_to(drift_file)
+
+        found = find_links_pointing_into(search_dir, target_root)
+        self.assertEqual(set(found), {link_inside, nested_link_inside})
+
+        # Test single file search_path
+        self.assertEqual(find_links_pointing_into(link_inside, target_root), [link_inside])
+        self.assertEqual(find_links_pointing_into(link_outside, target_root), [])
 
 
 if __name__ == "__main__":
