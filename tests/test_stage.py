@@ -236,12 +236,12 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes[0].modified_files, [])
         self.assertEqual(changes[0].deleted_files, [])
 
-        # Check that only valid.txt and ignore-related files exist in install/
+        # Check that all physical files (including ignored ones like hooks/logs) exist in install/
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", PACKAGE_CONFIG_FILE_NAME)))
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", "valid.txt")))
-        self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_file.txt")))
-        self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "error.log")))
-        self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_dir")))
+        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_file.txt")))
+        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "error.log")))
+        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_dir", "nested.txt")))
 
         # Check .drift_ignore was copied to install
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_IGNORE_FILE_NAME)))
@@ -313,10 +313,10 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes[0].package_name, "pkg_misspelled")
         self.assertEqual(changes[0].added_files, [Path("valid.txt")])
 
-        # Check that install/pkg_misspelled has .drift_ignore and .stow-local-ignore file
+        # Check that install/pkg_misspelled has .drift_ignore, .stow-local-ignore, and all physical files (including ignored)
         install_pkg_misspelled = os.path.join(self.install_dir, "pkg_misspelled")
         self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, "valid.txt")))
-        self.assertFalse(os.path.exists(os.path.join(install_pkg_misspelled, "misspelled_ignored.txt")))
+        self.assertTrue(os.path.exists(os.path.join(install_pkg_misspelled, "misspelled_ignored.txt")))
         self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, DRIFT_IGNORE_FILE_NAME)))
         
         stow_ignore_path = os.path.join(install_pkg_misspelled, ".stow-local-ignore")
@@ -432,15 +432,57 @@ class TestStageRepo(unittest.TestCase):
         # 3. Stage again
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        # It should be deleted!
+        # Deployable changes should report file1.txt as deleted from deployable manifest
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0].package_name, "pkg_a")
         self.assertEqual(changes[0].deleted_files, [Path("file1.txt")])
+        # But file1.txt still exists physically in install/ (so ignored files like hooks remain available)
+        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
+
+        # 4. Now physically delete file1.txt from render/pkg_a/
+        os.remove(os.path.join(pkg_a_render, "file1.txt"))
+        changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
+        # Physical file is now deleted from install/ and backed up
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
-        
-        # Verify it was backed up
         backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
         self.assertTrue(os.path.isfile(backup_file))
+
+    def test_stage_copies_hook_scripts_listed_in_drift_ignore(self) -> None:
+        """Verifies that hook scripts in .drift_ignore are staged to install/ but excluded from deployable changes."""
+        pkg = "pkg_hooks"
+        pkg_render = self.render_dir / pkg
+        pkg_render.mkdir(parents=True, exist_ok=True)
+
+        # Write config with hook
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "~/.config/test"
+
+        [hooks]
+        pre_install = "echo hook executed"
+        """, encoding="utf-8")
+
+        # Write .drift_ignore ignoring the hook script
+        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("pre_install.sh\n", encoding="utf-8")
+
+        # Write hook script and deployable file
+        (pkg_render / "pre_install.sh").write_text("#!/bin/sh\necho 'running hook'\n", encoding="utf-8")
+        (pkg_render / "app.json").write_text('{"name": "app"}', encoding="utf-8")
+
+        # Stage package
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
+
+        # Return value must ONLY contain deployable files (app.json)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(changes[0].added_files, [Path("app.json")])
+        self.assertNotIn(Path("pre_install.sh"), changes[0].added_files)
+
+        # But physical install/ directory MUST contain the hook script
+        pkg_install = self.install_dir / pkg
+        self.assertTrue((pkg_install / "pre_install.sh").is_file())
+        self.assertTrue((pkg_install / "app.json").is_file())
 
     def test_backup_and_delete_one_file_utility(self) -> None:
         """Tests backup_and_delete_one_file utility function."""

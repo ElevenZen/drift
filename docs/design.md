@@ -526,6 +526,7 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
     *   **Match Timing Guard**: The ignore engine matches file patterns against the native repository filenames **before** any prefix conversion or suffix extraction takes place.
         *   *Important*: To ignore a file named `dot-bashrc`, your `.drift_ignore` file must list `dot-bashrc`, not `.bashrc`. Listing `.bashrc` will fail to match on disk, and the file will still be processed.
     *   **Implicit Exclusions**: Package configurations (`drift_package.toml`) are automatically excluded by the compilation engine without requiring manual entries.
+    *   **Lifecycle Hook Script Coexistence**: Lifecycle hook scripts (such as `pre_install.sh`, `post_update.sh`) and helper build scripts can be listed in `.drift_ignore`. Drift stages these scripts into `install/<package>/` so they can be executed by Drift during lifecycle stages, while ensuring they are never deployed or symlinked onto the active host target filesystem.
     *   An extra `.stow-local-ignore` is dynamically generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as an active package.
 
     #### PCRE `.drift_ignore` File Example:
@@ -764,11 +765,11 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false`.
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted.
-    - **Reconciliation comparison**: Compares `render/<pkg>` with `install/<pkg>` using `compare_folders` in forward mode.
-        1. *Deletions*: Tracks files in `install/` that are missing in `render/` (ignoring managed configs). They are moved to `backup/<package>/deleted_files/` and deleted from `install/`.
-        2. *Additions/Modifications*: Physical files in `render/` are copied to `install/`.
-        3. *Stow Ignore generation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore` and package config file so GNU Stow ignores them.
-    - **Staged Transaction Complete**: Calculates granular file changes (`added_files`, `modified_files`, `deleted_files`) as a `PackageStageChanges` object and updates the state registry database to stable `"staged"`.
+    - **Reconciliation & Synchronization Pipeline**:
+        1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `added_files`, `modified_files`, `deleted_files`) for the function return value and downstream physical deployment.
+        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>` where they can be executed by Drift during installation.
+        3. *Stow Ignore Generation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore` and package config file so GNU Stow never symlinks ignored files, hooks, or configurations to the active host.
+    - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:

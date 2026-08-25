@@ -106,7 +106,11 @@ def process_package_changes(
     backup_base: Path,
     changes: PackageStageChanges
 ) -> None:
-    """Processes deletions, additions, and modifications for a single package using FolderDiff."""
+    """Processes deletions, additions, and modifications for a single package using FolderDiff.
+    
+    1. Runs compare_folders with drift_ignore to calculate deployable file changes for the return value.
+    2. Runs compare_folders without drift_ignore to stage ALL physical files into install/ (including hooks).
+    """
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
     backup_dir = backup_base / pkg / "deleted_files"
@@ -116,15 +120,33 @@ def process_package_changes(
 
     ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
 
-    # Use compare_folders to plan all package staging modifications!
-    diff = compare_folders(
-            src_dir=render_pkg_dir,
-            dst_dir=install_pkg_dir,
-            ignore_handler=ignore_handler,
-            resolve_symlinks=True)
+    # 1. Compute deployable changes with ignore_handler for the function output
+    deploy_diff = compare_folders(
+        src_dir=render_pkg_dir,
+        dst_dir=install_pkg_dir,
+        ignore_handler=ignore_handler,
+        resolve_symlinks=True
+    )
+    for rel_file in deploy_diff.deleted:
+        if rel_file.name not in MANAGED_CONFIG_FILES:
+            changes.deleted_files.append(rel_file)
+    for rel_file in deploy_diff.added:
+        if rel_file.name not in MANAGED_CONFIG_FILES:
+            changes.added_files.append(rel_file)
+    for rel_file in deploy_diff.modified:
+        if rel_file.name not in MANAGED_CONFIG_FILES:
+            changes.modified_files.append(rel_file)
+
+    # 2. Compute all physical file changes without ignore_handler to stage everything into install/
+    all_diff = compare_folders(
+        src_dir=render_pkg_dir,
+        dst_dir=install_pkg_dir,
+        ignore_handler=None,
+        resolve_symlinks=True
+    )
 
     # A. Process Deletions
-    for rel_file in diff.deleted:
+    for rel_file in all_diff.deleted:
         if rel_file.name in MANAGED_CONFIG_FILES:
             continue
         install_file = install_pkg_dir / rel_file
@@ -135,10 +157,9 @@ def process_package_changes(
         logger.info(f"🗑️  Deleting: {pkg}/{rel_file}")
         logger.debug(f"   (Backup: {backup_file})")
         backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
-        changes.deleted_files.append(rel_file)
 
     # B. Process Additions
-    for rel_file in diff.added:
+    for rel_file in all_diff.added:
         src = render_pkg_dir / rel_file
         dst = install_pkg_dir / rel_file
         if src.is_dir() and not src.is_symlink():
@@ -147,10 +168,9 @@ def process_package_changes(
         logger.info(f"📦 Adding: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        changes.added_files.append(rel_file)
 
     # C. Process Modifications
-    for rel_file in diff.modified:
+    for rel_file in all_diff.modified:
         src = render_pkg_dir / rel_file
         dst = install_pkg_dir / rel_file
         if src.is_dir() and not src.is_symlink():
@@ -159,7 +179,6 @@ def process_package_changes(
         logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, dst)
-        changes.modified_files.append(rel_file)
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
     copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)

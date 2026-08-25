@@ -1205,6 +1205,53 @@ class TestInstallRepo(unittest.TestCase):
             reloaded2 = load_state_registry(state_file)
             self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "deploying")
 
+    def test_deploy_executes_hooks_ignored_in_drift_ignore(self) -> None:
+        """Verifies that hook scripts listed in .drift_ignore are staged to install/, executed, and not deployed to host."""
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.render_package import render_package
+
+        pkg = "pkg_ignored_hook"
+        pkg_src = self.source_dir / pkg
+        pkg_src.mkdir(parents=True, exist_ok=True)
+
+        marker_file = self.system_target_dir / "hook_ran_marker.txt"
+
+        # 1. Config with lifecycle hook
+        (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        pre_install = "pre_hook.sh"
+        """, encoding="utf-8")
+
+        # 2. .drift_ignore ignoring the hook script
+        (pkg_src / DRIFT_IGNORE_FILE_NAME).write_text("pre_hook.sh\n", encoding="utf-8")
+
+        # 3. Hook script and valid config file
+        (pkg_src / "pre_hook.sh").write_text(f"#!/bin/sh\necho 'hook executed successfully' > '{marker_file}'\n", encoding="utf-8")
+        (pkg_src / "app_setting.conf").write_text("setting = 42\n", encoding="utf-8")
+
+        self.workspace_config.packages_enable[pkg] = True
+
+        # Render -> Stage -> Install
+        render_package(self.workspace_config, pkg_src)
+        run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+
+        # Assert:
+        # A. Hook executed and wrote marker file
+        self.assertTrue(marker_file.is_file())
+        self.assertEqual(marker_file.read_text(encoding="utf-8").strip(), "hook executed successfully")
+
+        # B. app_setting.conf is deployed to system target
+        self.assertTrue((self.system_target_dir / "app_setting.conf").is_file())
+
+        # C. pre_hook.sh is NOT deployed to system target
+        self.assertFalse((self.system_target_dir / "pre_hook.sh").exists())
+        self.assertFalse((self.system_target_dir / DRIFT_IGNORE_FILE_NAME).exists())
+        self.assertFalse((self.system_target_dir / PACKAGE_CONFIG_FILE_NAME).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
