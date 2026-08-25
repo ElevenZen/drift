@@ -22,3 +22,10 @@ rich = [
 
 [project.scripts]
 drift = "drift.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+drift = ["templates/*", "templates/*.toml"]
+"drift.cli" = ["help_docs/*", "help_docs/*.md"]

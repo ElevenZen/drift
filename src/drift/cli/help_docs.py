@@ -38,6 +38,16 @@ def get_help_page(topic: Optional[str]) -> str:
                 "Available topics are: 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml', 'drift.toml', 'workspace'."
             )
 
+    # Try pkgutil first (supports zipapp and installed packages)
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift.cli", f"help_docs/{topic_file_name}.md")
+        if data:
+            return data.decode("utf-8")
+    except Exception:
+        pass
+
+    help_dir = Path(__file__).resolve().parent / "help_docs"
     md_file_path = help_dir / f"{topic_file_name}.md"
     if not md_file_path.exists():
         raise FileNotFoundError(f"Help file not found at: {md_file_path}")

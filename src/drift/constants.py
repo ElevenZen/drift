@@ -34,6 +34,43 @@ DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 """
 )
 
+DEFAULT_FALLBACK_DRIFT_TOML_CONTENT = (
+"""# =====================================================================
+# drift.toml Minimal Configuration
+# =====================================================================
+
+[env]
+DRIFT_SAMPLE_ENV_THEME = "nord-dark"
+DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
+[packages.enable]
+DEFAULT = false
+
+[workspace]
+source_directory = "src"
+render_directory = "render"
+install_directory = "install"
+backup_directory = "backup"
+default_target_directory = "~"
+default_install_method = "stow"
+
+[render.envsubst]
+input_file = "envsubst.bash"
+suffix = "envst"
+render_command = "envsubst < {src} > {dest}"
+
+[render.mustache]
+input_file = "mustache.envst.json"
+suffix = "mustache"
+render_command = "mustache {input} {src} > {dest}"
+
+[render.jinja2]
+input_file = "jinja2.mustache.json"
+suffix = "j2"
+render_command = "j2 {src} {input} -o {dest}"
+"""
+)
+
 DEFAULT_SECRETS_ENV_CONTENT = (
     "# =====================================================================\n"
     "# config/secrets.env - Environment Secret Vault (Gitignored)\n"
@@ -92,6 +129,15 @@ def get_default_jinja2_content() -> str:
 
 def get_default_drift_toml_content() -> str:
     """Gets the default drift.toml template content, with an embedded fallback."""
+    # Try pkgutil first (supports zipapp and installed packages)
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift", "templates/drift_default.toml")
+        if data:
+            return data.decode("utf-8")
+    except Exception:
+        pass
+
     template_path = Path(__file__).resolve().parent / "templates" / "drift_default.toml"
     if template_path.exists():
         try:
@@ -102,42 +148,7 @@ def get_default_drift_toml_content() -> str:
         print("⚠️ Warning: Default drift.toml template file is missing. Using minimal fallback configuration.", file=sys.stderr)
 
     # Fallback to hardcoded minimal content to ensure self-containment
-    return (
-"""# =====================================================================
-# drift.toml Minimal Configuration
-# =====================================================================
-
-[env]
-DRIFT_SAMPLE_ENV_THEME = "nord-dark"
-DRIFT_SAMPLE_ENV_EDITOR = "vim"
-
-[packages.enable]
-DEFAULT = false
-
-[workspace]
-source_directory = "src"
-render_directory = "render"
-install_directory = "install"
-backup_directory = "backup"
-default_target_directory = "~"
-default_install_method = "stow"
-
-[render.envsubst]
-input_file = "envsubst.bash"
-suffix = "envst"
-render_command = "envsubst < {src} > {dest}"
-
-[render.mustache]
-input_file = "mustache.envst.json"
-suffix = "mustache"
-render_command = "mustache {input} {src} > {dest}"
-
-[render.jinja2]
-input_file = "jinja2.mustache.json"
-suffix = "j2"
-render_command = "j2 {src} {input} -o {dest}"
-"""
-    )
+    return DEFAULT_FALLBACK_DRIFT_TOML_CONTENT
 
 
 def update_initial_env() -> None:
