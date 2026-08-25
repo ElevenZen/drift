@@ -65,7 +65,10 @@ post_render = "scripts/generate_checksums.sh"
 When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
 
 *   **`$drift_package_name`**: Name / directory name of the package.
-*   **`$drift_target_directory`**: Resolved destination target directory path on the host system.
+*   **`$drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
+*   **`$drift_package_source_dir`**: Absolute path to the package's source directory (`<drift_root>/src/<pkg>`).
+*   **`$drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
+*   **`$drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
 *   **`$drift_install_method`**: Resolved deployment method (`stow` or `copy`).
 
 ### ⚡ Environment Variable Precedence:

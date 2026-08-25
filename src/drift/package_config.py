@@ -267,22 +267,36 @@ class PackageConfig:
 
         Variables loaded:
             drift_package_name: Name of the package (directory name).
-            drift_target_directory: Resolved target directory path on the host system.
+            drift_package_target_dir: Resolved absolute target directory path on the host system.
+            drift_package_source_dir: Absolute path to the package's source directory in workspace.
+            drift_package_render_dir: Absolute path to the package's compiled sandbox directory.
+            drift_package_install_dir: Absolute path to the package's state database directory.
             drift_install_method: Resolved install method ('stow' or 'copy').
 
         Returns:
             A list of (key, original_value) tuples for modified variables.
         """
         if workspace_config is not None:
-            target_dir_str = str(self.get_target_directory(workspace_config))
+            target_dir = self.get_target_directory(workspace_config)
+            target_dir_str = str(target_dir)
             install_method_str = self.get_install_method(workspace_config)
+            source_dir_str = str(workspace_config.source_path / self.name)
+            render_dir_str = str(workspace_config.render_path / self.name)
+            install_dir_str = str(workspace_config.install_path / self.name)
         else:
-            target_dir_str = str(self.target_directory or Path("~").expanduser())
+            target_dir = (self.target_directory or Path("~")).expanduser()
+            target_dir_str = str(target_dir)
             install_method_str = self.install_method or "stow"
+            source_dir_str = ""
+            render_dir_str = ""
+            install_dir_str = ""
 
         envs = [
             ("drift_package_name", self.name),
-            ("drift_target_directory", target_dir_str),
+            ("drift_package_target_dir", target_dir_str),
+            ("drift_package_source_dir", source_dir_str),
+            ("drift_package_render_dir", render_dir_str),
+            ("drift_package_install_dir", install_dir_str),
             ("drift_install_method", install_method_str),
         ]
         return load_env_settings(envs, overwrite=overwrite)

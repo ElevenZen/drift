@@ -331,7 +331,7 @@ To isolate secret tokens, private API keys, and work-specific emails from public
 
 1. **Strict Variable Precedence**:
    During template parsing and compiling, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
-   - **Package Environment (`drift_package_name`, `drift_target_directory`, `drift_install_method`)**: Dynamic package attributes loaded via `PackageConfig.package_envs()`. **Package environment variables have the absolute highest precedence and override all other layers.**
+   - **Package Environment (`drift_package_name`, `drift_package_target_dir`, `drift_install_method`, etc.)**: Dynamic package attributes loaded via `PackageConfig.package_envs()`. **Package environment variables have the absolute highest precedence and override all other layers.**
    - **Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
    - **Global Workspace Environment (`[env]` table in `drift.toml`)**: Shared, non-sensitive environment defaults.
    - **System Host / CLI Environment**: Base host-level environment variables (e.g. active shell exports in `os.environ`).
@@ -484,7 +484,10 @@ hook_timeout = 120
 #### Default Package Environment Variables & Precedence
 After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
 *   **`drift_package_name`**: Name / directory name of the package.
-*   **`drift_target_directory`**: Resolved destination target directory path on the host system.
+*   **`drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
+*   **`drift_package_source_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
+*   **`drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
+*   **`drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
 *   **`drift_install_method`**: Resolved deployment method (`stow` or `copy`).
 
 > [!IMPORTANT]
@@ -498,7 +501,7 @@ After parsing a package's configuration, the drift engine dynamically loads pack
 
 These variables are active during:
 1.  **Lifecycle Hook Script Executions** (`pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`).
-2.  **Template Compilations** (accessible as `${drift_package_name}`, `${drift_target_directory}`, `${drift_install_method}` in `.envst` / `envsubst` templates).
+2.  **Template Compilations** (accessible as `${drift_package_name}`, `${drift_package_target_dir}`, `${drift_package_source_dir}`, etc. in `.envst` / `envsubst` templates).
 3.  **Physical Deployment Operations**.
 
 Upon completion of the package's render or deployment phase, these variables are restored and unloaded via `PackageConfig.unload_package_envs()`, guaranteeing clean-room environment isolation between packages.

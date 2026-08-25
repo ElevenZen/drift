@@ -1342,7 +1342,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
     def test_default_package_envs_available_in_templates(self) -> None:
-        """Verifies drift_package_name, drift_target_directory, and drift_install_method are available in templates."""
+        """Verifies drift_package_name, drift_package_target_dir, and drift_install_method are available in templates."""
         if not shutil.which("envsubst"):
             self.skipTest("envsubst is not available")
 
@@ -1378,7 +1378,7 @@ class TestRenderPackage(unittest.TestCase):
 
         template_file = pkg_dir / "config.envst.json"
         template_file.write_text(
-            '{"name": "$drift_package_name", "target": "$drift_target_directory", "method": "$drift_install_method"}',
+            '{"name": "$drift_package_name", "target": "$drift_package_target_dir", "method": "$drift_install_method"}',
             encoding="utf-8"
         )
 
@@ -1394,7 +1394,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Ensure envs are cleaned up after rendering
         self.assertNotIn("drift_package_name", os.environ)
-        self.assertNotIn("drift_target_directory", os.environ)
+        self.assertNotIn("drift_package_target_dir", os.environ)
         self.assertNotIn("drift_install_method", os.environ)
 
 
