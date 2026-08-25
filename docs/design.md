@@ -330,10 +330,11 @@ To allow complete bootstrapping of workspaces under different environment parame
 To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.
 
 1. **Strict Variable Precedence**:
-   During template parsing and compiling, variables are resolved in a strict order of precedence:
-   - **System Host Environment**: Host-level environment variables (e.g. active shell exports).
-   - **Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides.
-   - **Global Workspace Environment**: Shared, non-sensitive environment defaults (defined under the `[env]` table section inside `drift.toml`).
+   During template parsing and compiling, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
+   - **Package Environment (`drift_package_name`, `drift_target_directory`, `drift_install_method`)**: Dynamic package attributes loaded via `PackageConfig.package_envs()`. **Package environment variables have the absolute highest precedence and override all other layers.**
+   - **Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
+   - **Global Workspace Environment (`[env]` table in `drift.toml`)**: Shared, non-sensitive environment defaults.
+   - **System Host / CLI Environment**: Base host-level environment variables (e.g. active shell exports in `os.environ`).
 
 2. **Transient, Clean-Room Isolation**:
    To prevent credentials from leaking to other processes, secrets are loaded with transient isolation:
@@ -480,11 +481,20 @@ post_update = "post-update.bash"
 hook_timeout = 120
 ```
 
-#### Default Package Environment Variables
-After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)`:
+#### Default Package Environment Variables & Precedence
+After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
 *   **`drift_package_name`**: Name / directory name of the package.
 *   **`drift_target_directory`**: Resolved destination target directory path on the host system.
 *   **`drift_install_method`**: Resolved deployment method (`stow` or `copy`).
+
+> [!IMPORTANT]
+> **Environment Variable Precedence & Overrides**:
+> Package environment variables have the **highest precedence** in Drift. When loaded, they strictly **override all other environment variables**, including:
+> 1. Host shell / CLI environment variables (`os.environ`).
+> 2. Global workspace environment variables defined in `config/drift.toml` (`[env]` table).
+> 3. Secret variables loaded from `config/secrets.env`.
+>
+> This guarantees that templates and hook scripts always receive the exact, authoritative package attributes regardless of any external or global environment definitions.
 
 These variables are active during:
 1.  **Lifecycle Hook Script Executions** (`pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`).

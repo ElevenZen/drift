@@ -26,6 +26,18 @@ default_install_method = "stow"
 
 
 # ---------------------------------------------------------------------
+# Workspace Environment Variables Propagation
+# ---------------------------------------------------------------------
+# Variables defined under the [env] table are automatically populated into
+# os.environ. They provide global defaults for template rendering engines.
+# (Note: Package-specific envs like $drift_target_directory and secrets in
+# config/secrets.env take precedence over workspace [env] definitions.)
+[env]
+DRIFT_SAMPLE_ENV_THEME = "nord-dark"
+DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
+
+# ---------------------------------------------------------------------
 # Render Engines Configurations
 # ---------------------------------------------------------------------
 
