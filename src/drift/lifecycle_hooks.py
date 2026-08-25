@@ -35,7 +35,6 @@ def trigger_pre_source_hook(
             from .package_config import load_package_config_from_source_dir
             pkg_config = load_package_config_from_source_dir(
                 package_dir=src_pkg_dir,
-                package_name=package_name,
                 workspace_config=workspace_config
             )
         except FileNotFoundError:

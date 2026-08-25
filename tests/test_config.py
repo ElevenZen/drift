@@ -272,7 +272,6 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_config_from_dict(self) -> None:
         data = {
             "package": {
-                "name": "my_pkg",
                 "install_method": "stow"
             },
             "hooks": {
@@ -280,23 +279,21 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": 60
             }
         }
-        config = PackageConfig.from_dict(data, default_name="fallback_name")
+        config = PackageConfig.from_dict(data, package_name="my_pkg")
         self.assertEqual(config.name, "my_pkg")
         self.assertEqual(config.pre_source, "scripts/gen.sh")
-        self.assertEqual(config.timeout, 60)
         self.assertEqual(config.hook_timeout, 60)
 
         # Test string casting for timeout
         data_str_timeout = {
             "package": {
-                "name": "my_pkg"
+                "install_method": "stow"
             },
             "hooks": {
                 "timeout": "45"
             }
         }
-        config_str = PackageConfig.from_dict(data_str_timeout)
-        self.assertEqual(config_str.timeout, 45)
+        config_str = PackageConfig.from_dict(data_str_timeout, package_name="my_pkg")
         self.assertEqual(config_str.hook_timeout, 45)
 
         data_no_name = {
@@ -304,13 +301,9 @@ class TestConfigClasses(unittest.TestCase):
                 "install_method": "stow"
             }
         }
-        config = PackageConfig.from_dict(data_no_name, default_name="fallback_name")
+        config = PackageConfig.from_dict(data_no_name, package_name="fallback_name")
         self.assertEqual(config.name, "fallback_name")
-        self.assertEqual(config.timeout, 120)  # Default value
-        self.assertEqual(config.hook_timeout, 120)
-
-        with self.assertRaises(ValueError):
-            PackageConfig.from_dict(data_no_name)
+        self.assertEqual(config.hook_timeout, 120)  # Default value
 
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ValueError):
@@ -320,11 +313,11 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
         with self.assertRaises(TypeError):
-            PackageConfig(name="foo", timeout="not_an_int").validate() # type: ignore
+            PackageConfig(name="foo", hook_timeout="not_an_int").validate() # type: ignore
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", timeout=0).validate()
+            PackageConfig(name="foo", hook_timeout=0).validate()
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", timeout=-10).validate()
+            PackageConfig(name="foo", hook_timeout=-10).validate()
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", pre_source=123).validate() # type: ignore
 
@@ -349,7 +342,6 @@ class TestConfigClasses(unittest.TestCase):
         """Verifies parsing package configuration with dedicated [hooks] table."""
         toml_dict = {
             "package": {
-                "name": "pkg_with_hooks",
                 "install_method": "copy",
                 "target_directory": "~/.config/test"
             },
@@ -363,7 +355,7 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": 45
             }
         }
-        config = PackageConfig.from_dict(toml_dict)
+        config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks")
         self.assertEqual(config.name, "pkg_with_hooks")
         self.assertEqual(config.install_method, "copy")
         self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
@@ -467,7 +459,6 @@ class TestConfigClasses(unittest.TestCase):
         # 2. PackageConfig unknown option warnings
         package_data_with_warnings = {
             "package": {
-                "name": "my_pkg",
                 "unknown_pkg_opt": "something"
             },
             "another_unknown_top_section": {
@@ -476,7 +467,7 @@ class TestConfigClasses(unittest.TestCase):
         }
 
         with patch("drift.package_config.logger.warning") as mock_package_warn:
-            PackageConfig.from_dict(package_data_with_warnings)
+            PackageConfig.from_dict(package_data_with_warnings, package_name="my_pkg")
             
             package_warn_messages = [call[0][0] for call in mock_package_warn.call_args_list]
             self.assertTrue(any("Unknown top-level package config section: 'another_unknown_top_section'" in msg for msg in package_warn_messages))
@@ -513,21 +504,20 @@ class TestConfigLoaders(unittest.TestCase):
     def test_load_package_config(self) -> None:
         pkg_config_path = self.drift_root / PACKAGE_CONFIG_FILE_NAME
 
-        # Nonexistent without default_name raises FileNotFoundError
+        # Nonexistent without package_name raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
             load_package_config_rendered(pkg_config_path)
 
-        # Nonexistent with default_name raises FileNotFoundError
+        # Nonexistent with package_name raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            load_package_config_rendered(pkg_config_path, default_name="my_default")
+            load_package_config_rendered(pkg_config_path, package_name_override="my_default")
 
-        # Valid file
+        # Valid file without name field (derived from package_name parameter)
         pkg_config_path.write_text("""
             [package]
-            name = "my_actual_package"
             install_method = "copy"
             """, encoding="utf-8")
-        config = load_package_config_rendered(pkg_config_path)
+        config = load_package_config_rendered(pkg_config_path, package_name_override="my_actual_package")
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
 
@@ -539,7 +529,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
                          ({}, None))
         with self.assertRaises(FileNotFoundError):
-            load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
+            load_package_config_from_source_dir(pkg_dir)
 
         # Creating drift_package.toml (alternative name)
         alt_config_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -550,7 +540,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
                         ({ "package" : { "install_method": "copy" } }, alt_config_path))
         
-        config = load_package_config_from_source_dir(pkg_dir, "my_pkg_folder")
+        config = load_package_config_from_source_dir(pkg_dir)
         self.assertEqual(config.name, "my_pkg_folder")
         self.assertEqual(config.install_method, "copy")
 
@@ -630,7 +620,7 @@ class TestConfigLoaders(unittest.TestCase):
         render_input_templates(list(workspace_config.render_engine_configs.values()), workspace_config.drift_root_path)
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
-        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg", workspace_config)
+        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
 
         # Verify fields and values
         self.assertEqual(pkg_config.name, "my_pkg")
@@ -682,7 +672,7 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
 
         # Passing workspace_config=None triggers static loading path
-        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg_merge")
+        pkg_config = load_package_config_from_source_dir(pkg_dir)
         self.assertEqual(pkg_config.name, "my_pkg_merge")
         self.assertEqual(pkg_config.install_method, "stow")
         self.assertEqual(pkg_config.sudo, True)
@@ -716,7 +706,7 @@ class TestConfigLoaders(unittest.TestCase):
             sudo = true
             """, encoding="utf-8")
 
-        pkg_config = load_package_config_from_source_dir(pkg_dir, "my_pkg_merge_ws", workspace_config)
+        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_pkg_merge_ws")
         self.assertEqual(pkg_config.install_method, "stow")
         self.assertEqual(pkg_config.sudo, True)

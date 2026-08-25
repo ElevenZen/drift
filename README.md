@@ -238,7 +238,6 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 Packages can declare automated hook scripts inside `drift_package.toml` to integrate with external packages:
 ```toml
 [package]
-name = "nvim"
 install_method = "stow"
 
 [hooks]

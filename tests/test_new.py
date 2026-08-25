@@ -27,7 +27,8 @@ class TestNewPackage(unittest.TestCase):
             self.assertTrue(config_file.is_file())
             
             content = config_file.read_text()
-            self.assertIn(f'name = "{pkg_name}"', content)
+            self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
+            self.assertIn('install_method = "stow"', content)
             self.assertIn('# target_directory = "~"', content)
 
     def test_run_primitive_10_create_new_package_already_exists(self) -> None:
@@ -49,7 +50,7 @@ class TestNewPackage(unittest.TestCase):
             # Should succeed with force
             run_primitive_10_create_new_package(config, pkg_name, force=True)
             content = (pkg_dir / "drift_package.toml").read_text()
-            self.assertIn(f'name = "{pkg_name}"', content)
+            self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
 
     def test_run_primitive_10_create_new_package_custom_target(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

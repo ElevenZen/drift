@@ -400,10 +400,6 @@ To handle machine-specific overrides and secrets at the package level, Drift imp
 # =====================================================================
 
 [package]
-# Unique name identifying the package, default value is the package folder name.
-# This is mainly used for logging. The package folder name will be used when locating files.
-name = "example_package"
-
 # ---------------------------------------------------------------------
 # Feature Flags (Default: true)
 # ---------------------------------------------------------------------

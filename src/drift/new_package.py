@@ -8,7 +8,6 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
 [package]
-name = "{package_name}"
 install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
 {target_directory_line}
 

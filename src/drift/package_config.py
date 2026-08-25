@@ -124,7 +124,6 @@ class PackageConfig:
         pre_update: Optional[str] = None,
         post_update: Optional[str] = None,
         post_render: Optional[str] = None,
-        timeout: Optional[int] = None,
         hook_timeout: Optional[int] = None
     ) -> None:
         self.name = name
@@ -136,7 +135,7 @@ class PackageConfig:
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
 
-        effective_timeout = timeout if timeout is not None else (hook_timeout if hook_timeout is not None else 120)
+        effective_timeout = hook_timeout if hook_timeout is not None else 120
         if hooks is not None:
             self.hooks = hooks
             if pre_source is not None:
@@ -151,7 +150,7 @@ class PackageConfig:
                 self.hooks.post_update = post_update
             if post_render is not None:
                 self.hooks.post_render = post_render
-            if timeout is not None or hook_timeout is not None:
+            if hook_timeout is not None:
                 self.hooks.timeout = effective_timeout
         else:
             self.hooks = PackageHooks(
@@ -325,11 +324,9 @@ class PackageConfig:
             self.unload_package_envs(saved_envs)
 
     @classmethod
-    def from_dict(cls,
-                  data: dict,
-                  default_name: Optional[str] = None,
+    def from_dict(cls, data: dict, package_name: str,
                   source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
-        """Builds a PackageConfig instance from a parsed TOML dictionary."""
+        """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         # Warning for unknown top-level sections
         known_top_sections = {"package", "hooks"}
         for key in data:
@@ -339,9 +336,9 @@ class PackageConfig:
         package_data = data.get("package", {})
         hooks_data = data.get("hooks", {})
         
-        name = package_data.get("name", default_name)
+        name = package_name
         if not name:
-            raise ValueError("Package configuration is missing the required 'name' field.")
+            raise ValueError("Package name must be provided when constructing PackageConfig.")
 
         # Warning for unknown package options
         known_package_keys = {
@@ -415,15 +412,16 @@ class PackageConfig:
 
 
 def load_package_config_rendered(
-    file_path: Path,
-    default_name: Optional[str] = None
+    package_toml_path: Path,
+    package_name_override: Optional[str] = None
 ) -> PackageConfig:
     """Loads and parses a package configuration from drift_package.toml."""
-    if not file_path.exists():
-        raise FileNotFoundError(f"Package configuration file not found: {file_path}")
-    content = file_path.read_text(encoding="utf-8")
+    pkg_name = package_name_override or package_toml_path.parent.name
+    if not package_toml_path.exists():
+        raise FileNotFoundError(f"Package configuration file not found: {package_toml_path}")
+    content = package_toml_path.read_text(encoding="utf-8")
     data = parse_toml(content)
-    config = PackageConfig.from_dict(data, default_name=default_name, source_files=[file_path])
+    config = PackageConfig.from_dict(data, package_name=pkg_name, source_files=[package_toml_path])
     return config
 
 
@@ -529,10 +527,10 @@ def locate_load_package_config_file_static(package_dir: Path, names: Sequence[st
 
 def load_package_config_from_source_dir(
     package_dir: Path,
-    package_name: str,
-    workspace_config: Optional[WorkspaceConfig] = None
+    workspace_config: Optional[WorkspaceConfig] = None,
 ) -> PackageConfig:
     """Loads package configuration from a package directory, optionally rendering it if it is a template."""
+    pkg_name = package_dir.name
     if workspace_config is None:
         logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
         # Fallback for backward compatibility/static loading without workspace settings
@@ -542,7 +540,7 @@ def load_package_config_from_source_dir(
         local_dict, local_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
         combined_dict = merge_toml(base_dict, local_dict)
         return PackageConfig.from_dict(combined_dict,
-                                       default_name=package_name,
+                                       package_name=pkg_name,
                                        source_files=[base_path, local_path])
 
     base_info, local_info = get_package_config_file_info(package_dir, workspace_config)
@@ -550,24 +548,24 @@ def load_package_config_from_source_dir(
     logger.debug(f"Local package config info: {local_info}")
     if not base_info:
         raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
-    base_dict = render_or_load_toml(base_info, workspace_config, package_name)
+    base_dict = render_or_load_toml(base_info, workspace_config, pkg_name)
     source_files = [base_info.path]
     if local_info:
-        local_dict = render_or_load_toml(local_info, workspace_config, package_name)
+        local_dict = render_or_load_toml(local_info, workspace_config, pkg_name)
         source_files.append(local_info.path)
     else:
         local_dict = {}
     combined_dict = merge_toml(base_dict, local_dict)
 
     # Determine output path: render/<package_name>/drift_package.toml
-    output_file_path = workspace_config.render_path / package_name / PACKAGE_CONFIG_FILE_NAME
+    output_file_path = workspace_config.render_path / pkg_name / PACKAGE_CONFIG_FILE_NAME
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
     toml_str = dump_toml(combined_dict)
     output_file_path.write_text(toml_str, encoding="utf-8")
 
     # Load from the rendered path
     config = PackageConfig.from_dict(combined_dict,
-                                     default_name=package_name,
+                                     package_name=pkg_name,
                                      source_files=source_files)
     return config
 

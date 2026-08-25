@@ -69,7 +69,8 @@ def render_or_copy_file(
 
 
 
-def prepare_package_config(package_dir: Path, package_name: str, workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> Optional[PackageConfig]:
+def prepare_package_config(package_dir: Path, package_name: str,
+                           workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> Optional[PackageConfig]:
     """Loads package config and checks if rendering is enabled.
 
     Since load_package_config_from_source_dir always renders/writes the config file to render_pkg_dir,
@@ -77,7 +78,6 @@ def prepare_package_config(package_dir: Path, package_name: str, workspace_confi
     """
     pkg_config = load_package_config_from_source_dir(
         package_dir=package_dir,
-        package_name=package_name,
         workspace_config=workspace_config
     )
 
@@ -88,8 +88,9 @@ def prepare_package_config(package_dir: Path, package_name: str, workspace_confi
     return pkg_config
 
 
-def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path, package_name: str) -> None:
+def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
     """Handles warning and copying of drift ignore files."""
+    package_name = package_dir.name
     misspelled_path = package_dir / ".driftignore"
     correct_path = package_dir / DRIFT_IGNORE_FILE_NAME
 
@@ -117,13 +118,13 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path, package_nam
 def render_package_files(
     workspace_config: WorkspaceConfig,
     package_dir: Path,
-    package_name: str,
     pkg_config: PackageConfig,
     render_pkg_dir: Path
 ) -> PackageRenderResult:
     """Renders package source files, copies static assets, and triggers lifecycle hooks."""
     from .ignore import DriftIgnore
     from .folder_diff import compare_folders
+    package_name = package_dir.name
 
     # Trigger pre_source hook before reading / processing source files
     trigger_pre_source_hook(
@@ -133,7 +134,7 @@ def render_package_files(
         pkg_config=pkg_config
     )
 
-    handle_driftignore_file(package_dir, render_pkg_dir, package_name)
+    handle_driftignore_file(package_dir, render_pkg_dir)
 
     # 3. Recursively process all other files inside the package directory
     # Proactively check for nested ignore files and trigger clean validation
@@ -207,7 +208,6 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> Pack
         return render_package_files(
             workspace_config=workspace_config,
             package_dir=package_dir,
-            package_name=package_name,
             pkg_config=pkg_config,
             render_pkg_dir=render_pkg_dir
         )

@@ -4,9 +4,6 @@ Below is a complete, fully documented template for `drift_package.toml` (or `dri
 
 ```toml
 [package]
-# Unique identifier name for the package
-name = "my_package"
-
 # How files are deployed to the host.
 # Options: "stow" (symlinks, GNU Stow logic) or "copy" (physical copies)
 # Falls back to "default_install_method" in drift.toml if unspecified.

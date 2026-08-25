@@ -63,7 +63,7 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     if not install_config_file.exists():
         raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
     try:
-        return load_package_config_rendered(install_config_file, default_name=pkg)
+        return load_package_config_rendered(install_config_file)
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 

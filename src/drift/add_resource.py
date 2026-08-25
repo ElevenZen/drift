@@ -30,7 +30,6 @@ def get_package_target_directory_from_source(
     try:
         pkg_config = load_package_config_from_source_dir(
             package_dir=src_pkg_dir,
-            package_name=package_name,
             workspace_config=workspace_config
         )
         target_base = pkg_config.get_target_directory(workspace_config)

@@ -606,7 +606,6 @@ class TestRenderPackage(unittest.TestCase):
         with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
-            name = "my_pkg"
             enable_render = true
             """)
 
@@ -634,7 +633,6 @@ class TestRenderPackage(unittest.TestCase):
         # Verify drift_package.toml was dumped to drift_drift_package.toml since it is static
         self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
         rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
-        self.assertEqual(rendered_config.get("package", {}).get("name"), "my_pkg")
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), True)
 
     def test_render_package_disabled(self) -> None:
@@ -655,7 +653,6 @@ class TestRenderPackage(unittest.TestCase):
         with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
-            name = "my_pkg"
             enable_render = false
             """)
 
@@ -669,7 +666,6 @@ class TestRenderPackage(unittest.TestCase):
         render_pkg_dir = drift_root / "render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(render_pkg_dir.exists())
         rendered_config = parse_toml(render_pkg_dir.read_text(encoding="utf-8"))
-        self.assertEqual(rendered_config.get("package", {}).get("name"), "my_pkg")
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), False)
 
     def test_render_package_templated_config_package_toml(self) -> None:

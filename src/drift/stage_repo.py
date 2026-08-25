@@ -46,7 +46,7 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
         if not config_file.exists():
             raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
         else:
-            metadata = load_package_config_rendered(config_file, default_name=pkg)
+            metadata = load_package_config_rendered(config_file)
         return metadata
     except Exception as e:
         if not force:
