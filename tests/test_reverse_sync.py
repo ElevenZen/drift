@@ -317,6 +317,49 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue(install_link.is_symlink())
         self.assertEqual(os.readlink(install_link), "fcd_broken_dest")
 
+    def test_reverse_sync_missing_target_managed_config_files_not_deleted(self) -> None:
+        """Verifies that missing managed config files (drift_package.toml, .drift_ignore, .stow-local-ignore) on target system do NOT trigger deletion in install/."""
+        from drift.constants import DRIFT_IGNORE_FILE_NAME
+        pkg = "pkg_managed_configs"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup install/ with managed config files and a regular file
+        pkg_config_path = pkg_install_dir / PACKAGE_CONFIG_FILE_NAME
+        pkg_config_path.write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        drift_ignore_path = pkg_install_dir / DRIFT_IGNORE_FILE_NAME
+        drift_ignore_path.write_text("*.tmp\n", encoding="utf-8")
+
+        stow_ignore_path = pkg_install_dir / ".stow-local-ignore"
+        stow_ignore_path.write_text("*.bak\n", encoding="utf-8")
+
+        regular_file = pkg_install_dir / "regular_file.txt"
+        regular_file.write_text("I should be deleted", encoding="utf-8")
+
+        # 2. On host system, none of the above files exist
+        self.assertFalse((self.system_target_dir / PACKAGE_CONFIG_FILE_NAME).exists())
+        self.assertFalse((self.system_target_dir / DRIFT_IGNORE_FILE_NAME).exists())
+        self.assertFalse((self.system_target_dir / ".stow-local-ignore").exists())
+        self.assertFalse((self.system_target_dir / "regular_file.txt").exists())
+
+        # 3. Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 4. Managed config files MUST still exist in install/
+        self.assertTrue(pkg_config_path.exists(), "drift_package.toml in install/ must not be deleted!")
+        self.assertTrue(drift_ignore_path.exists(), ".drift_ignore in install/ must not be deleted!")
+        self.assertTrue(stow_ignore_path.exists(), ".stow-local-ignore in install/ must not be deleted!")
+
+        # 5. Regular file should have been deleted because it was missing on host
+        self.assertFalse(regular_file.exists(), "regular_file.txt should be deleted as it is missing on host!")
+
 
 if __name__ == "__main__":
     unittest.main()

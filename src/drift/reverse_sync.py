@@ -114,6 +114,8 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     for rel in diff.deleted:
         repo_rel = translate_dot_prefixes_reverse(rel)
         repo_file = install_pkg_dir / repo_rel
+        if repo_file.name in MANAGED_CONFIG_FILES:
+            continue
         
         if repo_file.exists():
             logger.info(f"System Deletion: '{target_dir_path / rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
