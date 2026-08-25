@@ -39,19 +39,19 @@ If you are on a machine without `pip`/`pipx` access, but have cloned or download
 Install Drift into an isolated environment and place it directly into your `$PATH`:
 ```bash
 # Core standard-library mode (zero external dependencies)
-pipx install git+https://github.com/<your-username>/drift.git
+pipx install git+https://github.com/ElevenZen/drift.git
 
 # Or with uv:
-uv tool install git+https://github.com/<your-username>/drift.git
+uv tool install git+https://github.com/ElevenZen/drift.git
 
 # With enhanced Rich console UI:
-pipx install "git+https://github.com/<your-username>/drift.git#egg=drift[rich]"
+pipx install "git+https://github.com/ElevenZen/drift.git#egg=drift[rich]"
 ```
 
 #### B. Standard `pip install`
 Install locally or from a Git repository via `pip`:
 ```bash
-pip install --user git+https://github.com/<your-username>/drift.git
+pip install --user git+https://github.com/ElevenZen/drift.git
 
 # Or from a cloned local repository:
 pip install --user .
