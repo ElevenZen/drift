@@ -40,12 +40,16 @@ logger = logging.getLogger(__name__)
 def get_stow_version() -> Optional[str]:
     """Retrieves the installed GNU Stow version string if available."""
     try:
-        res = run_command(["stow", "--version"])
-        first_line = res.stdout.splitlines()[0]
+        res = run_command(["stow", "--version"], text=True)
+        stdout_str = res.stdout if isinstance(res.stdout, str) else res.stdout.decode("utf-8", errors="replace")
+        lines = stdout_str.splitlines()
+        if not lines:
+            return None
+        first_line = lines[0]
         match = re.search(r"(\d+(\.\d+)+)", first_line)
         if match:
             return match.group(1)
-        return first_line.strip()
+        return first_line.strip() or None
     except Exception as e:
         logger.debug(f"GNU Stow is not found or failed to return version: {e}")
         return None

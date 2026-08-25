@@ -15,6 +15,11 @@ from drift.git_utils import (
     git_init_repo,
     append_to_gitignore,
 )
+from drift.constants import (
+    STATE_REGISTRY_FILE_NAME,
+    INSTALL_STOW_IGNORE_PATTERN,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+)
 from drift.workspace_init import (
     init_drift_workspace,
 )
@@ -54,10 +59,10 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "install", ".git")))
 
         # Check `.stow-local-ignore` inside install/
-        stow_ignore = os.path.join(self.drift_root, "install", ".stow-local-ignore")
+        stow_ignore = os.path.join(self.drift_root, "install", STOW_LOCAL_IGNORE_FILE_NAME)
         self.assertTrue(os.path.isfile(stow_ignore))
         with open(stow_ignore, "r", encoding="utf-8") as f:
-            self.assertEqual(f.read().strip(), "state.toml")
+            self.assertEqual(f.read().strip(), INSTALL_STOW_IGNORE_PATTERN)
 
         # Check config/drift.toml template was created
         config_file = os.path.join(self.drift_root, "config", "drift.toml")

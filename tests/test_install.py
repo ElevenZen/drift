@@ -18,6 +18,8 @@ from drift.state_registry import (
 from drift.install_repo import (
         resolve_system_target,
         run_primitive_5_install_deployment,
+        get_stow_version,
+        is_stow_version_sufficient,
 )
 from drift.file_utils import (
         ensure_dir_exists_with_sudo,
@@ -1291,8 +1293,9 @@ class TestInstallRepo(unittest.TestCase):
 
         # 3. Setup system target directory:
         # A. valid_file.txt already points to pkg_install_dir / valid_file.txt (valid stow link)
+        from drift.file_utils import get_relative_path
         system_valid = self.system_target_dir / "valid_file.txt"
-        system_valid.symlink_to(pkg_install_dir / "valid_file.txt")
+        system_valid.symlink_to(get_relative_path(self.system_target_dir, pkg_install_dir / "valid_file.txt"))
 
         # B. ignored_hook.sh on system is an obsolete file
         system_ignored = self.system_target_dir / "ignored_hook.sh"
@@ -1389,6 +1392,40 @@ class TestInstallRepo(unittest.TestCase):
         # file_a.txt now points to file_a.txt in pkg_install_dir
         self.assertTrue(system_file_a.is_symlink())
         self.assertEqual(system_file_a.resolve(), (pkg_install_dir / "file_a.txt").resolve())
+
+
+class TestStowVersionDetection(unittest.TestCase):
+    """Tests for GNU Stow version retrieval and version checking logic."""
+
+    @patch("drift.install_repo.run_command")
+    def test_get_stow_version_string_stdout(self, mock_run_command: patch) -> None:
+        mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout="stow (GNU Stow) version 2.4.1\n")
+        mock_run_command.return_value = mock_res
+        version = get_stow_version()
+        self.assertEqual(version, "2.4.1")
+
+    @patch("drift.install_repo.run_command")
+    def test_get_stow_version_bytes_stdout(self, mock_run_command: patch) -> None:
+        mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout=b"stow (GNU Stow) version 2.3.1\n")
+        mock_run_command.return_value = mock_res
+        version = get_stow_version()
+        self.assertEqual(version, "2.3.1")
+
+    @patch("drift.install_repo.run_command")
+    def test_get_stow_version_command_fails(self, mock_run_command: patch) -> None:
+        mock_run_command.side_effect = FileNotFoundError("No such file or directory: 'stow'")
+        version = get_stow_version()
+        self.assertIsNone(version)
+
+    def test_is_stow_version_sufficient(self) -> None:
+        self.assertTrue(is_stow_version_sufficient("2.4.1"))
+        self.assertTrue(is_stow_version_sufficient("2.4.2"))
+        self.assertTrue(is_stow_version_sufficient("2.5.0"))
+        self.assertTrue(is_stow_version_sufficient("3.0.0"))
+        self.assertFalse(is_stow_version_sufficient("2.4.0"))
+        self.assertFalse(is_stow_version_sufficient("2.3.1"))
+        self.assertFalse(is_stow_version_sufficient("1.9.0"))
+        self.assertFalse(is_stow_version_sufficient("invalid"))
 
 
 if __name__ == "__main__":

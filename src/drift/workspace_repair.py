@@ -13,6 +13,9 @@ from .constants import (
     GLOBAL_CONFIG_FILE_NAME,
     GLOBAL_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
+    STATE_REGISTRY_FILE_NAME,
+    INSTALL_STOW_IGNORE_PATTERN,
+    STOW_LOCAL_IGNORE_FILE_NAME,
     get_default_drift_toml_content,
     get_default_drift_local_toml_content,
     get_default_secrets_env_content,
@@ -143,13 +146,13 @@ def repair_install_stow_ignore(
     actions: List[str] = []
     stow_ignore_res = check_install_stow_ignore(drift_root, workspace_config=workspace_config)
     install_dir = workspace_config.install_path if workspace_config is not None else (drift_root / "install")
-    stow_ignore_path = install_dir / ".stow-local-ignore"
+    stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
 
     if stow_ignore_res.status != ComponentStatus.GOOD:
-        actions.append("Restored 'install/.stow-local-ignore' with 'state.toml'.")
+        actions.append(f"Restored 'install/{STOW_LOCAL_IGNORE_FILE_NAME}' with '{INSTALL_STOW_IGNORE_PATTERN}'.")
         if not dry_run:
             install_dir.mkdir(parents=True, exist_ok=True)
-            stow_ignore_path.write_text("state.toml\n", encoding="utf-8")
+            stow_ignore_path.write_text(f"{INSTALL_STOW_IGNORE_PATTERN}\n", encoding="utf-8")
     return actions
 
 
@@ -162,10 +165,10 @@ def repair_state_registry(
     actions: List[str] = []
     state_res = check_state_registry(drift_root, workspace_config=workspace_config)
     install_dir = workspace_config.install_path if workspace_config is not None else (drift_root / "install")
-    state_file = install_dir / "state.toml"
+    state_file = install_dir / STATE_REGISTRY_FILE_NAME
 
     if state_res.status != ComponentStatus.GOOD:
-        actions.append("Restored 'install/state.toml' registry database.")
+        actions.append(f"Restored 'install/{STATE_REGISTRY_FILE_NAME}' registry database.")
         if not dry_run:
             install_dir.mkdir(parents=True, exist_ok=True)
             state_file.write_text("[packages]\n", encoding="utf-8")

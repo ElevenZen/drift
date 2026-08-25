@@ -14,6 +14,9 @@ from .constants import (
     GLOBAL_CONFIG_FILE_NAME,
     GLOBAL_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
+    STATE_REGISTRY_FILE_NAME,
+    INSTALL_STOW_IGNORE_PATTERN,
+    STOW_LOCAL_IGNORE_FILE_NAME,
 )
 from .git_utils import (
     is_git_tracked,
@@ -202,13 +205,13 @@ def check_state_registry(
 ) -> CheckResult:
     """Checks the deployment state database registry (install/state.toml)."""
     install_dir = workspace_config.install_path if workspace_config is not None else (drift_root / "install")
-    state_file = install_dir / "state.toml"
+    state_file = install_dir / STATE_REGISTRY_FILE_NAME
     if not state_file.exists():
         return CheckResult(
             name="State Registry",
             status=ComponentStatus.NOT_FOUND,
-            details="'install/state.toml' not found.",
-            fix_hint="Create 'install/state.toml' with '[packages]'"
+            details=f"'install/{STATE_REGISTRY_FILE_NAME}' not found.",
+            fix_hint=f"Create 'install/{STATE_REGISTRY_FILE_NAME}' with '[packages]'"
         )
 
     from .toml_utils import parse_toml
@@ -219,15 +222,15 @@ def check_state_registry(
             return CheckResult(
                 name="State Registry",
                 status=ComponentStatus.BROKEN,
-                details="'install/state.toml' must contain a TOML table.",
-                fix_hint="Reset 'install/state.toml' to '[packages]'"
+                details=f"'install/{STATE_REGISTRY_FILE_NAME}' must contain a TOML table.",
+                fix_hint=f"Reset 'install/{STATE_REGISTRY_FILE_NAME}' to '[packages]'"
             )
     except Exception as e:
         return CheckResult(
             name="State Registry",
             status=ComponentStatus.BROKEN,
-            details=f"Corrupt 'install/state.toml': {e}",
-            fix_hint="Fix syntax or reset 'install/state.toml'"
+            details=f"Corrupt 'install/{STATE_REGISTRY_FILE_NAME}': {e}",
+            fix_hint=f"Fix syntax or reset 'install/{STATE_REGISTRY_FILE_NAME}'"
         )
 
     return CheckResult(
@@ -372,16 +375,16 @@ def check_install_stow_ignore(
             name="Install Stow Ignore",
             status=ComponentStatus.NOT_FOUND,
             details="'install/' directory does not exist.",
-            fix_hint="Create 'install/.stow-local-ignore' after initializing 'install/'"
+            fix_hint=f"Create 'install/{STOW_LOCAL_IGNORE_FILE_NAME}' after initializing 'install/'"
         )
 
-    stow_ignore_file = install_dir / ".stow-local-ignore"
+    stow_ignore_file = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
     if not stow_ignore_file.exists():
         return CheckResult(
             name="Install Stow Ignore",
             status=ComponentStatus.NOT_FOUND,
-            details="'install/.stow-local-ignore' not found.",
-            fix_hint="Create 'install/.stow-local-ignore' with 'state.toml'"
+            details=f"'install/{STOW_LOCAL_IGNORE_FILE_NAME}' not found.",
+            fix_hint=f"Create 'install/{STOW_LOCAL_IGNORE_FILE_NAME}' with '{INSTALL_STOW_IGNORE_PATTERN}'"
         )
 
     try:
@@ -390,23 +393,23 @@ def check_install_stow_ignore(
         return CheckResult(
             name="Install Stow Ignore",
             status=ComponentStatus.BROKEN,
-            details=f"Unreadable 'install/.stow-local-ignore': {e}",
-            fix_hint="Ensure 'install/.stow-local-ignore' is readable"
+            details=f"Unreadable 'install/{STOW_LOCAL_IGNORE_FILE_NAME}': {e}",
+            fix_hint=f"Ensure 'install/{STOW_LOCAL_IGNORE_FILE_NAME}' is readable"
         )
 
     lines = {line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")}
-    if "state.toml" not in lines:
+    if INSTALL_STOW_IGNORE_PATTERN not in lines:
         return CheckResult(
             name="Install Stow Ignore",
             status=ComponentStatus.BROKEN,
-            details="'install/.stow-local-ignore' is missing 'state.toml'.",
-            fix_hint="Add 'state.toml' to 'install/.stow-local-ignore'"
+            details=f"'install/{STOW_LOCAL_IGNORE_FILE_NAME}' is missing '{INSTALL_STOW_IGNORE_PATTERN}'.",
+            fix_hint=f"Add '{INSTALL_STOW_IGNORE_PATTERN}' to 'install/{STOW_LOCAL_IGNORE_FILE_NAME}'"
         )
 
     return CheckResult(
         name="Install Stow Ignore",
         status=ComponentStatus.GOOD,
-        details="'install/.stow-local-ignore' is configured correctly."
+        details=f"'install/{STOW_LOCAL_IGNORE_FILE_NAME}' is configured correctly."
     )
 
 

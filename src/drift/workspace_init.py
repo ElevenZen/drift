@@ -11,6 +11,9 @@ from .constants import (
     SECRETS_ENV_FILE_NAME,
     GLOBAL_CONFIG_FILE_NAME,
     GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    STATE_REGISTRY_FILE_NAME,
+    INSTALL_STOW_IGNORE_PATTERN,
+    STOW_LOCAL_IGNORE_FILE_NAME,
     get_default_drift_toml_content,
     get_default_drift_local_toml_content,
     get_default_secrets_env_content,
@@ -88,8 +91,8 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     git_init_repo(install_dir, "install")
 
     # Generate extra .stow-local-ignore at root of install/
-    stow_ignore_path = install_dir / ".stow-local-ignore"
-    stow_ignore_path.write_text("^/state.toml\n", encoding="utf-8")
+    stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
+    stow_ignore_path.write_text(f"{INSTALL_STOW_IGNORE_PATTERN}\n", encoding="utf-8")
 
     # 6. Creates default directory templates (src/, config/drift.toml, config/drift.local.toml, install/state.toml)
     (drift_root / "src").mkdir(parents=True, exist_ok=True)
@@ -129,5 +132,5 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
         logger.warning(f"jinja2.mustache.json already exists at '{jinja2_input}', skipping creation.")
 
     # Write install/state.toml
-    state_file = install_dir / "state.toml"
+    state_file = install_dir / STATE_REGISTRY_FILE_NAME
     state_file.write_text("[packages]\n", encoding="utf-8")
