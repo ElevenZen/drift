@@ -78,7 +78,7 @@ def resolve_static_input_file(
 ) -> Path:
     """Resolves and validates a static input file path (handling both absolute and config-relative paths)."""
     if not input_file or str(input_file) in ("", "."):
-        logger.warning(f"Input file for render engine '{engine_name}' is not specified or empty.")
+        logger.warning(f"Input file for render engine '{engine_name}' is not specified or empty. Engine '{engine_name}' is disabled.")
         return Path("")
     if input_file.is_absolute():
         path = input_file
@@ -87,7 +87,7 @@ def resolve_static_input_file(
 
     if not path.exists():
         logger.warning(
-            f"Input file for render engine '{engine_name}' not found: {path}"
+            f"Input file for render engine '{engine_name}' not found: {path}. Engine '{engine_name}' is disabled."
         )
         return Path("")
     return path
@@ -132,7 +132,7 @@ def render_input_templates(
             dep_engine = engines_by_name[dep_name]
             dep_input_file = get_or_render_input_file(dep_engine)
             if dep_input_file == Path(""):
-                logger.warning(f"Dependency engine '{dep_name}' has an invalid input file, rendering for '{engine.name}' may fail.")
+                logger.warning(f"Render engine '{engine.name}' is disabled because dependency engine '{dep_name}' has an invalid or missing input file.")
                 memo[engine.name] = Path("")
                 return Path("")
 
@@ -141,7 +141,7 @@ def render_input_templates(
 
             if not template_file_path.exists():
                 logger.warning(
-                    f"Input template file for render engine '{engine.name}' not found: {template_file_path}"
+                    f"Input template file for render engine '{engine.name}' not found: {template_file_path}. Engine '{engine.name}' is disabled."
                 )
                 memo[engine.name] = Path("")
                 return Path("")
@@ -163,7 +163,7 @@ def render_input_templates(
                     input_file_path=dep_input_file
                 )
             except Exception as e:
-                logger.warning(f"Failed to render input template for engine '{engine.name}': {e}")
+                logger.warning(f"Failed to render input template for engine '{engine.name}': {e}. Engine '{engine.name}' is disabled.")
                 memo[engine.name] = Path("")
                 return Path("")
 

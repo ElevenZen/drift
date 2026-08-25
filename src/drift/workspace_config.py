@@ -46,6 +46,11 @@ class RenderEngineConfig:
         if not self.render_command or not isinstance(self.render_command, str):
             raise ValueError("render_command must be a non-empty string.")
 
+    @property
+    def is_disabled(self) -> bool:
+        """Returns True if the render engine is disabled due to missing or empty input file."""
+        return not self.input_file or str(self.input_file) in ("", ".")
+
     def strip_suffix(self, filename: str) -> str:
         """Strips the engine suffix segment from the filename, replacing only the last occurrence."""
         suffix = self.suffix

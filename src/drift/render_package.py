@@ -218,6 +218,7 @@ def run_primitive_2_render_packages(
         target_pkgs: Optional[List[str]] = None) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
     results: List[PackageRenderResult] = []
+    errors: List[Tuple[str, str, Exception]] = []
     with secrets_env_scope(workspace_config.drift_root):
         # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
         render_input_templates(
@@ -232,8 +233,36 @@ def run_primitive_2_render_packages(
                 candidates, target_pkgs, custom_dir=workspace_config.source_path)
         for package_name in active_packages:
             package_dir = workspace_config.source_path / package_name
-            pkg_res = render_package(workspace_config, package_dir)
-            results.append(pkg_res)
+            try:
+                pkg_res = render_package(workspace_config, package_dir)
+                results.append(pkg_res)
+            except FileNotFoundError as e:
+                err_msg = f"File not found: {e}"
+                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+                errors.append((package_name, err_msg, e))
+                results.append(PackageRenderResult(
+                    package=package_name,
+                    status="FAILED",
+                    error=err_msg
+                ))
+            except Exception as e:
+                err_msg = f"Render failed: {e}"
+                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+                errors.append((package_name, err_msg, e))
+                results.append(PackageRenderResult(
+                    package=package_name,
+                    status="FAILED",
+                    error=err_msg
+                ))
+
+        if errors:
+            failed_pkgs_str = ", ".join(f"'{pkg}' ({err})" for pkg, err, _ in errors)
+            return RenderResult(
+                status="FAILED",
+                packages=results,
+                error_package=errors[0][0],
+                error_message=f"Template rendering failed for package(s): {failed_pkgs_str}"
+            )
 
         return RenderResult(
             status="SUCCESS",

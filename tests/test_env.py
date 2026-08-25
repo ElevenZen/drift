@@ -572,8 +572,8 @@ pkg_test = true
         self._setup_package_with_template("pkg_test", f"FAIL=${{{var_secret}}}\n")
 
         ws_config = load_workspace_config(self.drift_root)
-        with self.assertRaises(Exception):
-            run_primitive_2_render_packages(ws_config, ["pkg_test"])
+        res = run_primitive_2_render_packages(ws_config, ["pkg_test"])
+        self.assertEqual(res.status, "FAILED")
 
         # Unload should have executed:
         self.assertNotIn(var_secret, os.environ)

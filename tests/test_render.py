@@ -1335,9 +1335,9 @@ class TestRenderPackage(unittest.TestCase):
         )
 
         from drift.render_package import run_primitive_2_render_packages
-        with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
-        self.assertIn("failed with exit code 1", str(ctx.exception))
+        res = run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
+        self.assertEqual(res.status, "FAILED")
+        self.assertIn("failed with exit code 1", res.error_message)
 
     def test_default_package_envs_available_in_templates(self) -> None:
         """Verifies drift_package_name, drift_package_target_dir, and drift_install_method are available in templates."""
@@ -1349,21 +1349,20 @@ class TestRenderPackage(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "envsubst.bash").write_text("# dummy env", encoding="utf-8")
 
-        drift_toml = config_dir / "drift.toml"
-        drift_toml.write_text("""
-            [workspace]
-            default_target_directory = "/home/default_user"
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            render_engine_config={
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("envsubst.bash"),
+                    suffix="envst",
+                    render_command="bash -c 'source %i && envsubst < %s'"
+                )
+            }
+        )
 
-            [render.envsubst]
-            input_file = "envsubst.bash"
-            suffix = "envst"
-            render_command = "bash -c 'source %i && envsubst < %s'"
-        """, encoding="utf-8")
-
-        from drift.workspace_config import load_workspace_config
-        workspace_config = load_workspace_config(self.drift_root)
-
-        # 2. Setup package with template
         pkg_dir = self.drift_root / "src" / "pkg_env_test"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1394,6 +1393,82 @@ class TestRenderPackage(unittest.TestCase):
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
         self.assertNotIn("drift_install_method", os.environ)
+
+    def test_render_input_template_command_failure_disables_engine(self) -> None:
+        """Tests that when an input template render command fails (e.g. command not found), the engine is disabled."""
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("export FOO=bar\n", encoding="utf-8")
+        (config_dir / "jinja2.mustache.json").write_text('{"foo": "bar"}', encoding="utf-8")
+
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"),
+            suffix="envst",
+            render_command="bash -c 'source %i && cp %s %s'"
+        )
+        mustache_engine = RenderEngineConfig(
+            name="mustache",
+            input_file=Path("mustache.json"), # static input
+            suffix="mustache",
+            render_command="non_existent_command_12345 %i %s" # command will fail
+        )
+        (config_dir / "mustache.json").write_text("{}", encoding="utf-8")
+        jinja2_engine = RenderEngineConfig(
+            name="jinja2",
+            input_file=Path("jinja2.mustache.json"), # depends on mustache!
+            suffix="jinja2",
+            render_command="jinja2 %i %s"
+        )
+
+        # render_input_templates should not throw, but should gracefully set jinja2.input_file = Path("")
+        render_input_templates([envsubst_engine, mustache_engine, jinja2_engine], self.drift_root)
+        self.assertEqual(jinja2_engine.input_file, Path(""))
+        self.assertTrue(jinja2_engine.is_disabled)
+
+    def test_primitive_2_partial_failure_proceeds_with_other_packages(self) -> None:
+        """Tests that Primitive 2 continues rendering remaining packages when one package fails, and returns FAILED status."""
+        from drift.workspace_config import WorkspaceConfig
+        from drift.render_package import run_primitive_2_render_packages
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            packages_enable={"pkg_good": True, "pkg_broken": True},
+            packages_enable_default=False
+        )
+        disabled_engine = RenderEngineConfig(
+            name="jinja2",
+            input_file=Path(""), # disabled!
+            suffix="jinja2",
+            render_command="jinja2 %i %s"
+        )
+        workspace_config.render_engine_config = {"jinja2": disabled_engine}
+
+        # Setup pkg_good
+        pkg_good_dir = self.drift_root / "src" / "pkg_good"
+        pkg_good_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_good_dir / "drift_package.toml").write_text("[package]\ninstall_method = 'copy'\n", encoding="utf-8")
+        (pkg_good_dir / "good_file.txt").write_text("hello world", encoding="utf-8")
+
+        # Setup pkg_broken (contains .jinja2 template relying on disabled engine)
+        pkg_broken_dir = self.drift_root / "src" / "pkg_broken"
+        pkg_broken_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_broken_dir / "drift_package.toml").write_text("[package]\ninstall_method = 'copy'\n", encoding="utf-8")
+        (pkg_broken_dir / "broken.jinja2").write_text("template data", encoding="utf-8")
+
+        # Primitive 2 should return RenderResult with status="FAILED"
+        res = run_primitive_2_render_packages(workspace_config)
+        self.assertEqual(res.status, "FAILED")
+        self.assertEqual(res.error_package, "pkg_broken")
+        self.assertIn("pkg_broken", res.error_message)
+        self.assertIn("Render failed", res.error_message)
+
+        # But pkg_good should have rendered successfully!
+        rendered_good_file = self.drift_root / "render" / "pkg_good" / "good_file.txt"
+        self.assertTrue(rendered_good_file.exists())
+        self.assertEqual(rendered_good_file.read_text(encoding="utf-8"), "hello world")
 
 
 if __name__ == "__main__":

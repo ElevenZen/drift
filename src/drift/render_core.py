@@ -7,6 +7,7 @@ from typing import Optional
 
 from .workspace_config import RenderEngineConfig
 from .constants import CONFIG_DIR_NAME
+from .file_utils import run_command
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def resolve_render_template_args(
         resolved_input_file = input_file_path
     else:
         # Resolve input file if not explicitly provided
-        if not engine_config.input_file or str(engine_config.input_file) in ("", "."):
+        if engine_config.is_disabled:
             raise ValueError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
         config_path = engine_config_input_relative_to / engine_config.input_file
         if not config_path.exists():
@@ -83,16 +84,8 @@ def render_template(
     cmd = cmd.replace("%i", str(resolved_input_file))
     cmd = cmd.replace("%s", str(template_file_path))
 
-    logger.debug(f"External: {cmd}")
-
     try:
-        result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=True,
-            text=True,
-            check=True
-        )
+        result = run_command(cmd, shell=True, text=True)
         return result.stdout
     except subprocess.CalledProcessError as e:
         err_msg = (

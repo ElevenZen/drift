@@ -111,7 +111,9 @@ def execute_sequential_compile_and_apply(
     failed_step = "Step 1 (Template Rendering)"
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
-        run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs)
+        render_res = run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs)
+        if render_res.status == "FAILED":
+            raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
         completed_steps.append(CompletedStep(1, "template_rendering"))
     except Exception as e:
         logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")

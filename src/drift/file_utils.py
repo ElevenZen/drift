@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import shlex
 from pathlib import Path
-from typing import Optional, List, Any
+from typing import Optional, Union, List, Any
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ def is_relative_to(path: Path, other: Path) -> bool:
         return False
 
 
-def run_command(cmd: List[str], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
+def run_command(cmd: Union[str, List[str]], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
     """Logs the command before executing it with subprocess.run."""
     logger.debug(f"External: {shlex.join(cmd)}")
     params: Any = {"check": True, "capture_output": True}

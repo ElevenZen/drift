@@ -242,7 +242,7 @@ def repair_engine_inputs(
     if ws_config is not None:
         configured_engines = list(ws_config.render_engine_config.values())
         for engine in configured_engines:
-            if not engine.input_file or str(engine.input_file) == ".":
+            if engine.is_disabled:
                 actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
                 continue
             input_path = engine.input_file
