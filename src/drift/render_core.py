@@ -12,11 +12,16 @@ from .file_utils import run_command
 logger = logging.getLogger(__name__)
 
 
+class RenderError(Exception):
+    """Raised when template rendering fails during subprocess execution or engine evaluation."""
+    pass
+
+
 def resolve_render_template_args(
     engine_config: RenderEngineConfig,
     engine_config_input_relative_to: Path,
     template_file_path: Path,
-    input_file_path: Optional[Path] = None
+    input_file_path_override: Optional[Path] = None
     ) -> Path:
     """Checks the validity of the arguments for rendering a template and resolves the input file path."""
     if not template_file_path.exists():
@@ -28,16 +33,16 @@ def resolve_render_template_args(
     if "%s" not in engine_config.render_command:
         raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
-    if input_file_path:
-        if str(input_file_path) == "":
-            raise ValueError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
-        if not input_file_path.exists():
-            raise FileNotFoundError(f"Input file does not exist: {input_file_path}")
-        resolved_input_file = input_file_path
+    if input_file_path_override:
+        if str(input_file_path_override) == "":
+            raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
+        if not input_file_path_override.exists():
+            raise FileNotFoundError(f"Input file does not exist: {input_file_path_override}")
+        resolved_input_file = input_file_path_override
     else:
         # Resolve input file if not explicitly provided
         if engine_config.is_disabled:
-            raise ValueError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
+            raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
         config_path = engine_config_input_relative_to / engine_config.input_file
         if not config_path.exists():
             if config_path.is_absolute():
@@ -71,14 +76,14 @@ def render_template(
 
     Raises:
         FileNotFoundError: If the template file or input file is missing.
-        ValueError: If an input file is required but cannot be found or resolved.
-        RuntimeError: If the render subprocess fails.
+        ValueError: If placeholders are missing in the render command.
+        RenderError: If the render engine is disabled or subprocess fails.
     """
     resolved_input_file: Path = resolve_render_template_args(
         engine_config=engine_config,
         engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
         template_file_path=template_file_path,
-        input_file_path=input_file_path
+        input_file_path_override=input_file_path
     )
     cmd: str = engine_config.render_command
     cmd = cmd.replace("%i", str(resolved_input_file))
@@ -93,7 +98,7 @@ def render_template(
             f"Command: {cmd}\n"
             f"Stderr: {e.stderr}"
         )
-        raise RuntimeError(err_msg) from e
+        raise RenderError(err_msg) from e
 
 
 def render_template_to_file(

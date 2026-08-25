@@ -15,7 +15,7 @@ from drift.constants import (
     SECRETS_ENV_FILE_NAME,
 )
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
-from drift.render_core import render_template, render_template_to_file
+from drift.render_core import render_template, render_template_to_file, RenderError
 from drift.render_input import (
     find_engine_for_file,
     strip_engine_suffix,
@@ -153,7 +153,7 @@ class TestRenderEngine(unittest.TestCase):
                 template_file_path=template_path
             )
 
-    def test_render_template_missing_input_raises_value_error_if_unresolved(self) -> None:
+    def test_render_template_missing_input_raises_render_error_if_unresolved(self) -> None:
         template_path = self.drift_root / "template.txt"
         template_path.write_text("Some template content", encoding="utf-8")
 
@@ -163,7 +163,7 @@ class TestRenderEngine(unittest.TestCase):
             suffix="sh",
             render_command="bash -c 'source %i && cat %s'"
         )
-        with self.assertRaises(ValueError):
+        with self.assertRaises(RenderError):
             render_template(
                 engine_config=engine_config,
                 drift_root=self.drift_root,
@@ -206,7 +206,7 @@ class TestRenderEngine(unittest.TestCase):
             )
         self.assertIn("must contain '%s' placeholder", str(ctx.exception))
 
-    def test_render_template_failure_raises_runtime_error(self) -> None:
+    def test_render_template_failure_raises_render_error(self) -> None:
         template_path = self.drift_root / "template.txt"
         template_path.write_text("Some content", encoding="utf-8")
         input_path = self.drift_root / "unused.sh"
@@ -219,7 +219,7 @@ class TestRenderEngine(unittest.TestCase):
             # We must include both placeholders to pass resolve_render_template_args
             render_command="false # %i %s"
         )
-        with self.assertRaises(RuntimeError) as ctx:
+        with self.assertRaises(RenderError) as ctx:
             render_template(
                 engine_config=engine_config,
                 drift_root=self.drift_root,
@@ -1027,8 +1027,8 @@ class TestRenderPackage(unittest.TestCase):
         template_path = self.drift_root / "template.sh"
         template_path.write_text("echo -n 'hello'", encoding="utf-8")
 
-        # Calling render_template with this engine should raise a ValueError
-        with self.assertRaises(ValueError) as ctx:
+        # Calling render_template with this engine should raise a RenderError
+        with self.assertRaises(RenderError) as ctx:
             render_template(
                 engine_config=engine_config,
                 drift_root=self.drift_root,

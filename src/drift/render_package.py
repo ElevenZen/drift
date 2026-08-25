@@ -15,7 +15,7 @@ from .constants import DRIFT_IGNORE_FILE_NAME, INITIAL_ENV
 from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
-from .render_core import render_template_to_file
+from .render_core import render_template_to_file, RenderError
 from .lifecycle_hooks import trigger_pre_source_hook, trigger_post_render_hook
 from .result_models import PackageRenderResult, RenderResult
 
@@ -245,8 +245,17 @@ def run_primitive_2_render_packages(
                     status="FAILED",
                     error=err_msg
                 ))
-            except Exception as e:
+            except RenderError as e:
                 err_msg = f"Render failed: {e}"
+                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+                errors.append((package_name, err_msg, e))
+                results.append(PackageRenderResult(
+                    package=package_name,
+                    status="FAILED",
+                    error=err_msg
+                ))
+            except Exception as e:
+                err_msg = f"Error: {e}"
                 logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
                 errors.append((package_name, err_msg, e))
                 results.append(PackageRenderResult(
