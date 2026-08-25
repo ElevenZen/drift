@@ -51,7 +51,7 @@ def make_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
 
-    # init subcommand
+    # 1. init subcommand
     init_parser = subparsers.add_parser(
         "init",
         help="Initialize a new drift workspace"
@@ -67,113 +67,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # render subcommand
-    render_parser = subparsers.add_parser(
-        "render",
-        help="(Low-Level) Render templates of a package or all enabled packages"
-    )
-    render_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to render specifically"
-    )
-    render_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # stage subcommand
-    stage_parser = subparsers.add_parser(
-        "stage",
-        help="(Low-Level) Stage compiled sandbox templates from render/ to install/ state database"
-    )
-    stage_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to stage specifically"
-    )
-    stage_parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        help="Force staging and bypass uncommitted modifications check"
-    )
-    stage_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # apply subcommand
-    apply_parser = subparsers.add_parser(
-        "apply",
-        help="(Low-Level) Apply configurations from state database to active host system"
-    )
-    apply_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to apply specifically"
-    )
-    apply_parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        help="Force deployment and bypass check"
-    )
-    apply_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # render-commit subcommand
-    render_commit_parser = subparsers.add_parser(
-        "render-commit",
-        help="(Low-Level) Stage and commit compiled render sandbox changes"
-    )
-    render_commit_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to commit specifically"
-    )
-    render_commit_parser.add_argument(
-        "-m", "--message",
-        required=True,
-        help="Commit message"
-    )
-
-    # install-commit subcommand
-    install_commit_parser = subparsers.add_parser(
-        "install-commit",
-        help="(Low-Level) Stage and commit install state directory changes"
-    )
-    install_commit_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to commit specifically"
-    )
-    install_commit_parser.add_argument(
-        "-m", "--message",
-        required=True,
-        help="Commit message"
-    )
-
-    # reverse-sync subcommand
-    reverse_sync_parser = subparsers.add_parser(
-        "reverse-sync",
-        help="(Low-Level) Synchronize changes from host system back to install/ state database"
-    )
-    reverse_sync_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to reverse-sync specifically"
-    )
-    reverse_sync_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # new subcommand
+    # 2. new subcommand
     new_parser = subparsers.add_parser(
         "new",
         help="Scaffold a new package directory and drift_package.toml"
@@ -203,74 +97,53 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # uninstall subcommand
-    uninstall_parser = subparsers.add_parser(
-        "uninstall",
-        help="Uninstall a package from the system and restore any backups"
+    # 3. add subcommand
+    add_parser = subparsers.add_parser(
+        "add",
+        help="Import files or folders from the system into a package (with dot-prefix translation)"
     )
-    uninstall_parser.add_argument(
-        "packages",
+    add_parser.add_argument(
+        "package_name",
+        help="Name of the package to add resources into"
+    )
+    add_parser.add_argument(
+        "paths",
         nargs="+",
-        help="One or more package names to uninstall"
+        help="One or more file/folder paths to import"
     )
-    uninstall_parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        help="Force uninstallation even if package is still active in drift.toml"
-    )
-    uninstall_parser.add_argument(
+    add_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview uninstallation without making changes"
+        help="Preview the import without making changes"
     )
-    uninstall_parser.add_argument(
-        "--detach",
-        action="store_true",
-        help="Remove management relationship but keep configurations as actual physical files on host system"
-    )
-    uninstall_parser.add_argument(
+    add_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
     )
 
-    # adopt subcommand
-    adopt_parser = subparsers.add_parser(
-        "adopt",
-        help="Adopt active system drifts and incorporate them back into source templates"
+    # 4. deploy subcommand
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."
     )
-    adopt_parser.add_argument(
+    deploy_parser.add_argument(
         "packages",
         nargs="*",
-        help="Optional package name(s) to adopt specifically"
+        help="Optional specific package(s) to deploy"
     )
-    adopt_parser.add_argument(
-        "-i", "--interactive",
-        action="store_true",
-        help="Interactively reconcile each drifted file"
-    )
-    adopt_parser.add_argument(
-        "--accept-conflicts",
-        action="store_true",
-        help="Apply conflicting patches, writing merge conflict markers directly into templates"
-    )
-    adopt_parser.add_argument(
+    deploy_parser.add_argument(
         "-f", "--force",
         action="store_true",
-        help="Force adoption even if the package source directory has uncommitted modifications"
+        help="Forcefully deploy and bypass system drift sentinel safeguards"
     )
-    adopt_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Simulate the adoption, previewing changes and conflict results"
-    )
-    adopt_parser.add_argument(
+    deploy_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
     )
 
-    # status subcommand
+    # 5. status subcommand
     status_parser = subparsers.add_parser(
         "status",
         help="Audit and aggregate configuration status across active packages"
@@ -286,23 +159,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # gc subcommand
-    gc_parser = subparsers.add_parser(
-        "gc",
-        help="(Low-Level) Identify and uninstall orphan packages (present in state but disabled in config)"
-    )
-    gc_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Simulate the garbage collection without making changes"
-    )
-    gc_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # diff subcommand
+    # 6. diff subcommand
     diff_parser = subparsers.add_parser(
         "diff",
         help="Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)"
@@ -339,32 +196,74 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # add subcommand
-    add_parser = subparsers.add_parser(
-        "add",
-        help="Import files or folders from the system into a package (with dot-prefix translation)"
+    # 7. adopt subcommand
+    adopt_parser = subparsers.add_parser(
+        "adopt",
+        help="Adopt active system drifts and incorporate them back into source templates"
     )
-    add_parser.add_argument(
-        "package_name",
-        help="Name of the package to add resources into"
+    adopt_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to adopt specifically"
     )
-    add_parser.add_argument(
-        "paths",
-        nargs="+",
-        help="One or more file/folder paths to import"
+    adopt_parser.add_argument(
+        "-i", "--interactive",
+        action="store_true",
+        help="Interactively reconcile each drifted file"
     )
-    add_parser.add_argument(
+    adopt_parser.add_argument(
+        "--accept-conflicts",
+        action="store_true",
+        help="Apply conflicting patches, writing merge conflict markers directly into templates"
+    )
+    adopt_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force adoption even if the package source directory has uncommitted modifications"
+    )
+    adopt_parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview the import without making changes"
+        help="Simulate the adoption, previewing changes and conflict results"
     )
-    add_parser.add_argument(
+    adopt_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
     )
 
-    # rollback subcommand
+    # 8. uninstall subcommand
+    uninstall_parser = subparsers.add_parser(
+        "uninstall",
+        help="Uninstall a package from the system and restore any backups"
+    )
+    uninstall_parser.add_argument(
+        "packages",
+        nargs="+",
+        help="One or more package names to uninstall"
+    )
+    uninstall_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force uninstallation even if package is still active in drift.toml"
+    )
+    uninstall_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview uninstallation without making changes"
+    )
+    uninstall_parser.add_argument(
+        "--detach",
+        action="store_true",
+        help="Remove management relationship but keep configurations as actual physical files on host system"
+    )
+    uninstall_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 9. rollback subcommand
     rollback_parser = subparsers.add_parser(
         "rollback",
         help="Rollback failed deployments and restore systems to the last committed clean state."
@@ -385,28 +284,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # deploy subcommand
-    deploy_parser = subparsers.add_parser(
-        "deploy",
-        help="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."
-    )
-    deploy_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional specific package(s) to deploy"
-    )
-    deploy_parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        help="Forcefully deploy and bypass system drift sentinel safeguards"
-    )
-    deploy_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # repair subcommand
+    # 10. repair subcommand
     repair_parser = subparsers.add_parser(
         "repair",
         help="Repair missing, damaged, or partially-initialized components in the drift workspace."
@@ -422,7 +300,23 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # help subcommand
+    # 11. gc subcommand
+    gc_parser = subparsers.add_parser(
+        "gc",
+        help="Identify and uninstall orphan packages (present in state but disabled in config)"
+    )
+    gc_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate the garbage collection without making changes"
+    )
+    gc_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 12. help subcommand
     help_parser = subparsers.add_parser(
         "help",
         help="Show overall model of drift and its detailed manual pages."
@@ -432,6 +326,115 @@ def make_parser() -> argparse.ArgumentParser:
         nargs="?",
         help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml)"
     )
+
+    # === Low-Level Primitive Subcommands ===
+
+    # 13. render subcommand
+    render_parser = subparsers.add_parser(
+        "render",
+        help="(Low-Level) Render templates of a package or all enabled packages"
+    )
+    render_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to render specifically"
+    )
+    render_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 14. render-commit subcommand
+    render_commit_parser = subparsers.add_parser(
+        "render-commit",
+        help="(Low-Level) Stage and commit compiled render sandbox changes"
+    )
+    render_commit_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to commit specifically"
+    )
+    render_commit_parser.add_argument(
+        "-m", "--message",
+        required=True,
+        help="Commit message"
+    )
+
+    # 15. stage subcommand
+    stage_parser = subparsers.add_parser(
+        "stage",
+        help="(Low-Level) Stage compiled sandbox templates from render/ to install/ state database"
+    )
+    stage_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to stage specifically"
+    )
+    stage_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force staging and bypass uncommitted modifications check"
+    )
+    stage_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 16. install-commit subcommand
+    install_commit_parser = subparsers.add_parser(
+        "install-commit",
+        help="(Low-Level) Stage and commit install state directory changes"
+    )
+    install_commit_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to commit specifically"
+    )
+    install_commit_parser.add_argument(
+        "-m", "--message",
+        required=True,
+        help="Commit message"
+    )
+
+    # 17. apply subcommand
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="(Low-Level) Apply configurations from state database to active host system"
+    )
+    apply_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to apply specifically"
+    )
+    apply_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Force deployment and bypass check"
+    )
+    apply_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 18. reverse-sync subcommand
+    reverse_sync_parser = subparsers.add_parser(
+        "reverse-sync",
+        help="(Low-Level) Synchronize changes from host system back to install/ state database"
+    )
+    reverse_sync_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to reverse-sync specifically"
+    )
+    reverse_sync_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
     return parser
 
 

@@ -190,7 +190,7 @@ Removes or detaches a package from the system:
 ### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
 Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure. Resets `install/` to HEAD, purges untracked files via `git clean -fd`, and executes a Full Package Redeploy with `force=True`.
 
-### Primitive 9: Workspace Garbage Collection [Low-level: `drift gc`]
+### Primitive 9: Workspace Garbage Collection [High-level: `drift gc`]
 Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories:
 1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift.toml`.
 2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml`), preventing database pollution.
