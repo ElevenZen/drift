@@ -207,6 +207,8 @@ class TestInstallRepo(unittest.TestCase):
             name = "{pkg}"
             install_method = "copy"
             target_directory = "{self.system_target_dir}"
+
+            [hooks]
             post_install = "on-install.sh"
             post_update = "on-update.sh"
             """)
@@ -479,6 +481,8 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
+
+            [hooks]
             post_install = "hook.sh"
             """)
 
@@ -1044,6 +1048,8 @@ class TestInstallRepo(unittest.TestCase):
             name = "{pkg}"
             install_method = "copy"
             target_directory = "{self.system_target_dir}"
+
+            [hooks]
             post_install = "fail.sh"
             """)
 
@@ -1216,12 +1222,14 @@ class TestInstallRepo(unittest.TestCase):
 
         marker_file = self.system_target_dir / "hook_ran_marker.txt"
 
-        # 1. Config with lifecycle hook
+        # 1. Config with lifecycle hook under [hooks]
         (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
         target_directory = "{self.system_target_dir}"
+
+        [hooks]
         pre_install = "pre_hook.sh"
         """, encoding="utf-8")
 

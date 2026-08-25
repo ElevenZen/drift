@@ -1283,7 +1283,8 @@ class TestRenderPackage(unittest.TestCase):
         pkg_toml = pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
             "[package]\n"
-            "name = \"pkg_dynamic\"\n"
+            "name = \"pkg_dynamic\"\n\n"
+            "[hooks]\n"
             "pre_source = \"scripts/gen_dynamic.sh\"\n",
             encoding="utf-8"
         )
@@ -1325,7 +1326,8 @@ class TestRenderPackage(unittest.TestCase):
         pkg_toml = pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
             "[package]\n"
-            "name = \"pkg_failing_hook\"\n"
+            "name = \"pkg_failing_hook\"\n\n"
+            "[hooks]\n"
             "pre_source = \"scripts/failing.sh\"\n",
             encoding="utf-8"
         )

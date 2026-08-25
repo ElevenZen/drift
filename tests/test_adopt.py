@@ -475,7 +475,7 @@ class TestAdopt(unittest.TestCase):
 
         pkg_toml = src_pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
-            f"[package]\nname = \"{pkg}\"\npre_source = \"scripts/prepare_src.sh\"\n",
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/prepare_src.sh\"\n",
             encoding="utf-8"
         )
 
@@ -510,7 +510,7 @@ class TestAdopt(unittest.TestCase):
 
         pkg_toml = src_pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
-            f"[package]\nname = \"{pkg}\"\npre_source = \"scripts/failing.sh\"\n",
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/failing.sh\"\n",
             encoding="utf-8"
         )
 

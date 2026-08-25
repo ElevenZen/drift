@@ -36,9 +36,10 @@ fully_controlled_dirs = [
     "plugins"
 ]
 
+[hooks]
 # Lifecycle Hooks (Optional shell command execution)
 # Timeout in seconds before hook processes are aborted (defaults to 120)
-hook_timeout = 120
+timeout = 120
 
 # Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
 # Executed from src/ package root (runs in user space, never with sudo)

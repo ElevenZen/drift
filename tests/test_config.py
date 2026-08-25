@@ -273,24 +273,30 @@ class TestConfigClasses(unittest.TestCase):
         data = {
             "package": {
                 "name": "my_pkg",
-                "install_method": "stow",
+                "install_method": "stow"
+            },
+            "hooks": {
                 "pre_source": "scripts/gen.sh",
-                "hook_timeout": 60
+                "timeout": 60
             }
         }
         config = PackageConfig.from_dict(data, default_name="fallback_name")
         self.assertEqual(config.name, "my_pkg")
         self.assertEqual(config.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.timeout, 60)
         self.assertEqual(config.hook_timeout, 60)
 
-        # Test string casting for hook_timeout
+        # Test string casting for timeout
         data_str_timeout = {
             "package": {
-                "name": "my_pkg",
-                "hook_timeout": "45"
+                "name": "my_pkg"
+            },
+            "hooks": {
+                "timeout": "45"
             }
         }
         config_str = PackageConfig.from_dict(data_str_timeout)
+        self.assertEqual(config_str.timeout, 45)
         self.assertEqual(config_str.hook_timeout, 45)
 
         data_no_name = {
@@ -300,7 +306,8 @@ class TestConfigClasses(unittest.TestCase):
         }
         config = PackageConfig.from_dict(data_no_name, default_name="fallback_name")
         self.assertEqual(config.name, "fallback_name")
-        self.assertEqual(config.hook_timeout, 120)  # Default value
+        self.assertEqual(config.timeout, 120)  # Default value
+        self.assertEqual(config.hook_timeout, 120)
 
         with self.assertRaises(ValueError):
             PackageConfig.from_dict(data_no_name)
@@ -313,11 +320,11 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
         with self.assertRaises(TypeError):
-            PackageConfig(name="foo", hook_timeout="not_an_int").validate() # type: ignore
+            PackageConfig(name="foo", timeout="not_an_int").validate() # type: ignore
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", hook_timeout=0).validate()
+            PackageConfig(name="foo", timeout=0).validate()
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", hook_timeout=-10).validate()
+            PackageConfig(name="foo", timeout=-10).validate()
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", pre_source=123).validate() # type: ignore
 
@@ -337,6 +344,36 @@ class TestConfigClasses(unittest.TestCase):
         # Direct property modification forwards to hooks
         config.post_render = "scripts/render.sh"
         self.assertEqual(config.hooks.post_render, "scripts/render.sh")
+
+    def test_load_package_config_with_hooks_table(self) -> None:
+        """Verifies parsing package configuration with dedicated [hooks] table."""
+        toml_dict = {
+            "package": {
+                "name": "pkg_with_hooks",
+                "install_method": "copy",
+                "target_directory": "~/.config/test"
+            },
+            "hooks": {
+                "pre_source": "scripts/gen.sh",
+                "pre_install": "scripts/pre_install.sh",
+                "post_install": "scripts/post_install.sh",
+                "pre_update": "scripts/pre_update.sh",
+                "post_update": "scripts/post_update.sh",
+                "post_render": "scripts/post_render.sh",
+                "timeout": 45
+            }
+        }
+        config = PackageConfig.from_dict(toml_dict)
+        self.assertEqual(config.name, "pkg_with_hooks")
+        self.assertEqual(config.install_method, "copy")
+        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_install, "scripts/pre_install.sh")
+        self.assertEqual(config.hooks.post_install, "scripts/post_install.sh")
+        self.assertEqual(config.hooks.pre_update, "scripts/pre_update.sh")
+        self.assertEqual(config.hooks.post_update, "scripts/post_update.sh")
+        self.assertEqual(config.hooks.post_render, "scripts/post_render.sh")
+        self.assertEqual(config.hooks.timeout, 45)
+        self.assertEqual(config.hook_timeout, 45)
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""

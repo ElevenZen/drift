@@ -219,7 +219,7 @@ class TestAddResource(unittest.TestCase):
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\npre_source="scripts/pre_add.sh"\n'
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.sh"\n'
         )
 
         target_file = self.system_target_dir / "imported_file.txt"
@@ -249,7 +249,7 @@ class TestAddResource(unittest.TestCase):
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\npre_source="scripts/failing.sh"\n'
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/failing.sh"\n'
         )
 
         target_file = self.system_target_dir / "imported_file.txt"

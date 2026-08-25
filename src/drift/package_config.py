@@ -45,10 +45,10 @@ class PackageHooks:
                 raise TypeError(f"{hook_name} must be a string{name_str}.")
         if not isinstance(self.timeout, int):
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise TypeError(f"hook_timeout must be an integer{name_str}.")
+            raise TypeError(f"timeout must be an integer{name_str}.")
         if self.timeout <= 0:
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise ValueError(f"hook_timeout must be a positive integer{name_str}.")
+            raise ValueError(f"timeout must be a positive integer{name_str}.")
 
     def trigger(self, hook_name: str, hook_dir: Path, cwd: Path) -> None:
         """Executes a package lifecycle hook script if specified and found."""
@@ -124,6 +124,7 @@ class PackageConfig:
         pre_update: Optional[str] = None,
         post_update: Optional[str] = None,
         post_render: Optional[str] = None,
+        timeout: Optional[int] = None,
         hook_timeout: Optional[int] = None
     ) -> None:
         self.name = name
@@ -135,6 +136,7 @@ class PackageConfig:
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
 
+        effective_timeout = timeout if timeout is not None else (hook_timeout if hook_timeout is not None else 120)
         if hooks is not None:
             self.hooks = hooks
             if pre_source is not None:
@@ -149,8 +151,8 @@ class PackageConfig:
                 self.hooks.post_update = post_update
             if post_render is not None:
                 self.hooks.post_render = post_render
-            if hook_timeout is not None:
-                self.hooks.timeout = hook_timeout
+            if timeout is not None or hook_timeout is not None:
+                self.hooks.timeout = effective_timeout
         else:
             self.hooks = PackageHooks(
                 pre_source=pre_source,
@@ -159,7 +161,7 @@ class PackageConfig:
                 pre_update=pre_update,
                 post_update=post_update,
                 post_render=post_render,
-                timeout=hook_timeout if hook_timeout is not None else 120
+                timeout=effective_timeout
             )
         self.hooks.package_config = self
 
@@ -329,12 +331,13 @@ class PackageConfig:
                   source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary."""
         # Warning for unknown top-level sections
-        known_top_sections = {"package"}
+        known_top_sections = {"package", "hooks"}
         for key in data:
             if key not in known_top_sections:
                 logger.warning(f"Unknown top-level package config section: '{key}'")
 
         package_data = data.get("package", {})
+        hooks_data = data.get("hooks", {})
         
         name = package_data.get("name", default_name)
         if not name:
@@ -348,18 +351,25 @@ class PackageConfig:
             "install_method",
             "target_directory",
             "sudo",
-            "fully_controlled_dirs",
+            "fully_controlled_dirs"
+        }
+        for key in package_data:
+            if key not in known_package_keys:
+                logger.warning(f"Unknown package option: '{key}'")
+
+        # Warning for unknown hooks options
+        known_hooks_keys = {
             "pre_source",
             "pre_install",
             "post_install",
             "pre_update",
             "post_update",
             "post_render",
-            "hook_timeout"
+            "timeout"
         }
-        for key in package_data:
-            if key not in known_package_keys:
-                logger.warning(f"Unknown package option: '{key}'")
+        for key in hooks_data:
+            if key not in known_hooks_keys:
+                logger.warning(f"Unknown hook option: '{key}'")
             
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
@@ -372,19 +382,19 @@ class PackageConfig:
         if target_dir:
             target_dir = Path(target_dir).expanduser()
             
-        raw_timeout = package_data.get("hook_timeout", 120)
+        raw_timeout = hooks_data.get("timeout", 120)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
             raw_timeout = int(raw_timeout)
         if not isinstance(raw_timeout, int):
-            raise TypeError(f"hook_timeout must be an integer for package '{name}'.")
+            raise TypeError(f"timeout must be an integer for package '{name}'.")
 
         hooks = PackageHooks(
-            pre_source=package_data.get("pre_source"),
-            pre_install=package_data.get("pre_install"),
-            post_install=package_data.get("post_install"),
-            pre_update=package_data.get("pre_update"),
-            post_update=package_data.get("post_update"),
-            post_render=package_data.get("post_render"),
+            pre_source=hooks_data.get("pre_source"),
+            pre_install=hooks_data.get("pre_install"),
+            post_install=hooks_data.get("post_install"),
+            pre_update=hooks_data.get("pre_update"),
+            post_update=hooks_data.get("post_update"),
+            post_render=hooks_data.get("post_render"),
             timeout=raw_timeout
         )
 

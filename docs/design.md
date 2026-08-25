@@ -455,6 +455,7 @@ fully_controlled_dirs = [
     "sub_dir2"
 ]
 
+[hooks]
 # ---------------------------------------------------------------------
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
@@ -478,7 +479,7 @@ pre_update = "pre-update.bash"
 post_update = "post-update.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
-hook_timeout = 120
+timeout = 120
 ```
 
 #### Default Package Environment Variables & Precedence

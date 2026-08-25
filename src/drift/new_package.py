@@ -12,20 +12,21 @@ name = "{package_name}"
 install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
 {target_directory_line}
 
+# Advanced Flags
+# sudo = false
+# fully_controlled_dirs = []  # Sync deletions inside these directories
+# enable_render = true
+# enable_install = true
+
 # Lifecycle Hooks (Optional)
+# [hooks]
 # pre_source   = ""
 # pre_install  = ""
 # post_install = ""
 # pre_update   = ""
 # post_update  = ""
 # post_render  = ""
-# hook_timeout = 120
-
-# Advanced Flags
-# sudo = false
-# fully_controlled_dirs = []  # Sync deletions inside these directories
-# enable_render = true
-# enable_install = true
+# timeout      = 120
 """
 
 def get_default_package_config_template() -> str:
