@@ -360,6 +360,47 @@ class TestReverseSync(unittest.TestCase):
         # 5. Regular file should have been deleted because it was missing on host
         self.assertFalse(regular_file.exists(), "regular_file.txt should be deleted as it is missing on host!")
 
+    def test_reverse_sync_ignored_file_in_target_dir_not_deleted_in_install(self) -> None:
+        """Verifies that if an ignored file exists (or does not exist) in target dir, reverse sync will NOT delete the ignored file in install/."""
+        from drift.constants import DRIFT_IGNORE_FILE_NAME
+        pkg = "pkg_ignored_reverse"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup install/ with config, .drift_ignore, an ignored script, and a tracked file
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook.sh\n", encoding="utf-8")
+        ignored_hook_install = pkg_install_dir / "ignored_hook.sh"
+        ignored_hook_install.write_text("#!/bin/sh\necho 'hook'\n", encoding="utf-8")
+
+        tracked_file_install = pkg_install_dir / "app.conf"
+        tracked_file_install.write_text("setting=1\n", encoding="utf-8")
+
+        # 2. Setup target dir: ignored_hook.sh exists on host, app.conf is modified on host
+        ignored_hook_target = self.system_target_dir / "ignored_hook.sh"
+        ignored_hook_target.write_text("#!/bin/sh\necho 'different on host'\n", encoding="utf-8")
+
+        tracked_file_target = self.system_target_dir / "app.conf"
+        tracked_file_target.write_text("setting=2\n", encoding="utf-8")
+
+        # 3. Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 4. Assert:
+        # A. ignored_hook.sh in install/ is NOT deleted and NOT overwritten
+        self.assertTrue(ignored_hook_install.exists(), "ignored_hook.sh in install/ must not be deleted!")
+        self.assertEqual(ignored_hook_install.read_text(encoding="utf-8"), "#!/bin/sh\necho 'hook'\n")
+
+        # B. app.conf in install/ was updated from host
+        self.assertEqual(tracked_file_install.read_text(encoding="utf-8"), "setting=2\n")
+
 
 if __name__ == "__main__":
     unittest.main()
