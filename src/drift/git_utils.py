@@ -1,5 +1,6 @@
 """Git repository utility functions."""
 
+import os
 import logging
 import subprocess
 from pathlib import Path
@@ -239,22 +240,26 @@ def check_repo_can_commit(repo_path: Path) -> None:
         raise FileNotFoundError(f"Directory does not exist: {repo_path}")
 
     # Query user.name
-    try:
-        subprocess.run(["git", "-C", str(repo_path), "config", "user.name"], capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"Git configuration error: 'user.name' is not configured in the repository or globally for '{repo_path}'. "
-            "Please run: git config --global user.name \"Your Name\""
-        ) from e
+    has_env_name = bool(os.environ.get("GIT_AUTHOR_NAME") or os.environ.get("GIT_COMMITTER_NAME"))
+    if not has_env_name:
+        try:
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.name"], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Git configuration error: 'user.name' is not configured in the repository or globally for '{repo_path}'. "
+                "Please run: git config --global user.name \"Your Name\""
+            ) from e
 
     # Query user.email
-    try:
-        subprocess.run(["git", "-C", str(repo_path), "config", "user.email"], capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        raise RuntimeError(
-            f"Git configuration error: 'user.email' is not configured in the repository or globally for '{repo_path}'. "
-            "Please run: git config --global user.email \"you@example.com\""
-        ) from e
+    has_env_email = bool(os.environ.get("GIT_AUTHOR_EMAIL") or os.environ.get("GIT_COMMITTER_EMAIL"))
+    if not has_env_email:
+        try:
+            subprocess.run(["git", "-C", str(repo_path), "config", "user.email"], capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(
+                f"Git configuration error: 'user.email' is not configured in the repository or globally for '{repo_path}'. "
+                "Please run: git config --global user.email \"you@example.com\""
+            ) from e
 
 
 def git_init_repo(dir_path: Path, name: str) -> bool:
