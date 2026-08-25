@@ -22,7 +22,7 @@ def is_relative_to(path: Path, other: Path) -> bool:
 
 def run_command(cmd: Union[str, List[str]], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
     """Logs the command before executing it with subprocess.run."""
-    logger.debug(f"External: {shlex.join(cmd)}")
+    logger.debug(f"External: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
     params: Any = {"check": True, "capture_output": True}
     params.update(kwargs)
     return subprocess.run(cmd, **params)
