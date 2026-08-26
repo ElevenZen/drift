@@ -259,7 +259,6 @@ def run_collision_guard(
             continue
 
         # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
-        # TODO: add a test case for the target is a symlink, it should be removed whatever first time or not.
         if (metadata.get_install_method(workspace_config) == "copy"
                 and not system_target.is_symlink() and not is_first_time):
             continue

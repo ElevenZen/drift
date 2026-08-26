@@ -46,6 +46,7 @@ def translate_dot_prefixes(relative_path: Path) -> Path:
     translated_parts = ["." + p[4:]
                         if p.startswith("dot-") and p not in ("dot-", "dot-.") else p
                         for p in relative_path.parts]
+    assert len(translated_parts) == len(relative_path.parts), "Translation should not change the number of path segments."
     return Path(*translated_parts)
 
 
@@ -57,6 +58,7 @@ def translate_dot_prefixes_reverse(relative_path: Path) -> Path:
     translated_parts = ["dot-" + p[1:]
                         if p.startswith(".") and p not in (".", "..") else p
                         for p in relative_path.parts]
+    assert len(translated_parts) == len(relative_path.parts), "Reverse translation should not change the number of path segments."
     return Path(*translated_parts)
 
 
