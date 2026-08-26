@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_rendered, PackageConfig
-from .file_utils import tree_relative_files, file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
+from .file_utils import file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
 from .folder_diff import compare_folders
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications

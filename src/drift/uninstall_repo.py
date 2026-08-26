@@ -112,7 +112,8 @@ def restore_backups(
     if not backup_pkg_overwritten.exists():
         return restored  # No backups to restore
 
-    # We assume there won't be any symlinks to directories in the backup, so we can safely use tree_relative_files
+    # We assume we can just move symlinks in the backup without resolving,
+    # so we can safely use tree_relative_files
     backup_files = tree_relative_files(backup_pkg_overwritten)
 
     if not backup_files:
@@ -291,8 +292,8 @@ def run_primitive_7_uninstall_packages(
                     install_method=pkg_state.install_method or "stow",
                     target_directory=str(target_dir),
                     detach_mode=detach,
-                    removed_files=list(pkg_state.deployed_files) if not detach else [],
-                    converted_symlinks=list(pkg_state.deployed_files) if detach else [],
+                    removed_files=[str(x) for x in pkg_state.deployed_files] if not detach else [],
+                    converted_symlinks=[str(x) for x in pkg_state.deployed_files] if detach else [],
                     status="SUCCESS"
                 )
             )

@@ -27,7 +27,6 @@ from .file_utils import (
         ensure_directory_writable,
         ensure_dir_exists_with_sudo,
         remove_file_or_dir_with_sudo,
-        tree_relative_files,
         is_relative_to,
         run_command,
 )
@@ -110,6 +109,9 @@ def handle_internal_symlink_conflicts(
     processed_paths: set
 ) -> None:
     """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
+
+    # not necessary to follow_symlinks here, because dir pointing into drift_root will always trigger backup and removal.
+    # so dig deep inside is meaningless.
     links = find_links_pointing_into(target_dir, workspace_config.drift_root, follow_symlinks=False)
     for link in links:
         try:
@@ -129,14 +131,25 @@ def handle_internal_symlink_conflicts(
         # If install method is stow and link points into our pkg install dir, it's valid for this package
         if metadata.get_install_method(workspace_config) == "stow":
             try:
-                link_target = (link.parent / os.readlink(link)).resolve()
-                if is_relative_to(link_target, install_pkg_dir.resolve()):
-                    continue
+                # stow command can only handle relative paths,
+                # so only relative links pointing to the same install_pkg_dir are valid stow links.
+                # And we restrict the result to not contain linked dir as parent dir.
+                # so dir pointing to the same install_pkg_dir is considered invalid, and trigger backup and removal.
+                # Other cases must trigger backup and removal, including symlinked directories.
+                link_content = Path(os.readlink(link))
+                if not link_content.is_absolute() and not link.is_dir():
+                    link_target = (link.parent / os.readlink(link)).resolve()
+                    if is_relative_to(link_target, install_pkg_dir.resolve()):
+                        continue
             except Exception:
                 pass
 
         # Otherwise, it is a link conflict and must be backed up & removed
+        # including copy method but the target is currently a symlink pointing into drift_root
         processed_paths.add(repo_rel)
+        # TODO: add all children of this repo_rel to processed_paths to avoid double handling
+        # if repo_path.is_dir():
+
         handle_collision_error(
             pkg=pkg,
             rel_path=repo_rel,
@@ -200,6 +213,7 @@ def run_collision_guard(
     )
 
     # 3. Handle Deleted items (system files blocking repo dirs or now-ignored files)
+    # The rule 'ignore file as deletion' is handled here.
     for rel in diff.deleted:
         if rel in processed_paths:
             continue
@@ -223,22 +237,29 @@ def run_collision_guard(
         
         system_target = resolve_system_target(rel, target_dir)
         
-        # Stow specific check: skip if it's already a link to OUR package in install_pkg_dir (i.e. a previous stow link)
-        if metadata.get_install_method(workspace_config) == "stow" and system_target.is_symlink():
-            try:
-                link_target = (system_target.parent / os.readlink(system_target)).resolve()
-                if is_relative_to(link_target, install_pkg_dir.resolve()):
-                    continue
-            except Exception:
-                pass
+        # If the file is modified, then it cannot pointing to the same file.
+        # If the symlink points to anywhere inside install_pkg_dir but not the same pkg_install_dir,
+        # it is handled earlier in internal symlink conflicts.
+        # So if it's symlink
+        #   1. it is a broken symlink
+        #   2. it is a symlink pointing outside install_pkg_dir 
+        #   3. it is pointing inside the same pkg_install_dir, but not the same file.
+        # We can skip the backup if the system target is a symlink pointing to the same file in install_pkg_dir.
+        # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
+        if (metadata.get_install_method(workspace_config) == "stow"
+                and system_target.is_symlink() and system_target.exists()
+                and is_relative_to(system_target.resolve(), install_pkg_dir.resolve())):
+            continue
 
-        # Copy mode check: only collision on FIRST installation
-        if metadata.get_install_method(workspace_config) == "copy" and not is_first_time:
+        # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
+        # TODO: add a test case for the target is a symlink, it should be removed whether first time or not.
+        if (metadata.get_install_method(workspace_config) == "copy"
+                and not system_target.is_symlink() and not is_first_time):
             continue
 
         # conditions include:
-        # stow mode: target is normal file or symlink not pointing install_pkg_dir.
-        # copy mode: not first installation.
+        # stow mode: system target file is not a symlink, or is broken link, or pointing outside install_pkg_dir
+        # copy mode: first installation, or system target is a symlink (broken or not)
         handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
                                "Deployment collision", resolve_symlinks)
 

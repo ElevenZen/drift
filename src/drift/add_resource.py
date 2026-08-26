@@ -12,7 +12,6 @@ from .file_utils import (
     translate_dot_prefixes_reverse,
     is_relative_to,
     resolve_system_target,
-    tree_relative_files
 )
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore

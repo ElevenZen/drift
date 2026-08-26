@@ -110,7 +110,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     drifted_files: List[str] = []
     synced_files: List[str] = []
 
-    # 1. Handle system deletions (deleted in system but exist in repo)
+    # 1. Handle system deletions (deleted in system but exist in repo, or blocking dirs)
     for rel in diff.deleted:
         repo_rel = translate_dot_prefixes_reverse(rel)
         if ignore_handler and ignore_handler.match_path(repo_rel):
