@@ -10,6 +10,7 @@ from .ignore import DriftIgnore
 from .file_utils import (
     is_relative_to,
     resolve_system_target,
+    translate_dot_prefixes,
     translate_dot_prefixes_reverse,
     remove_file_or_dir,
 )
@@ -50,12 +51,13 @@ def filter_added_files_to_sync(
     2. Or a parent directory was deleted in repo (promoted tracked file).
     Internal managed config files are ignored.
     """
+    normalized_fcds = [translate_dot_prefixes(f) for f in fully_controlled_dirs]
     to_sync = []
     for rel in added_files:
         if rel.name in MANAGED_CONFIG_FILES:
             continue
 
-        in_fcd = any(is_relative_to(rel, fcd_rel) for fcd_rel in fully_controlled_dirs)
+        in_fcd = any(is_relative_to(rel, fcd_rel) for fcd_rel in normalized_fcds)
         parent_deleted = any(parent in deleted_files for parent in [rel] + list(rel.parents))
 
         if in_fcd or parent_deleted:
