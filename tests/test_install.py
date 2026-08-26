@@ -712,7 +712,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("insufficient", str(ctx.exception))
 
     def test_collision_guard_ignored_file_deletion(self) -> None:
-        """Verifies that if a staged file matches .drift_ignore, the collision guard backs it up to deleted_files/ and removes it from the host system."""
+        """Verifies that if a staged file matches .drift_ignore,
+        the collision guard will ignore its corresponding file the host system."""
         # 1. Create a package in install/ State Database
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
@@ -729,7 +730,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Add physical file under install/pkg_stow, e.g., ignored_file.txt
         with open(os.path.join(pkg_install_dir, "ignored_file.txt"), "w", encoding="utf-8") as f:
-            f.write("should be deleted")
+            f.write("should be ignored")
 
         # Write .drift_ignore to install/pkg_stow telling it to ignore ignored_file.txt
         with open(os.path.join(pkg_install_dir, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
@@ -748,13 +749,11 @@ class TestInstallRepo(unittest.TestCase):
         # Execute deployment
         run_primitive_5_install_deployment(self.workspace_config, [pkg])
 
-        # 1. The ignored_file.txt should be deleted from self.system_target_dir
-        self.assertFalse(system_file.exists())
+        # 1. The ignored_file.txt should be ignored.
+        self.assertTrue(system_file.exists())
 
-        # 2. It should be backed up under backup/pkg_stow/deleted_files (preserving structure)
-        backup_deleted = self.backup_dir / pkg / "deleted_files" / "ignored_file.txt"
-        self.assertTrue(backup_deleted.exists())
-        with open(backup_deleted, "r", encoding="utf-8") as f:
+        # 2. It should stay untouched.
+        with open(system_file, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertEqual(content, "pre-existing on target")
 
@@ -1200,7 +1199,7 @@ class TestInstallRepo(unittest.TestCase):
         # Mock config loading to return metadata for missing dir
         from drift.package_config import PackageConfig
         metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=self.system_target_dir)
-        with unittest.mock.patch("drift.install_repo.load_config_for_install", return_value=metadata):
+        with patch("drift.install_repo.load_config_for_install", return_value=metadata):
             res_missing = deploy_package_impl(
                 workspace_config=self.workspace_config,
                 pkg=pkg_missing,
@@ -1265,7 +1264,7 @@ class TestInstallRepo(unittest.TestCase):
     def test_collision_guard_ignored_file_matching_drift_root_symlink_not_collided(self) -> None:
         """Verifies collision guard behavior:
         1. Valid stow link pointing to this package's file is NOT removed.
-        2. Ignored file on system is cleaned up (deleted).
+        2. Ignored file on system is untouched.
         3. Rogue internal symlink pointing to another drift file is backed up and replaced.
         """
         pkg = "pkg_symlink_guard"
@@ -1315,9 +1314,12 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_file.txt").resolve())
         self.assertFalse((self.backup_dir / pkg / "overwritten" / "valid_file.txt").exists())
 
-        # B. Ignored file on system is cleaned up (removed) and backed up to deleted_files
-        self.assertFalse(system_ignored.exists())
-        self.assertTrue((self.backup_dir / pkg / "deleted_files" / "ignored_hook.sh").exists())
+        # B. Ignored file on system is ignored and stay the same.
+        self.assertTrue(system_ignored.exists())
+        with open(system_ignored, "r", encoding="utf-8") as f:
+            system_ignored_content = f.read()
+            # The system ignored_hook.sh file points to the drift_internal_target, which contains "[workspace]\n"
+            self.assertEqual(system_ignored_content, "[workspace]\n")
 
         # C. Rogue link was backed up and replaced with the correct stow link
         self.assertTrue(system_rogue.is_symlink())
@@ -1393,26 +1395,123 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_file_a.is_symlink())
         self.assertEqual(system_file_a.resolve(), (pkg_install_dir / "file_a.txt").resolve())
 
+    def test_internal_symlink_directory_children_processed_paths(self) -> None:
+        """Verifies that when an internal symlink points to drift_root for a directory,
+        its children in install_pkg_dir are added to processed_paths, avoiding double collision handling.
+        """
+        pkg = "pkg_dir_symlink_guard"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        sub_dir = pkg_install_dir / "my_dir"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        (sub_dir / "file1.txt").write_text("file 1 content", encoding="utf-8")
+        nested_dir = sub_dir / "nested"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "file2.txt").write_text("file 2 content", encoding="utf-8")
+
+        # Setup: system_target_dir / my_dir is a symlink pointing to drift_root/config
+        drift_internal_dir = self.drift_root / "config"
+        drift_internal_dir.mkdir(parents=True, exist_ok=True)
+        system_dir = self.system_target_dir / "my_dir"
+        system_dir.symlink_to(drift_internal_dir)
+
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert:
+        # 1. system_dir is now a physical directory (not a symlink)
+        self.assertTrue(system_dir.is_dir())
+        self.assertFalse(system_dir.is_symlink())
+        # 2. Children deployed properly
+        self.assertTrue((system_dir / "file1.txt").is_file())
+        self.assertEqual((system_dir / "file1.txt").read_text(encoding="utf-8"), "file 1 content")
+        self.assertTrue((system_dir / "nested" / "file2.txt").is_file())
+        self.assertEqual((system_dir / "nested" / "file2.txt").read_text(encoding="utf-8"), "file 2 content")
+        # 3. Collision backup was recorded for the symlink
+        self.assertTrue((self.backup_dir / pkg / "overwritten" / "my_dir").exists())
+
+    def test_copy_mode_update_target_symlink_backed_up_and_replaced(self) -> None:
+        """Verifies that in copy mode, even during an update (not first time),
+        if the target on host is a symlink, it is detected as a collision, backed up,
+        and replaced with a physical regular file instead of writing through the link.
+        """
+        pkg = "pkg_copy_symlink_update"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "app.conf").write_text("setting=new\n", encoding="utf-8")
+
+        # Register package as already "installed" in state.toml (so is_first_time is False)
+        state_file = self.install_dir / "state.toml"
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        save_state_registry(
+            state_file,
+            StateRegistry(packages={
+                pkg: PackageState(
+                    state="installed",
+                    install_method="copy",
+                    last_deployed="2026-08-20T00:00:00Z",
+                    deployed_files=[Path("app.conf")]
+                )
+            })
+        )
+
+        # Host system has app.conf as a symlink pointing to an external file
+        external_file = self.drift_root.parent / "external_target.conf"
+        external_file.write_text("setting=external_original\n", encoding="utf-8")
+
+        system_file = self.system_target_dir / "app.conf"
+        system_file.symlink_to(external_file)
+
+        # Run deployment update
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert:
+        # 1. system_file is now a regular physical file (not a symlink)
+        self.assertTrue(system_file.is_file())
+        self.assertFalse(system_file.is_symlink())
+        self.assertEqual(system_file.read_text(encoding="utf-8"), "setting=new\n")
+        # 2. External file was NOT touched/overwritten
+        self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
+        # 3. Collision backup was saved
+        self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
+
 
 class TestStowVersionDetection(unittest.TestCase):
     """Tests for GNU Stow version retrieval and version checking logic."""
 
     @patch("drift.install_repo.run_command")
-    def test_get_stow_version_string_stdout(self, mock_run_command: patch) -> None:
+    def test_get_stow_version_string_stdout(self, mock_run_command) -> None:
         mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout="stow (GNU Stow) version 2.4.1\n")
         mock_run_command.return_value = mock_res
         version = get_stow_version()
         self.assertEqual(version, "2.4.1")
 
     @patch("drift.install_repo.run_command")
-    def test_get_stow_version_bytes_stdout(self, mock_run_command: patch) -> None:
+    def test_get_stow_version_bytes_stdout(self, mock_run_command) -> None:
         mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout=b"stow (GNU Stow) version 2.3.1\n")
         mock_run_command.return_value = mock_res
         version = get_stow_version()
         self.assertEqual(version, "2.3.1")
 
     @patch("drift.install_repo.run_command")
-    def test_get_stow_version_command_fails(self, mock_run_command: patch) -> None:
+    def test_get_stow_version_command_fails(self, mock_run_command) -> None:
         mock_run_command.side_effect = FileNotFoundError("No such file or directory: 'stow'")
         version = get_stow_version()
         self.assertIsNone(version)

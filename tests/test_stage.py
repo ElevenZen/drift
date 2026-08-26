@@ -414,8 +414,8 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[0].package_name, "pkg_a")
 
-    def test_stage_newly_ignored_file_gets_pruned_and_backed_up(self) -> None:
-        """Verifies that if a tracked file in install/ becomes ignored, it gets pruned and backed up."""
+    def test_stage_newly_ignored_file_stays_the_same(self) -> None:
+        """Verifies that if a tracked file in install/ becomes ignored, it stays untouched"""
         # 1. Stage pkg_a with file1.txt
         pkg_a_render = os.path.join(self.render_dir, "pkg_a")
         os.makedirs(pkg_a_render, exist_ok=True)
@@ -432,11 +432,9 @@ class TestStageRepo(unittest.TestCase):
         # 3. Stage again
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        # Deployable changes should report file1.txt as deleted from deployable manifest
-        self.assertEqual(len(changes), 1)
-        self.assertEqual(changes[0].package_name, "pkg_a")
-        self.assertEqual(changes[0].deleted_files, [Path("file1.txt")])
-        # But file1.txt still exists physically in install/ (so ignored files like hooks remain available)
+        # Deployable changes should not report file1.txt.
+        self.assertEqual(len(changes), 0)
+        # file1.txt still exists physically in install/ (so ignored files like hooks remain available)
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
         # 4. Now physically delete file1.txt from render/pkg_a/

@@ -142,15 +142,14 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
 
     def test_render_outside_git_repository_raises_friendly_error(self) -> None:
         """Verifies that running render outside a Git repository prints our friendly error message."""
-        non_git_dir = tempfile.TemporaryDirectory()
-        try:
+        with tempfile.TemporaryDirectory() as non_git_dir_path:
             stderr = StringIO()
             original_stderr = sys.stderr
             sys.stderr = stderr
 
             try:
                 with self.assertRaises(SystemExit) as cm:
-                    main(["-C", non_git_dir.name, "render"])
+                    main(["-C", non_git_dir_path, "render"])
                 self.assertEqual(cm.exception.code, 1)
             finally:
                 sys.stderr = original_stderr
@@ -158,8 +157,6 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             self.assertIn_stripped("is not inside a Git repository", stderr.getvalue())
             self.assertIn_stripped("drift requires a Git-backed workspace", stderr.getvalue())
             self.assertIn_stripped("Run 'drift init' to initialize a new workspace", stderr.getvalue())
-        finally:
-            non_git_dir.cleanup()
 
     def test_cli_stage(self) -> None:
         """Verifies that running 'stage' stages the package into install directory."""

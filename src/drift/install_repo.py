@@ -14,7 +14,7 @@ from .package_config import PackageConfig, load_package_config_rendered
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
-from .folder_diff import compare_folders
+from .folder_diff import compare_folders, list_folder_paths, find_links_pointing_into
 from .stage_repo import PackageStageChanges
 from .file_utils import (
         resolve_system_target,
@@ -23,7 +23,6 @@ from .file_utils import (
         create_symlink_manually_with_sudo,
         get_relative_path,
         get_symlinked_parent,
-        find_links_pointing_into,
         ensure_directory_writable,
         ensure_dir_exists_with_sudo,
         remove_file_or_dir_with_sudo,
@@ -110,7 +109,8 @@ def handle_internal_symlink_conflicts(
 ) -> None:
     """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
 
-    # not necessary to follow_symlinks here, because dir pointing into drift_root will always trigger backup and removal.
+    # not necessary to follow_symlinks here,
+    # because dir pointing into drift_root will always trigger backup and removal.
     # so dig deep inside is meaningless.
     links = find_links_pointing_into(target_dir, workspace_config.drift_root, follow_symlinks=False)
     for link in links:
@@ -145,10 +145,18 @@ def handle_internal_symlink_conflicts(
                 pass
 
         # Otherwise, it is a link conflict and must be backed up & removed
-        # including copy method but the target is currently a symlink pointing into drift_root
         processed_paths.add(repo_rel)
-        # TODO: add all children of this repo_rel to processed_paths to avoid double handling
-        # if repo_path.is_dir():
+
+        # Add all children of this repo_rel to processed_paths to avoid double handling
+        if repo_path.is_dir():
+            for child_rel in list_folder_paths(
+                src_dir=repo_path,
+                base_rel=repo_rel,
+                ignore_handler=ignore_handler,
+                resolve_symlinks=resolve_symlinks,
+                translate_mode="forward"
+            ):
+                processed_paths.add(child_rel)
 
         handle_collision_error(
             pkg=pkg,
@@ -212,8 +220,7 @@ def run_collision_guard(
         src_only=True,
     )
 
-    # 3. Handle Deleted items (system files blocking repo dirs or now-ignored files)
-    # The rule 'ignore file as deletion' is handled here.
+    # 3. Handle Deleted items (type mismatches where system files block repo dirs)
     for rel in diff.deleted:
         if rel in processed_paths:
             continue
@@ -244,7 +251,7 @@ def run_collision_guard(
         #   1. it is a broken symlink
         #   2. it is a symlink pointing outside install_pkg_dir 
         #   3. it is pointing inside the same pkg_install_dir, but not the same file.
-        # We can skip the backup if the system target is a symlink pointing to the same file in install_pkg_dir.
+        # We can skip if the system target is a symlink pointing to another file in same install_pkg_dir.
         # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
         if (metadata.get_install_method(workspace_config) == "stow"
                 and system_target.is_symlink() and system_target.exists()
@@ -252,7 +259,7 @@ def run_collision_guard(
             continue
 
         # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
-        # TODO: add a test case for the target is a symlink, it should be removed whether first time or not.
+        # TODO: add a test case for the target is a symlink, it should be removed whatever first time or not.
         if (metadata.get_install_method(workspace_config) == "copy"
                 and not system_target.is_symlink() and not is_first_time):
             continue
@@ -263,7 +270,7 @@ def run_collision_guard(
         handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
                                "Deployment collision", resolve_symlinks)
 
-    # 5. Handle Match items (Stow specific: physical file matching repo content is STILL a collision)
+    # 5. Handle Content Match items (Stow specific: physical file matching repo content is STILL a collision)
     if metadata.get_install_method(workspace_config) == "stow":
         for rel in diff.matches:
             if rel in processed_paths:

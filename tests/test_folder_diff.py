@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from drift.constants import set_test_mode
-from drift.folder_diff import compare_folders, FolderDiff
+from drift.folder_diff import compare_folders, list_folder_paths, find_links_pointing_into, FolderDiff
 from drift.ignore import DriftIgnore
 
 
@@ -336,11 +336,11 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         self.assertEqual(diff.added, [Path("normal.txt")])
         self.assertNotIn(Path("secret.key"), diff.added)
 
-    def test_ignored_file_present_in_dst_is_marked_deleted(self) -> None:
+    def test_ignored_file_present_in_dst_is_not_marked_deleted(self) -> None:
         (self.src / "normal.txt").write_text("normal", encoding="utf-8")
         (self.dst / "normal.txt").write_text("normal", encoding="utf-8")
 
-        # File is ignored in src, but exists in dst (should be cleaned up from dst)
+        # File is ignored in src, but exists in dst
         (self.src / "ignored.tmp").write_text("temp", encoding="utf-8")
         (self.dst / "ignored.tmp").write_text("temp", encoding="utf-8")
 
@@ -348,10 +348,10 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, ignore_handler=ignore)
 
         self.assertEqual(diff.matches, [Path("normal.txt")])
-        self.assertEqual(diff.deleted, [Path("ignored.tmp")])
+        self.assertEqual(diff.deleted, [])
         self.assertEqual(diff.added, [])
 
-    def test_ignored_directory_deletes_dst_contents(self) -> None:
+    def test_ignored_directory_does_not_delete_dst_contents(self) -> None:
         ignore_src = self.src / "build"
         ignore_dst = self.dst / "build"
         ignore_src.mkdir()
@@ -364,7 +364,8 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         ignore = DriftIgnore([r"^/build"])
         diff = compare_folders(self.src, self.dst, ignore_handler=ignore)
 
-        self.assertEqual(sorted(diff.deleted), [Path("build/other.bin"), Path("build/output.bin")])
+        self.assertEqual(diff.added, [])
+        self.assertEqual(diff.deleted, [])
 
     def test_reverse_translation_with_ignore_handler(self) -> None:
         # In reverse translation, src is host system (.file), ignore patterns use repo format (dot-file)
@@ -374,7 +375,8 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         ignore = DriftIgnore(["^dot-private$"])
         diff = compare_folders(self.src, self.dst, ignore_handler=ignore, translate_mode="reverse")
 
-        self.assertEqual(diff.deleted, [Path(".private")])
+        self.assertEqual(diff.added, [])
+        self.assertEqual(diff.deleted, [])
         self.assertEqual(diff.matches, [])
 
 
@@ -455,6 +457,17 @@ class TestFolderDiffSymlinks(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
         self.assertEqual(diff.modified, [Path("link.txt")])
 
+    def test_resolve_symlinks_false_raw_matching(self) -> None:
+        target = self.base / "target.txt"
+        target.write_text("content", encoding="utf-8")
+
+        os.symlink(target, self.src / "link.txt")
+        os.symlink(target, self.dst / "link.txt")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
+        self.assertEqual(diff.matches, [Path("link.txt")])
+        self.assertEqual(diff.modified, [])
+
     def test_resolve_symlinks_false_symlink_vs_regular_file(self) -> None:
         target = self.base / "target.txt"
         target.write_text("content", encoding="utf-8")
@@ -464,6 +477,108 @@ class TestFolderDiffSymlinks(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
         self.assertEqual(diff.modified, [Path("item.txt")])
+
+    def test_resolve_symlinks_false_src_file_vs_dst_symlink(self) -> None:
+        target = self.base / "target.txt"
+        target.write_text("content", encoding="utf-8")
+
+        (self.src / "item.txt").write_text("content", encoding="utf-8")
+        os.symlink(target, self.dst / "item.txt")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
+        self.assertEqual(diff.modified, [Path("item.txt")])
+
+    def test_resolve_symlinks_false_src_symlink_vs_dst_dir(self) -> None:
+        target = self.base / "target.txt"
+        target.write_text("content", encoding="utf-8")
+
+        os.symlink(target, self.src / "item")
+        dst_dir = self.dst / "item"
+        dst_dir.mkdir()
+        (dst_dir / "child.txt").write_text("child content", encoding="utf-8")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
+        self.assertEqual(diff.added, [Path("item")])
+        self.assertEqual(diff.deleted, [Path("item/child.txt")])
+        self.assertEqual(diff.modified, [])
+
+    def test_resolve_symlinks_true_symlink_dir_vs_symlink_dir(self) -> None:
+        real1 = self.base / "real_dir1"
+        real1.mkdir()
+        (real1 / "f.txt").write_text("same", encoding="utf-8")
+        real2 = self.base / "real_dir2"
+        real2.mkdir()
+        (real2 / "f.txt").write_text("same", encoding="utf-8")
+
+        os.symlink(real1, self.src / "dir_link")
+        os.symlink(real2, self.dst / "dir_link")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertEqual(diff.matches, [Path("dir_link/f.txt")])
+        self.assertEqual(diff.modified, [])
+
+    def test_find_links_pointing_into(self) -> None:
+        """Verifies find_links_pointing_into finds symlinks whose targets lie inside target_dir."""
+        target_root = self.base / "drift_target"
+        target_root.mkdir()
+        drift_file = target_root / "internal.txt"
+        drift_file.write_text("internal", encoding="utf-8")
+
+        outside_dir = self.base / "outside"
+        outside_dir.mkdir()
+        outside_file = outside_dir / "external.txt"
+        outside_file.write_text("external", encoding="utf-8")
+
+        search_dir = self.base / "search_area"
+        search_dir.mkdir()
+
+        # 1. Symlink pointing into target_root
+        link_inside = search_dir / "link_inside.txt"
+        link_inside.symlink_to(drift_file)
+
+        # 2. Symlink pointing outside
+        link_outside = search_dir / "link_outside.txt"
+        link_outside.symlink_to(outside_file)
+
+        # 3. Regular file
+        normal_file = search_dir / "normal.txt"
+        normal_file.write_text("normal", encoding="utf-8")
+
+        # 4. Nested directory with symlink inside
+        nested = search_dir / "sub" / "deep"
+        nested.mkdir(parents=True)
+        nested_link_inside = nested / "deep_link.txt"
+        nested_link_inside.symlink_to(drift_file)
+
+        found = find_links_pointing_into(search_dir, target_root)
+        self.assertEqual(set(found), {link_inside, nested_link_inside})
+
+        # Test single file search_path
+        self.assertEqual(find_links_pointing_into(link_inside, target_root), [link_inside])
+        self.assertEqual(find_links_pointing_into(link_outside, target_root), [])
+
+    def test_find_links_pointing_into_follow_symlinks(self) -> None:
+        """Verifies follow_symlinks=True traverses into symlinked directories."""
+        target_root = self.base / "drift_target"
+        target_root.mkdir()
+        drift_file = target_root / "internal.txt"
+        drift_file.write_text("internal", encoding="utf-8")
+
+        real_sub = self.base / "real_sub"
+        real_sub.mkdir()
+        (real_sub / "nested_in_symdir.txt").symlink_to(drift_file)
+
+        search_dir = self.base / "search_dir"
+        search_dir.mkdir()
+        sym_dir = search_dir / "sym_dir"
+        sym_dir.symlink_to(real_sub)
+
+        # follow_symlinks=False does not traverse inside sym_dir
+        self.assertEqual(find_links_pointing_into(search_dir, target_root, follow_symlinks=False), [])
+
+        # follow_symlinks=True traverses inside sym_dir
+        found = find_links_pointing_into(search_dir, target_root, follow_symlinks=True)
+        self.assertEqual(found, [sym_dir / "nested_in_symdir.txt"])
 
 
 class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
@@ -492,6 +607,24 @@ class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
         diff = compare_folders(self.src, self.dst)
         self.assertEqual(diff.deleted, [Path("item")])
         self.assertEqual(diff.added, [Path("item/child.txt")])
+
+    def test_src_dir_dst_symlink_mismatch_resolve_symlinks_false(self) -> None:
+        self.src.mkdir(parents=True, exist_ok=True)
+        self.dst.mkdir(parents=True, exist_ok=True)
+
+        # src has directory 'item', dst has symlink 'item' (pointing to external file or dir)
+        item_dir = self.src / "item"
+        item_dir.mkdir()
+        (item_dir / "child.txt").write_text("child content", encoding="utf-8")
+
+        external_target = self.base / "external_target.txt"
+        external_target.write_text("external", encoding="utf-8")
+        os.symlink(external_target, self.dst / "item")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
+        self.assertEqual(diff.deleted, [Path("item")])
+        self.assertEqual(diff.added, [Path("item/child.txt")])
+        self.assertEqual(diff.modified, [])
 
     def test_src_file_dst_dir_mismatch(self) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
@@ -572,12 +705,14 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         self.assertEqual(diff.added, [])
 
     def test_forward_translation_isolated_dot_dash_folder(self) -> None:
-        # In drift, 'dot-' alone as a folder segment translates to root or same folder
-        # e.g. src/dot-/file.txt translates to dst/.file.txt or dst/file.txt depending on dot- prefix
+        # 'dot-' alone as a folder segment is preserved as a literal directory name 'dot-'
         special_src = self.src / "dot-"
         special_src.mkdir()
         (special_src / "dot-bashrc").write_text("content", encoding="utf-8")
-        (self.dst / ".bashrc").write_text("content", encoding="utf-8")
+        
+        special_dst = self.dst / "dot-"
+        special_dst.mkdir()
+        (special_dst / ".bashrc").write_text("content", encoding="utf-8")
 
         diff = compare_folders(self.src, self.dst, translate_mode="forward")
         self.assertEqual(diff.matches, [Path("dot-/dot-bashrc")])
@@ -611,6 +746,66 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         (self.dst / "cycle1").write_text("regular", encoding="utf-8")
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertIn(Path("cycle1"), diff.modified)
+
+
+class TestListFolderPaths(unittest.TestCase):
+    """Tests for list_folder_paths helper function."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp_dir.name).resolve()
+        self.root = self.base / "pkg_root"
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_list_folder_paths_basic(self) -> None:
+        (self.root / "file1.txt").write_text("1", encoding="utf-8")
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "file2.txt").write_text("2", encoding="utf-8")
+        (self.root / "empty_dir").mkdir()
+
+        paths = list_folder_paths(self.root)
+        self.assertEqual(paths, [Path("empty_dir"), Path("file1.txt"), Path("sub/file2.txt")])
+
+    def test_list_folder_paths_with_base_rel(self) -> None:
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "file.txt").write_text("content", encoding="utf-8")
+
+        paths = list_folder_paths(self.root / "sub", base_rel=Path("sub"))
+        self.assertEqual(paths, [Path("sub/file.txt")])
+
+    def test_list_folder_paths_with_ignore_handler(self) -> None:
+        (self.root / "keep.txt").write_text("keep", encoding="utf-8")
+        (self.root / "ignore_me.bak").write_text("ignored", encoding="utf-8")
+
+        ignore = DriftIgnore([r"\.bak$"])
+        paths = list_folder_paths(self.root, ignore_handler=ignore)
+        self.assertEqual(paths, [Path("keep.txt")])
+
+    def test_list_folder_paths_single_file(self) -> None:
+        f = self.root / "single.txt"
+        f.write_text("hello", encoding="utf-8")
+        paths = list_folder_paths(f, base_rel=Path("single.txt"))
+        self.assertEqual(paths, [Path("single.txt")])
+
+    def test_list_folder_paths_symlinked_dir_resolved(self) -> None:
+        target_dir = self.base / "target_dir"
+        target_dir.mkdir()
+        (target_dir / "child.txt").write_text("target child", encoding="utf-8")
+
+        link_dir = self.root / "link_dir"
+        link_dir.symlink_to(target_dir)
+
+        # resolve_symlinks=True follows symlink to directory
+        paths_resolved = list_folder_paths(link_dir, base_rel=Path("link_dir"), resolve_symlinks=True)
+        self.assertEqual(paths_resolved, [Path("link_dir/child.txt")])
+
+        # resolve_symlinks=False treats it as a single symlink entry
+        paths_unresolved = list_folder_paths(link_dir, base_rel=Path("link_dir"), resolve_symlinks=False)
+        self.assertEqual(paths_unresolved, [Path("link_dir")])
 
 
 if __name__ == "__main__":

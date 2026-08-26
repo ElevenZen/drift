@@ -840,10 +840,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def test_package_discovery_methods(self) -> None:
         """Verifies package discovery methods on WorkspaceConfig correctly find folders from source, render, and install dirs."""
         from drift.workspace_config import WorkspaceConfig
-        temp_root = tempfile.TemporaryDirectory()
-        try:
-            root_path = temp_root.name
-            
+        with tempfile.TemporaryDirectory() as root_path:
             # Setup directories
             os.makedirs(os.path.join(root_path, "src", "pkg_src_a"), exist_ok=True)
             os.makedirs(os.path.join(root_path, "src", "pkg_src_b"), exist_ok=True)
@@ -867,8 +864,6 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
             config.packages_enable_default = True
             self.assertTrue(config.is_package_enabled("pkg_unlisted"))
-        finally:
-            temp_root.cleanup()
 
     def test_render_engine_strip_suffix(self) -> None:
         """Verifies RenderEngineConfig.strip_suffix strips engine suffix segment correctly from the filename."""

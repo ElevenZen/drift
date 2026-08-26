@@ -10,13 +10,14 @@ from unittest.mock import patch, MagicMock
 from drift.file_utils import (
     is_relative_to,
     resolve_system_target,
+    translate_dot_prefixes,
+    translate_dot_prefixes_reverse,
     tree_relative_files,
     get_relative_path,
     compute_file_hash,
     file_contents_differ,
     rmdir_parents,
     get_symlinked_parent,
-    find_links_pointing_into,
     backup_and_delete_one_file,
     copy_or_move_file_or_dir_external,
     ensure_directory_writable,
@@ -55,6 +56,43 @@ class TestFileUtils(unittest.TestCase):
 
         self.assertEqual(res1, base / ".config" / "nvim" / "init.lua")
         self.assertEqual(res2, base / "normal_dir" / "file.txt")
+
+    def test_translate_dot_prefixes(self) -> None:
+        """Verifies translate_dot_prefixes converts 'dot-' to leading '.', skips 'dot-'/'dot-.',
+        and only translates segments that start with 'dot-'.
+        """
+        self.assertEqual(translate_dot_prefixes(Path("dot-bashrc")), Path(".bashrc"))
+        self.assertEqual(translate_dot_prefixes(Path("dot-config/nvim/init.lua")), Path(".config/nvim/init.lua"))
+        self.assertEqual(translate_dot_prefixes(Path("dot-config/dot-vimrc")), Path(".config/.vimrc"))
+        self.assertEqual(translate_dot_prefixes(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
+
+        # Segments 'dot-' and 'dot-.' are preserved (not translated to '.' or '..')
+        self.assertEqual(translate_dot_prefixes(Path("dot-")), Path("dot-"))
+        self.assertEqual(translate_dot_prefixes(Path("dot-.")), Path("dot-."))
+        self.assertEqual(translate_dot_prefixes(Path("config/dot-/file.txt")), Path("config/dot-/file.txt"))
+        self.assertEqual(translate_dot_prefixes(Path("config/dot-./file.txt")), Path("config/dot-./file.txt"))
+
+        # Segments starting with 'dot-'
+        self.assertEqual(translate_dot_prefixes(Path("dot--foo")), Path(".-foo"))
+        self.assertEqual(translate_dot_prefixes(Path("dot-.bar")), Path("..bar"))
+
+    def test_translate_dot_prefixes_reverse(self) -> None:
+        """Verifies translate_dot_prefixes_reverse converts leading '.' to 'dot-',
+        and never translates '.' or '..' segments.
+        """
+        self.assertEqual(translate_dot_prefixes_reverse(Path(".bashrc")), Path("dot-bashrc"))
+        self.assertEqual(translate_dot_prefixes_reverse(Path(".config/nvim/init.lua")), Path("dot-config/nvim/init.lua"))
+        self.assertEqual(translate_dot_prefixes_reverse(Path(".config/.vimrc")), Path("dot-config/dot-vimrc"))
+        self.assertEqual(translate_dot_prefixes_reverse(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
+
+        # '.' and '..' segments are preserved and never converted to 'dot-'
+        self.assertEqual(translate_dot_prefixes_reverse(Path(".")), Path("."))
+        self.assertEqual(translate_dot_prefixes_reverse(Path("..")), Path(".."))
+        self.assertEqual(translate_dot_prefixes_reverse(Path("config/./file.txt")), Path("config/file.txt"))
+
+        # Other leading dot names
+        self.assertEqual(translate_dot_prefixes_reverse(Path("..bar")), Path("dot-.bar"))
+        self.assertEqual(translate_dot_prefixes_reverse(Path(".-foo")), Path("dot--foo"))
 
     def test_tree_relative_files(self) -> None:
         subdir = self.root / "subdir"
@@ -406,46 +444,6 @@ class TestFileUtils(unittest.TestCase):
         # It should copy the broken link itself
         self.assertTrue(dest_link.is_symlink())
         self.assertEqual(os.readlink(dest_link), "nested_non_existent")
-
-    def test_find_links_pointing_into(self) -> None:
-        """Verifies find_links_pointing_into finds symlinks whose targets lie inside target_dir."""
-        target_root = self.root / "drift_target"
-        target_root.mkdir()
-        drift_file = target_root / "internal.txt"
-        drift_file.write_text("internal", encoding="utf-8")
-
-        outside_dir = self.root / "outside"
-        outside_dir.mkdir()
-        outside_file = outside_dir / "external.txt"
-        outside_file.write_text("external", encoding="utf-8")
-
-        search_dir = self.root / "search_area"
-        search_dir.mkdir()
-
-        # 1. Symlink pointing into target_root
-        link_inside = search_dir / "link_inside.txt"
-        link_inside.symlink_to(drift_file)
-
-        # 2. Symlink pointing outside
-        link_outside = search_dir / "link_outside.txt"
-        link_outside.symlink_to(outside_file)
-
-        # 3. Regular file
-        normal_file = search_dir / "normal.txt"
-        normal_file.write_text("normal", encoding="utf-8")
-
-        # 4. Nested directory with symlink inside
-        nested = search_dir / "sub" / "deep"
-        nested.mkdir(parents=True)
-        nested_link_inside = nested / "deep_link.txt"
-        nested_link_inside.symlink_to(drift_file)
-
-        found = find_links_pointing_into(search_dir, target_root)
-        self.assertEqual(set(found), {link_inside, nested_link_inside})
-
-        # Test single file search_path
-        self.assertEqual(find_links_pointing_into(link_inside, target_root), [link_inside])
-        self.assertEqual(find_links_pointing_into(link_outside, target_root), [])
 
 
 if __name__ == "__main__":
