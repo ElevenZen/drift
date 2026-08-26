@@ -3,7 +3,11 @@ import tempfile
 from pathlib import Path
 from drift.workspace_config import WorkspaceConfig
 from drift.new_package import run_primitive_10_create_new_package
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    get_default_drift_ignore_content,
+)
 
 class TestNewPackage(unittest.TestCase):
     def test_run_primitive_10_create_new_package(self) -> None:
@@ -30,6 +34,32 @@ class TestNewPackage(unittest.TestCase):
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
             self.assertIn('install_method = "stow"', content)
             self.assertIn('# target_directory = "~"', content)
+
+            # Default .drift_ignore should be generated
+            ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
+            self.assertTrue(ignore_file.exists())
+            self.assertTrue(ignore_file.is_file())
+            self.assertEqual(ignore_file.read_text(encoding="utf-8"), get_default_drift_ignore_content())
+
+    def test_run_primitive_10_create_new_package_preserves_existing_drift_ignore(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            drift_root = Path(temp_dir).resolve()
+            src_dir = drift_root / "src"
+            src_dir.mkdir()
+            
+            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            
+            pkg_name = "pkg_with_custom_ignore"
+            pkg_dir = src_dir / pkg_name
+            pkg_dir.mkdir()
+            
+            custom_ignore = pkg_dir / DRIFT_IGNORE_FILE_NAME
+            custom_ignore.write_text("# Custom ignore rules\ncustom_rule/\n", encoding="utf-8")
+            
+            run_primitive_10_create_new_package(config, pkg_name)
+            
+            # Existing .drift_ignore should be preserved
+            self.assertEqual(custom_ignore.read_text(encoding="utf-8"), "# Custom ignore rules\ncustom_rule/\n")
 
     def test_run_primitive_10_create_new_package_already_exists(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

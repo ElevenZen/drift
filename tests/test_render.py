@@ -52,6 +52,9 @@ class TestRenderEngine(unittest.TestCase):
             [workspace]
             render_directory = "my_render"
 
+            [packages.enable]
+            DEFAULT = false
+
             [env]
             MY_CUSTOM_ENV_VAR = "hello_from_drift_toml"
             """, encoding="utf-8")

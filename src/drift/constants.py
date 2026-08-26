@@ -29,10 +29,10 @@ DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 # =====================================================================
 # This file is gitignored and contains local overrides for drift.toml.
 
-# [workspace]
+[workspace]
 # default_target_directory = "~"
 
-# [packages.enable]
+[packages.enable]
 # gui_apps = false
 """
 )
@@ -103,6 +103,40 @@ DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
     "sample_editor": "{{editor}}",
     "sample_tool": "git"
 }, indent=4) + "\n"
+
+DEFAULT_DRIFT_IGNORE_CONTENT = (
+    "# =====================================================================\n"
+    "# .drift_ignore - PCRE Regex Package Ignore Patterns\n"
+    "# =====================================================================\n"
+    "# Lines starting with '#' or empty lines are ignored.\n"
+    "# Patterns use Perl-Compatible Regular Expressions (PCRE).\n"
+    "# Note: In source packages, hidden files/dirs are named with 'dot-'\n"
+    "# (e.g. 'dot-config/' instead of '.config/').\n"
+    "#\n"
+    "# Matching Rules (GNU Stow Algorithm):\n"
+    "# Drift splits regex patterns into two groups:\n"
+    "# 1. Patterns containing '/':\n"
+    "#    Matched against relative path starting with '/' (e.g. '/sub/file.txt').\n"
+    "#    To match a file at package root, use '^/sample\\.txt$' (do NOT use './').\n"
+    "#    Example: ^/sample\\.txt$\n"
+    "#    Example: ^/dot-config/coc-settings\\.json$\n"
+    "#    Example: /cache/\n"
+    "#\n"
+    "# 2. Patterns WITHOUT '/':\n"
+    "#    Matched against the file/directory basename anywhere in the package.\n"
+    "#    Example: \\.bak$   (matches any file ending in .bak)\n"
+    "#    Example: ^~       (matches temporary files starting with ~)\n"
+    "# ---------------------------------------------------------------------\n"
+    "# ^/sample\\.txt$\n"
+    "# \\.bak$\n"
+    "# \\.tmp$\n"
+    "# /cache/\n"
+)
+
+
+def get_default_drift_ignore_content() -> str:
+    """Gets default .drift_ignore template content."""
+    return DEFAULT_DRIFT_IGNORE_CONTENT
 
 
 def get_default_drift_local_toml_content() -> str:

@@ -377,7 +377,7 @@ render_command = "mustache %i %s"
 # Key: package folder name under src/
 # Value: true/false to enable or disable the package globally
 # DEFAULT = true | false sets the default value for unlisted packages.
-[packages]
+[packages.enable]
 DEFAULT = false
 shell = true
 nvim = true

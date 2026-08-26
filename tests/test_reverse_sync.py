@@ -423,6 +423,219 @@ class TestReverseSync(unittest.TestCase):
         # D. Non-ignored tracked file modified on host IS updated
         self.assertEqual(tracked_modified_install.read_text(encoding="utf-8"), "setting=2\n")
 
+    def test_reverse_sync_fcd_with_ignore_patterns(self) -> None:
+        """Verifies that ignored files inside an FCD directory are NOT reverse-synced,
+        while non-ignored wild files inside the FCD are reverse-synced.
+        """
+        from drift.constants import DRIFT_IGNORE_FILE_NAME
+        pkg = "pkg_fcd_ignores"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["themes"]
+        """, encoding="utf-8")
+
+        # Ignore .*\.log and themes/cache/ inside the package (Drift uses PCRE regex syntax)
+        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text(".*\\.log$\nthemes/cache/\n", encoding="utf-8")
+
+        # Setup files on host system inside FCD
+        host_themes = self.system_target_dir / "themes"
+        host_themes.mkdir(parents=True, exist_ok=True)
+        (host_themes / "valid_dark.theme").write_text("theme data", encoding="utf-8")
+        (host_themes / "debug.log").write_text("log data", encoding="utf-8")
+        
+        host_cache = host_themes / "cache"
+        host_cache.mkdir(parents=True, exist_ok=True)
+        (host_cache / "temp.dat").write_text("cached data", encoding="utf-8")
+
+        # Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 1. Non-ignored wild file in FCD is reverse-synced
+        self.assertTrue((pkg_install_dir / "themes" / "valid_dark.theme").exists())
+        self.assertEqual((pkg_install_dir / "themes" / "valid_dark.theme").read_text(encoding="utf-8"), "theme data")
+
+        # 2. Ignored files in FCD are NOT reverse-synced
+        self.assertFalse((pkg_install_dir / "themes" / "debug.log").exists())
+        self.assertFalse((pkg_install_dir / "themes" / "cache").exists())
+
+    def test_reverse_sync_fcd_dot_notation_variants(self) -> None:
+        """Verifies that FCD entries defined with repo notation ('dot-config/app') or
+        system dot notation ('.config/app') both correctly match host additions.
+        """
+        pkg = "pkg_fcd_dot_variants"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["dot-config/app/plugins", ".config/app/themes"]
+        """, encoding="utf-8")
+
+        # Host system has additions in both directories
+        host_plugins = self.system_target_dir / ".config" / "app" / "plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+        (host_plugins / "ext.py").write_text("print('plugin')", encoding="utf-8")
+
+        host_themes = self.system_target_dir / ".config" / "app" / "themes"
+        host_themes.mkdir(parents=True, exist_ok=True)
+        (host_themes / "dark.css").write_text("body { color: black; }", encoding="utf-8")
+
+        # Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Both should be reverse-synced to repo path format (dot-config/...)
+        synced_plugin = pkg_install_dir / "dot-config" / "app" / "plugins" / "ext.py"
+        synced_theme = pkg_install_dir / "dot-config" / "app" / "themes" / "dark.css"
+
+        self.assertTrue(synced_plugin.exists())
+        self.assertEqual(synced_plugin.read_text(encoding="utf-8"), "print('plugin')")
+        self.assertTrue(synced_theme.exists())
+        self.assertEqual(synced_theme.read_text(encoding="utf-8"), "body { color: black; }")
+
+    def test_reverse_sync_fcd_symlink_preservation(self) -> None:
+        """Verifies that valid and broken symlinks created inside an FCD on host
+        are safely preserved as symlinks when reverse-synced to install/.
+        """
+        pkg = "pkg_fcd_symlinks"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["plugins"]
+        """, encoding="utf-8")
+
+        # Setup host target with valid file outside FCD and symlinks inside FCD
+        host_shared = self.system_target_dir / "shared"
+        host_shared.mkdir(parents=True, exist_ok=True)
+        (host_shared / "base_theme.json").write_text('{"theme": "base"}', encoding="utf-8")
+
+        host_plugins = self.system_target_dir / "plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+
+        # 1. Valid symlink inside FCD
+        valid_link = host_plugins / "current_theme.json"
+        valid_link.symlink_to(host_shared / "base_theme.json")
+
+        # 2. Broken symlink inside FCD
+        broken_link = host_plugins / "broken_ext.so"
+        broken_link.symlink_to("non_existent_binary.so")
+
+        # Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify links in install/
+        synced_valid_link = pkg_install_dir / "plugins" / "current_theme.json"
+        synced_broken_link = pkg_install_dir / "plugins" / "broken_ext.so"
+
+        self.assertTrue(synced_valid_link.exists() or synced_valid_link.is_symlink())
+        self.assertTrue(synced_broken_link.is_symlink())
+        self.assertEqual(os.readlink(synced_broken_link), "non_existent_binary.so")
+
+    def test_reverse_sync_fcd_selective_directory_filtering(self) -> None:
+        """Verifies that only additions in designated FCD directories are reverse-synced,
+        while additions in non-FCD sibling directories or root are ignored.
+        """
+        pkg = "pkg_fcd_selective"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["controlled_zone"]
+        """, encoding="utf-8")
+
+        # 1. Addition inside FCD
+        fcd_dir = self.system_target_dir / "controlled_zone"
+        fcd_dir.mkdir(parents=True, exist_ok=True)
+        (fcd_dir / "fcd_file.txt").write_text("in fcd", encoding="utf-8")
+
+        # 2. Addition inside non-FCD directory
+        uncontrolled_dir = self.system_target_dir / "uncontrolled_zone"
+        uncontrolled_dir.mkdir(parents=True, exist_ok=True)
+        (uncontrolled_dir / "other_file.txt").write_text("not in fcd", encoding="utf-8")
+
+        # 3. Addition at root level
+        (self.system_target_dir / "root_wild_file.txt").write_text("root file", encoding="utf-8")
+
+        # Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert:
+        # FCD addition is synced
+        self.assertTrue((pkg_install_dir / "controlled_zone" / "fcd_file.txt").exists())
+        self.assertEqual((pkg_install_dir / "controlled_zone" / "fcd_file.txt").read_text(encoding="utf-8"), "in fcd")
+
+        # Non-FCD additions are NOT synced
+        self.assertFalse((pkg_install_dir / "uncontrolled_zone").exists())
+        self.assertFalse((pkg_install_dir / "root_wild_file.txt").exists())
+
+    def test_reverse_sync_fcd_in_stow_package_lifecycle(self) -> None:
+        """Verifies end-to-end FCD lifecycle under stow deployment:
+        deploy stow -> create wild file on host -> reverse-sync -> deploy update.
+        """
+        from drift.install_repo import run_primitive_5_install_deployment
+        pkg = "pkg_fcd_stow_lifecycle"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["plugins"]
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "initial.conf").write_text("init=1\n", encoding="utf-8")
+        (pkg_install_dir / "plugins" / "base.plugin").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "plugins" / "base.plugin").write_text("base plugin", encoding="utf-8")
+
+        # 1. Initial stow deployment
+        res_dep1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res_dep1.status, "SUCCESS")
+
+        # 2. Host app dynamically creates a new plugin file
+        host_plugins = self.system_target_dir / "plugins"
+        # If stow created plugins as a symlink or directory, ensure target file exists
+        if host_plugins.is_symlink():
+            # In folded stow tree, plugins is a symlink to install/pkg/plugins
+            # App writes new file inside the directory
+            (host_plugins / "dynamic.plugin").write_text("dynamic plugin", encoding="utf-8")
+        else:
+            host_plugins.mkdir(parents=True, exist_ok=True)
+            (host_plugins / "dynamic.plugin").write_text("dynamic plugin", encoding="utf-8")
+
+        # 3. Reverse sync detects and syncs it back
+        res_sync = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res_sync.status, "SUCCESS")
+
+        self.assertTrue((pkg_install_dir / "plugins" / "dynamic.plugin").exists())
+        self.assertEqual((pkg_install_dir / "plugins" / "dynamic.plugin").read_text(encoding="utf-8"), "dynamic plugin")
+
+        # 4. Subsequent stow deployment succeeds without collision errors
+        res_dep2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res_dep2.status, "SUCCESS")
+
 
 if __name__ == "__main__":
     unittest.main()

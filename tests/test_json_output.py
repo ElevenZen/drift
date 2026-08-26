@@ -119,7 +119,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
             render_directory = "render"
             install_directory = "install"
 
-            [packages]
+            [packages.enable]
             pkg_a = true
             pkg_b = false
             """)

@@ -1492,6 +1492,120 @@ class TestInstallRepo(unittest.TestCase):
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
 
+    def test_switch_method_from_stow_to_copy_backs_up_and_replaces_symlinks(self) -> None:
+        """Verifies that when a package deployed with 'stow' switches to 'copy',
+        the collision handler backs up the previous symlinks/files into overwritten/
+        and replaces them with physical copies.
+        """
+        pkg = "pkg_stow_to_copy"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Initial deployment with 'stow'
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "config.json").write_text('{"version": 1}', encoding="utf-8")
+        sub_dir = pkg_install_dir / "sub"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        (sub_dir / "tool.sh").write_text("#!/bin/bash\necho hi", encoding="utf-8")
+
+        res1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res1.status, "SUCCESS")
+
+        host_config = self.system_target_dir / "config.json"
+        host_tool = self.system_target_dir / "sub" / "tool.sh"
+        self.assertTrue(host_config.is_symlink())
+        self.assertTrue(host_tool.is_symlink())
+
+        # 2. Switch install_method to 'copy'
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res2.status, "SUCCESS")
+
+        # Assert:
+        # - Files on host are now regular physical files
+        self.assertTrue(host_config.is_file())
+        self.assertFalse(host_config.is_symlink())
+        self.assertEqual(host_config.read_text(encoding="utf-8"), '{"version": 1}')
+
+        self.assertTrue(host_tool.is_file())
+        self.assertFalse(host_tool.is_symlink())
+        self.assertEqual(host_tool.read_text(encoding="utf-8"), "#!/bin/bash\necho hi")
+
+        # - Previous deployed files are backed up to overwritten/
+        self.assertTrue((self.backup_dir / pkg / "overwritten" / "config.json").exists())
+        self.assertTrue((self.backup_dir / pkg / "overwritten" / "sub" / "tool.sh").exists())
+
+    def test_switch_method_from_copy_to_stow_backs_up_and_replaces_physical_files(self) -> None:
+        """Verifies that when a package deployed with 'copy' switches to 'stow',
+        the collision handler backs up the previous physical files into overwritten/
+        and replaces them with stow symlinks.
+        """
+        pkg = "pkg_copy_to_stow"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Initial deployment with 'copy'
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "settings.ini").write_text("key=value1\n", encoding="utf-8")
+        nested_dir = pkg_install_dir / "nested"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "data.txt").write_text("data payload 1\n", encoding="utf-8")
+
+        res1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res1.status, "SUCCESS")
+
+        host_settings = self.system_target_dir / "settings.ini"
+        host_data = self.system_target_dir / "nested" / "data.txt"
+        self.assertTrue(host_settings.is_file())
+        self.assertFalse(host_settings.is_symlink())
+        self.assertTrue(host_data.is_file())
+        self.assertFalse(host_data.is_symlink())
+
+        # 2. Switch install_method to 'stow'
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res2.status, "SUCCESS")
+
+        # Assert:
+        # - Files on host are now symlinks pointing to pkg_install_dir
+        self.assertTrue(host_settings.is_symlink())
+        self.assertEqual(host_settings.resolve(), (pkg_install_dir / "settings.ini").resolve())
+
+        self.assertTrue(host_data.is_symlink())
+        self.assertEqual(host_data.resolve(), (pkg_install_dir / "nested" / "data.txt").resolve())
+
+        # - Previous physical files are backed up to overwritten/ with original content
+        backup_settings = self.backup_dir / pkg / "overwritten" / "settings.ini"
+        backup_data = self.backup_dir / pkg / "overwritten" / "nested" / "data.txt"
+        self.assertTrue(backup_settings.exists())
+        self.assertEqual(backup_settings.read_text(encoding="utf-8"), "key=value1\n")
+        self.assertTrue(backup_data.exists())
+        self.assertEqual(backup_data.read_text(encoding="utf-8"), "data payload 1\n")
+
 
 class TestStowVersionDetection(unittest.TestCase):
     """Tests for GNU Stow version retrieval and version checking logic."""

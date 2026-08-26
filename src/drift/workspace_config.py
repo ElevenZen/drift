@@ -367,13 +367,12 @@ class WorkspaceConfig:
             if key not in known_workspace_keys:
                 logger.warning(f"Unknown workspace option: '{key}'")
 
-        packages_data = data.get("packages", {})
-        
-        # Symmetrically support both flat [packages] and nested [packages.enable] schemas
-        if "enable" in packages_data and isinstance(packages_data["enable"], dict):
-            packages_enable_data = packages_data["enable"]
-        else:
-            packages_enable_data = packages_data
+        if "packages" not in data or not isinstance(data.get("packages"), dict) or "enable" not in data["packages"]:
+            raise ValueError("Missing '[packages.enable]' section in workspace configuration.")
+
+        packages_enable_data = data["packages"]["enable"]
+        if not isinstance(packages_enable_data, dict):
+            raise TypeError("'[packages.enable]' must be a TOML table.")
         
         packages = {}
         for pkg, val in packages_enable_data.items():
@@ -389,7 +388,7 @@ class WorkspaceConfig:
         packages_enable_default = bool(packages_enable_data.get("DEFAULT", False))
         if not packages_enable_default and len(packages) == 0:
             logger.warning("No packages are enabled in the workspace configuration. "
-                        + "Consider enabling packages or setting 'DEFAULT = true' under [packages].")
+                        + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")
 
         # Parse render engines configurations under [render.*]
         render_data = data.get("render", {})

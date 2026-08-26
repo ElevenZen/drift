@@ -2,7 +2,12 @@ import logging
 from pathlib import Path
 from typing import Optional
 from .workspace_config import WorkspaceConfig
-from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST
+from .constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME_LIST,
+    DRIFT_IGNORE_FILE_NAME,
+    get_default_drift_ignore_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,5 +78,11 @@ def run_primitive_10_create_new_package(
 
     logger.info(f"✨ Package '{package_name}' created successfully!")
     logger.info(f"📝 Generated {final_config_name} at {config_file}")
+
+    # Generate default .drift_ignore if it doesn't already exist
+    ignore_file = package_dir / DRIFT_IGNORE_FILE_NAME
+    if not ignore_file.exists() and not (package_dir / ".driftignore").exists():
+        ignore_file.write_text(get_default_drift_ignore_content(), encoding="utf-8")
+        logger.info(f"📝 Generated {DRIFT_IGNORE_FILE_NAME} at {ignore_file}")
     
     return package_dir

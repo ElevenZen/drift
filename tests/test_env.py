@@ -424,6 +424,9 @@ install_directory = "install"
 backup_directory = "backup"
 default_target_directory = "~"
 
+[packages.enable]
+DEFAULT = true
+
 [env]
 {var_name} = "base_value"
 """,

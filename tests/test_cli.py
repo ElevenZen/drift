@@ -28,7 +28,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             source_directory = "src"
             render_directory = "render"
 
-            [packages]
+            [packages.enable]
             pkg_a = true
             pkg_b = false
             """)

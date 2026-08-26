@@ -182,7 +182,7 @@ def repair_workspace_config(
 ) -> List[str]:
     """Repairs global config/drift.toml if missing."""
     actions: List[str] = []
-    config_res = check_workspace_config(drift_root, workspace_config=workspace_config)
+    config_res = check_workspace_config(drift_root)
     config_dir = drift_root / CONFIG_DIR_NAME
     config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
 

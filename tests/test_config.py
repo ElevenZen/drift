@@ -171,6 +171,22 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
 
+    def test_workspace_config_missing_packages_enable_raises(self) -> None:
+        # 1. Missing [packages] entirely
+        with self.assertRaises(ValueError) as cm:
+            WorkspaceConfig.from_dict({"workspace": {}})
+        self.assertIn("Missing '[packages.enable]'", str(cm.exception))
+
+        # 2. Obsolete flat [packages] without nested enable
+        with self.assertRaises(ValueError) as cm:
+            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"pkg_a": True}})
+        self.assertIn("Missing '[packages.enable]'", str(cm.exception))
+
+        # 3. [packages.enable] is not a dict
+        with self.assertRaises(TypeError) as cm:
+            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"enable": "not_a_table"}})
+        self.assertIn("'[packages.enable]' must be a TOML table", str(cm.exception))
+
     def test_find_source_file_for_rendered_names(self) -> None:
         """Verifies find_source_file_for_rendered_names correctly identifies static and template source files."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -434,6 +450,9 @@ class TestConfigClasses(unittest.TestCase):
                 "render_directory": "custom_render",
                 "unknown_workspace_opt": "random_val"
             },
+            "packages": {
+                "enable": {}
+            },
             "unknown_top_section": {
                 "foo": "bar"
             },
@@ -495,6 +514,9 @@ class TestConfigLoaders(unittest.TestCase):
         config_path.write_text("""
             [workspace]
             render_directory = "sandbox"
+
+            [packages.enable]
+            DEFAULT = false
             """, encoding="utf-8")
         config = load_workspace_config(self.drift_root)
         self.assertEqual(config.render_directory, Path("sandbox"))
@@ -590,6 +612,9 @@ class TestConfigLoaders(unittest.TestCase):
             [workspace]
             render_directory = "my_render"
 
+            [packages.enable]
+            DEFAULT = true
+
             [render.envsubst]
             input_file = "env.sh"
             suffix = "envst"
@@ -641,6 +666,9 @@ class TestConfigLoaders(unittest.TestCase):
             [workspace]
             render_directory = "my_render"
             install_directory = "my_install"
+
+            [packages.enable]
+            DEFAULT = false
             """, encoding="utf-8")
 
         local_path.write_text("""
@@ -685,6 +713,9 @@ class TestConfigLoaders(unittest.TestCase):
         config_path.write_text("""
             [workspace]
             render_directory = "my_render"
+
+            [packages.enable]
+            DEFAULT = true
             """, encoding="utf-8")
         workspace_config = load_workspace_config(self.drift_root)
 
@@ -724,6 +755,9 @@ class TestConfigLoaders(unittest.TestCase):
         config_path.write_text("""
             [workspace]
             render_directory = "my_render"
+
+            [packages.enable]
+            DEFAULT = false
 
             [env]
             TEST_DRIFT_VAR = "hello"
@@ -793,6 +827,9 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             "workspace": {
                 "render_directory": "custom_render",
             },
+            "packages": {
+                "enable": {}
+            },
             "render": {
                 "envsubst": {
                     "input_file": "envsubst.bash",
@@ -828,6 +865,9 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             [workspace]
             render_directory = "$MY_TEST_RENDER_DIR"
             install_directory = "${MY_TEST_INSTALL_DIR}"
+
+            [packages.enable]
+            DEFAULT = false
             """)
 
         # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml

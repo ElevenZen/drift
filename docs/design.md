@@ -246,7 +246,7 @@ This section provides the essential syntax and specifications for global and pac
 ### A. Global Workspace Configuration: `config/drift.toml` Specification
 Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift.toml` (which can itself be a template named `drift.envst.toml`). This file orchestrates two main responsibilities:
 1. **Workspace Paths & Rendering Engines**: Defines directories (`source_directory`, `render_directory`, `install_directory`, `backup_directory`, `default_target_directory`, `default_install_method`) and template engines with their file suffixes and rendering subprocess commands (e.g. `envsubst`, `mustache`).
-2. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages]` (or `[packages.enable]`) section.
+2. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages.enable]` section.
 
 *   **Active Package Determination**:
     During global operations (like a bulk `drift status` or `drift deploy`), the engine checks the package registry table:
@@ -304,12 +304,11 @@ render_command = "mustache %i %s"
 # ---------------------------------------------------------------------
 # Enabled Packages Registry
 # ---------------------------------------------------------------------
-# Both flat [packages] and nested [packages.enable] table formats are supported.
 # Key: package folder name under src/
 # Value: True/False to enable or disable the package globally
 # Entry "DEFAULT = true | false" will set the default value for unlisted packages.
 # "DEFAULT = false" is the default setting.
-[packages]
+[packages.enable]
 DEFAULT = false
 shell = true
 nvim = true
@@ -601,7 +600,7 @@ Files are categorized and safely routed to prevent overwriting or data loss:
 ### E. Execution Safeguards and Package Exclusion
 To enable granular control over modular configurations, the deployment pipeline respects three cascading enablement switches across different execution phases:
 
-#### 1. Global Activation Switch: `drift.toml [packages]` (or `[packages.enable]`)
+#### 1. Global Activation Switch: `drift.toml [packages.enable]`
 *   **Location**: Global workspace config (`config/drift.toml`).
 *   **Affected Phase**: **Global Workspace Discovery**.
 *   **How it works**: This table controls whether a package is active on this machine.

@@ -129,14 +129,13 @@ def check_root_git_repo(drift_root: Path) -> CheckResult:
     )
 
 
-def check_workspace_config(
-    drift_root: Path,
-    workspace_config: Optional["WorkspaceConfig"] = None,
-    workspace_config_error: Optional[Exception] = None,
-) -> CheckResult:
-    """Checks the global workspace configuration file (config/drift.toml or template)."""
-    config_file = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-    envst_file = drift_root / CONFIG_DIR_NAME / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
+def check_workspace_config(drift_root: Path) -> CheckResult:
+    """
+    Checks the global workspace configuration file (config/drift.toml or template).
+    """
+    config_dir = drift_root / CONFIG_DIR_NAME
+    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
+    envst_file = config_dir / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
 
     if not config_file.exists() and not envst_file.exists():
         return CheckResult(
@@ -146,22 +145,6 @@ def check_workspace_config(
             fix_hint=f"Create default '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'"
         )
 
-    if workspace_config is not None:
-        return CheckResult(
-            name="Workspace Configuration",
-            status=ComponentStatus.GOOD,
-            details="Workspace configuration is valid."
-        )
-
-    if workspace_config_error is not None:
-        return CheckResult(
-            name="Workspace Configuration",
-            status=ComponentStatus.BROKEN,
-            details=f"Invalid configuration syntax or schema: {workspace_config_error}",
-            fix_hint="Fix configuration syntax in drift.toml"
-        )
-
-    from .toml_utils import parse_toml
     from .workspace_config import load_workspace_config, render_envst_load_toml
 
     try:
@@ -174,15 +157,21 @@ def check_workspace_config(
                 fix_hint=f"Create default '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'"
             )
 
-        if "workspace" not in data or "packages" not in data:
+        if (
+            not isinstance(data, dict)
+            or "workspace" not in data
+            or "packages" not in data
+            or not isinstance(data["packages"], dict)
+            or "enable" not in data["packages"]
+        ):
             return CheckResult(
                 name="Workspace Configuration",
                 status=ComponentStatus.BROKEN,
-                details="Configuration is missing mandatory '[workspace]' or '[packages]' section.",
-                fix_hint="Add '[workspace]' and '[packages]' sections"
+                details="Configuration is missing mandatory '[workspace]' or '[packages.enable]' section.",
+                fix_hint="Add '[workspace]' and '[packages.enable]' sections"
             )
 
-        # it will call validate() functions in the workspace config and render engine config classes
+        # Validate full workspace config loading
         load_workspace_config(drift_root)
     except Exception as e:
         return CheckResult(
@@ -543,21 +532,18 @@ def check_existing_workspace_status(
     Returns:
         WorkspaceHealthReport containing overall_status and list of CheckResult objects.
     """
+    config_check = check_workspace_config(drift_root)
     ws_config = workspace_config
-    ws_config_error: Optional[Exception] = None
 
-    if ws_config is None:
-        config_file = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-        envst_file = drift_root / CONFIG_DIR_NAME / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
-        if config_file.exists() or envst_file.exists():
-            from .workspace_config import load_workspace_config
-            try:
-                ws_config = load_workspace_config(drift_root)
-            except Exception as e:
-                ws_config_error = e
+    if ws_config is None and config_check.status == ComponentStatus.GOOD:
+        from .workspace_config import load_workspace_config
+        try:
+            ws_config = load_workspace_config(drift_root)
+        except Exception:
+            ws_config = None
 
     checks = [
-        check_workspace_config(drift_root, workspace_config=ws_config, workspace_config_error=ws_config_error),
+        config_check,
         check_state_registry(drift_root, workspace_config=ws_config),
         check_render_repo(drift_root, workspace_config=ws_config),
         check_install_repo(drift_root, workspace_config=ws_config),
