@@ -295,5 +295,12 @@ timeout = 60
 
 ---
 
+## 📚 Further Reading & In-Depth Documentation
+
+*   **Interactive Built-in Manual (`drift help`)**: After reading this README, explore Drift's built-in manual pages directly from your terminal by running `drift help` or `drift help <topic>` (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
+*   **Deep Architectural Design (`docs/design.md`)**: If you want to understand the complete architectural design, atomic execution primitives, transaction state machines, safety guarantees, and low-level engine internals, read [docs/design.md](docs/design.md).
+
+---
+
 ## 📜 License
 Drift is released under the **MIT License**. See [LICENSE](LICENSE) for details.

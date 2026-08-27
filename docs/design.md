@@ -104,9 +104,9 @@ You no longer want a package active on this machine.
 
 ---
 
-## 3. The 11 Core Primitives
+## 3. The Core Primitives
 
-All high-level workflows in drift are composed of eleven atomic, sequential primitives:
+All high-level workflows in drift are composed of fourteen atomic, sequential primitives:
 
 ```
                           [ Execution: drift deploy ]
@@ -208,31 +208,50 @@ Imports an existing, active host system configuration file directly into the dec
 2.  Translates standard hidden dotfile names (e.g. `.bashrc`) to repository-safe dot-prefixes (e.g. `dot-bashrc`).
 3.  Performs a global conflict check before copying; if an import would overwrite an existing source template in `src/<package>`, it halts and reports a conflict error to protect declarative templates.
 
+### Primitive 12: Package Runtime Health Checks [High-level: `drift health`]
+Executes live runtime health check probe scripts declared in `drift_package.toml` (`[hooks] health = ...`):
+1.  Executes the declared health probe script with the working directory (`cwd`) set to the package's deployed host `target_directory`.
+2.  Captures execution exit codes, standard output, standard error, and timing metrics under strict timeout constraints.
+3.  Aggregates health diagnostics across all installed packages with rich status displays and machine-readable `--json` summaries.
+
+### Primitive 13: Repository Cloning & Legacy Migration [High-level: `drift clone`]
+Clones a remote Git repository and automatically bootstraps the workspace:
+1.  **Case A (Drift Workspace)**: Clones the repository and immediately triggers non-destructive self-healing (`repair_drift_workspace`) to reconstruct local databases (`render/.git`, `install/.git`, `state.toml`), `.gitignore` rules, and local config templates (`config/drift.local.toml`, `config/secrets.env`).
+2.  **Case B (Plain / Legacy Dotfiles)**: Migrates plain dotfiles into `src/<pkg_name>/`, initializes full Drift workspace infrastructure, generates `drift_package.toml` and `.drift_ignore`, and enables the package in `config/drift.toml`.
+
+### Primitive 14: Workspace Diagnostics & Self-Healing [High-level: `drift repair`]
+Audits and self-heals workspace structure, repositories, configuration templates, and secrets:
+1.  Reconstructs missing Git state databases (`render/.git`, `install/.git`) and `install/state.toml`.
+2.  Rebuilds `.gitignore` and `install/.stow-local-ignore` isolation rules.
+3.  Generates default templates for `config/drift.local.toml` and `config/secrets.env` if missing.
+
 ---
 
 ## 4. User-Facing Operations (CLI Overview)
 
 The `drift` Python command provides a unified interface for all primitives and high-level workflows with `--json` machine-readable output support.
 
-### High-Level Commands (Implemented)
-*   **`drift init [--force] [--secrets/--no-secrets] [--json]`**: Initializes a new drift workspace.
-*   **`drift new <package> [--force] [--target <dir>] [--method <stow|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
+### High-Level Commands (Ordered by Lifecycle)
+*   **`drift clone <url> [dir] [-b branch] [--depth N] [--no-repair] [--json]`**: Clones a Git repo and auto-bootstraps/repairs the Drift workspace (Primitive 13).
+*   **`drift init [-f/--force] [--json]`**: Initializes a new drift workspace.
+*   **`drift new <package> [-f/--force] [-t/--target <dir>] [-m/--method <stow|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
 *   **`drift add <package> <paths...> [--dry-run] [--json]`**: Imports active system files into a declarative package (Primitive 11).
+*   **`drift adopt [packages...] [-i/--interactive] [--accept-conflicts] [-f/--force] [--dry-run] [--json]`**: Reconciles system drift into templates.
+*   **`drift deploy [packages...] [-f/--force] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
+*   **`drift health [packages...] [-t/--timeout <secs>] [-v/--verbose] [--json]`**: Runs runtime health check probes on installed packages (Primitive 12).
+*   **`drift uninstall <packages...> [-f/--force] [--detach] [--dry-run] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
+*   **`drift rollback [packages...] [-f/--force] [--json]`**: Emergency recovery after midway failure (Primitive 8).
 *   **`drift status [packages...] [--json]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
-*   **`drift diff [packages...] [--template] [--system] [--stat] [--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
-*   **`drift deploy [packages...] [--force] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
-*   **`drift rollback [packages...] [--force] [--json]`**: Emergency recovery after midway failure (Primitive 8).
-*   **`drift adopt [packages...] [--interactive] [--accept-conflicts] [--force] [--dry-run] [--json]`**: Reconciles system drift into templates.
-*   **`drift uninstall <packages...> [--force] [--detach] [--dry-run] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
+*   **`drift diff [packages...] [-t/--template] [-s/--system] [--stat] [-y/--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
 *   **`drift gc [--dry-run] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
-*   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets.
-*   **`drift help [topic]`**: Interactive mini user manual with pager fallback support.
+*   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
+*   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
 
-### Low-Level Control Commands
+### Low-Level Control Commands (Ordered by Pipeline Lifecycle)
 These commands are for advanced users or CI/CD pipelines to trigger specific primitives:
+*   **`drift reverse-sync [packages...] [--json]`**: Trigger Primitive 1 (System $\rightarrow$ install/).
 *   **`drift render [packages...] [--json]`**: Trigger Primitive 2 (Render).
 *   **`drift render-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 3 (Commit Render).
-*   **`drift reverse-sync [packages...] [--json]`**: Trigger Primitive 1 (System $\rightarrow$ install/).
 *   **`drift stage [packages...] [--force] [--json]`**: Trigger Primitive 4 (Staging).
 *   **`drift apply [packages...] [--force] [--resolve-symlinks/--no-resolve-symlinks] [--json]`**: Trigger Primitive 5 (Physical Deployment).
 *   **`drift install-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 6 (Commit install/).
@@ -473,9 +492,31 @@ pre_update = "pre-update.bash"
 # Run after any successful update/deployment (CWD: target_directory). Runs with sudo if sudo = true.
 post_update = "post-update.bash"
 
+# Run before package uninstallation (CWD: install/pkg). Runs with sudo if sudo = true.
+pre_uninstall = "pre-uninstall.bash"
+
+# Run after package uninstallation (CWD: target_directory). Runs with sudo if sudo = true.
+post_uninstall = "post-uninstall.bash"
+
+# Run runtime health check probe on installed package (CWD: target_directory). Runs with sudo if sudo = true.
+health = "health.bash"
+
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 timeout = 120
 ```
+
+#### Lifecycle Hooks Execution Matrix
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Sudo Elevation Model |
+| :--- | :--- | :--- | :--- |
+| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` | Always user space (No sudo) |
+| `post_render` | After sandbox compilation | `render/<pkg>` | Always user space (No sudo) |
+| `pre_install` | Before first-time deployment | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_install` | After first-time deployment | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `pre_update` | Before incremental/full update deploy | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_update` | After incremental/full update deploy | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `pre_uninstall` | Before unlinking/deleting files | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_uninstall`| After unlinking/deleting files | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `health` | During `drift health` probe execution | `target_directory` | Runs with `sudo` if `sudo = true` |
 
 #### Default Package Environment Variables & Precedence
 After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
