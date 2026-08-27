@@ -246,5 +246,146 @@ class TestUninstall(unittest.TestCase):
         res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
         self.assertIn(f"Detach: Removed package(s) {pkg}", res.stdout)
 
+    def test_uninstall_triggers_pre_and_post_uninstall_hooks(self):
+        """Verifies that pre_uninstall and post_uninstall hooks run in the correct order with correct environments."""
+        pkg = "pkg_hooks"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        system_target = self.system_target_dir / "app.conf"
+        system_target.write_text("deployed config", encoding="utf-8")
+
+        pre_hook_out = self.system_target_dir / "pre_uninstall_out.txt"
+        post_hook_out = self.system_target_dir / "post_uninstall_out.txt"
+
+        pre_hook = scripts_dir / "pre_uninstall.sh"
+        pre_hook.write_text(f"""#!/bin/sh
+if [ -f "{system_target}" ]; then
+    echo "PRE_UNINSTALL_${{drift_package_name}}_FILE_EXISTS" > "{pre_hook_out}"
+fi
+""", encoding="utf-8")
+        pre_hook.chmod(0o755)
+
+        post_hook = scripts_dir / "post_uninstall.sh"
+        post_hook.write_text(f"""#!/bin/sh
+if [ ! -f "{system_target}" ]; then
+    echo "POST_UNINSTALL_${{drift_package_name}}_FILE_REMOVED_IN_$(pwd)" > "{post_hook_out}"
+fi
+""", encoding="utf-8")
+        post_hook.chmod(0o755)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+
+        [hooks]
+        pre_uninstall = "scripts/pre_uninstall.sh"
+        post_uninstall = "scripts/post_uninstall.sh"
+        """, encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="copy")
+        registry.set_package_deployed_files(pkg, [Path("app.conf")])
+        save_state_registry(state_file, registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 1. Target file was removed
+        self.assertFalse(system_target.exists())
+
+        # 2. pre_uninstall executed before file removal
+        self.assertTrue(pre_hook_out.is_file())
+        self.assertEqual(pre_hook_out.read_text(encoding="utf-8").strip(), f"PRE_UNINSTALL_{pkg}_FILE_EXISTS")
+
+        # 3. post_uninstall executed after file removal with cwd=target_dir
+        self.assertTrue(post_hook_out.is_file())
+        self.assertEqual(
+            post_hook_out.read_text(encoding="utf-8").strip(),
+            f"POST_UNINSTALL_{pkg}_FILE_REMOVED_IN_{self.system_target_dir}"
+        )
+
+    def test_uninstall_fails_if_hook_file_missing_in_install(self):
+        """Verifies that uninstall pre-flight checks fail if a configured hook file is missing."""
+        pkg = "pkg_missing_hook"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+
+        [hooks]
+        pre_uninstall = "scripts/non_existent.sh"
+        """, encoding="utf-8")
+
+        system_target = self.system_target_dir / "sample.txt"
+        system_target.write_text("sample")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="copy")
+        registry.set_package_deployed_files(pkg, [Path("sample.txt")])
+        save_state_registry(state_file, registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        with self.assertRaises(FileNotFoundError) as ctx:
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+
+        self.assertIn("pre_uninstall", str(ctx.exception))
+        # System target was not touched
+        self.assertTrue(system_target.exists())
+
+    def test_uninstall_pre_hook_failure_aborts_uninstall(self):
+        """Verifies that a failure in pre_uninstall aborts the uninstall process."""
+        pkg = "pkg_failing_hook"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        hook_script = scripts_dir / "failing.sh"
+        hook_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook_script.chmod(0o755)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+
+        [hooks]
+        pre_uninstall = "scripts/failing.sh"
+        """, encoding="utf-8")
+
+        system_target = self.system_target_dir / "sample.txt"
+        system_target.write_text("sample")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed", install_method="copy")
+        registry.set_package_deployed_files(pkg, [Path("sample.txt")])
+        save_state_registry(state_file, registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+
+        self.assertIn("pre_uninstall", str(ctx.exception))
+        # System target was not removed
+        self.assertTrue(system_target.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -54,13 +54,19 @@ pre_update = "scripts/backup_settings.sh"
 # Run after updating an already installed package (executed from host target directory; runs with sudo if sudo = true)
 post_update = "scripts/reload_service.sh"
 
+# Run before uninstalling a package (executed from install/ package root; runs with sudo if sudo = true)
+pre_uninstall = "scripts/cleanup_pre.sh"
+
+# Run after uninstalling a package (executed from host target directory; runs with sudo if sudo = true)
+post_uninstall = "scripts/cleanup_post.sh"
+
 # Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
 post_render = "scripts/generate_checksums.sh"
 ```
 
 ## 🌐 Default Package Environment Variables & Precedence
 
-When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
+When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
 
 *   **`$drift_package_name`**: Name / directory name of the package.
 *   **`$drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.

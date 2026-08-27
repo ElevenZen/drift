@@ -24,13 +24,15 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 
 # Lifecycle Hooks (Optional)
 # [hooks]
-# pre_source   = ""
-# pre_install  = ""
-# post_install = ""
-# pre_update   = ""
-# post_update  = ""
-# post_render  = ""
-# timeout      = 120
+# pre_source     = ""
+# pre_install    = ""
+# post_install   = ""
+# pre_update     = ""
+# post_update    = ""
+# pre_uninstall  = ""
+# post_uninstall = ""
+# post_render    = ""
+# timeout        = 120
 """
 
 def get_default_package_config_template() -> str:

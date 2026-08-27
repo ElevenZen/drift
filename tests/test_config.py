@@ -367,6 +367,8 @@ class TestConfigClasses(unittest.TestCase):
                 "post_install": "scripts/post_install.sh",
                 "pre_update": "scripts/pre_update.sh",
                 "post_update": "scripts/post_update.sh",
+                "pre_uninstall": "scripts/pre_uninstall.sh",
+                "post_uninstall": "scripts/post_uninstall.sh",
                 "post_render": "scripts/post_render.sh",
                 "timeout": 45
             }
@@ -379,6 +381,8 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.post_install, "scripts/post_install.sh")
         self.assertEqual(config.hooks.pre_update, "scripts/pre_update.sh")
         self.assertEqual(config.hooks.post_update, "scripts/post_update.sh")
+        self.assertEqual(config.hooks.pre_uninstall, "scripts/pre_uninstall.sh")
+        self.assertEqual(config.hooks.post_uninstall, "scripts/post_uninstall.sh")
         self.assertEqual(config.hooks.post_render, "scripts/post_render.sh")
         self.assertEqual(config.hooks.timeout, 45)
         self.assertEqual(config.hook_timeout, 45)
@@ -411,6 +415,12 @@ class TestConfigClasses(unittest.TestCase):
             with self.assertRaises(ValueError) as cm:
                 hooks.check_hook_files(base)
             self.assertIn("not a regular file", str(cm.exception))
+
+            # 4. Filtered hook_names ignores unrequested broken hooks
+            (scripts_dir / "pre_uninstall.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+            hooks.pre_uninstall = "scripts/pre_uninstall.sh"
+            # Checking only pre_uninstall passes even though post_update is broken
+            hooks.check_hook_files(base, hook_names=["pre_uninstall"])
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""

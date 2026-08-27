@@ -1,4 +1,10 @@
-"""Primitive 7: Uninstall package from system and restore backups."""
+"""Primitive 7: Uninstall package from system and restore backups.
+
+Note:
+    Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only
+    triggered if the package configuration file ('drift_package.toml') is available
+    in the install/<pkg>/ directory.
+"""
 
 import logging
 import shutil
@@ -14,7 +20,7 @@ from .file_utils import (
     tree_relative_files,
     resolve_system_target,
 )
-from .constants import PACKAGE_CONFIG_FILE_NAME
+from .constants import PACKAGE_CONFIG_FILE_NAME, UNINSTALL_HOOK_NAMES
 from .result_models import PackageUninstallResult, RestoredBackup, UninstallResult
 
 logger = logging.getLogger(__name__)
@@ -208,19 +214,50 @@ def uninstall_single_package_standard(
     pkg_state: PackageState,
     dry_run: bool = False
 ) -> bool:
-    """Orchestrates standard uninstallation of a single package."""
+    """Orchestrates standard uninstallation of a single package.
+
+    Note:
+        Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only
+        triggered if the package configuration file ('drift_package.toml') is available
+        in the install/<pkg>/ directory.
+    """
     if not dry_run:
         logger.info(f"🗑️  Uninstalling package: {pkg}")
     else:
         logger.info(f"🔍 [DRY RUN] Would uninstall package: {pkg}")
 
-    target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
+    install_pkg_dir = workspace_config.install_path / pkg
 
-    # 1. Remove deployed files
+    from .install_repo import load_config_for_install
+    try:
+        pkg_config = load_config_for_install(workspace_config.install_path, pkg)
+        target_dir = pkg_config.get_target_directory(workspace_config)
+        sudo = pkg_config.sudo
+    except Exception as e:
+        logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
+        pkg_config = None
+        target_dir = workspace_config.default_target_path
+        sudo = False
+
+    # Check uninstall hook files exist before attempting uninstallation
+    if not dry_run and pkg_config and pkg_config.hooks:
+        pkg_config.hooks.check_hook_files(install_pkg_dir, hook_names=UNINSTALL_HOOK_NAMES)
+
+    # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
+    if not dry_run and pkg_config and pkg_config.pre_uninstall:
+        with pkg_config.package_envs(workspace_config):
+            pkg_config.hooks.trigger_pre_uninstall(install_dir=install_pkg_dir, cwd=install_pkg_dir)
+
+    # 2. Remove deployed files
     remove_deployed_files(pkg, pkg_state.deployed_files, target_dir, sudo, dry_run=dry_run)
 
-    # 2. Restore backups
+    # 3. Restore backups
     restore_backups(workspace_config, pkg, target_dir, sudo, dry_run=dry_run)
+
+    # 4. Trigger post_uninstall hook (only if drift_package.toml is available)
+    if not dry_run and pkg_config and pkg_config.post_uninstall:
+        with pkg_config.package_envs(workspace_config):
+            pkg_config.hooks.trigger_post_uninstall(install_dir=install_pkg_dir, cwd=target_dir)
 
     if dry_run:
         return True
@@ -255,6 +292,11 @@ def run_primitive_7_uninstall_packages(
     Safeguard: Aborts if the package is still enabled in workspace config unless force=True.
     If package_names is None, uninstalls all orphans.
     Returns the UninstallResult containing details of uninstalled packages.
+
+    Note:
+        Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only
+        triggered if the package configuration file ('drift_package.toml') is available
+        in the install/<pkg>/ directory.
     """
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
@@ -274,8 +316,19 @@ def run_primitive_7_uninstall_packages(
 
     if not safe_map:
         if package_names is not None:
-             logger.info("Nothing to uninstall.")
+              logger.info("Nothing to uninstall.")
         return UninstallResult(status="SUCCESS", detach_mode=detach, packages=[])
+
+    # Pre-check uninstall hook files for all packages to be uninstalled
+    if not dry_run and not detach:
+        from .install_repo import load_config_for_install
+        pkg_config_map = { pkg: load_config_for_install(workspace_config.install_path, pkg)
+                          for pkg in safe_map
+                          if (workspace_config.install_path / pkg / PACKAGE_CONFIG_FILE_NAME).exists() }
+        for pkg, pkg_config in pkg_config_map.items():
+            if pkg_config and pkg_config.hooks:
+                pkg_config.hooks.check_hook_files(
+                        workspace_config.install_path / pkg, hook_names=UNINSTALL_HOOK_NAMES)
 
     package_results: List[PackageUninstallResult] = []
     successfully_uninstalled: List[str] = []

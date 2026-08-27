@@ -400,6 +400,8 @@ class TestInstallRepo(unittest.TestCase):
             post_install="hook.sh",
             pre_update="hook.sh",
             post_update="hook.sh",
+            pre_uninstall="hook.sh",
+            post_uninstall="hook.sh",
             post_render="hook.sh"
         )
 
@@ -410,9 +412,10 @@ class TestInstallRepo(unittest.TestCase):
         hook_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
 
-        # 1. sudo=True: installation/update hooks MUST execute with sudo
-        sudo_eligible = ["pre_install", "post_install", "pre_update", "post_update"]
-        for hook_name in sudo_eligible:
+        from drift.constants import SUDO_ELIGIBLE_HOOKS
+
+        # 1. sudo=True: installation/update/uninstallation hooks MUST execute with sudo
+        for hook_name in SUDO_ELIGIBLE_HOOKS:
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0
                 trigger_package_lifecycle_hook(
@@ -452,9 +455,11 @@ class TestInstallRepo(unittest.TestCase):
             post_install="hook.sh",
             pre_update="hook.sh",
             post_update="hook.sh",
+            pre_uninstall="hook.sh",
+            post_uninstall="hook.sh",
             post_render="hook.sh"
         )
-        for hook_name in (sudo_eligible + sudo_ineligible):
+        for hook_name in (list(SUDO_ELIGIBLE_HOOKS) + sudo_ineligible):
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0
                 trigger_package_lifecycle_hook(

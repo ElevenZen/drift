@@ -11,12 +11,9 @@ if TYPE_CHECKING:
 
 from .package_config import PackageConfig
 from .file_utils import run_command, is_relative_to
+from .constants import SUDO_ELIGIBLE_HOOKS
 
 logger = logging.getLogger(__name__)
-
-
-# Only installation and update hooks are allowed to be executed with sudo elevation
-SUDO_ELIGIBLE_HOOKS = {"pre_install", "post_install", "pre_update", "post_update"}
 
 
 def execute_hook_script(

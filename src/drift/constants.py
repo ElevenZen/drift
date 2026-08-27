@@ -19,7 +19,23 @@ LIFECYCLE_HOOK_NAMES = (
     "post_install",
     "pre_update",
     "post_update",
+    "pre_uninstall",
+    "post_uninstall",
     "post_render",
+)
+
+UNINSTALL_HOOK_NAMES = (
+    "pre_uninstall",
+    "post_uninstall",
+)
+
+SUDO_ELIGIBLE_HOOKS = (
+    "pre_install",
+    "post_install",
+    "pre_update",
+    "post_update",
+    "pre_uninstall",
+    "post_uninstall",
 )
 
 import json

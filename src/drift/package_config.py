@@ -29,6 +29,8 @@ class PackageHooks:
     post_install: Optional[str] = None
     pre_update: Optional[str] = None
     post_update: Optional[str] = None
+    pre_uninstall: Optional[str] = None
+    post_uninstall: Optional[str] = None
     post_render: Optional[str] = None
     timeout: int = 120
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
@@ -126,19 +128,45 @@ class PackageHooks:
         if self.post_update:
             self.trigger("post_update", hook_dir=install_dir, cwd=cwd)
 
-    def check_hook_files(self, base_dir: Path) -> None:
-        """Checks that all configured lifecycle hook files exist in base_dir and are regular files.
+    def trigger_pre_uninstall(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the pre_uninstall hook.
+
+        Note:
+            Uninstall hooks are only triggered if the package-level configuration
+            file ('drift_package.toml') is available in the install/ directory.
+        """
+        if self.pre_uninstall:
+            self.trigger("pre_uninstall", hook_dir=install_dir, cwd=cwd)
+
+    def trigger_post_uninstall(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the post_uninstall hook.
+
+        Note:
+            Uninstall hooks are only triggered if the package-level configuration
+            file ('drift_package.toml') is available in the install/ directory.
+        """
+        if self.post_uninstall:
+            self.trigger("post_uninstall", hook_dir=install_dir, cwd=cwd)
+
+    def check_hook_files(
+        self,
+        base_dir: Path,
+        hook_names: Optional[Sequence[str]] = None
+    ) -> None:
+        """Checks that configured lifecycle hook files exist in base_dir and are regular files.
 
         Args:
             base_dir: Directory containing package files (e.g. render/<pkg> or install/<pkg>).
+            hook_names: Optional sequence of hook names to check. If omitted, all LIFECYCLE_HOOK_NAMES are checked.
 
         Raises:
             FileNotFoundError: If a configured hook file does not exist.
             ValueError: If a configured hook path is not a regular file.
         """
         pkg_name = self._package_config.name if self._package_config else "unknown"
-        for hook_name in LIFECYCLE_HOOK_NAMES:
-            hook_rel = getattr(self, hook_name)
+        target_hooks = hook_names if hook_names is not None else LIFECYCLE_HOOK_NAMES
+        for hook_name in target_hooks:
+            hook_rel = getattr(self, hook_name, None)
             if hook_rel:
                 hook_path = base_dir / hook_rel
                 if not hook_path.exists():
@@ -164,9 +192,13 @@ class PackageConfig:
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
 
-    def check_hook_files(self, base_dir: Path) -> None:
-        """Checks that all configured lifecycle hook files exist in base_dir and are regular files."""
-        self.hooks.check_hook_files(base_dir)
+    def check_hook_files(
+        self,
+        base_dir: Path,
+        hook_names: Optional[Sequence[str]] = None
+    ) -> None:
+        """Checks that configured lifecycle hook files exist in base_dir and are regular files."""
+        self.hooks.check_hook_files(base_dir, hook_names=hook_names)
 
     def __init__(
         self,
@@ -184,6 +216,8 @@ class PackageConfig:
         post_install: Optional[str] = None,
         pre_update: Optional[str] = None,
         post_update: Optional[str] = None,
+        pre_uninstall: Optional[str] = None,
+        post_uninstall: Optional[str] = None,
         post_render: Optional[str] = None,
         hook_timeout: Optional[int] = None
     ) -> None:
@@ -209,6 +243,10 @@ class PackageConfig:
                 self.hooks.pre_update = pre_update
             if post_update is not None:
                 self.hooks.post_update = post_update
+            if pre_uninstall is not None:
+                self.hooks.pre_uninstall = pre_uninstall
+            if post_uninstall is not None:
+                self.hooks.post_uninstall = post_uninstall
             if post_render is not None:
                 self.hooks.post_render = post_render
             if hook_timeout is not None:
@@ -220,6 +258,8 @@ class PackageConfig:
                 post_install=post_install,
                 pre_update=pre_update,
                 post_update=post_update,
+                pre_uninstall=pre_uninstall,
+                post_uninstall=post_uninstall,
                 post_render=post_render,
                 timeout=effective_timeout
             )
@@ -264,6 +304,22 @@ class PackageConfig:
     @post_update.setter
     def post_update(self, val: Optional[str]) -> None:
         self.hooks.post_update = val
+
+    @property
+    def pre_uninstall(self) -> Optional[str]:
+        return self.hooks.pre_uninstall
+
+    @pre_uninstall.setter
+    def pre_uninstall(self, val: Optional[str]) -> None:
+        self.hooks.pre_uninstall = val
+
+    @property
+    def post_uninstall(self) -> Optional[str]:
+        return self.hooks.post_uninstall
+
+    @post_uninstall.setter
+    def post_uninstall(self, val: Optional[str]) -> None:
+        self.hooks.post_uninstall = val
 
     @property
     def post_render(self) -> Optional[str]:
@@ -444,6 +500,8 @@ class PackageConfig:
             post_install=hooks_data.get("post_install"),
             pre_update=hooks_data.get("pre_update"),
             post_update=hooks_data.get("post_update"),
+            pre_uninstall=hooks_data.get("pre_uninstall"),
+            post_uninstall=hooks_data.get("post_uninstall"),
             post_render=hooks_data.get("post_render"),
             timeout=raw_timeout
         )
