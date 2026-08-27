@@ -63,6 +63,10 @@ class TestAdopt(unittest.TestCase):
         subprocess.run(["git", "add", ".gitignore"], cwd=str(self.workspace_path), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial workspace commit"], cwd=str(self.workspace_path), check=True, capture_output=True)
 
+        config_dir = self.workspace_path / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "envsubst.bash").write_text("#!/bin/bash\n", encoding="utf-8")
+
         from drift.workspace_config import RenderEngineConfig
         env_engine = RenderEngineConfig(
             name="envsubst",
@@ -455,9 +459,9 @@ class TestAdopt(unittest.TestCase):
                 # The first character is for staged index changes. It should be empty/space or untracked '??'
                 self.assertIn(line[0], [" ", "?"])
 
-    def test_adopt_triggers_pre_source_hook(self) -> None:
-        """Verifies that pre_source hook is triggered in src/pkg before adopt processing."""
-        pkg = "pkg_adopt_hook"
+    def test_adopt_triggers_pre_source_hook_static(self) -> None:
+        """Verifies that a static pre_source hook is triggered in src/pkg before adopt processing."""
+        pkg = "pkg_adopt_static_hook"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
         pkg_install_dir = self.install_dir / pkg
@@ -468,7 +472,7 @@ class TestAdopt(unittest.TestCase):
         hook_script = scripts_dir / "prepare_src.sh"
         hook_script.write_text(
             "#!/bin/bash\n"
-            "echo 'HOOK_RAN' > hook_executed.txt\n",
+            "echo 'STATIC_HOOK_RAN' > hook_executed.txt\n",
             encoding="utf-8"
         )
         hook_script.chmod(0o755)
@@ -487,7 +491,54 @@ class TestAdopt(unittest.TestCase):
         # Hook must have run and generated hook_executed.txt in src_pkg_dir
         hook_out = src_pkg_dir / "hook_executed.txt"
         self.assertTrue(hook_out.is_file())
-        self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "HOOK_RAN")
+        self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "STATIC_HOOK_RAN")
+
+        # Copied static hook must exist in render/
+        rendered_hook = self.workspace_path / "render" / pkg / "scripts" / "prepare_src.sh"
+        self.assertTrue(rendered_hook.is_file())
+        self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text(encoding="utf-8"))
+
+    def test_adopt_triggers_pre_source_hook_templated(self) -> None:
+        """Verifies that a templated pre_source hook is rendered and triggered in src/pkg before adopt processing."""
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        pkg = "pkg_adopt_template_hook"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        scripts_dir = src_pkg_dir / "scripts"
+        scripts_dir.mkdir()
+        hook_script = scripts_dir / "prepare_src.envst.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo \"HOOK_RAN_${drift_package_name}\" > hook_executed.txt\n",
+            encoding="utf-8"
+        )
+        hook_script.chmod(0o755)
+
+        pkg_toml = src_pkg_dir / "drift_package.toml"
+        pkg_toml.write_text(
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/prepare_src.envst.sh\"\n",
+            encoding="utf-8"
+        )
+
+        # Create a drift in install/
+        (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
+
+        adopt_single_package(self.workspace_config, pkg, interactive=False)
+
+        # Hook must have run and generated hook_executed.txt in src_pkg_dir
+        hook_out = src_pkg_dir / "hook_executed.txt"
+        self.assertTrue(hook_out.is_file())
+        self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), f"HOOK_RAN_{pkg}")
+
+        # Rendered hook must exist in render/
+        rendered_hook = self.workspace_path / "render" / pkg / "scripts" / "prepare_src.sh"
+        self.assertTrue(rendered_hook.is_file())
+        self.assertIn(f"HOOK_RAN_{pkg}", rendered_hook.read_text(encoding="utf-8"))
 
     def test_adopt_pre_source_hook_failure_aborts_adopt(self) -> None:
         """Verifies that an error in pre_source hook is not suppressed and aborts adopt."""

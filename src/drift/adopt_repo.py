@@ -744,8 +744,8 @@ def adopt_single_package(
     install_pkg_dir = workspace_config.install_path / pkg
 
     # Trigger pre_source hook before adopting drifts into source directory
-    from .lifecycle_hooks import trigger_pre_source_hook
-    trigger_pre_source_hook(workspace_config, pkg, load_envs=True)
+    from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
+    trigger_pre_source_lifecycle_hook(workspace_config, pkg, load_envs=True)
 
     skipped_files = []
 

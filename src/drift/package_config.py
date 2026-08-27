@@ -68,10 +68,38 @@ class PackageHooks:
             cwd=cwd
         )
 
-    def trigger_pre_source(self, source_dir: Path) -> None:
-        """Triggers the pre_source hook inside source_dir."""
+    def trigger_pre_source(
+        self,
+        source_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None
+    ) -> None:
+        """Triggers the pre_source hook inside source_dir.
+
+        If workspace_config is provided, the hook is executed via trigger_pre_source_lifecycle_hook
+        (rendering or copying into render/ as needed). Otherwise, it executes directly from source_dir.
+        """
         if self.pre_source:
-            self.trigger("pre_source", hook_dir=source_dir, cwd=source_dir)
+            if self._package_config is None:
+                raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
+            if workspace_config is not None:
+                from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
+                trigger_pre_source_lifecycle_hook(
+                    workspace_config=workspace_config,
+                    package_name=self._package_config.name,
+                    load_envs=False,
+                    pkg_config=self._package_config
+                )
+            else:
+                from .lifecycle_hooks import execute_hook_script
+                hook_file_path = Path(self.pre_source)
+                hook_path = hook_file_path if hook_file_path.is_absolute() else source_dir / hook_file_path
+                execute_hook_script(
+                    hook_path=hook_path,
+                    pkg=self._package_config.name,
+                    hook_name="pre_source",
+                    metadata=self._package_config,
+                    cwd=source_dir
+                )
 
     def trigger_post_render(self, render_dir: Path) -> None:
         """Triggers the post_render hook inside render_dir."""

@@ -16,7 +16,7 @@ from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
-from .lifecycle_hooks import trigger_pre_source_hook, trigger_post_render_hook
+from .lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
 from .result_models import PackageRenderResult, RenderResult
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ def render_package_files(
     package_name = package_dir.name
 
     # Trigger pre_source hook before reading / processing source files
-    trigger_pre_source_hook(
+    trigger_pre_source_lifecycle_hook(
         workspace_config=workspace_config,
         package_name=package_name,
         load_envs=False,

@@ -1473,6 +1473,124 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue(rendered_good_file.exists())
         self.assertEqual(rendered_good_file.read_text(encoding="utf-8"), "hello world")
 
+    def test_pre_source_hook_static_in_src_copied_and_executed_with_src_cwd(self) -> None:
+        """Verifies that a static pre_source hook located inside src/ is copied into render/ before executing with cwd=src/."""
+        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_static_hook": True},
+            packages_enable_default=False
+        )
+
+        # Setup pkg_static_hook with a static pre_source hook
+        pkg_src_dir = self.drift_root / "src" / "pkg_static_hook"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_static_hook"
+        install_method = "copy"
+
+        [hooks]
+        pre_source = "scripts/generate_static.sh"
+        """, encoding="utf-8")
+
+        hook_script = scripts_dir / "generate_static.sh"
+        hook_script.write_text("""#!/bin/sh
+echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
+""", encoding="utf-8")
+
+        # Trigger pre_source hook
+        trigger_pre_source_lifecycle_hook(
+            workspace_config=workspace_config,
+            package_name="pkg_static_hook",
+            load_envs=True
+        )
+
+        # 1. Copied script should exist in render/pkg_static_hook/scripts/generate_static.sh
+        copied_hook = self.drift_root / "render" / "pkg_static_hook" / "scripts" / "generate_static.sh"
+        self.assertTrue(copied_hook.is_file())
+        self.assertIn("STATIC_PRE_SOURCE_RAN", copied_hook.read_text(encoding="utf-8"))
+
+        # 2. Output file from script execution should exist in src/pkg_static_hook (proving cwd was src/pkg_static_hook)
+        created_file = pkg_src_dir / "generated_static_file.txt"
+        self.assertTrue(created_file.is_file())
+        self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "STATIC_PRE_SOURCE_RAN")
+
+    def test_pre_source_hook_rendered_in_render_dir_and_executed_with_src_cwd(self) -> None:
+        """Verifies that a pre_source hook located inside src/ is rendered into render/ before executing with cwd=src/."""
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+
+        # Setup workspace config with envsubst engine
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("env.sh"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_hook": True},
+            packages_enable_default=False
+        )
+        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+
+        # Setup pkg_hook with a templated pre_source hook
+        pkg_src_dir = self.drift_root / "src" / "pkg_hook"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_hook"
+        install_method = "copy"
+
+        [hooks]
+        pre_source = "scripts/generate.envst.sh"
+        """, encoding="utf-8")
+
+        hook_script = scripts_dir / "generate.envst.sh"
+        hook_script.write_text("""#!/bin/sh
+echo "CREATED_BY_${drift_package_name}" > generated_file.txt
+""", encoding="utf-8")
+
+        # Trigger pre_source hook
+        trigger_pre_source_lifecycle_hook(
+            workspace_config=workspace_config,
+            package_name="pkg_hook",
+            load_envs=True
+        )
+
+        # 1. Rendered script should exist in render/pkg_hook/scripts/generate.sh
+        rendered_hook = self.drift_root / "render" / "pkg_hook" / "scripts" / "generate.sh"
+        self.assertTrue(rendered_hook.is_file())
+        self.assertIn("CREATED_BY_pkg_hook", rendered_hook.read_text(encoding="utf-8"))
+
+        # 2. Output file from script execution should exist in src/pkg_hook (proving cwd was src/pkg_hook)
+        created_file = pkg_src_dir / "generated_file.txt"
+        self.assertTrue(created_file.is_file())
+        self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "CREATED_BY_pkg_hook")
+
 
 if __name__ == "__main__":
     unittest.main()

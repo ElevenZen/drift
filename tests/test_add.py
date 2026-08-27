@@ -23,6 +23,10 @@ class TestAddResource(unittest.TestCase):
         for d in [self.source_dir, self.render_dir, self.install_dir, self.backup_dir, self.system_target_dir]:
             d.mkdir(parents=True, exist_ok=True)
             
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+
         from drift.workspace_config import RenderEngineConfig
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
@@ -35,9 +39,9 @@ class TestAddResource(unittest.TestCase):
             render_engine_config={
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
-                    input_file=Path("config/mustache.json"), # unused in this test
+                    input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command="envsubst"
+                    render_command="bash -c 'source %i && envsubst < %s'"
                 )
             }
         )
@@ -203,9 +207,9 @@ class TestAddResource(unittest.TestCase):
         self.assertIn("Conflict detected", str(ctx.exception))
         self.assertIn("dot-bashrc", str(ctx.exception))
 
-    def test_add_triggers_pre_source_hook(self):
-        """Verifies that pre_source hook is triggered in src/pkg before importing resources."""
-        pkg = "pkg_add_hook"
+    def test_add_triggers_pre_source_hook_static(self):
+        """Verifies that a static pre_source hook is triggered in src/pkg before importing resources."""
+        pkg = "pkg_add_static_hook"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
 
@@ -214,7 +218,7 @@ class TestAddResource(unittest.TestCase):
         hook_script = scripts_dir / "pre_add.sh"
         hook_script.write_text(
             "#!/bin/bash\n"
-            "echo 'ADD_HOOK_RAN' > add_hook_out.txt\n"
+            "echo 'STATIC_HOOK_RAN' > add_hook_out.txt\n"
         )
         hook_script.chmod(0o755)
 
@@ -230,7 +234,49 @@ class TestAddResource(unittest.TestCase):
         # Hook must have run and generated add_hook_out.txt
         hook_out = pkg_src_dir / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
-        self.assertEqual(hook_out.read_text().strip(), "ADD_HOOK_RAN")
+        self.assertEqual(hook_out.read_text().strip(), "STATIC_HOOK_RAN")
+
+        # Copied static hook must exist in render/
+        rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
+        self.assertTrue(rendered_hook.is_file())
+        self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text())
+
+    def test_add_triggers_pre_source_hook_templated(self):
+        """Verifies that a templated pre_source hook is rendered and triggered in src/pkg before importing resources."""
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        pkg = "pkg_add_template_hook"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir()
+        hook_script = scripts_dir / "pre_add.envst.sh"
+        hook_script.write_text(
+            "#!/bin/bash\n"
+            "echo \"ADD_HOOK_RAN_${drift_package_name}\" > add_hook_out.txt\n"
+        )
+        hook_script.chmod(0o755)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.envst.sh"\n'
+        )
+
+        target_file = self.system_target_dir / "imported_file.txt"
+        target_file.write_text("imported content")
+
+        run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+
+        # Hook must have run and generated add_hook_out.txt
+        hook_out = pkg_src_dir / "add_hook_out.txt"
+        self.assertTrue(hook_out.is_file())
+        self.assertEqual(hook_out.read_text().strip(), f"ADD_HOOK_RAN_{pkg}")
+
+        # Rendered hook must exist in render/
+        rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
+        self.assertTrue(rendered_hook.is_file())
+        self.assertIn(f"ADD_HOOK_RAN_{pkg}", rendered_hook.read_text())
 
     def test_add_pre_source_hook_failure_aborts_add(self):
         """Verifies that an error in pre_source hook is not suppressed and aborts add."""
