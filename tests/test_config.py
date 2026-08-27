@@ -370,6 +370,7 @@ class TestConfigClasses(unittest.TestCase):
                 "pre_uninstall": "scripts/pre_uninstall.sh",
                 "post_uninstall": "scripts/post_uninstall.sh",
                 "post_render": "scripts/post_render.sh",
+                "health": "scripts/health_check.sh",
                 "timeout": 45
             }
         }
@@ -384,6 +385,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.pre_uninstall, "scripts/pre_uninstall.sh")
         self.assertEqual(config.hooks.post_uninstall, "scripts/post_uninstall.sh")
         self.assertEqual(config.hooks.post_render, "scripts/post_render.sh")
+        self.assertEqual(config.hooks.health, "scripts/health_check.sh")
         self.assertEqual(config.hooks.timeout, 45)
         self.assertEqual(config.hook_timeout, 45)
 

@@ -402,7 +402,8 @@ class TestInstallRepo(unittest.TestCase):
             post_update="hook.sh",
             pre_uninstall="hook.sh",
             post_uninstall="hook.sh",
-            post_render="hook.sh"
+            post_render="hook.sh",
+            health="hook.sh"
         )
 
         hook_path = os.path.join(pkg_install_dir, "hook.sh")
@@ -457,7 +458,8 @@ class TestInstallRepo(unittest.TestCase):
             post_update="hook.sh",
             pre_uninstall="hook.sh",
             post_uninstall="hook.sh",
-            post_render="hook.sh"
+            post_render="hook.sh",
+            health="hook.sh"
         )
         for hook_name in (list(SUDO_ELIGIBLE_HOOKS) + sudo_ineligible):
             with patch("subprocess.run") as mock_run:

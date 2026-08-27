@@ -31,6 +31,9 @@ from ..result_models import (
     DiffResult,
     PackageDiffDetail,
     FileDiffDetail,
+    PackageHealthStatus,
+    PackageHealthResult,
+    HealthResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -381,6 +384,34 @@ def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = Fa
             checks=checks_list
         )
         print(res.to_json())
+
+
+def execute_health(
+    drift_root: Path,
+    package_names: Optional[List[str]] = None,
+    json_mode: bool = False,
+    verbose: bool = False,
+    timeout: Optional[int] = None
+) -> None:
+    """Core function to run package health check probes, shared by both CLI backends."""
+    from ..package_health import run_primitive_health_checks
+
+    workspace_config = load_workspace_config_default(drift_root)
+    health_result = run_primitive_health_checks(
+        workspace_config=workspace_config,
+        package_names=package_names,
+        custom_timeout=timeout
+    )
+
+    if json_mode:
+        print(health_result.to_json())
+    else:
+        text = health_result.format_text(verbose=verbose)
+        if text:
+            print(text)
+
+    if health_result.status != "SUCCESS":
+        sys.exit(1)
 
 
 def execute_help(topic: Optional[str] = None) -> None:

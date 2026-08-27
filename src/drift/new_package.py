@@ -32,6 +32,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # pre_uninstall  = ""
 # post_uninstall = ""
 # post_render    = ""
+# health         = ""
 # timeout        = 120
 """
 

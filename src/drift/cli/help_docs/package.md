@@ -26,8 +26,8 @@ or `drift_package.toml`. This file dictates:
     (e.g., `~/.config/nvim`).
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
     automatically synchronize and prune deleted files inside them (FCDs).
-4.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, and uninstallation sequences 
-    (`pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`). 
-    If `sudo = true`, installation, update, and uninstallation hooks (`pre/post_install`, `pre/post_update`, `pre/post_uninstall`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always run in user space without `sudo`.
+4.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
+    (`pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
+    If `sudo = true`, installation, update, uninstallation, and health probe hooks (`pre/post_install`, `pre/post_update`, `pre/post_uninstall`, `health`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always run in user space without `sudo`.
 
 👉 Run `drift help drift_package.toml` to view the comprehensive configuration reference.

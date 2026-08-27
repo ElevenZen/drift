@@ -376,3 +376,92 @@ class RepairResult(SerializableModel):
     dry_run: bool = False
     actions_performed: List[str] = field(default_factory=list)
     checks: List[RepairCheckDetail] = field(default_factory=list)
+
+
+class PackageHealthStatus(str, Enum):
+    HEALTHY = "HEALTHY"            # Exit code 0
+    UNHEALTHY = "UNHEALTHY"        # Non-zero exit code
+    TIMEOUT = "TIMEOUT"            # Process timed out
+    MISSING_HOOK = "MISSING_HOOK"  # Specified hook file does not exist
+    NO_HOOK = "NO_HOOK"            # Package does not define a health hook (skipped)
+    NOT_INSTALLED = "NOT_INSTALLED"# Package is not present in install/ registry
+    ERROR = "ERROR"                # Unexpected exception
+
+
+@dataclass
+class PackageHealthResult(SerializableModel):
+    """Health check outcome for an individual package."""
+    package: str
+    status: PackageHealthStatus = PackageHealthStatus.HEALTHY
+    exit_code: Optional[int] = None
+    stdout: str = ""
+    stderr: str = ""
+    duration_ms: float = 0.0
+    hook_path: Optional[str] = None
+    target_directory: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class HealthResult(SerializableModel):
+    """Aggregated health check result across all evaluated packages."""
+    command: str = "health"
+    status: str = "SUCCESS"        # "SUCCESS" if all evaluated are healthy/skipped, "FAILED" if any unhealthy/timeout
+    packages: List[PackageHealthResult] = field(default_factory=list)
+    healthy_count: int = 0
+    unhealthy_count: int = 0
+    skipped_count: int = 0
+    total_duration_ms: float = 0.0
+
+    def format_text(self, verbose: bool = False) -> str:
+        """Formats a human-readable summary of package health check probes."""
+        if not self.packages:
+            return "No packages found to check health."
+
+        lines = ["🩺 Running package health probes...\n"]
+        for p in self.packages:
+            status_val = p.status.value if isinstance(p.status, PackageHealthStatus) else str(p.status)
+            status_tag = f"[{status_val}]"
+            if status_val == "HEALTHY":
+                lines.append(f"  \033[32m{status_tag:<14}\033[0m {p.package:<20} (exit {p.exit_code}, {p.duration_ms:.1f}ms)")
+            elif status_val == "UNHEALTHY":
+                lines.append(f"  \033[31m{status_tag:<14}\033[0m {p.package:<20} (exit {p.exit_code}, {p.duration_ms:.1f}ms)")
+                if p.stderr:
+                    err_preview = p.stderr.strip()
+                    if not verbose and len(err_preview.splitlines()) > 3:
+                        err_preview = "\n".join(err_preview.splitlines()[:3]) + "\n         ..."
+                    for line in err_preview.splitlines():
+                        lines.append(f"         └─ {line}")
+                elif p.stdout:
+                    out_preview = p.stdout.strip()
+                    if not verbose and len(out_preview.splitlines()) > 3:
+                        out_preview = "\n".join(out_preview.splitlines()[:3]) + "\n         ..."
+                    for line in out_preview.splitlines():
+                        lines.append(f"         └─ {line}")
+            elif status_val == "TIMEOUT":
+                lines.append(f"  \033[31m{status_tag:<14}\033[0m {p.package:<20} (timed out after {p.duration_ms:.1f}ms)")
+            elif status_val == "MISSING_HOOK":
+                lines.append(f"  \033[33m{status_tag:<14}\033[0m {p.package:<20} (hook file missing: {p.hook_path})")
+            elif status_val == "NO_HOOK":
+                lines.append(f"  \033[90m{status_tag:<14}\033[0m {p.package:<20} (no health hook defined)")
+            elif status_val == "NOT_INSTALLED":
+                lines.append(f"  \033[33m{status_tag:<14}\033[0m {p.package:<20} (not installed)")
+            else:
+                lines.append(f"  \033[31m{status_tag:<14}\033[0m {p.package:<20} (error: {p.error_message})")
+
+            if verbose:
+                if p.stdout and status_val != "UNHEALTHY":
+                    for line in p.stdout.strip().splitlines():
+                        lines.append(f"         [stdout] {line}")
+                if p.stderr and status_val != "UNHEALTHY":
+                    for line in p.stderr.strip().splitlines():
+                        lines.append(f"         [stderr] {line}")
+
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append(
+            f"📊 Health Summary: {self.healthy_count} Healthy, {self.unhealthy_count} Unhealthy, "
+            f"{self.skipped_count} Skipped ({self.total_duration_ms:.1f}ms total)"
+        )
+        lines.append("=" * 70)
+        return "\n".join(lines)

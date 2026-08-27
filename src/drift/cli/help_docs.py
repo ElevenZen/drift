@@ -32,10 +32,12 @@ def get_help_page(topic: Optional[str]) -> str:
             topic_file_name = "drift_toml"
         elif topic_lower == "workspace":
             topic_file_name = "workspace"
+        elif topic_lower == "health":
+            topic_file_name = "health"
         else:
             raise ValueError(
                 f"Unknown help topic: '{topic}'.\n"
-                "Available topics are: 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml', 'drift.toml', 'workspace'."
+                "Available topics are: 'package', 'src', 'render', 'install', 'fcd', 'ignore', 'drift_package.toml', 'drift.toml', 'workspace', 'health'."
             )
 
     # Try pkgutil first (supports zipapp and installed packages)

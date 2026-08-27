@@ -62,11 +62,14 @@ post_uninstall = "scripts/cleanup_post.sh"
 
 # Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
 post_render = "scripts/generate_checksums.sh"
+
+# Run runtime health check probes on installed package (executed from host target directory; runs with sudo if sudo = true)
+health = "scripts/health_check.sh"
 ```
 
 ## 🌐 Default Package Environment Variables & Precedence
 
-When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
+When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
 
 *   **`$drift_package_name`**: Name / directory name of the package.
 *   **`$drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.

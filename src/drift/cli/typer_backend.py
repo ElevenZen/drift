@@ -24,6 +24,7 @@ from .actions import (
     execute_rollback,
     execute_deploy,
     execute_repair,
+    execute_health,
     execute_help
 )
 from ..result_models import DiffType
@@ -617,6 +618,44 @@ def typer_apply(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_apply(drift_root, packages, force=force, json_mode=json_mode)
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("health")
+def typer_health(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to check health specifically"
+    ),
+    timeout: Optional[int] = typer.Option(
+        None,
+        "--timeout",
+        "-t",
+        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose output with probe stdout/stderr"
+    )
+) -> None:
+    """Run runtime health check probes on installed packages."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_health(drift_root, packages, json_mode=json_mode, verbose=verbose, timeout=timeout)
+    except SystemExit as se:
+        raise typer.Exit(code=se.code)
     except Exception as e:
         if not json_mode:
             rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)

@@ -21,6 +21,7 @@ from .actions import (
     execute_rollback,
     execute_deploy,
     execute_repair,
+    execute_health,
     execute_help
 )
 from ..result_models import DiffType
@@ -435,6 +436,28 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
+    # 19. health subcommand
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Run runtime health check probes on installed packages"
+    )
+    health_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to check health specifically"
+    )
+    health_parser.add_argument(
+        "-t", "--timeout",
+        type=int,
+        default=None,
+        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
+    )
+    health_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
     return parser
 
 
@@ -685,6 +708,24 @@ def run_argparse_cli(argv=None) -> None:
 
         try:
             execute_repair(drift_root, dry_run=args.dry_run, json_mode=json_mode)
+        except Exception as e:
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "health":
+        if args.no_git_root:
+            drift_root = base_dir
+        else:
+            drift_root = get_drift_root(base_dir)
+
+        try:
+            execute_health(
+                drift_root,
+                args.packages,
+                json_mode=json_mode,
+                verbose=args.verbose,
+                timeout=args.timeout
+            )
         except Exception as e:
             if not json_mode:
                 print(f"❌ [ERROR] {e}", file=sys.stderr)

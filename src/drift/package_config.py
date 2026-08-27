@@ -32,6 +32,7 @@ class PackageHooks:
     pre_uninstall: Optional[str] = None
     post_uninstall: Optional[str] = None
     post_render: Optional[str] = None
+    health: Optional[str] = None
     timeout: int = 120
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
 
@@ -148,6 +149,11 @@ class PackageHooks:
         if self.post_uninstall:
             self.trigger("post_uninstall", hook_dir=install_dir, cwd=cwd)
 
+    def trigger_health(self, install_dir: Path, cwd: Path) -> None:
+        """Triggers the health probe hook."""
+        if self.health:
+            self.trigger("health", hook_dir=install_dir, cwd=cwd)
+
     def check_hook_files(
         self,
         base_dir: Path,
@@ -219,6 +225,7 @@ class PackageConfig:
         pre_uninstall: Optional[str] = None,
         post_uninstall: Optional[str] = None,
         post_render: Optional[str] = None,
+        health: Optional[str] = None,
         hook_timeout: Optional[int] = None
     ) -> None:
         self.name = name
@@ -249,6 +256,8 @@ class PackageConfig:
                 self.hooks.post_uninstall = post_uninstall
             if post_render is not None:
                 self.hooks.post_render = post_render
+            if health is not None:
+                self.hooks.health = health
             if hook_timeout is not None:
                 self.hooks.timeout = effective_timeout
         else:
@@ -261,6 +270,7 @@ class PackageConfig:
                 pre_uninstall=pre_uninstall,
                 post_uninstall=post_uninstall,
                 post_render=post_render,
+                health=health,
                 timeout=effective_timeout
             )
         self.hooks.package_config = self
@@ -328,6 +338,14 @@ class PackageConfig:
     @post_render.setter
     def post_render(self, val: Optional[str]) -> None:
         self.hooks.post_render = val
+
+    @property
+    def health(self) -> Optional[str]:
+        return self.hooks.health
+
+    @health.setter
+    def health(self, val: Optional[str]) -> None:
+        self.hooks.health = val
 
     @property
     def hook_timeout(self) -> int:
@@ -503,6 +521,7 @@ class PackageConfig:
             pre_uninstall=hooks_data.get("pre_uninstall"),
             post_uninstall=hooks_data.get("post_uninstall"),
             post_render=hooks_data.get("post_render"),
+            health=hooks_data.get("health"),
             timeout=raw_timeout
         )
 
