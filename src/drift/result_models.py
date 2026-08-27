@@ -465,3 +465,49 @@ class HealthResult(SerializableModel):
         )
         lines.append("=" * 70)
         return "\n".join(lines)
+
+
+@dataclass
+class CloneResult(SerializableModel):
+    """Structured result for drift clone execution."""
+    command: str = "clone"
+    status: str = "SUCCESS"
+    git_url: str = ""
+    target_directory: str = ""
+    is_drift_workspace: bool = True
+    converted_legacy_package: Optional[str] = None
+    repaired_actions: List[str] = field(default_factory=list)
+    recommended_next_steps: List[str] = field(default_factory=list)
+    recommended_next_command: str = ""
+    error_message: Optional[str] = None
+
+    def format_text(self) -> str:
+        """Formats clone execution results for human-readable terminal output."""
+        lines = []
+        if self.status != "SUCCESS":
+            lines.append(f"❌ [ERROR] Failed to clone workspace: {self.error_message}")
+            return "\n".join(lines)
+
+        if self.is_drift_workspace:
+            lines.append(f"🔍 Detected Drift workspace at '{self.target_directory}'.")
+            if self.repaired_actions:
+                lines.append("🔧 Reconstructing workspace databases and sandbox repositories...")
+                for action in self.repaired_actions:
+                    lines.append(f"  ✨ {action}")
+            lines.append("✨ Workspace successfully cloned and prepared!")
+        else:
+            pkg = self.converted_legacy_package or "dotfiles"
+            lines.append(f"🔍 Detected plain dotfiles repository. Converting to Drift package '{pkg}'...")
+            if self.repaired_actions:
+                for action in self.repaired_actions:
+                    lines.append(f"  ✨ {action}")
+            lines.append("✨ Converted repository into a Drift workspace!")
+
+        if self.recommended_next_steps:
+            lines.append("")
+            lines.append("👉 Next steps:")
+            for i, step in enumerate(self.recommended_next_steps, 1):
+                lines.append(f"   {i}. {step}")
+
+        return "\n".join(lines)
+

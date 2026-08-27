@@ -57,6 +57,14 @@ class TestHelpDocs(unittest.TestCase):
         self.assertIn("Dual-Layered Configuration Merging", workspace_doc)
         self.assertIn(f"Environment Secret Vault (`{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}`)", workspace_doc)
 
+        # health
+        health_doc = get_help_page("health")
+        self.assertIn("Drift Package Runtime Health Checks", health_doc)
+
+        # clone
+        clone_doc = get_help_page("clone")
+        self.assertIn("Drift Repository Cloning & Bootstrapping", clone_doc)
+
     def test_get_help_page_invalid_topic_raises_error(self) -> None:
         """Verifies that querying an unknown/invalid help topic raises ValueError."""
         with self.assertRaises(ValueError) as context:

@@ -1,44 +1,111 @@
-# 🚫 Drift Ignore Engine: Syntax and Integration
+# 🚫 Drift Ignore Engine: Syntax and Integration Reference
 
-Drift includes a robust, PCRE-based file ignore engine to prevent system directories, 
-transient runtime logs, or junk files from cluttering your repository state.
+Drift includes a robust, Perl-Compatible Regular Expression (PCRE) file ignore engine matching the exact matching logic of GNU Stow's `.stow-local-ignore`. It prevents transient files, backup dumps, system caches, build artifacts, and non-dotfile repository assets from being deployed or tracked.
 
-## 1. Syntax of `.drift_ignore`
-Each package can have exactly one `.drift_ignore` file placed at its root:
-*   **Format**: One Perl-Compatible Regular Expression (PCRE) pattern per line. Blank lines and lines starting with `#` are skipped.
-*   **Enforcement**: Drift strictly blocks multiple or nested ignore files (e.g., subfolder-specific ignores) to maintain a single, transparent source of ignore truth.
-*   **Match Timing**: Patterns are evaluated against relative package paths *before* prefix expansion is applied (e.g. matching `dot-bashrc` instead of `.bashrc`). This guarantees that rename and prefix translation engines do not bypass matching rules.
+---
 
-Example `.drift_ignore`:
-```pcre
-# Ignore all vim/neovim swap, backup, and undo files
-.*\\.sw[p-z]$
-.*~
-.*\\.un~$
+## 1. Syntax & Core Matching Rules (GNU Stow Algorithm)
 
-# Ignore temporary local logs
-logs/.*\\.log
-```
+Each package can have **exactly one** `.drift_ignore` file placed directly in its root (`src/<pkg>/.drift_ignore`).
 
-## 2. Install Ignore Logic
-During compilation and deployment (`drift deploy` / `drift stage` / `drift apply` / `drift status` / `drift diff`):
-*   Any files under `src/` matching `.drift_ignore` patterns are **skipped** during rendering.
+### 📌 Comment & Line Rules
+*   **Comments**: Lines starting with `#` are ignored.
+*   **Empty Lines**: Blank lines and whitespace-only lines are ignored.
+*   **Inline Escaped Comments**: To include a literal `#` in a regex pattern, escape it with a backslash (`\#`).
+
+---
+
+### 🔍 Two-Group Pattern Evaluation
+Drift splits all ignore regex patterns into two distinct groups based on whether the pattern contains a forward slash (`/`):
+
+#### Group 1: Patterns Containing `/` (Relative Path Matching)
+When a pattern contains at least one `/`, it is matched against the file's **full relative path inside the package, prefixed with `/`** (e.g., `/app.log`, `/subfolder/file.txt`, `/dot-config/nvim/coc-settings.json`).
+
+*   **Anchoring to Package Root**:
+    To match a file or directory strictly at the package root, anchor with `^/`:
+    ```pcre
+    ^/README(\..*)?$
+    ^/LICENSE(\..*)?$
+    ^/install.*\.sh$
+    ^/sample\.txt$
+    ```
+    > ⚠️ **Important**: Do **not** use `./` (e.g. `./sample.txt` will fail to match). Always use `^/`.
+
+*   **Matching Subdirectories Anywhere**:
+    ```pcre
+    /cache/
+    /build/
+    /logs/
+    ```
+
+*   **Matching Specific Nested Paths**:
+    ```pcre
+    ^/dot-config/nvim/undodir/.*$
+    ^/dot-config/gh/hosts\.yml$
+    ```
+
+---
+
+#### Group 2: Patterns WITHOUT `/` (Basename Matching)
+When a pattern contains no `/`, it is matched against the **isolated file or directory basename** anywhere in the package hierarchy:
+
+*   **File Extension / Suffix Matching**:
+    ```pcre
+    \.bak$        # Matches foo.bak, sub/bar.bak
+    \.tmp$        # Matches data.tmp, sub/dir/temp.tmp
+    \.sw[p-z]$    # Matches Vim/Neovim swap files (.swp, .swo, .swx)
+    ~$            # Matches editor backup files ending with ~
+    \.un~$         # Matches Vim undo history files
+    ```
+
+*   **Prefix Matching**:
+    ```pcre
+    ^~            # Matches temporary files starting with ~
+    ^\.git        # Matches .git, .gitignore, .gitmodules
+    ```
+
+*   **Exact Basename Matching**:
+    ```pcre
+    ^Thumbs\.db$  # Matches Windows thumbnail cache
+    ^\.DS_Store$  # Matches macOS Finder metadata
+    ```
+
+---
+
+## 2. Source Naming Convention & Prefix Translation (`dot-`)
+
+In Drift source packages (`src/<pkg>/`), hidden files and directories can be represented using the `dot-` prefix convention (e.g. `dot-config/` instead of `.config/`, `dot-bashrc` instead of `.bashrc`).
+
+*   **Match Timing Guard**: Drift evaluates `.drift_ignore` patterns against the native repository filenames **before** prefix expansion is applied.
+*   **Writing Patterns for Hidden Files**:
+    ```pcre
+    ^/dot-bash_history$
+    ^/dot-config/qBittorrent/logs/
+    ```
+
+---
+
+## 3. Enforcement: Single Source of Truth
+
+Drift strictly enforces that **only one `.drift_ignore` file** exists per package root:
+*   Nested ignore files in subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore`) are prohibited to maintain a clear, single source of ignore truth.
+*   Managed metadata files (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`) are automatically protected and ignored from host linking.
+
+---
+
+## 4. Lifecycle & Integration Behaviors
+
+### 📦 Compilation & Deployment Pipelines (`drift deploy` / `drift stage` / `drift apply`)
+*   Files matching `.drift_ignore` are **skipped during sandbox compilation** (`render/`).
 *   They are never copied or symlinked onto your active host system.
-*   They are excluded from change staging, meaning they will not generate additions or deletions.
+*   They are excluded from staging diffs and state database tracking.
 
-## 3. Integration with Fully-Controlled Directory (FCD) Ignore Mechanism
-A Fully-Controlled Directory (FCD) is a directory where Drift has total tracking governance, meaning files deleted on the host inside an FCD are cleaned up. 
+### 🔄 Fully-Controlled Directory (FCD) Reverse-Sync
+Inside Fully-Controlled Directories (FCDs), Drift monitors for untracked host files:
+*   **Automatic Skip**: If an untracked host file matches `.drift_ignore`, it is completely skipped during `reverse-sync` and never pulled into `install/`.
+*   **Interactive Adoption (`drift adopt -i`)**: When you choose **Option [2] Ignore** on an untracked FCD file, Drift automatically unlinks it from the `install/` state base and appends its relative pattern to `.drift_ignore`.
 
-When untracked files are created on the host inside an FCD:
-1.  **Detection & Reverse-Sync (F1)**:
-    *   Normally, untracked host files are completely ignored by dotfile managers.
-    *   Inside FCDs, however, `reverse-sync` automatically tracks *every single untracked file addition* and reverse-copies it back to your `install/` state base.
-    *   **However, if the file matches any pattern inside `.drift_ignore`, it is completely skipped during `reverse-sync`**. It is not reverse-copied to `install/`.
-2.  **Adoption Integration (F12)**:
-    *   During interactive drift adoption (`drift adopt <pkg> --interactive` or `-i`), if you choose **Option [2] Ignore** on an untracked FCD file, Drift will:
-        *   **State Unlink**: Remove the file from the `install/` base (restoring Git state database cleanliness).
-        *   **Pattern Append**: Automatically append the relative file path pattern to the package's `.drift_ignore` file.
-    *   Because the pattern is appended to `.drift_ignore`, in all future `reverse-sync` runs, the ignore engine sees that the host file is ignored.
-    *   As a result, the file is safely kept on your active host system but is completely ignored by the FCD tracking, leaving your repository pristine!
+---
 
-👉 Run `drift help fcd` to learn more about the purpose and scenarios of Fully-Controlled Directories.
+👉 Run `drift help fcd` to learn more about Fully-Controlled Directories.  
+👉 Run `drift help drift_package.toml` for complete package configuration syntax.

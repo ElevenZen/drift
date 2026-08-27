@@ -22,6 +22,7 @@ from .actions import (
     execute_deploy,
     execute_repair,
     execute_health,
+    execute_clone,
     execute_help
 )
 from ..result_models import DiffType
@@ -52,7 +53,48 @@ def make_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
 
-    # 1. init subcommand
+    # =========================================================================
+    # High-Level User Commands (Ordered by Lifecycle)
+    # =========================================================================
+
+    # 1. clone subcommand
+    clone_parser = subparsers.add_parser(
+        "clone",
+        help="Clone a Git repository and automatically bootstrap/repair the Drift workspace"
+    )
+    clone_parser.add_argument(
+        "git_url",
+        help="Remote or local Git repository URL/path"
+    )
+    clone_parser.add_argument(
+        "directory",
+        nargs="?",
+        default=None,
+        help="Optional destination directory for the clone (defaults to repo name)"
+    )
+    clone_parser.add_argument(
+        "-b", "--branch",
+        default=None,
+        help="Specific branch to clone"
+    )
+    clone_parser.add_argument(
+        "--depth",
+        type=int,
+        default=None,
+        help="Create a shallow clone with a history truncated to the specified number of commits"
+    )
+    clone_parser.add_argument(
+        "--no-repair",
+        action="store_true",
+        help="Skip automatic workspace database and repository repair after cloning"
+    )
+    clone_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 2. init subcommand
     init_parser = subparsers.add_parser(
         "init",
         help="Initialize a new drift workspace"
@@ -68,7 +110,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 2. new subcommand
+    # 3. new subcommand
     new_parser = subparsers.add_parser(
         "new",
         help="Scaffold a new package directory and drift_package.toml"
@@ -98,7 +140,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 3. add subcommand
+    # 4. add subcommand
     add_parser = subparsers.add_parser(
         "add",
         help="Import files or folders from the system into a package (with dot-prefix translation)"
@@ -123,81 +165,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 4. deploy subcommand
-    deploy_parser = subparsers.add_parser(
-        "deploy",
-        help="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."
-    )
-    deploy_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional specific package(s) to deploy"
-    )
-    deploy_parser.add_argument(
-        "-f", "--force",
-        action="store_true",
-        help="Forcefully deploy and bypass system drift sentinel safeguards"
-    )
-    deploy_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # 5. status subcommand
-    status_parser = subparsers.add_parser(
-        "status",
-        help="Audit and aggregate configuration status across active packages"
-    )
-    status_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to audit specifically"
-    )
-    status_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # 6. diff subcommand
-    diff_parser = subparsers.add_parser(
-        "diff",
-        help="Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)"
-    )
-    diff_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to diff specifically"
-    )
-    diff_group = diff_parser.add_mutually_exclusive_group()
-    diff_group.add_argument(
-        "-t", "--template",
-        action="store_true",
-        help="Visualize Template Evolution (Diff A: src -> render)"
-    )
-    diff_group.add_argument(
-        "-s", "--system",
-        action="store_true",
-        help="Visualize System Drift (Diff B: System -> install)"
-    )
-    diff_parser.add_argument(
-        "-y", "--side-by-side",
-        action="store_true",
-        help="Show side-by-side comparison (Note: relies on git/diff capabilities)"
-    )
-    diff_parser.add_argument(
-        "--stat",
-        action="store_true",
-        help="Show concise summary of changes (diffstat)"
-    )
-    diff_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # 7. adopt subcommand
+    # 5. adopt subcommand
     adopt_parser = subparsers.add_parser(
         "adopt",
         help="Adopt active system drifts and incorporate them back into source templates"
@@ -228,6 +196,49 @@ def make_parser() -> argparse.ArgumentParser:
         help="Simulate the adoption, previewing changes and conflict results"
     )
     adopt_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 6. deploy subcommand
+    deploy_parser = subparsers.add_parser(
+        "deploy",
+        help="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."
+    )
+    deploy_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional specific package(s) to deploy"
+    )
+    deploy_parser.add_argument(
+        "-f", "--force",
+        action="store_true",
+        help="Forcefully deploy and bypass system drift sentinel safeguards"
+    )
+    deploy_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 7. health subcommand
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Run runtime health check probes on installed packages"
+    )
+    health_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to check health specifically"
+    )
+    health_parser.add_argument(
+        "-t", "--timeout",
+        type=int,
+        default=None,
+        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
+    )
+    health_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -285,23 +296,60 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 10. repair subcommand
-    repair_parser = subparsers.add_parser(
-        "repair",
-        help="Repair missing, damaged, or partially-initialized components in the drift workspace."
+    # 10. status subcommand
+    status_parser = subparsers.add_parser(
+        "status",
+        help="Audit and aggregate configuration status across active packages"
     )
-    repair_parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show repair actions without executing them"
+    status_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to audit specifically"
     )
-    repair_parser.add_argument(
+    status_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 11. gc subcommand
+    # 11. diff subcommand
+    diff_parser = subparsers.add_parser(
+        "diff",
+        help="Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)"
+    )
+    diff_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to diff specifically"
+    )
+    diff_group = diff_parser.add_mutually_exclusive_group()
+    diff_group.add_argument(
+        "-t", "--template",
+        action="store_true",
+        help="Visualize Template Evolution (Diff A: src -> render)"
+    )
+    diff_group.add_argument(
+        "-s", "--system",
+        action="store_true",
+        help="Visualize System Drift (Diff B: System -> install)"
+    )
+    diff_parser.add_argument(
+        "-y", "--side-by-side",
+        action="store_true",
+        help="Show side-by-side comparison (Note: relies on git/diff capabilities)"
+    )
+    diff_parser.add_argument(
+        "--stat",
+        action="store_true",
+        help="Show concise summary of changes (diffstat)"
+    )
+    diff_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 12. gc subcommand
     gc_parser = subparsers.add_parser(
         "gc",
         help="Identify and uninstall orphan packages (present in state but disabled in config)"
@@ -317,7 +365,23 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 12. help subcommand
+    # 13. repair subcommand
+    repair_parser = subparsers.add_parser(
+        "repair",
+        help="Repair missing, damaged, or partially-initialized components in the drift workspace."
+    )
+    repair_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show repair actions without executing them"
+    )
+    repair_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 14. help subcommand
     help_parser = subparsers.add_parser(
         "help",
         help="Show overall model of drift and its detailed manual pages."
@@ -325,12 +389,30 @@ def make_parser() -> argparse.ArgumentParser:
     help_parser.add_argument(
         "topic",
         nargs="?",
-        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml)"
+        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml, workspace, health, clone)"
     )
 
-    # === Low-Level Primitive Subcommands ===
+    # =========================================================================
+    # Low-Level Control Commands (Ordered by Pipeline Lifecycle)
+    # =========================================================================
 
-    # 13. render subcommand
+    # 15. reverse-sync subcommand
+    reverse_sync_parser = subparsers.add_parser(
+        "reverse-sync",
+        help="(Low-Level) Synchronize changes from host system back to install/ state database"
+    )
+    reverse_sync_parser.add_argument(
+        "packages",
+        nargs="*",
+        help="Optional package name(s) to reverse-sync specifically"
+    )
+    reverse_sync_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
+    # 16. render subcommand
     render_parser = subparsers.add_parser(
         "render",
         help="(Low-Level) Render templates of a package or all enabled packages"
@@ -346,7 +428,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 14. render-commit subcommand
+    # 17. render-commit subcommand
     render_commit_parser = subparsers.add_parser(
         "render-commit",
         help="(Low-Level) Stage and commit compiled render sandbox changes"
@@ -362,7 +444,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Commit message"
     )
 
-    # 15. stage subcommand
+    # 18. stage subcommand
     stage_parser = subparsers.add_parser(
         "stage",
         help="(Low-Level) Stage compiled sandbox templates from render/ to install/ state database"
@@ -383,23 +465,7 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 16. install-commit subcommand
-    install_commit_parser = subparsers.add_parser(
-        "install-commit",
-        help="(Low-Level) Stage and commit install state directory changes"
-    )
-    install_commit_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to commit specifically"
-    )
-    install_commit_parser.add_argument(
-        "-m", "--message",
-        required=True,
-        help="Commit message"
-    )
-
-    # 17. apply subcommand
+    # 19. apply subcommand
     apply_parser = subparsers.add_parser(
         "apply",
         help="(Low-Level) Apply configurations from state database to active host system"
@@ -420,42 +486,20 @@ def make_parser() -> argparse.ArgumentParser:
         help="Output results in structured machine-readable JSON format"
     )
 
-    # 18. reverse-sync subcommand
-    reverse_sync_parser = subparsers.add_parser(
-        "reverse-sync",
-        help="(Low-Level) Synchronize changes from host system back to install/ state database"
+    # 20. install-commit subcommand
+    install_commit_parser = subparsers.add_parser(
+        "install-commit",
+        help="(Low-Level) Stage and commit install state directory changes"
     )
-    reverse_sync_parser.add_argument(
+    install_commit_parser.add_argument(
         "packages",
         nargs="*",
-        help="Optional package name(s) to reverse-sync specifically"
+        help="Optional package name(s) to commit specifically"
     )
-    reverse_sync_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
-    )
-
-    # 19. health subcommand
-    health_parser = subparsers.add_parser(
-        "health",
-        help="Run runtime health check probes on installed packages"
-    )
-    health_parser.add_argument(
-        "packages",
-        nargs="*",
-        help="Optional package name(s) to check health specifically"
-    )
-    health_parser.add_argument(
-        "-t", "--timeout",
-        type=int,
-        default=None,
-        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
-    )
-    health_parser.add_argument(
-        "--json",
-        action="store_true",
-        help="Output results in structured machine-readable JSON format"
+    install_commit_parser.add_argument(
+        "-m", "--message",
+        required=True,
+        help="Commit message"
     )
 
     return parser
@@ -725,6 +769,21 @@ def run_argparse_cli(argv=None) -> None:
                 json_mode=json_mode,
                 verbose=args.verbose,
                 timeout=args.timeout
+            )
+        except Exception as e:
+            if not json_mode:
+                print(f"❌ [ERROR] {e}", file=sys.stderr)
+            sys.exit(1)
+    elif args.command == "clone":
+        target_dir = Path(args.directory).resolve() if args.directory else None
+        try:
+            execute_clone(
+                git_url=args.git_url,
+                target_dir=target_dir,
+                branch=args.branch,
+                depth=args.depth,
+                no_repair=args.no_repair,
+                json_mode=json_mode
             )
         except Exception as e:
             if not json_mode:

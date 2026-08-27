@@ -25,6 +25,7 @@ from .actions import (
     execute_deploy,
     execute_repair,
     execute_health,
+    execute_clone,
     execute_help
 )
 from ..result_models import DiffType
@@ -75,6 +76,61 @@ def main_callback(
         import logging
         setup_logging(level=logging.DEBUG)
     ctx.obj = DriftCLIContext(directory=directory, no_git_root=no_git_root)
+
+
+# =============================================================================
+# High-Level User Commands (Ordered by Lifecycle)
+# =============================================================================
+
+@app.command("clone")
+def typer_clone(
+    git_url: str = typer.Argument(
+        ...,
+        help="Remote or local Git repository URL/path"
+    ),
+    directory: Optional[str] = typer.Argument(
+        None,
+        help="Optional destination directory for the clone (defaults to repo name)"
+    ),
+    branch: Optional[str] = typer.Option(
+        None,
+        "-b",
+        "--branch",
+        help="Specific branch to clone"
+    ),
+    depth: Optional[int] = typer.Option(
+        None,
+        "--depth",
+        help="Create a shallow clone with a history truncated to the specified number of commits"
+    ),
+    no_repair: bool = typer.Option(
+        False,
+        "--no-repair",
+        help="Skip automatic workspace database and repository repair after cloning"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """Clone a Git repository and automatically bootstrap/repair the Drift workspace."""
+    try:
+        target_dir = Path(directory).resolve() if directory else None
+        execute_clone(
+            git_url=git_url,
+            target_dir=target_dir,
+            branch=branch,
+            depth=depth,
+            no_repair=no_repair,
+            json_mode=json_mode
+        )
+    except SystemExit as se:
+        raise typer.Exit(code=se.code)
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
 
 
 @app.command("init")
@@ -192,6 +248,60 @@ def typer_add(
         raise typer.Exit(code=1)
 
 
+@app.command("adopt")
+def typer_adopt(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to adopt specifically"
+    ),
+    interactive: bool = typer.Option(
+        False,
+        "--interactive",
+        "-i",
+        help="Interactively reconcile each drifted file"
+    ),
+    accept_conflicts: bool = typer.Option(
+        False,
+        "--accept-conflicts",
+        help="Apply conflicting patches, writing merge conflict markers directly into templates"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force adoption even if the package source directory has uncommitted modifications"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Simulate the adoption, previewing changes and conflict results"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """Adopt active system drifts and incorporate them back into source templates."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_adopt(
+            drift_root=drift_root,
+            package_names=packages or [],
+            interactive=interactive,
+            accept_conflicts=accept_conflicts,
+            force=force,
+            dry_run=dry_run,
+            json_mode=json_mode
+        )
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
 @app.command("deploy")
 def typer_deploy(
     ctx: typer.Context,
@@ -216,6 +326,114 @@ def typer_deploy(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_deploy(drift_root, packages, force=force, json_mode=json_mode)
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("health")
+def typer_health(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to check health specifically"
+    ),
+    timeout: Optional[int] = typer.Option(
+        None,
+        "--timeout",
+        "-t",
+        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    ),
+    verbose: bool = typer.Option(
+        False,
+        "--verbose",
+        "-v",
+        help="Enable verbose output with probe stdout/stderr"
+    )
+) -> None:
+    """Run runtime health check probes on installed packages."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_health(drift_root, packages, json_mode=json_mode, verbose=verbose, timeout=timeout)
+    except SystemExit as se:
+        raise typer.Exit(code=se.code)
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("uninstall")
+def typer_uninstall(
+    ctx: typer.Context,
+    packages: List[str] = typer.Argument(
+        ...,
+        help="One or more package names to uninstall"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force uninstallation even if package is still active in drift.toml"
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview uninstallation without making changes"
+    ),
+    detach: bool = typer.Option(
+        False,
+        "--detach",
+        help="Remove management relationship but keep configurations as actual physical files on host system"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """Uninstall a package from the system and restore any backups."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=json_mode)
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+
+@app.command("rollback")
+def typer_rollback(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional specific package(s) to rollback"
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force the rollback and skip failed interlock checking"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """Rollback failed deployments and restore systems to the last committed clean state."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_rollback(drift_root, packages, force=force, json_mode=json_mode)
     except Exception as e:
         if not json_mode:
             rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
@@ -297,34 +515,13 @@ def typer_diff(
         raise typer.Exit(code=1)
 
 
-@app.command("adopt")
-def typer_adopt(
+@app.command("gc")
+def typer_gc(
     ctx: typer.Context,
-    packages: Optional[List[str]] = typer.Argument(
-        None,
-        help="Optional package name(s) to adopt specifically"
-    ),
-    interactive: bool = typer.Option(
-        False,
-        "--interactive",
-        "-i",
-        help="Interactively reconcile each drifted file"
-    ),
-    accept_conflicts: bool = typer.Option(
-        False,
-        "--accept-conflicts",
-        help="Apply conflicting patches, writing merge conflict markers directly into templates"
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Force adoption even if the package source directory has uncommitted modifications"
-    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
-        help="Simulate the adoption, previewing changes and conflict results"
+        help="Simulate the garbage collection without making changes"
     ),
     json_mode: bool = typer.Option(
         False,
@@ -332,89 +529,11 @@ def typer_adopt(
         help="Output results in structured machine-readable JSON format"
     )
 ) -> None:
-    """Adopt active system drifts and incorporate them back into source templates."""
+    """Identify and uninstall orphan packages (present in state but disabled in config)."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_adopt(
-            drift_root=drift_root,
-            package_names=packages or [],
-            interactive=interactive,
-            accept_conflicts=accept_conflicts,
-            force=force,
-            dry_run=dry_run,
-            json_mode=json_mode
-        )
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
-
-@app.command("uninstall")
-def typer_uninstall(
-    ctx: typer.Context,
-    packages: List[str] = typer.Argument(
-        ...,
-        help="One or more package names to uninstall"
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Force uninstallation even if package is still active in drift.toml"
-    ),
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Preview uninstallation without making changes"
-    ),
-    detach: bool = typer.Option(
-        False,
-        "--detach",
-        help="Remove management relationship but keep configurations as actual physical files on host system"
-    ),
-    json_mode: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in structured machine-readable JSON format"
-    )
-) -> None:
-    """Uninstall a package from the system and restore any backups."""
-    try:
-        cli_ctx: DriftCLIContext = ctx.obj
-        drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
-
-@app.command("rollback")
-def typer_rollback(
-    ctx: typer.Context,
-    packages: Optional[List[str]] = typer.Argument(
-        None,
-        help="Optional specific package(s) to rollback"
-    ),
-    force: bool = typer.Option(
-        False,
-        "--force",
-        "-f",
-        help="Force the rollback and skip failed interlock checking"
-    ),
-    json_mode: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in structured machine-readable JSON format"
-    )
-) -> None:
-    """Rollback failed deployments and restore systems to the last committed clean state."""
-    try:
-        cli_ctx: DriftCLIContext = ctx.obj
-        drift_root = cli_ctx.get_drift_root()
-        execute_rollback(drift_root, packages, force=force, json_mode=json_mode)
+        execute_gc(drift_root, dry_run=dry_run, json_mode=json_mode)
     except Exception as e:
         if not json_mode:
             rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
@@ -446,36 +565,11 @@ def typer_repair(
         raise typer.Exit(code=1)
 
 
-@app.command("gc")
-def typer_gc(
-    ctx: typer.Context,
-    dry_run: bool = typer.Option(
-        False,
-        "--dry-run",
-        help="Simulate the garbage collection without making changes"
-    ),
-    json_mode: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in structured machine-readable JSON format"
-    )
-) -> None:
-    """Identify and uninstall orphan packages (present in state but disabled in config)."""
-    try:
-        cli_ctx: DriftCLIContext = ctx.obj
-        drift_root = cli_ctx.get_drift_root()
-        execute_gc(drift_root, dry_run=dry_run, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
-
 @app.command("help")
 def typer_help(
     topic: Optional[str] = typer.Argument(
         None,
-        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml)"
+        help="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml, workspace, health, clone)"
     )
 ) -> None:
     """Show overall model of drift and its detailed manual pages."""
@@ -483,8 +577,38 @@ def typer_help(
 
 
 # =============================================================================
-# Low-Level Primitive Subcommands
+# Low-Level Control Commands (Ordered by Pipeline Lifecycle)
 # =============================================================================
+
+@app.command("reverse-sync")
+def typer_reverse_sync(
+    ctx: typer.Context,
+    packages: Optional[List[str]] = typer.Argument(
+        None,
+        help="Optional package name(s) to reverse-sync specifically"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """(Low-Level) Synchronize changes from host system back to install/ state database."""
+    try:
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_reverse_sync(drift_root, packages, json_mode=json_mode)
+        if not json_mode:
+            if packages:
+                pkgs_str = ", ".join(packages)
+                rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]")
+            else:
+                rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]")
+    except Exception as e:
+        if not json_mode:
+            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        raise typer.Exit(code=1)
+
 
 @app.command("render")
 def typer_render(
@@ -570,30 +694,6 @@ def typer_stage(
         raise typer.Exit(code=1)
 
 
-@app.command("install-commit")
-def typer_install_commit(
-    ctx: typer.Context,
-    packages: Optional[List[str]] = typer.Argument(
-        None,
-        help="Optional package name(s) to commit specifically"
-    ),
-    message: str = typer.Option(
-        ...,
-        "-m",
-        "--message",
-        help="Commit message"
-    )
-) -> None:
-    """(Low-Level) Stage and commit install state directory changes."""
-    try:
-        cli_ctx: DriftCLIContext = ctx.obj
-        drift_root = cli_ctx.get_drift_root()
-        execute_install_commit(drift_root, message, packages)
-    except Exception as e:
-        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
-
 @app.command("apply")
 def typer_apply(
     ctx: typer.Context,
@@ -624,70 +724,26 @@ def typer_apply(
         raise typer.Exit(code=1)
 
 
-@app.command("health")
-def typer_health(
+@app.command("install-commit")
+def typer_install_commit(
     ctx: typer.Context,
     packages: Optional[List[str]] = typer.Argument(
         None,
-        help="Optional package name(s) to check health specifically"
+        help="Optional package name(s) to commit specifically"
     ),
-    timeout: Optional[int] = typer.Option(
-        None,
-        "--timeout",
-        "-t",
-        help="Custom execution timeout in seconds per probe (default: package hook timeout or 120s)"
-    ),
-    json_mode: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in structured machine-readable JSON format"
-    ),
-    verbose: bool = typer.Option(
-        False,
-        "--verbose",
-        "-v",
-        help="Enable verbose output with probe stdout/stderr"
+    message: str = typer.Option(
+        ...,
+        "-m",
+        "--message",
+        help="Commit message"
     )
 ) -> None:
-    """Run runtime health check probes on installed packages."""
+    """(Low-Level) Stage and commit install state directory changes."""
     try:
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_health(drift_root, packages, json_mode=json_mode, verbose=verbose, timeout=timeout)
-    except SystemExit as se:
-        raise typer.Exit(code=se.code)
+        execute_install_commit(drift_root, message, packages)
     except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
-
-@app.command("reverse-sync")
-def typer_reverse_sync(
-    ctx: typer.Context,
-    packages: Optional[List[str]] = typer.Argument(
-        None,
-        help="Optional package name(s) to reverse-sync specifically"
-    ),
-    json_mode: bool = typer.Option(
-        False,
-        "--json",
-        help="Output results in structured machine-readable JSON format"
-    )
-) -> None:
-    """(Low-Level) Synchronize changes from host system back to install/ state database."""
-    try:
-        cli_ctx: DriftCLIContext = ctx.obj
-        drift_root = cli_ctx.get_drift_root()
-        execute_reverse_sync(drift_root, packages, json_mode=json_mode)
-        if not json_mode:
-            if packages:
-                pkgs_str = ", ".join(packages)
-                rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]")
-            else:
-                rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]")
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
         raise typer.Exit(code=1)
 

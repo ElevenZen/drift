@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-370%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-406%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -200,6 +200,15 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
     *   Drift resets the package's local state database directory to the last committed clean HEAD, purges half-written/untracked files via `git checkout HEAD` and `git clean -fd`.
     *   It then performs a full redeploy fallback to safely restore system files to the last committed stable state.
 
+### Scenario D: Bootstrapping a New Machine or Migrating Legacy Dotfiles (Clone Flow)
+*When you set up a fresh machine and want to replicate your existing Drift configuration repository in one command, or migrate an old plain dotfiles repository.*
+
+1.  **Clone Drift Workspace**: Run `drift clone git@github.com:username/dotfiles.git`.
+    *   Drift fetches the remote repository and automatically executes a non-destructive repair (`drift repair`) to reconstruct the excluded `render/` and `install/` databases, `.gitignore` rules, and machine-specific local configuration templates (`config/drift.local.toml`, `config/secrets.env`).
+2.  **Migrate Legacy Plain Dotfiles Repo**: Run `drift clone https://github.com/username/legacy-dotfiles.git`.
+    *   Drift detects that the repository is a traditional plain dotfiles repository, isolates existing dotfiles into `src/legacy-dotfiles/`, generates `drift_package.toml` and `.drift_ignore`, and scaffolds the full Drift workspace infrastructure automatically.
+3.  **Review & Deploy**: Navigate into the directory (`cd dotfiles`), configure machine-specific overrides in `config/drift.local.toml` / `config/secrets.env`, and run `drift deploy`.
+
 ---
 
 ## 🛠️ Operational Commands & Functions
@@ -210,11 +219,13 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 
 | Command | Description |
 | :--- | :--- |
+| `drift clone <url> [dir]` | Clones a Git repo and auto-bootstraps/repairs the Drift workspace (or converts legacy dotfiles). |
 | `drift init` | Initializes a new Git-backed Drift workspace, databases, templates, and `secrets.env`. |
 | `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
 | `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
 | `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
+| `drift health [pkgs]` | Probes live runtime health check hooks on installed packages. |
 | `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
 | `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |

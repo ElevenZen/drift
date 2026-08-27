@@ -34,6 +34,7 @@ from ..result_models import (
     PackageHealthStatus,
     PackageHealthResult,
     HealthResult,
+    CloneResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -411,6 +412,36 @@ def execute_health(
             print(text)
 
     if health_result.status != "SUCCESS":
+        sys.exit(1)
+
+
+def execute_clone(
+    git_url: str,
+    target_dir: Optional[Path] = None,
+    branch: Optional[str] = None,
+    depth: Optional[int] = None,
+    no_repair: bool = False,
+    json_mode: bool = False
+) -> None:
+    """Core function to clone a git repository and bootstrap/repair the drift workspace."""
+    from ..workspace_clone import run_primitive_clone
+
+    res = run_primitive_clone(
+        git_url=git_url,
+        target_dir=target_dir,
+        branch=branch,
+        depth=depth,
+        no_repair=no_repair
+    )
+
+    if json_mode:
+        print(res.to_json())
+    else:
+        text = res.format_text()
+        if text:
+            print(text)
+
+    if res.status != "SUCCESS":
         sys.exit(1)
 
 
