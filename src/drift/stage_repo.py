@@ -243,6 +243,8 @@ def run_primitive_4_stage_render_to_install(
         metadata = load_config_from_render(render_base, pkg, force=force)
         if not (force or metadata.enable_install):
             continue
+        # Verify hook files exist and are regular files in render/ sandbox
+        metadata.hooks.check_hook_files(render_base / pkg)
         pkg_metadata[pkg] = metadata
 
     # Check if active_packages is empty after filtering by enable_install, and if so, raise an error

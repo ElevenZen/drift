@@ -1606,6 +1606,53 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(backup_data.exists())
         self.assertEqual(backup_data.read_text(encoding="utf-8"), "data payload 1\n")
 
+    def test_install_fails_if_hook_file_missing_in_install(self) -> None:
+        """Verifies that installation raises FileNotFoundError if a configured hook file is missing in install/."""
+        pkg = "pkg_hook_missing"
+        self.workspace_config.packages_enable[pkg] = True
+
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        pre_install = "scripts/missing.sh"
+        """, encoding="utf-8")
+        (pkg_install_dir / "app.conf").write_text("hello", encoding="utf-8")
+
+        with self.assertRaises(FileNotFoundError) as cm:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertIn("missing.sh", str(cm.exception))
+
+    def test_install_fails_if_hook_file_is_directory_in_install(self) -> None:
+        """Verifies that installation raises ValueError if a configured hook file is a directory in install/."""
+        pkg = "pkg_hook_is_dir"
+        self.workspace_config.packages_enable[pkg] = True
+
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "scripts").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        post_install = "scripts/hook_dir"
+        """, encoding="utf-8")
+        (pkg_install_dir / "app.conf").write_text("hello", encoding="utf-8")
+
+        with self.assertRaises(ValueError) as cm:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertIn("not a regular file", str(cm.exception))
+
 
 class TestStowVersionDetection(unittest.TestCase):
     """Tests for GNU Stow version retrieval and version checking logic."""

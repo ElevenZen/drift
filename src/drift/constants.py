@@ -13,6 +13,15 @@ STATE_REGISTRY_FILE_NAME = "state.toml"
 INSTALL_STOW_IGNORE_PATTERN = "^/state.toml"
 MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME]
 
+LIFECYCLE_HOOK_NAMES = (
+    "pre_source",
+    "pre_install",
+    "post_install",
+    "pre_update",
+    "post_update",
+    "post_render",
+)
+
 import json
 import os
 import sys

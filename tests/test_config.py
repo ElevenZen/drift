@@ -383,6 +383,35 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.timeout, 45)
         self.assertEqual(config.hook_timeout, 45)
 
+    def test_package_hooks_check_hook_files(self) -> None:
+        """Verifies check_hook_files validates existence and regular file status of configured hook files."""
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            scripts_dir = base / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "pre_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+            (scripts_dir / "post_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+
+            hooks = PackageHooks(
+                pre_install="scripts/pre_install.sh",
+                post_install="scripts/post_install.sh"
+            )
+            # 1. Valid hook files pass
+            hooks.check_hook_files(base)
+
+            # 2. Missing hook file raises FileNotFoundError
+            hooks.post_update = "scripts/missing.sh"
+            with self.assertRaises(FileNotFoundError) as cm:
+                hooks.check_hook_files(base)
+            self.assertIn("missing.sh", str(cm.exception))
+
+            # 3. Hook path pointing to directory raises ValueError
+            (scripts_dir / "dir_hook").mkdir()
+            hooks.post_update = "scripts/dir_hook"
+            with self.assertRaises(ValueError) as cm:
+                hooks.check_hook_files(base)
+            self.assertIn("not a regular file", str(cm.exception))
+
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""
         config = PackageConfig(name="my_pkg",

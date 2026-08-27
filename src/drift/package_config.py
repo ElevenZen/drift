@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import List, Sequence, Optional, Tuple, Dict, Iterator
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
-from .constants import PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_FILE_NAME_LIST, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST
+from .constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME_LIST,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST,
+    LIFECYCLE_HOOK_NAMES,
+)
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 
 from dataclasses import dataclass, field
@@ -38,7 +43,7 @@ class PackageHooks:
 
     def validate(self, package_name: str = "") -> None:
         """Validates hook configurations."""
-        for hook_name in ("pre_source", "pre_install", "post_install", "pre_update", "post_update", "post_render"):
+        for hook_name in LIFECYCLE_HOOK_NAMES:
             val = getattr(self, hook_name)
             if val is not None and not isinstance(val, str):
                 name_str = f" for package '{package_name}'" if package_name else ""
@@ -93,6 +98,30 @@ class PackageHooks:
         if self.post_update:
             self.trigger("post_update", hook_dir=install_dir, cwd=cwd)
 
+    def check_hook_files(self, base_dir: Path) -> None:
+        """Checks that all configured lifecycle hook files exist in base_dir and are regular files.
+
+        Args:
+            base_dir: Directory containing package files (e.g. render/<pkg> or install/<pkg>).
+
+        Raises:
+            FileNotFoundError: If a configured hook file does not exist.
+            ValueError: If a configured hook path is not a regular file.
+        """
+        pkg_name = self._package_config.name if self._package_config else "unknown"
+        for hook_name in LIFECYCLE_HOOK_NAMES:
+            hook_rel = getattr(self, hook_name)
+            if hook_rel:
+                hook_path = base_dir / hook_rel
+                if not hook_path.exists():
+                    raise FileNotFoundError(
+                        f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'"
+                    )
+                if not hook_path.is_file():
+                    raise ValueError(
+                        f"Lifecycle hook path specified for '{hook_name}' in package '{pkg_name}' is not a regular file: '{hook_path}'"
+                    )
+
 
 @dataclass
 class PackageConfig:
@@ -106,6 +135,10 @@ class PackageConfig:
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
+
+    def check_hook_files(self, base_dir: Path) -> None:
+        """Checks that all configured lifecycle hook files exist in base_dir and are regular files."""
+        self.hooks.check_hook_files(base_dir)
 
     def __init__(
         self,
@@ -355,15 +388,7 @@ class PackageConfig:
                 logger.warning(f"Unknown package option: '{key}'")
 
         # Warning for unknown hooks options
-        known_hooks_keys = {
-            "pre_source",
-            "pre_install",
-            "post_install",
-            "pre_update",
-            "post_update",
-            "post_render",
-            "timeout"
-        }
+        known_hooks_keys = set(LIFECYCLE_HOOK_NAMES) | {"timeout"}
         for key in hooks_data:
             if key not in known_hooks_keys:
                 logger.warning(f"Unknown hook option: '{key}'")

@@ -714,6 +714,9 @@ def deploy_package_impl(
             status="SKIPPED",
             error=f"Package installation directory '{install_pkg_dir}' does not exist."
         )
+
+    # Verify hook files exist and are regular files in install/
+    metadata.hooks.check_hook_files(install_pkg_dir)
     
     # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
@@ -789,6 +792,14 @@ def run_primitive_5_install_deployment(
         custom_dir=workspace_config.install_path,
         target_pkgs=packages_to_redeploy,
     )
+
+    # Pre-check hook files in install/ for all packages before starting deployment
+    pkg_metadata_map = { pkg: load_config_for_install(install_base, pkg)
+                        for pkg in discovered_packages
+                        if (install_base / pkg).is_dir() }
+    for pkg, metadata in pkg_metadata_map.items():
+        if force or metadata.enable_install:
+            metadata.hooks.check_hook_files(install_base / pkg)
     
     results: List[PackageInstallResult] = []
     for pkg in discovered_packages:

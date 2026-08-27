@@ -459,7 +459,7 @@ class TestStageRepo(unittest.TestCase):
         target_directory = "~/.config/test"
 
         [hooks]
-        pre_install = "echo hook executed"
+        pre_install = "pre_install.sh"
         """, encoding="utf-8")
 
         # Write .drift_ignore ignoring the hook script
@@ -613,6 +613,51 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue(install_pkg_dir.is_dir())
         self.assertTrue((install_pkg_dir / "file.txt").is_file())
         self.assertEqual((install_pkg_dir / "file.txt").read_text(encoding="utf-8"), "rendered content")
+
+    def test_stage_fails_if_hook_file_missing_in_render(self) -> None:
+        """Verifies that staging raises FileNotFoundError if a configured hook file does not exist in render/."""
+        pkg_name = "pkg_hook_missing"
+        self.workspace_config.packages_enable[pkg_name] = True
+
+        render_pkg_dir = self.render_dir / pkg_name
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+
+            [hooks]
+            pre_install = "scripts/missing_hook.sh"
+            """)
+
+        with self.assertRaises(FileNotFoundError) as cm:
+            run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
+        self.assertIn("missing_hook.sh", str(cm.exception))
+
+    def test_stage_fails_if_hook_file_is_directory_in_render(self) -> None:
+        """Verifies that staging raises ValueError if a configured hook file is a directory in render/."""
+        pkg_name = "pkg_hook_is_dir"
+        self.workspace_config.packages_enable[pkg_name] = True
+
+        render_pkg_dir = self.render_dir / pkg_name
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / "scripts").mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
+
+        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+
+            [hooks]
+            post_install = "scripts/hook_dir"
+            """)
+
+        with self.assertRaises(ValueError) as cm:
+            run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
+        self.assertIn("not a regular file", str(cm.exception))
 
 
 if __name__ == "__main__":

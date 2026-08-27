@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import subprocess
 from pathlib import Path
-from typing import cast, Any
+from typing import cast, Any, List, Tuple, Union
 
 from drift.constants import (
     CONFIG_DIR_NAME,
@@ -1181,7 +1181,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertEqual(secrets[1], ("PRE_EXISTING_SECRET", "new_secret_value"))
 
         # 2. Load env settings
-        saved_envs: Any = load_env_settings(secrets)
+        saved_envs = cast(List[Tuple[str, Union[str, None]]], load_env_settings(secrets))
         self.assertIsNotNone(saved_envs)
         self.assertEqual(len(saved_envs), 2)
 
@@ -1340,7 +1340,7 @@ class TestRenderPackage(unittest.TestCase):
         from drift.render_package import run_primitive_2_render_packages
         res = run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
         self.assertEqual(res.status, "FAILED")
-        self.assertIn("failed with exit code 1", res.error_message)
+        self.assertIn("failed with exit code 1", cast(str, res.error_message))
 
     def test_default_package_envs_available_in_templates(self) -> None:
         """Verifies drift_package_name, drift_package_target_dir, and drift_install_method are available in templates."""
@@ -1465,8 +1465,8 @@ class TestRenderPackage(unittest.TestCase):
         res = run_primitive_2_render_packages(workspace_config)
         self.assertEqual(res.status, "FAILED")
         self.assertEqual(res.error_package, "pkg_broken")
-        self.assertIn("pkg_broken", res.error_message)
-        self.assertIn("Render failed", res.error_message)
+        self.assertIn("pkg_broken", cast(str, res.error_message))
+        self.assertIn("Render failed", cast(str, res.error_message))
 
         # But pkg_good should have rendered successfully!
         rendered_good_file = self.drift_root / "render" / "pkg_good" / "good_file.txt"
