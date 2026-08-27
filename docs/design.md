@@ -335,14 +335,24 @@ qbittorrent = true
 proxychains = false
 ```
 
-#### Meta-Config Templating: `drift.envst.toml`
-To allow complete bootstrapping of workspaces under different environment parameters, the main config file itself can be a template. By renaming `config/drift.toml` to `config/drift.envst.toml`, the system will compile it on-the-fly using `envsubst` populated with active system-level environment variables.
-*   The generated output is safely rendered, loaded, and printed in the logs:
-    ```
-    # pseudocode when config/drift.toml does not exist and config/drift.envst.toml can be found.
-    rendered_content = render_envsubst_string(template_content)
-    logger.debug("Workspace config is rendered from template: config/drift.envst.toml")
-    ```
+#### Meta-Config Templating: `drift.envst.toml` & `drift.local.envst.toml`
+To allow complete bootstrapping of workspaces under different environment parameters, the workspace config files (`drift.toml` and `drift.local.toml`) can themselves be templates named `drift.envst.toml` or `drift.local.envst.toml`. Drift automatically compiles them on-the-fly using `envsubst` populated with active system-level environment variables.
+
+For example, a user or provisioning script can compute machine capabilities and export an environment variable containing the desired package roster:
+```bash
+export DRIFT_PACKAGES="shell = true
+nvim = true
+cuda_toolkit = true
+desktop_hyprland = false
+"
+```
+And author `config/drift.local.envst.toml`:
+```toml
+[packages.enable]
+DEFAULT = false
+${DRIFT_PACKAGES}
+```
+When Drift loads the workspace configuration, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs.
 
 #### Private Dotenv Vault: `config/secrets.env`
 To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.

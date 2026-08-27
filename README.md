@@ -17,7 +17,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 > **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
-* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
+* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.local.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
 * 📦 **Modular & Pluggable**: Pure standard-library core with DAG template pipelines, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
@@ -131,8 +131,15 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     cuda_toolkit = true     # Enabled only on high-performance GPU compute nodes
     desktop_hyprland = false# Disabled on headless servers, enabled on laptops
     ```
-*   **Dynamic Meta-Config Templating (`config/drift.envst.toml`)**:
-    The workspace configuration itself can be written as a template (`config/drift.envst.toml`). Drift compiles it on-the-fly via `envsubst` using host environment variables (e.g., `HOST_ROLE`, `HAS_GUI`, `OS_TYPE`), dynamically computing the exact list of enabled packages and settings automatically based on host profiling!
+*   **Dynamic Host Profiling via Meta-Config Templating (`config/drift.local.envst.toml`)**:
+    For automated fleet deployments across servers and laptops, you can write a host-detection script that computes and exports environment variables such as `DRIFT_PACKAGES` (e.g. `export DRIFT_PACKAGES="cuda_toolkit = true\ndesktop_hyprland = false\n"`), and author a local configuration template:
+    ```toml
+    # config/drift.local.envst.toml (Template rendered on-the-fly)
+    [packages.enable]
+    DEFAULT = false
+    ${DRIFT_PACKAGES}
+    ```
+    When Drift runs, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
 ### 🔗 4. Directed Acyclic Graph (DAG) Template Pipelines
 Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
