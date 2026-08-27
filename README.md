@@ -264,5 +264,36 @@ timeout = 60
 
 ---
 
+## 💡 Troubleshooting & Practical FAQ
+
+### 1. Discarding System Drift Pollution & Overwriting Host Files
+* **Q**: How do I discard all host system modifications and force-reset host files back to the declarative templates?
+* **A**: Run **`drift deploy --force`** (or `drift deploy <pkg> -f`). Drift bypasses system drift sentinel safeguards and forces the target files to match the freshly compiled templates from `src/`.
+
+### 2. Resetting a Stuck or Problematic Package
+* **Q**: What should I do if a package's installation state is corrupted, out of sync, or encountering unexpected file collisions?
+* **A**: **Uninstall and redeploy**:
+  ```bash
+  drift uninstall <pkg> --force   # Remove host mappings and reset state tracking
+  # (Optional: verify and clean any unmanaged leftovers in target directory)
+  drift deploy <pkg>              # Cleanly compile, stage, and redeploy
+  ```
+
+### 3. Recovering from Corrupted Files in `render/` or `install/`
+* **Q**: What if a file inside internal sandbox `render/` or local state database `install/` was accidentally deleted or broken?
+* **A**: In Drift, **`src/` is the single source of truth**. Simply run **`drift render <pkg>`** or **`drift deploy <pkg>`**; Drift will automatically re-compile and re-stage clean files from `src/`.
+
+### 4. Self-Healing Missing Workspace Databases & Templates
+* **Q**: My Git databases (`render/.git`, `install/.git`), `.gitignore` rules, or local config templates (`config/drift.local.toml`, `config/secrets.env`) are missing.
+* **A**: Run **`drift repair`** to audit and reconstruct missing workspace databases, `.gitignore` rules, and template files non-destructively.
+
+### 5. Recovering from Midway Deployment Failures
+* **Q**: A deployment script or hook crashed midway and left files in a half-written state.
+* **A**: Run **`drift rollback <pkg>`** to revert `install/` to the last committed clean HEAD and redeploy the last stable state.
+
+👉 Run `drift help faq` for more tips and topic manuals.
+
+---
+
 ## 📜 License
 Drift is released under the **MIT License**. See [LICENSE](LICENSE) for details.

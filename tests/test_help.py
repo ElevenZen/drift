@@ -65,6 +65,11 @@ class TestHelpDocs(unittest.TestCase):
         clone_doc = get_help_page("clone")
         self.assertIn("Drift Repository Cloning & Bootstrapping", clone_doc)
 
+        # faq
+        faq_doc = get_help_page("faq")
+        self.assertIn("Drift Frequently Asked Questions & Troubleshooting (FAQ)", faq_doc)
+        self.assertIn("drift deploy --force", faq_doc)
+
     def test_get_help_page_invalid_topic_raises_error(self) -> None:
         """Verifies that querying an unknown/invalid help topic raises ValueError."""
         with self.assertRaises(ValueError) as context:

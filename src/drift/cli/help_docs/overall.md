@@ -28,15 +28,19 @@ audits active system drifts, and executes deployments using atomic, transactiona
 ```
 
 ## 🚀 High-Level User Commands (Frequently Used)
+*   `drift clone <url> [dir]` Clones a Git repo and auto-bootstraps/repairs the Drift workspace.
 *   `drift init`              Initializes a new Git-backed Drift workspace & databases.
 *   `drift new <pkg>`         Scaffolds a new package directory with `drift_package.toml` metadata.
 *   `drift add <pkg> <paths>` Imports external target-system configurations into package source.
 *   `drift adopt <pkg>`       Backports uncommitted system drifts back into package templates.
 *   `drift deploy [pkgs]`     Sandbox-compiles, stages, and deploys declarative configs to host.
+*   `drift health [pkgs]`     Runs runtime health check probes on installed packages.
 *   `drift uninstall [pkgs]`  Removes stowed/copied mappings on host paths, restoring backups.
 *   `drift rollback [pkgs]`   Resets staging/deploy midway failures to restore a stable state.
 *   `drift status`            Audits and inspects current template, staging, and system-drift status.
 *   `drift diff`              Compares and visualizes template, deployment, or active system layers.
+*   `drift gc`                Purges orphan packages and zombie database directories.
+*   `drift repair`            Audits and self-heals workspace structure and Git databases.
 
 👉 For detailed documentation, run:
     `drift help package`               Understand the 'package' concept and config files.
@@ -48,3 +52,6 @@ audits active system drifts, and executes deployments using atomic, transactiona
     `drift help drift_package.toml`    View a complete, commented drift_package.toml configuration template.
     `drift help drift.toml`            View a complete, commented drift.toml global template.
     `drift help workspace`             Learn about workspace directories, local overrides, and the secrets vault.
+    `drift help health`                Learn about package runtime health check probes and lifecycle hooks.
+    `drift help clone`                 Learn about cloning Drift repositories and migrating legacy dotfiles.
+    `drift help faq`                   Troubleshooting recipes and frequently asked questions.
