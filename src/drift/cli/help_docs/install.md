@@ -20,3 +20,5 @@ Before modifying any live file on your system, Drift runs a comprehensive collis
     safely to `backup/<package>/deleted_files/`.
 *   **Nesting Prevention**: Drift prevents deployment if a target directory is equal to 
     or nested inside your Drift workspace root, avoiding infinite stow loops.
+
+> ⚠️ **Note on `backup/`**: The `backup/` directory is untracked and unversioned. Users are responsible for archiving or saving critical files from `backup/` manually.

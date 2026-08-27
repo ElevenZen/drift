@@ -638,17 +638,23 @@ Prior to running any folder comparisons, the system traverses up the target dire
 If the parent symlink safety check passes, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically). 
 
 Files are categorized and safely routed to prevent overwriting or data loss:
-1.  **Internal Symlinks (`diff.internal_symlinks` / `handle_internal_symlink_conflicts`)**:
-    *   Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution.
-    *   The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and (if the repository expects a physical directory at that path) recreates it as a physical directory to avoid infinite directory-reference loops.
-2.  **Deleted files & Type Mismatches (`diff.deleted`)**:
-    *   *Type Mismatches*: If the type of a target path on the host system differs from the repository (e.g., a physical regular file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and removes it to clear the way.
-3.  **Modified paths (`diff.modified`)**:
-    *   *Stow Link Exemption*: If the package is deployed via `stow` and the target is already a symlink pointing to OUR package inside the `install/` base directory, it is a valid pre-existing link and is skipped.
-    *   *Copy Mode Exemption*: If the package is deployed via `copy` and it is **not** a first-time installation (i.e. already registered as `"installed"` or `"staged"` in `state.toml`), collision backups are skipped; the target file is simply overwritten with updated contents.
-    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
-4.  **Matches (`diff.matches` under Stow mode)**:
-    *   If a file matches the repo's content exactly but exists on the host as a **regular physical file** rather than a symlink, it is still treated as a collision because Stow requires symlinks. The system backs up the physical file to `backup/<package>/overwritten/<path>` and deletes it so the symlink can be created safely.
+1.  **Safety Aborts (`CollisionError` / Exit Code `5`)**:
+    *   *Path Collision Guard Abort*: When an untracked, external file or broken symlink exists at the target host destination and deployment is run without `--force`, the collision guard halts execution to prevent unintentional overwrites.
+    *   *State Ownership Collision*: If the target destination is already claimed and owned by a different Drift package in `state.toml`, deployment aborts immediately.
+2.  **Backup & Collision Routing (Non-Abort Operations)**:
+    *   *Internal Symlinks (`diff.internal_symlinks`)*: Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution. The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and recreates physical parent directories.
+    *   *Type Mismatches (`diff.deleted`)*: If the type of a target path on the host differs from the repository (e.g. a physical file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and clears the path.
+    *   *Modified paths (`diff.modified`)*:
+        *   *Stow Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
+        *   *Copy Mode Exemption*: If deployed via `copy` and already registered in `state.toml`, target files are overwritten with updated content.
+        *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
+    *   *Matches (`diff.matches` under Stow mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the Stow symlink.
+
+> [!IMPORTANT]
+> **Transient `backup/` Directory Policy & User Responsibility**:
+> Drift creates timestamped and package-scoped subdirectories under `backup/<package>/overwritten/` and `backup/<package>/deleted_files/` to protect pre-existing host files from silent loss.
+> *   **Not Versioned or Tracked by Drift**: The `backup/` folder is intentionally unmanaged and untracked by Git in Drift.
+> *   **User Responsibility**: It is solely the user's responsibility to periodically review `backup/`, archive important displaced configurations, or commit them into personal backup storage before cleaning.
 
 ### E. Execution Safeguards and Package Exclusion
 To enable granular control over modular configurations, the deployment pipeline respects three cascading enablement switches across different execution phases:

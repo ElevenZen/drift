@@ -28,6 +28,13 @@ class TestDriftIgnore(unittest.TestCase):
             self.assertTrue(ignore.match_path(Path(filename)))
             self.assertTrue(ignore.match_path(Path("subdir") / filename))
 
+        # Check that files like '.drift_ignore' are ignored, while 'xdrift_ignore' is NOT ignored
+        self.assertTrue(ignore.match_path(Path(".drift_ignore")))
+        self.assertTrue(ignore.match_path(Path("drift_package.toml")))
+        self.assertFalse(ignore.match_path(Path("xdrift_ignore")))
+        self.assertFalse(ignore.match_path(Path("xdrift_package.toml")))
+        self.assertFalse(ignore.match_path(Path("x.stow-local-ignore")))
+
         # Check a normal file is not ignored
         self.assertFalse(ignore.match_path(Path("normal_file.txt")))
         self.assertFalse(ignore.match_path(Path("subdir/normal_file.txt")))
@@ -38,6 +45,8 @@ class TestDriftIgnore(unittest.TestCase):
         (self.pkg_dir / "drift_package.toml").touch()
         (self.pkg_dir / ".drift_ignore").touch()
         (self.pkg_dir / ".stow-local-ignore").touch()
+        (self.pkg_dir / "xdrift_ignore").touch()
+        (self.pkg_dir / "xdrift_package.toml").touch()
         (self.pkg_dir / "allowed.txt").touch()
         (self.pkg_dir / "ignored_pattern.txt").touch()
 
@@ -49,6 +58,8 @@ class TestDriftIgnore(unittest.TestCase):
         deployable_set = {p.as_posix() for p in deployable}
 
         self.assertIn("allowed.txt", deployable_set)
+        self.assertIn("xdrift_ignore", deployable_set)
+        self.assertIn("xdrift_package.toml", deployable_set)
         self.assertNotIn("drift_package.toml", deployable_set)
         self.assertNotIn(".drift_ignore", deployable_set)
         self.assertNotIn(".stow-local-ignore", deployable_set)
@@ -128,6 +139,15 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertIn(r"^/drift_package\.toml$", content)
         self.assertIn(r"^/\.drift_ignore$", content)
         self.assertIn(r"^/custom_file\.txt$", content)
+
+        # Check matching behavior of exported patterns with re.search
+        import re
+        self.assertTrue(bool(re.search(r"^/\.drift_ignore$", "/.drift_ignore")))
+        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/xdrift_ignore")))
+        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/x.drift_ignore")))
+        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/sub/.drift_ignore")))
+        self.assertTrue(bool(re.search(r"^/drift_package\.toml$", "/drift_package.toml")))
+        self.assertFalse(bool(re.search(r"^/drift_package\.toml$", "/xdrift_package.toml")))
 
     def test_match_path_regex_matching_logic(self) -> None:
         """Verifies that step 1 (with slash) and step 2 (without slash) matching logic works correctly."""

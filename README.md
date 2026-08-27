@@ -153,6 +153,9 @@ Drift values your data integrity. Before any physical stage or deployment execut
 *   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted_files/`.
 *   **Symlink Nesting Block**: Drift blocks deployments if the target directory written in configurations is equal to or nested inside the Drift workspace root directory.
 
+> [!IMPORTANT]
+> **Transient `backup/` Policy & User Responsibility**: The `backup/` folder stores displaced original files and pruned artifacts created during deployment collisions. **`backup/` is a local, unversioned directory that is neither tracked nor saved in Git by Drift.** Users are responsible for inspecting `backup/`, preserving critical historical assets, or committing them to private archival storage as needed.
+
 ### 🕵️ 6. PCRE-Based Ignorance & Stow Compatibility
 Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`), matching the exact parsing rules of GNU Stow's `.stow-local-ignore`.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
