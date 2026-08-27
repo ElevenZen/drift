@@ -37,8 +37,8 @@ class TestWorkspaceClone(unittest.TestCase):
         """Helper to create and initialize a git repository with an initial commit."""
         repo_path.mkdir(parents=True, exist_ok=True)
         subprocess.run(["git", "init"], cwd=str(repo_path), capture_output=True, check=True)
-        subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Drift Test"], check=True)
-        subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "drift@example.com"], check=True)
+        subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Drift Test"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(repo_path), "config", "user.email", "drift@example.com"], check=True, capture_output=True)
         return repo_path
 
     def test_extract_repo_name_from_url(self):
@@ -64,8 +64,8 @@ class TestWorkspaceClone(unittest.TestCase):
         (pkg_src / "init.lua").write_text("-- nvim config\n", encoding="utf-8")
 
         # Commit everything to remote repo (render/ and install/ are gitignored)
-        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "Initial drift workspace"], check=True)
+        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "Initial drift workspace"], check=True, capture_output=True)
 
         # 2. Clone to destination
         dest_path = self.dest_base / "my_cloned_drift"
@@ -111,8 +111,8 @@ class TestWorkspaceClone(unittest.TestCase):
         config_nvim.mkdir(parents=True, exist_ok=True)
         (config_nvim / "init.lua").write_text("vim.opt.number = true\n", encoding="utf-8")
 
-        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "Legacy dotfiles"], check=True)
+        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "Legacy dotfiles"], check=True, capture_output=True)
 
         # 2. Clone to destination
         dest_path = self.dest_base / "legacy_dotfiles"
@@ -152,8 +152,8 @@ class TestWorkspaceClone(unittest.TestCase):
         """Verifies cloning fails cleanly if target directory exists and is non-empty."""
         remote_repo = self._create_git_repo(self.remote_base / "sample_repo")
         (remote_repo / "file.txt").write_text("hello\n", encoding="utf-8")
-        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True)
+        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True, capture_output=True)
 
         dest_path = self.dest_base / "occupied_dir"
         dest_path.mkdir(parents=True, exist_ok=True)
@@ -170,8 +170,8 @@ class TestWorkspaceClone(unittest.TestCase):
         """Verifies cloning with no_repair=True skips workspace repair."""
         remote_repo = self._create_git_repo(self.remote_base / "drift_no_repair")
         init_drift_workspace(remote_repo, no_git_root=True)
-        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True)
+        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True, capture_output=True)
 
         dest_path = self.dest_base / "cloned_no_repair"
         res = run_primitive_clone(
@@ -190,8 +190,8 @@ class TestWorkspaceClone(unittest.TestCase):
         """Verifies CLI execution with 'drift clone --json'."""
         remote_repo = self._create_git_repo(self.remote_base / "cli_repo")
         init_drift_workspace(remote_repo, no_git_root=True)
-        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True)
-        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True)
+        subprocess.run(["git", "-C", str(remote_repo), "add", "-A"], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(remote_repo), "commit", "-m", "init"], check=True, capture_output=True)
 
         dest_path = self.dest_base / "cli_dest"
 

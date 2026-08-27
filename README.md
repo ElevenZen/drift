@@ -17,6 +17,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 > **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
+* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
 * 📦 **Modular & Pluggable**: Pure standard-library core with DAG template pipelines, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
@@ -114,24 +115,43 @@ Drift fundamentally resolves this mismatch by recognizing configuration as a **c
 *   **Interactive Review & Adoption**: You can run a diff to inspect the changes written by your system's GUI utilities. If you want to keep them, run `drift adopt <pkg>` to extract the changes as a patch and cleanly backport them into your source templates under `src/`.
 *   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply run `drift deploy <pkg> --force`. Drift's engine will overwrite the active drift and restore your files exactly as defined in `src/`.
 
-### 🔗 3. Directed Acyclic Graph (DAG) Template Pipelines
+### 💻 3. Modular "Config-as-a-Package" (One Unified Repo from Servers to Laptops)
+Unlike monolithic dotfile managers that force you to deploy entire configurations wholesale or maintain separate git branches per machine, Drift structures every tool as an **independent, self-contained package** under `src/<pkg>/` (with its own `drift_package.toml`, target paths, deployment methods, and lifecycle hooks).
+
+A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
+
+*   **Granular Machine Enablement (`config/drift.local.toml`)**:
+    You can selectively enable or disable packages on each machine using the gitignored `config/drift.local.toml` override without modifying version-controlled source files:
+    ```toml
+    # config/drift.local.toml (Machine-specific override)
+    [packages.enable]
+    DEFAULT = false
+    shell = true            # Enabled on all machines
+    nvim = true             # Enabled on all machines
+    cuda_toolkit = true     # Enabled only on high-performance GPU compute nodes
+    desktop_hyprland = false# Disabled on headless servers, enabled on laptops
+    ```
+*   **Dynamic Meta-Config Templating (`config/drift.envst.toml`)**:
+    The workspace configuration itself can be written as a template (`config/drift.envst.toml`). Drift compiles it on-the-fly via `envsubst` using host environment variables (e.g., `HOST_ROLE`, `HAS_GUI`, `OS_TYPE`), dynamically computing the exact list of enabled packages and settings automatically based on host profiling!
+
+### 🔗 4. Directed Acyclic Graph (DAG) Template Pipelines
 Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
 *   **Template Input Dependencies**: A render engine's input variables can itself be a template compiled by another engine (e.g., `mustache` needing a static JSON config generated from environment variables).
 *   **Cycle Detection**: Drift constructs a compiler dependency graph and executes cycle-detection validation, throwing `CyclicDependencyError` to prevent compilation loops.
 *   **Deferred Render Compilation**: If variables or templates are missing during boot, Drift gracefully logs a warning. Compilation is only blocked if a file in the active workspace *actually* relies on the disabled engine, preventing unrelated package bottlenecks.
 
-### 🛑 4. Proactive Collision Guard & Safeguards
+### 🛑 5. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
 *   **Zero Overwrite of Manual Files**: Any conflicting manual file on the host system is safely backed up to `backup/<package>/overwritten/` before deployment.
 *   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted_files/`.
 *   **Symlink Nesting Block**: Drift blocks deployments if the target directory written in configurations is equal to or nested inside the Drift workspace root directory.
 
-### 🕵️ 5. PCRE-Based Ignorance & Stow Compatibility
+### 🕵️ 6. PCRE-Based Ignorance & Stow Compatibility
 Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`), matching the exact parsing rules of GNU Stow's `.stow-local-ignore`.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
-### 🧹 6. Autonomous Garbage Collection (Self-Cleaning)  
+### 🧹 7. Autonomous Garbage Collection (Self-Cleaning)  
 Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
 
 When you toggle packages to `false` in `drift.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
@@ -139,7 +159,7 @@ When you toggle packages to `false` in `drift.toml` or delete package source fol
 *   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
 
-### 🔌 7. Decouple & Eject Packages on Demand (Detach Mode)
+### 🔌 8. Decouple & Eject Packages on Demand (Detach Mode)
 Sometimes, you want to stop managing a configuration through a dotfile manager but keep the configurations permanently active on your host system. 
 *   **Keep Active Configurations**: Drift supports a dedicated **Detach Mode (`drift uninstall <pkg> --detach`)** that unregisters the package without deleting any files on your system.
 *   **Symlink to Copy Conversion**: If the package was stowed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
