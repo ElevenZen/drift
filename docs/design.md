@@ -562,7 +562,9 @@ This section defines the core architectural policies, safeguards, and customizat
 ### A. Ignored Files and Name Conversion Rules
 Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
 1.  **Ignore Filter (`.drift_ignore`) Syntax & Rules**:
-    *   **Single File Restriction**: Exactly **one** `.drift_ignore` (or `drift_ignore`) file is allowed at the root of each package directory. Nested subdirectory ignore files are strictly prohibited and will trigger execution aborts.
+    *   **Single File Restriction & Stow Compatibility**:
+        *   Exactly **one** `.drift_ignore` file is allowed at the root of each package directory. Nested subdirectory ignore files are strictly prohibited and will trigger execution aborts.
+        *   **Default Stow Ignore List**: If no `.drift_ignore` is provided for a package, Drift automatically applies GNU Stow's default ignore list (`RCS`, `\.+,v`, `CVS`, `\.\#.+=`, `\.cvsignore`, `\.svn`, `_darcs`, `\.hg`, `\.git`, `\.gitignore`, `.+~`, `\#.*\#`, `^/README.*`, `^/LICENSE.*`, `^/COPYING.*`) for complete compatibility.
     *   **Syntax & Engine**:
         *   The `.drift_ignore` matches the exact syntax and matching rules used by GNU Stow's `.stow-local-ignore`.
         *   **No Globbing**: The ignore engine **does NOT use globbing**. Instead, it compiles and evaluates patterns as **PCRE Regular Expressions** (compiled in Python's `re` engine).
@@ -572,8 +574,8 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
         *   *Without Slashes*: If a pattern does not contain a slash, it is matched directly against the file's `basename` (e.g., `\.bak$`).
     *   **Match Timing Guard**: The ignore engine matches file patterns against the native repository filenames **before** any prefix conversion or suffix extraction takes place.
         *   *Important*: To ignore a file named `dot-bashrc`, your `.drift_ignore` file must list `dot-bashrc`, not `.bashrc`. Listing `.bashrc` will fail to match on disk, and the file will still be processed.
-    *   **Implicit Exclusions**: Package configurations (`drift_package.toml`) are automatically excluded by the compilation engine without requiring manual entries.
-    *   **Lifecycle Hook Script Coexistence**: Lifecycle hook scripts (such as `pre_install.sh`, `post_update.sh`) and helper build scripts can be listed in `.drift_ignore`. Drift stages these scripts into `install/<package>/` so they can be executed by Drift during lifecycle stages, while ensuring they are never deployed or symlinked onto the active host target filesystem.
+    *   **Implicit Exclusions**: Package configurations (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`, `drift_package.local.toml`) are automatically excluded by the compilation engine without requiring manual entries.
+    *   **Automated `.stow-local-ignore` Generation**: During staging and deployment, Drift exports all active `DriftIgnore` patterns plus `MANAGED_CONFIG_FILES` into `install/<package>/.stow-local-ignore`. This ensures GNU Stow respects both custom and default ignore rules without polluting host target directories.
     *   An extra `.stow-local-ignore` is dynamically generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as an active package.
 
     #### PCRE `.drift_ignore` File Example:

@@ -246,14 +246,14 @@ class TestStageRepo(unittest.TestCase):
         # Check .drift_ignore was copied to install
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_IGNORE_FILE_NAME)))
 
-        # Check .stow-local-ignore file was created and contains ^/.drift_ignore and ^/drift_package.toml
+        # Check .stow-local-ignore file was created and contains ^/\.drift_ignore and ^/drift_package\.toml
         stow_ignore_path = os.path.join(self.install_dir, "pkg_ignored", ".stow-local-ignore")
         self.assertTrue(os.path.isfile(stow_ignore_path))
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", stow_content)
-        self.assertIn(f"^/{PACKAGE_CONFIG_FILE_NAME}", stow_content)
+        self.assertIn(r"^/\.drift_ignore", stow_content)
+        self.assertIn(r"^/drift_package\.toml", stow_content)
 
     def test_stow_local_ignore_without_drift_ignore(self) -> None:
         """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created to ignore drift_package.toml."""
@@ -280,8 +280,8 @@ class TestStageRepo(unittest.TestCase):
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             content = f.read()
         
-        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", content)
-        self.assertIn(f"^/{PACKAGE_CONFIG_FILE_NAME}", content)
+        self.assertIn(r"^/\.drift_ignore", content)
+        self.assertIn(r"^/drift_package\.toml", content)
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
@@ -324,7 +324,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn(f"^/{DRIFT_IGNORE_FILE_NAME}", stow_content)
+        self.assertIn(r"^/\.drift_ignore", stow_content)
 
     def test_tree_relative_files_utility(self) -> None:
         """Tests tree_relative_files utility function."""

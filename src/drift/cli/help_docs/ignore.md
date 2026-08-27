@@ -85,11 +85,35 @@ In Drift source packages (`src/<pkg>/`), hidden files and directories can be rep
 
 ---
 
-## 3. Enforcement: Single Source of Truth
+## 3. Enforcement & Default Stow Ignore Compatibility
 
+### 🛡️ Default Ignore List (When No `.drift_ignore` is Provided)
+If a package does not contain a `.drift_ignore` file, Drift automatically applies GNU Stow's built-in default ignore list to ensure full backward compatibility:
+```pcre
+RCS
+\.+,v
+CVS
+\.\#.+=
+\.cvsignore
+\.svn
+_darcs
+\.hg
+\.git
+\.gitignore
+.+~
+\#.*\#
+^/README.*
+^/LICENSE.*
+^/COPYING.*
+```
+
+### 🔒 Single Source of Truth
 Drift strictly enforces that **only one `.drift_ignore` file** exists per package root:
 *   Nested ignore files in subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore`) are prohibited to maintain a clear, single source of ignore truth.
-*   Managed metadata files (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`) are automatically protected and ignored from host linking.
+*   Managed metadata files (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`, `drift_package.local.toml`) are automatically protected and ignored from host linking.
+
+### 📝 Automated `.stow-local-ignore` Generation
+During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns together with `MANAGED_CONFIG_FILES` into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
 
 ---
 

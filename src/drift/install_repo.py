@@ -11,7 +11,7 @@ from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_package_config_rendered
-from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
+from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .folder_diff import compare_folders, list_folder_paths, find_links_pointing_into
@@ -549,6 +549,12 @@ def execute_package_deployment(
         resolve_symlinks=resolve_symlinks,
         install_base=install_base
     )
+
+    if metadata.get_install_method(workspace_config) == "stow":
+        stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
+        stow_ignore_content = ignore_handler.generate_stow_local_ignore_content()
+        if not stow_ignore_path.exists() or stow_ignore_path.read_text(encoding="utf-8") != stow_ignore_content:
+            stow_ignore_path.write_text(stow_ignore_content, encoding="utf-8")
     
     # Remove full_redeploy parameter and rely on package_changes to determine deployment mode
     full_redeploy = (package_changes is None)

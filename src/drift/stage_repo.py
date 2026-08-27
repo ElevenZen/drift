@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Union, Optional
 from dataclasses import dataclass, field
 
-from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
+from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_rendered, PackageConfig
 from .file_utils import file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
@@ -58,45 +58,23 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
         return metadata
 
 
-def create_stow_ignore_file(install_pkg_dir: Path, render_ignore_path: Optional[Path]) -> None:
-    """Copies render's .drift_ignore to install's .stow-local-ignore (if present),
-
-    and appends '^/.drift_ignore' and '^/drift_package.toml' to it so Stow ignores them during stowing.
-    """
-    stow_ignore_path = install_pkg_dir / ".stow-local-ignore"
-    
-    # Overwrite/remove if exists and is directory or symlink
-    if stow_ignore_path.exists() or stow_ignore_path.is_symlink():
-        if stow_ignore_path.is_dir() and not stow_ignore_path.is_symlink():
-            shutil.rmtree(stow_ignore_path)
+def create_stow_ignore_file(
+    install_pkg_dir: Path,
+    render_pkg_dir: Optional[Path] = None,
+    ignore_handler: Optional[DriftIgnore] = None
+) -> None:
+    """Generates install/<pkg>/.stow-local-ignore using DriftIgnore patterns plus MANAGED_CONFIG_FILES."""
+    if ignore_handler is None:
+        if render_pkg_dir is not None:
+            ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
         else:
-            stow_ignore_path.unlink()
-            
+            ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
+
+    stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
     install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    if render_ignore_path and render_ignore_path.is_file():
-        shutil.copy2(render_ignore_path, stow_ignore_path)
-    else:
-        stow_ignore_path.write_text("", encoding="utf-8")
-    
-    # Read and append patterns to .stow-local-ignore
-    content = stow_ignore_path.read_text(encoding="utf-8")
-            
-    # Check lines to prevent substring false positives
-    lines = [line.strip() for line in content.splitlines()]
-    
-    append_patterns = [f"^/{DRIFT_IGNORE_FILE_NAME}", f"^/{PACKAGE_CONFIG_FILE_NAME}"]
-    to_append = []
-    for pattern in append_patterns:
-        if pattern not in lines:
-            to_append.append(pattern)
-            
-    if to_append:
-        with stow_ignore_path.open("a", encoding="utf-8") as f:
-            if content and not content.endswith("\n"):
-                f.write("\n")
-            for pattern in to_append:
-                f.write(f"{pattern}\n")
-    logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path} with patterns: {append_patterns}")
+    content = ignore_handler.generate_stow_local_ignore_content()
+    stow_ignore_path.write_text(content, encoding="utf-8")
+    logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path}")
 
 
 def process_package_changes(
@@ -181,10 +159,14 @@ def process_package_changes(
         shutil.copy2(src, dst)
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
-    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir)
+    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
 
 
-def copy_ignore_and_config_files(install_pkg_dir: Path, render_pkg_dir: Path) -> None:
+def copy_ignore_and_config_files(
+    install_pkg_dir: Path,
+    render_pkg_dir: Path,
+    ignore_handler: Optional[DriftIgnore] = None
+) -> None:
     """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
     # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
     render_ignore = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
@@ -192,13 +174,11 @@ def copy_ignore_and_config_files(install_pkg_dir: Path, render_pkg_dir: Path) ->
         install_ignore = install_pkg_dir / DRIFT_IGNORE_FILE_NAME
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(render_ignore, install_ignore)
-        # Create physical .stow-local-ignore and append exclusion pattern
-        create_stow_ignore_file(install_pkg_dir, render_ignore)
-    else:
-        # Create stow-local-ignore even if no .drift_ignore exists to ignore drift_package.toml
-        create_stow_ignore_file(install_pkg_dir, None)
 
-    # 2. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
+    # 2. Create physical .stow-local-ignore
+    create_stow_ignore_file(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
+
+    # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
     render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
     if not render_config.is_file():
         raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")

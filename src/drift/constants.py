@@ -11,7 +11,50 @@ DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
 STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
 INSTALL_STOW_IGNORE_PATTERN = "^/state.toml"
-MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME]
+MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME, *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST]
+
+# This is the default list of ignore patterns used by GNU Stow when no custom .stow-local-ignore file is present in the package source.
+DEFAULT_STOW_IGNORE_PATTERNS = [
+    "RCS",
+    r"\.+,v",
+    "CVS",
+    r"\.\#.+=",
+    r"\.cvsignore",
+    r"\.svn",
+    "_darcs",
+    r"\.hg",
+    r"\.git",
+    r"\.gitignore",
+    r".+~",
+    r"\#.*\#",
+    r"^/README.*",
+    r"^/LICENSE.*",
+    r"^/COPYING.*",
+]
+
+# This is the default content for .stow-local-ignore when no custom ignore file is present in the package source.
+# It contains common patterns which is used to ignore common VCS and editor files when using GNU Stow.
+DEFAULT_STOW_IGNORE_CONTENT = (
+    "# Comments and blank lines are allowed.\n"
+    "RCS\n"
+    r"\.+,v" "\n"
+    "CVS\n"
+    r"\.\#.+=" "\n"
+    "# CVS conflict files / emacs lock files\n"
+    r"\.cvsignore" "\n"
+    r"\.svn" "\n"
+    "_darcs\n"
+    r"\.hg" "\n"
+    r"\.git" "\n"
+    r"\.gitignore" "\n"
+    r".+~" "\n"
+    "# emacs backup files\n"
+    r"\#.*\#" "\n"
+    "# emacs autosave files\n"
+    r"^/README.*" "\n"
+    r"^/LICENSE.*" "\n"
+    r"^/COPYING.*" "\n"
+)
 
 LIFECYCLE_HOOK_NAMES = (
     "pre_source",
