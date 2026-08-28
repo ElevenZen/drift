@@ -18,6 +18,7 @@ from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
 from .lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
 from .result_models import PackageRenderResult, RenderResult
+from .file_utils import remove_file_or_dir
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,8 @@ logger = logging.getLogger(__name__)
 def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
     """Clears the sandbox package directory inside the render folder to preserve the render/.git repository."""
     render_pkg_dir = workspace_config.render_path / package_name
-    if render_pkg_dir.exists():
-        if render_pkg_dir.is_dir():
-            shutil.rmtree(render_pkg_dir)
-        else:
-            render_pkg_dir.unlink()
+    if render_pkg_dir.exists() or render_pkg_dir.is_symlink():
+        remove_file_or_dir(render_pkg_dir)
 
 
 def render_or_copy_file(

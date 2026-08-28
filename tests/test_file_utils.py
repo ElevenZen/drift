@@ -657,6 +657,39 @@ class TestFileUtils(unittest.TestCase):
         # convert_line_endings=False: they differ
         self.assertTrue(file_contents_differ(f1, f2, convert_line_endings=False))
 
+    def test_unlock_file_or_dir_if_windows(self) -> None:
+        from drift.file_utils import unlock_file_or_dir_if_windows, remove_file_or_dir
+
+        # 1. On non-windows: does nothing without errors
+        target_file = self.root / "locked_file.txt"
+        target_file.write_text("locked", encoding="utf-8")
+        target_file.chmod(0o444)
+        with patch("sys.platform", "linux"):
+            unlock_file_or_dir_if_windows(target_file)
+
+        # 2. On windows: removes read-only attribute
+        with patch("sys.platform", "win32"):
+            unlock_file_or_dir_if_windows(target_file)
+            # Check that write permission is restored
+            self.assertTrue(bool(target_file.stat().st_mode & 0o200))
+
+        # 3. On directory with read-only files on windows
+        target_dir = self.root / "locked_dir"
+        target_dir.mkdir()
+        child_file = target_dir / "child.txt"
+        child_file.write_text("child", encoding="utf-8")
+        child_file.chmod(0o444)
+
+        with patch("sys.platform", "win32"):
+            unlock_file_or_dir_if_windows(target_dir)
+            self.assertTrue(bool(child_file.stat().st_mode & 0o200))
+
+        # Clean removal
+        remove_file_or_dir(target_file)
+        remove_file_or_dir(target_dir)
+        self.assertFalse(target_file.exists())
+        self.assertFalse(target_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

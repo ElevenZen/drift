@@ -2,6 +2,7 @@
 
 import os
 import sys
+import stat
 import hashlib
 import logging
 import shutil
@@ -363,6 +364,42 @@ def get_symlinked_parent(file_path: Path, link_target_range: Path) -> Optional[P
 
 
 
+def unlock_file_or_dir_if_windows(path: Path) -> None:
+    """Removes the Windows Read-Only file attribute (FILE_ATTRIBUTE_READONLY) if running on Windows.
+
+    On Windows, attempting to delete, overwrite, or move a read-only file/directory throws
+    PermissionError: [WinError 5] Access is denied until the read-only bit is removed (stat.S_IWRITE).
+    If path is a directory, recursively unlocks all nested files and subdirectories.
+    Does nothing on non-Windows platforms.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        if not path.exists() and not path.is_symlink():
+            return
+        if path.is_dir() and not path.is_symlink():
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+            for root, dirs, files in os.walk(path):
+                for d in dirs:
+                    try:
+                        os.chmod(os.path.join(root, d), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+                    except Exception:
+                        pass
+                for f in files:
+                    try:
+                        os.chmod(os.path.join(root, f), stat.S_IWRITE | stat.S_IREAD)
+                    except Exception:
+                        pass
+        else:
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    except Exception:
+        pass
+
+
+unlock_file_if_windows = unlock_file_or_dir_if_windows
+clear_readonly_attribute = unlock_file_or_dir_if_windows
+
+
 def backup_and_delete_one_file(
     file_path: Path,
     backup_dest: Path,
@@ -373,11 +410,13 @@ def backup_and_delete_one_file(
         return
 
     # Safely remove backup_dest if it already exists, to avoid conflicts.
+    unlock_file_or_dir_if_windows(backup_dest)
     remove_file_or_dir(backup_dest)
 
     backup_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(file_path, backup_dest)
-    file_path.unlink()
+    unlock_file_or_dir_if_windows(file_path)
+    remove_file_or_dir(file_path)
     if limit_dir:
         rmdir_parents(file_path.parent, limit_dir)
 
@@ -397,6 +436,9 @@ def copy_or_move_file_or_dir_external(
     On Windows, falls back directly to Python standard library (shutil/pathlib).
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
+    unlock_file_or_dir_if_windows(dst)
+    if move:
+        unlock_file_or_dir_if_windows(src)
 
     if sys.platform == "win32":
         if move:
@@ -469,6 +511,7 @@ def ensure_dir_exists_with_sudo(path: Path, sudo: bool) -> None:
 
 def remove_file_or_dir(path: Path) -> None:
     """Safely removes a file, symlink, or directory tree using Python standard libraries."""
+    unlock_file_or_dir_if_windows(path)
     if path.exists() or path.is_symlink():
         if path.is_dir() and not path.is_symlink():
             shutil.rmtree(path)
@@ -478,6 +521,7 @@ def remove_file_or_dir(path: Path) -> None:
 
 def remove_file_or_dir_with_sudo(path: Path, sudo: bool) -> None:
     """Safely removes a file, symlink, or directory using sudo on POSIX if requested, or Python builtins on Windows."""
+    unlock_file_or_dir_if_windows(path)
     if path.exists() or path.is_symlink():
         if sudo and sys.platform != "win32":
             cmd_rm = ["rm", "-rf" if path.is_dir() and not path.is_symlink() else "-f", str(path)]
@@ -489,6 +533,7 @@ def remove_file_or_dir_with_sudo(path: Path, sudo: bool) -> None:
 def create_symlink_manually_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
     """Creates a symlink from src to dst manually, cleaning up existing file/link with sudo if requested."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
+    unlock_file_or_dir_if_windows(dst)
     remove_file_or_dir_with_sudo(dst, sudo)
 
     if sys.platform == "win32" or not sudo:
@@ -506,6 +551,7 @@ def write_file_contents_with_sudo(
 ) -> None:
     """Writes string or bytes content to dst file with directory creation, sudo handling, and permission setting."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
+    unlock_file_or_dir_if_windows(dst)
     remove_file_or_dir_with_sudo(dst, sudo)
 
     if sys.platform == "win32" or not sudo:
@@ -548,6 +594,7 @@ def copy_file_contents_with_sudo(
     """
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
+    unlock_file_or_dir_if_windows(dst)
     remove_file_or_dir_with_sudo(dst, sudo)
 
     if line_ending != LineEnding.PRESERVE and not is_binary_file(src):
@@ -572,6 +619,7 @@ def sync_broken_symlink(src: Path, dst: Path) -> None:
         link_val = os.readlink(src)
         if not dst.is_symlink() or os.readlink(dst) != link_val:
             logger.info(f"Broken Link Sync: '{src}' is a broken symlink pointing to '{link_val}'. Copying symlink itself...")
+            unlock_file_or_dir_if_windows(dst)
             remove_file_or_dir(dst)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.symlink_to(link_val)

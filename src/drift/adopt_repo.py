@@ -15,6 +15,7 @@ from .git_utils import (
     is_git_tracked,
     run_command
 )
+from .file_utils import remove_file_or_dir
 
 logger = logging.getLogger(__name__)
 
@@ -180,11 +181,8 @@ def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None
 def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
     """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
     install_file = install_pkg_dir / rel_path
-    if install_file.exists():
-        if install_file.is_dir():
-            shutil.rmtree(install_file)
-        else:
-            install_file.unlink()
+    if install_file.exists() or install_file.is_symlink():
+        remove_file_or_dir(install_file)
             
     install_base = install_pkg_dir.parent
     rel_install_base = Path(install_pkg_dir.name) / rel_path
@@ -202,11 +200,8 @@ def adopt_deletion(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) 
     """Symmetrically deletes the corresponding file from declarative source folder."""
     pkg_dir = workspace_config.source_path / pkg
     src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
-    if src_file and src_file.exists():
-        if src_file.is_dir():
-            shutil.rmtree(src_file)
-        else:
-            src_file.unlink()
+    if src_file and (src_file.exists() or src_file.is_symlink()):
+        remove_file_or_dir(src_file)
 
 
 def adopt_modification(src_file: Path, patch_content: str) -> bool:
