@@ -294,6 +294,20 @@ class TestFileUtils(unittest.TestCase):
     def test_copy_file_contents_with_sudo(self, mock_run) -> None:
         src = self.root / "src_file"
         dst = self.root / "dst_file"
+
+        # 1. Pipeline success (mktemp -> cp -> mv)
+        mock_proc = MagicMock()
+        mock_proc.stdout = str(self.root / ".tmp_dst_file_123456")
+        mock_run.return_value = mock_proc
+
+        copy_file_contents_with_sudo(src, dst, sudo=True)
+        mock_run.assert_any_call(["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"], check=True, capture_output=True, text=True)
+        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True)
+
+        # 2. Fallback when mktemp fails
+        mock_run.reset_mock()
+        mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
         copy_file_contents_with_sudo(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
 

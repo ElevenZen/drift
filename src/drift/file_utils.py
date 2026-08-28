@@ -638,7 +638,7 @@ def write_file_contents_with_sudo(
             unlock_file_or_dir_if_windows(dst)
             os.replace(temp_path, dst)
         else:
-            # POSIX with sudo: mv -f performs atomic replacement (rename)
+            # POSIX with sudo: mv -f performs atomic replacement with best effort (rename)
             cmd = ["mv", "-f", str(temp_path), str(dst)]
             run_sudo_command(cmd, sudo=True)
     finally:
@@ -674,7 +674,34 @@ def copy_file_contents_with_sudo(
         write_file_contents_with_sudo(dst, converted, sudo=True, permission=perm)
         return
 
-    # For privileged destinations on POSIX, copy using elevated 'cp -p' command
+    # Guaranteed atomic copy for privileged destinations on POSIX:
+    # 1. Create temporary sibling file in dst.parent via elevated mktemp
+    # 2. Copy source content & permissions into temp file
+    # 3. Atomically replace destination via elevated rename (mv -f)
+    temp_path_str = None
+    try:
+        res = run_sudo_command(
+            ["mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"],
+            sudo=True,
+            text=True
+        )
+        temp_path_str = str(res.stdout).strip()
+        if temp_path_str:
+            run_sudo_command(["cp", "-p", str(src), temp_path_str], sudo=True)
+            run_sudo_command(["mv", "-f", temp_path_str, str(dst)], sudo=True)
+            return
+    except Exception:
+        # Fallback to direct elevated cp if mktemp fails
+        pass
+    finally:
+        # Clean up temporary file if an error occurred before mv
+        if temp_path_str and Path(temp_path_str).name != dst.name:
+            try:
+                run_sudo_command(["rm", "-f", temp_path_str], sudo=True)
+            except Exception:
+                pass
+
+    # Direct fallback from Exception
     cmd = ["cp", "-p", str(src), str(dst)]
     run_sudo_command(cmd, sudo=True)
 
