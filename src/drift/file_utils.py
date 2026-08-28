@@ -457,7 +457,7 @@ def copy_file_contents_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
     if sys.platform == "win32" or not sudo:
         shutil.copy2(src, dst)
     else:
-        cmd = ["cp", str(src), str(dst)]
+        cmd = ["cp", "-p", str(src), str(dst)]
         run_sudo_command(cmd, sudo=True)
 
 

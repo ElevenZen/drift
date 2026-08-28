@@ -173,6 +173,7 @@ def render_template_to_file(
     """Renders a template file and writes the output directly to the specified file path.
 
     Automatically creates any missing parent directories for the output file.
+    Preserves file permissions (mode) from the template file onto the rendered output file.
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
@@ -193,3 +194,7 @@ def render_template_to_file(
 
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
     output_file_path.write_text(rendered_content, encoding="utf-8")
+    try:
+        shutil.copymode(template_file_path, output_file_path)
+    except Exception:
+        pass

@@ -1672,6 +1672,35 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             self.assertIn('theme = "dracula"', out)
             self.assertIn('port = 9000', out)
 
+    def test_rendered_file_preserves_template_permissions(self) -> None:
+        """Verifies that rendered files preserve the exact file permissions (modes) of their template files."""
+        from drift.render_core import render_template_to_file
+        from drift.render_package import render_or_copy_file, render_package_files
+
+        template_script = self.drift_root / "test_exec.sh.envst"
+        template_script.write_text("#!/bin/sh\necho '$GREETING'\n", encoding="utf-8")
+        template_script.chmod(0o755)
+
+        rendered_script = self.drift_root / "test_exec.sh"
+
+        engine_config = RenderEngineConfig(
+            name="var",
+            suffix="envst",
+            render_command="internal"
+        )
+
+        with patch.dict(os.environ, {"GREETING": "hello world"}):
+            render_template_to_file(
+                engine_config=engine_config,
+                drift_root=self.drift_root,
+                template_file_path=template_script,
+                output_file_path=rendered_script
+            )
+
+        # Mode of rendered script should match mode of template script (0o755)
+        self.assertEqual(rendered_script.stat().st_mode & 0o777, template_script.stat().st_mode & 0o777)
+        self.assertTrue(bool(rendered_script.stat().st_mode & 0o111))
+
 
 if __name__ == "__main__":
     unittest.main()

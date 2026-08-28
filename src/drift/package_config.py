@@ -714,6 +714,11 @@ def load_package_config_from_source_dir(
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
     toml_str = dump_toml(combined_dict)
     output_file_path.write_text(toml_str, encoding="utf-8")
+    if base_info and base_info.path.exists():
+        try:
+            shutil.copymode(base_info.path, output_file_path)
+        except Exception:
+            pass
 
     # Load from the rendered path
     config = PackageConfig.from_dict(combined_dict,

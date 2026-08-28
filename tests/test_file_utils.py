@@ -295,7 +295,7 @@ class TestFileUtils(unittest.TestCase):
         src = self.root / "src_file"
         dst = self.root / "dst_file"
         copy_file_contents_with_sudo(src, dst, sudo=True)
-        mock_run.assert_any_call(["sudo", "cp", str(src), str(dst)], check=True, capture_output=True)
+        mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
 
     @patch("subprocess.run")
     def test_copy_or_move_file_or_dir_external(self, mock_run) -> None:
