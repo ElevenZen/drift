@@ -8,13 +8,9 @@ from typing import Optional
 from .workspace_config import RenderEngineConfig
 from .constants import CONFIG_DIR_NAME
 from .file_utils import run_command
+from .exceptions import RenderError
 
 logger = logging.getLogger(__name__)
-
-
-class RenderError(Exception):
-    """Raised when template rendering fails during subprocess execution or engine evaluation."""
-    pass
 
 
 def resolve_render_template_args(

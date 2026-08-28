@@ -5,7 +5,8 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Union
 
-from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
+from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME, ExitCode
+from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, CollisionError
 from ..workspace_config import WorkspaceConfig, load_workspace_config
 from ..workspace_init import init_drift_workspace
 from ..git_utils import get_drift_root
@@ -186,6 +187,9 @@ def execute_status(drift_root: Path, package_names: Optional[List[str]] = None, 
         if text:
             print(text)
 
+    if status_result.overall_status == "DRIFTED":
+        sys.exit(ExitCode.DRIFT_DETECTED)
+
 
 def execute_gc(drift_root: Path, dry_run: bool = False, json_mode: bool = False) -> None:
     """Core function to garbage collect orphans and purge databases, shared by both CLI backends."""
@@ -344,7 +348,12 @@ def execute_deploy(
                 failure=fail
             )
             print(res.to_json())
-            sys.exit(3 if is_drift else 1)
+            if is_drift:
+                sys.exit(ExitCode.DRIFT_DETECTED)
+            elif isinstance(e, DriftError):
+                sys.exit(e.exit_code)
+            else:
+                sys.exit(ExitCode.GENERAL_ERROR)
         raise
 
 
@@ -412,7 +421,7 @@ def execute_health(
             print(text)
 
     if health_result.status != "SUCCESS":
-        sys.exit(1)
+        sys.exit(ExitCode.HEALTH_CHECK_FAILED)
 
 
 def execute_clone(

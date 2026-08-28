@@ -17,6 +17,7 @@ from .constants import (
         INITIAL_ENV,
 )
 from .toml_utils import parse_toml, merge_toml
+from .exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -351,7 +352,7 @@ class WorkspaceConfig:
                 logger.warning(f"Unknown top-level config section: '{key}'")
 
         if "workspace" not in data:
-            raise ValueError("Missing '[workspace]' section in workspace configuration.")
+            raise ConfigError("Missing '[workspace]' section in workspace configuration.")
             
         workspace_data = data.get("workspace", {})
         # Warning for unknown workspace options
@@ -368,11 +369,11 @@ class WorkspaceConfig:
                 logger.warning(f"Unknown workspace option: '{key}'")
 
         if "packages" not in data or not isinstance(data.get("packages"), dict) or "enable" not in data["packages"]:
-            raise ValueError("Missing '[packages.enable]' section in workspace configuration.")
+            raise ConfigError("Missing '[packages.enable]' section in workspace configuration.")
 
         packages_enable_data = data["packages"]["enable"]
         if not isinstance(packages_enable_data, dict):
-            raise TypeError("'[packages.enable]' must be a TOML table.")
+            raise ConfigError("'[packages.enable]' must be a TOML table.")
         
         packages = {}
         for pkg, val in packages_enable_data.items():
@@ -485,7 +486,7 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
 
     main_dict = render_envst_load_toml(file_path)
     if main_dict is None:
-        raise FileNotFoundError(
+        raise ConfigError(
             f"Workspace main configuration file not found in '{file_path}' or its template '{add_envst(file_path)}'."
         )
 

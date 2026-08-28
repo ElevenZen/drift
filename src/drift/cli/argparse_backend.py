@@ -26,6 +26,7 @@ from .actions import (
     execute_help
 )
 from ..result_models import DiffType
+from .error_boundary import cli_error_boundary
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -516,12 +517,12 @@ def run_argparse_cli(argv=None) -> None:
 
     json_mode = getattr(args, "json", False)
 
-    # Resolve literal base directory path
-    base_dir = Path(args.directory).resolve() if args.directory else Path.cwd().resolve()
+    with cli_error_boundary(json_mode=json_mode):
+        # Resolve literal base directory path
+        base_dir = Path(args.directory).resolve() if args.directory else Path.cwd().resolve()
 
-    if args.command == "init":
-        drift_root = base_dir
-        try:
+        if args.command == "init":
+            drift_root = base_dir
             execute_init(drift_root, force=args.force, no_git_root=args.no_git_root, json_mode=json_mode)
             if not json_mode:
                 print("✨ Initialized drift workspace!")
@@ -529,99 +530,64 @@ def run_argparse_cli(argv=None) -> None:
                 print("📁 Created install/ local state Git database.")
                 print("📝 Generated drift.toml template.")
                 print("📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.")
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "render":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "render":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_render(drift_root, args.packages, json_mode=json_mode)
             if not json_mode:
                 if args.packages:
                     print(f"✨ Successfully rendered package(s) '{', '.join(args.packages)}'!")
                 else:
                     print("✨ Successfully rendered all enabled packages!")
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "stage":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "stage":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_stage(drift_root, args.packages, force=args.force, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "apply":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "apply":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_apply(drift_root, args.packages, force=args.force, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "render-commit":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "render-commit":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_render_commit(drift_root, args.message, args.packages)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "install-commit":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "install-commit":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_install_commit(drift_root, args.message, args.packages)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "reverse-sync":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "reverse-sync":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_reverse_sync(drift_root, args.packages, json_mode=json_mode)
             if not json_mode:
                 if args.packages:
                     print(f"✨ Successfully reverse-synced package(s) '{', '.join(args.packages)}'!")
                 else:
                     print("✨ Successfully reverse-synced all enabled packages!")
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "new":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "new":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_new_package(
                 drift_root,
                 args.package_name,
@@ -630,29 +596,19 @@ def run_argparse_cli(argv=None) -> None:
                 install_method=args.method,
                 json_mode=json_mode
             )
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "uninstall":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "uninstall":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "adopt":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "adopt":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_adopt(
                 drift_root=drift_root,
                 package_names=args.packages,
@@ -662,107 +618,67 @@ def run_argparse_cli(argv=None) -> None:
                 dry_run=args.dry_run,
                 json_mode=json_mode
             )
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "status":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "status":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_status(drift_root, args.packages, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "gc":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "gc":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_gc(drift_root, dry_run=args.dry_run, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "diff":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "diff":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        diff_type = DiffType.PENDING
-        if args.template:
-            diff_type = DiffType.TEMPLATE
-        elif args.system:
-            diff_type = DiffType.SYSTEM
+            diff_type = DiffType.PENDING
+            if args.template:
+                diff_type = DiffType.TEMPLATE
+            elif args.system:
+                diff_type = DiffType.SYSTEM
 
-        try:
             execute_diff(drift_root, args.packages, diff_type=diff_type, side_by_side=args.side_by_side, stat=args.stat, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "add":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "add":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "rollback":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "rollback":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_rollback(drift_root, args.packages, force=args.force, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "deploy":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "deploy":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_deploy(drift_root, args.packages, force=args.force, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "repair":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "repair":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_repair(drift_root, dry_run=args.dry_run, json_mode=json_mode)
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "health":
-        if args.no_git_root:
-            drift_root = base_dir
-        else:
-            drift_root = get_drift_root(base_dir)
+        elif args.command == "health":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
 
-        try:
             execute_health(
                 drift_root,
                 args.packages,
@@ -770,13 +686,8 @@ def run_argparse_cli(argv=None) -> None:
                 verbose=args.verbose,
                 timeout=args.timeout
             )
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "clone":
-        target_dir = Path(args.directory).resolve() if args.directory else None
-        try:
+        elif args.command == "clone":
+            target_dir = Path(args.directory).resolve() if args.directory else None
             execute_clone(
                 git_url=args.git_url,
                 target_dir=target_dir,
@@ -785,15 +696,7 @@ def run_argparse_cli(argv=None) -> None:
                 no_repair=args.no_repair,
                 json_mode=json_mode
             )
-        except Exception as e:
-            if not json_mode:
-                print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    elif args.command == "help":
-        try:
+        elif args.command == "help":
             execute_help(args.topic)
-        except Exception as e:
-            print(f"❌ [ERROR] {e}", file=sys.stderr)
-            sys.exit(1)
-    else:
-        parser.print_help()
+        else:
+            parser.print_help()

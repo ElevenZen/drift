@@ -17,6 +17,7 @@ from drift.toml_utils import (
     parse_toml_value,
     split_array_elements,
 )
+from drift.exceptions import ConfigError
 from drift.workspace_config import (
     WorkspaceConfig,
     RenderEngineConfig,
@@ -183,7 +184,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIn("Missing '[packages.enable]'", str(cm.exception))
 
         # 3. [packages.enable] is not a dict
-        with self.assertRaises(TypeError) as cm:
+        with self.assertRaises(ConfigError) as cm:
             WorkspaceConfig.from_dict({"workspace": {}, "packages": {"enable": "not_a_table"}})
         self.assertIn("'[packages.enable]' must be a TOML table", str(cm.exception))
 
@@ -543,8 +544,8 @@ class TestConfigLoaders(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_load_workspace_config(self) -> None:
-        # Test nonexistent file (raises FileNotFoundError)
-        with self.assertRaises(FileNotFoundError):
+        # Test nonexistent file (raises ConfigError)
+        with self.assertRaises(ConfigError):
             load_workspace_config(self.drift_root)
 
         config_dir = self.drift_root / "config"

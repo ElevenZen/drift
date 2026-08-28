@@ -1,5 +1,7 @@
 """Global constants for the drift dotfiles manager."""
 
+from enum import IntEnum
+
 CONFIG_DIR_NAME = "config"
 GLOBAL_CONFIG_FILE_NAME = "drift.toml"
 GLOBAL_CONFIG_LOCAL_FILE_NAME = "drift.local.toml"
@@ -12,6 +14,17 @@ STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
 INSTALL_STOW_IGNORE_PATTERN = "^/state.toml"
 MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME, *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST]
+
+
+class ExitCode(IntEnum):
+    """Standardized exit codes for the Drift CLI and automated pipeline integration."""
+    SUCCESS = 0
+    GENERAL_ERROR = 1
+    CONFIG_ERROR = 2
+    DRIFT_DETECTED = 3
+    RENDER_ERROR = 4
+    COLLISION_ERROR = 5
+    HEALTH_CHECK_FAILED = 6
 
 # This is the default list of ignore patterns used by GNU Stow when no custom .stow-local-ignore file is present in the package source.
 DEFAULT_STOW_IGNORE_PATTERNS = [

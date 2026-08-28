@@ -15,6 +15,7 @@ from .constants import (
     LIFECYCLE_HOOK_NAMES,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
+from .exceptions import ConfigError
 
 from dataclasses import dataclass, field
 

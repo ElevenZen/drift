@@ -15,6 +15,7 @@ from .folder_diff import compare_folders
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
 from .state_registry import load_state_registry, save_state_registry
+from .exceptions import DriftDetectedError
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
     if not install_pkg_dir.is_dir():
         return
     if has_uncommitted_modifications(install_base, install_pkg_dir):
-        raise RuntimeError(
+        raise DriftDetectedError(
             f"Package '{pkg}' in install directory has uncommitted local modifications. "
             "Please commit or stash your changes before staging, or use --force flag to bypass this check."
         )

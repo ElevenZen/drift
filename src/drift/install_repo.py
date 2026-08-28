@@ -12,6 +12,7 @@ from typing import List, Optional, Union
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_package_config_rendered
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME
+from .exceptions import CollisionError
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .folder_diff import compare_folders, list_folder_paths, find_links_pointing_into
@@ -189,7 +190,7 @@ def run_collision_guard(
     # This detects if our target base itself is a symlink into drift_root
     parent_symlink = get_symlinked_parent(target_dir, workspace_config.drift_root)
     if parent_symlink:
-         raise RuntimeError(
+         raise CollisionError(
             f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
             f"is a symlink pointing into drift workspace root '{workspace_config.drift_root}', "
             f"but lies outside the package target directory '{target_dir}'. "

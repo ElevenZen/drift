@@ -29,6 +29,7 @@ from .actions import (
     execute_help
 )
 from ..result_models import DiffType
+from .error_boundary import cli_error_boundary
 
 app = typer.Typer(
     help="drift: Decoupled Two-Stage Git-Backed Dotfiles Manager",
@@ -115,7 +116,7 @@ def typer_clone(
     )
 ) -> None:
     """Clone a Git repository and automatically bootstrap/repair the Drift workspace."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         target_dir = Path(directory).resolve() if directory else None
         execute_clone(
             git_url=git_url,
@@ -125,12 +126,6 @@ def typer_clone(
             no_repair=no_repair,
             json_mode=json_mode
         )
-    except SystemExit as se:
-        raise typer.Exit(code=se.code)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("init")
@@ -149,9 +144,8 @@ def typer_init(
     )
 ) -> None:
     """Initialize a new drift workspace."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
-        # Bypassing show-toplevel check for init, using raw directory/cwd as root
         drift_root = Path(cli_ctx.directory).resolve() if cli_ctx.directory else Path.cwd().resolve()
         execute_init(drift_root, force=force, no_git_root=cli_ctx.no_git_root, json_mode=json_mode)
         if not json_mode:
@@ -160,10 +154,6 @@ def typer_init(
             rprint("[bold yellow]📁[/bold yellow] [bold green]Created install/ local state Git database.[/bold green]")
             rprint("[bold yellow]📝[/bold yellow] [bold green]Generated drift.toml template.[/bold green]")
             rprint("[bold yellow]📝[/bold yellow] [bold green]Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.[/bold green]")
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("new")
@@ -198,7 +188,7 @@ def typer_new(
     )
 ) -> None:
     """Scaffold a new package directory and drift_package.toml."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_new_package(
@@ -209,10 +199,6 @@ def typer_new(
             install_method=method,
             json_mode=json_mode
         )
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("add")
@@ -238,14 +224,10 @@ def typer_add(
     )
 ) -> None:
     """Import files or folders from the system into a package (with dot-prefix translation)."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("adopt")
@@ -284,7 +266,7 @@ def typer_adopt(
     )
 ) -> None:
     """Adopt active system drifts and incorporate them back into source templates."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_adopt(
@@ -296,10 +278,6 @@ def typer_adopt(
             dry_run=dry_run,
             json_mode=json_mode
         )
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("deploy")
@@ -322,14 +300,10 @@ def typer_deploy(
     )
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_deploy(drift_root, packages, force=force, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("health")
@@ -358,16 +332,10 @@ def typer_health(
     )
 ) -> None:
     """Run runtime health check probes on installed packages."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_health(drift_root, packages, json_mode=json_mode, verbose=verbose, timeout=timeout)
-    except SystemExit as se:
-        raise typer.Exit(code=se.code)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("uninstall")
@@ -400,14 +368,10 @@ def typer_uninstall(
     )
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("rollback")
@@ -430,14 +394,10 @@ def typer_rollback(
     )
 ) -> None:
     """Rollback failed deployments and restore systems to the last committed clean state."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_rollback(drift_root, packages, force=force, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("status")
@@ -454,14 +414,10 @@ def typer_status(
     )
 ) -> None:
     """Audit and aggregate configuration status across active packages."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_status(drift_root, packages, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("diff")
@@ -498,7 +454,7 @@ def typer_diff(
     )
 ) -> None:
     """Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         
@@ -509,10 +465,6 @@ def typer_diff(
             diff_type = DiffType.SYSTEM
             
         execute_diff(drift_root, packages, diff_type=diff_type, side_by_side=side_by_side, stat=stat, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("gc")
@@ -530,14 +482,10 @@ def typer_gc(
     )
 ) -> None:
     """Identify and uninstall orphan packages (present in state but disabled in config)."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_gc(drift_root, dry_run=dry_run, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("repair")
@@ -555,14 +503,10 @@ def typer_repair(
     )
 ) -> None:
     """Repair missing, damaged, or partially-initialized components in the drift workspace."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_repair(drift_root, dry_run=dry_run, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("help")
@@ -573,7 +517,8 @@ def typer_help(
     )
 ) -> None:
     """Show overall model of drift and its detailed manual pages."""
-    execute_help(topic)
+    with cli_error_boundary(json_mode=False, use_rich=True):
+        execute_help(topic)
 
 
 # =============================================================================
@@ -594,7 +539,7 @@ def typer_reverse_sync(
     )
 ) -> None:
     """(Low-Level) Synchronize changes from host system back to install/ state database."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_reverse_sync(drift_root, packages, json_mode=json_mode)
@@ -604,10 +549,6 @@ def typer_reverse_sync(
                 rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]")
             else:
                 rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]")
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("render")
@@ -624,7 +565,7 @@ def typer_render(
     )
 ) -> None:
     """(Low-Level) Render templates of a package or all enabled packages."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_render(drift_root, packages, json_mode=json_mode)
@@ -634,10 +575,6 @@ def typer_render(
                 rprint(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package(s) '{pkgs_str}'![/bold green]")
             else:
                 rprint("[bold yellow]✨[/bold yellow] [bold green]Successfully rendered all enabled packages![/bold green]")
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("render-commit")
@@ -655,13 +592,10 @@ def typer_render_commit(
     )
 ) -> None:
     """(Low-Level) Stage and commit compiled render sandbox changes."""
-    try:
+    with cli_error_boundary(json_mode=False, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_render_commit(drift_root, message, packages)
-    except Exception as e:
-        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("stage")
@@ -684,14 +618,10 @@ def typer_stage(
     )
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_stage(drift_root, packages, force=force, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("apply")
@@ -714,14 +644,10 @@ def typer_apply(
     )
 ) -> None:
     """(Low-Level) Apply configurations from state database to active host system."""
-    try:
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_apply(drift_root, packages, force=force, json_mode=json_mode)
-    except Exception as e:
-        if not json_mode:
-            rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
 
 
 @app.command("install-commit")
@@ -739,11 +665,7 @@ def typer_install_commit(
     )
 ) -> None:
     """(Low-Level) Stage and commit install state directory changes."""
-    try:
+    with cli_error_boundary(json_mode=False, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_install_commit(drift_root, message, packages)
-    except Exception as e:
-        rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
-        raise typer.Exit(code=1)
-
