@@ -1,8 +1,9 @@
 import os
+import sys
 import shutil
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typing import cast, Any
 from drift.constants import (
@@ -390,6 +391,111 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.health, "scripts/health_check.sh")
         self.assertEqual(config.hooks.timeout, 45)
         self.assertEqual(config.hook_timeout, 45)
+
+    def test_load_package_config_with_hooks_winos(self) -> None:
+        """Verifies [hooks.winos] override table behaviour on Windows vs POSIX."""
+        toml_dict = {
+            "package": {
+                "install_method": "copy",
+            },
+            "hooks": {
+                "pre_install": "scripts/bootstrap.sh",
+                "post_install": "scripts/setup.sh",
+                "winos": {
+                    "pre_install": "scripts/bootstrap.ps1",
+                    "post_install": "scripts/setup.ps1",
+                    "post_update": "scripts/update.bat",
+                }
+            }
+        }
+        # On POSIX (Linux/macOS), winos subtable is ignored
+        with patch("sys.platform", "linux"):
+            config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
+            self.assertEqual(config_linux.hooks.pre_install, "scripts/bootstrap.sh")
+            self.assertEqual(config_linux.hooks.post_install, "scripts/setup.sh")
+            self.assertIsNone(config_linux.hooks.post_update)
+
+        # On Windows, winos subtable overrides default hooks
+        with patch("sys.platform", "win32"):
+            config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
+            self.assertEqual(config_win.hooks.pre_install, "scripts/bootstrap.ps1")
+            self.assertEqual(config_win.hooks.post_install, "scripts/setup.ps1")
+            self.assertEqual(config_win.hooks.post_update, "scripts/update.bat")
+
+    def test_build_hook_execution_command(self) -> None:
+        """Verifies cross-platform command building for lifecycle hook dispatch."""
+        from drift.lifecycle_hooks import build_hook_execution_command
+
+        # POSIX
+        with patch("sys.platform", "linux"):
+            cmd = build_hook_execution_command(Path("/scripts/setup.sh"))
+            self.assertEqual(cmd, ["/scripts/setup.sh"])
+
+        # Windows
+        with patch("sys.platform", "win32"):
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.ps1")),
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", r"C:\scripts\install.ps1"]
+            )
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.bat")),
+                ["cmd.exe", "/c", r"C:\scripts\install.bat"]
+            )
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.cmd")),
+                ["cmd.exe", "/c", r"C:\scripts\install.cmd"]
+            )
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.py")),
+                [sys.executable, r"C:\scripts\install.py"]
+            )
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.sh")),
+                ["bash.exe", r"C:\scripts\install.sh"]
+            )
+            self.assertEqual(
+                build_hook_execution_command(Path(r"C:\scripts\install.exe")),
+                [r"C:\scripts\install.exe"]
+            )
+
+    def test_execute_hook_command_with_sudo(self) -> None:
+        """Verifies execute_hook_command applies sudo correctly across platforms."""
+        from drift.lifecycle_hooks import execute_hook_command
+
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+            mock_run.return_value = MagicMock()
+
+            # POSIX with sudo
+            with patch("sys.platform", "linux"):
+                execute_hook_command(
+                    cmd=["/scripts/setup.sh"],
+                    cwd=Path("/opt/app"),
+                    timeout_seconds=60,
+                    use_sudo=True
+                )
+                mock_run.assert_called_with(
+                    ["sudo", "/scripts/setup.sh"],
+                    cwd="/opt/app",
+                    text=True,
+                    timeout=60
+                )
+
+            mock_run.reset_mock()
+
+            # Windows ignores 'sudo' binary prefix
+            with patch("sys.platform", "win32"):
+                execute_hook_command(
+                    cmd=["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
+                    cwd=Path(r"C:\app"),
+                    timeout_seconds=60,
+                    use_sudo=True
+                )
+                mock_run.assert_called_with(
+                    ["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
+                    cwd=r"C:\app",
+                    text=True,
+                    timeout=60
+                )
 
     def test_package_hooks_check_hook_files(self) -> None:
         """Verifies check_hook_files validates existence and regular file status of configured hook files."""

@@ -319,12 +319,18 @@ def run_primitive_7_uninstall_packages(
               logger.info("Nothing to uninstall.")
         return UninstallResult(status="SUCCESS", detach_mode=detach, packages=[])
 
-    # Pre-check uninstall hook files for all packages to be uninstalled
+    # Pre-check uninstall hook files and sudo privileges for all packages to be uninstalled
     if not dry_run and not detach:
         from .install_repo import load_config_for_install
         pkg_config_map = { pkg: load_config_for_install(workspace_config.install_path, pkg)
                           for pkg in safe_map
                           if (workspace_config.install_path / pkg / PACKAGE_CONFIG_FILE_NAME).exists() }
+
+        needs_sudo = any(pkg_cfg.sudo for pkg_cfg in pkg_config_map.values() if pkg_cfg)
+        if needs_sudo:
+            from .file_utils import check_sudo_privilege
+            check_sudo_privilege(True)
+
         for pkg, pkg_config in pkg_config_map.items():
             if pkg_config and pkg_config.hooks:
                 pkg_config.hooks.check_hook_files(

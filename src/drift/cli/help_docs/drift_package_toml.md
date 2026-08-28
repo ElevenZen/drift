@@ -70,6 +70,21 @@ post_render = "scripts/generate_checksums.sh"
 
 # Run runtime health check probes on installed package (executed from host target directory; runs with sudo if sudo = true)
 health = "scripts/health_check.sh"
+
+# Optional Windows-specific hook overrides.
+# When running on Windows (win32), hook paths defined here automatically
+# override the default [hooks] entries.
+# On Windows, '.exe' binary files are executed directly as native executables,
+# and following file types are automatically executed via their respective interpreters:
+#   • .ps1  -> powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>
+#   • .bat / .cmd -> cmd.exe /c <script>
+#   • .py   -> python <script>
+#   • .sh / .bash -> bash.exe <script> (if available in PATH)
+[hooks.winos]
+pre_install = "scripts/bootstrap.exe"
+post_install = "scripts/setup.ps1"
+post_update = "scripts/reload_service.bat"
+health = "scripts/health_check.ps1"
 ```
 
 ## 🌐 Default Package Environment Variables & Precedence

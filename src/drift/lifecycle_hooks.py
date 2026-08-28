@@ -1,10 +1,9 @@
-"""Module for managing package lifecycle hooks in the drift workspace."""
-
+import sys
 import logging
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
@@ -14,6 +13,46 @@ from .file_utils import run_command, is_relative_to
 from .constants import SUDO_ELIGIBLE_HOOKS
 
 logger = logging.getLogger(__name__)
+
+
+def build_hook_execution_command(hook_path: Path) -> List[str]:
+    """Generates cross-platform invocation command based on file extension and OS."""
+    if sys.platform == "win32":
+        ext = hook_path.suffix.lower()
+        if ext == ".exe":
+            return [str(hook_path)]
+        elif ext == ".ps1":
+            return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(hook_path)]
+        elif ext in (".bat", ".cmd"):
+            return ["cmd.exe", "/c", str(hook_path)]
+        elif ext == ".py":
+            return [sys.executable, str(hook_path)]
+        elif ext in (".sh", ".bash"):
+            # Fallback to Git Bash / bash if present in PATH
+            return ["bash.exe", str(hook_path)]
+        else:
+            return [str(hook_path)]
+    else:
+        return [str(hook_path)]
+
+
+def execute_hook_command(
+    cmd: List[str],
+    cwd: Path,
+    timeout_seconds: int,
+    use_sudo: bool = False
+) -> subprocess.CompletedProcess:
+    """Executes a lifecycle hook command with sudo handling and timeout."""
+    final_cmd = list(cmd)
+    if use_sudo and sys.platform != "win32":
+        if not final_cmd or final_cmd[0] != "sudo":
+            final_cmd.insert(0, "sudo")
+    return run_command(
+        final_cmd,
+        cwd=str(cwd),
+        text=True,
+        timeout=timeout_seconds
+    )
 
 
 def execute_hook_script(
@@ -40,24 +79,24 @@ def execute_hook_script(
     logger.debug(f"   Script: {hook_path}")
     logger.debug(f"   CWD:    {cwd}")
 
-    cmd = [str(hook_path)]
-    if metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS:
-        cmd.insert(0, "sudo")
-
+    cmd = build_hook_execution_command(hook_path)
+    use_sudo = bool(metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS)
     timeout_seconds = metadata.hook_timeout
+
     try:
-        run_command(
-            cmd,
-            cwd=str(cwd),
-            text=True,
-            timeout=timeout_seconds
+        execute_hook_command(
+            cmd=cmd,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            use_sudo=use_sudo
         )
     except subprocess.TimeoutExpired as e:
         stdout_str = e.stdout or ""
         stderr_str = e.stderr or ""
+        display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
-            f"Command: {shlex.join(cmd)}\n"
+            f"Command: {shlex.join(display_cmd)}\n"
         )
         if stdout_str.strip():
             err_msg += f"Stdout:\n{stdout_str.strip()}\n"
@@ -68,9 +107,10 @@ def execute_hook_script(
     except subprocess.CalledProcessError as e:
         stdout_str = e.stdout or ""
         stderr_str = e.stderr or ""
+        display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
-            f"Command: {shlex.join(cmd)}\n"
+            f"Command: {shlex.join(display_cmd)}\n"
         )
         if stdout_str.strip():
             err_msg += f"Stdout:\n{stdout_str.strip()}\n"

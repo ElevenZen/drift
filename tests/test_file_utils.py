@@ -498,6 +498,56 @@ class TestFileUtils(unittest.TestCase):
         res = safe_relative_to(other_path, base_mock)
         self.assertEqual(res, other_path)
 
+    def test_has_admin_privileges_and_run_sudo_command(self) -> None:
+        from drift.file_utils import has_admin_privileges, run_sudo_command
+
+        # Linux non-root
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+            self.assertFalse(has_admin_privileges())
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                run_sudo_command(["echo", "hello"], sudo=True)
+                mock_run.assert_called_with(["sudo", "echo", "hello"], check=True, capture_output=True)
+
+        # Linux root
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
+            self.assertTrue(has_admin_privileges())
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value = MagicMock(returncode=0)
+                run_sudo_command(["echo", "hello"], sudo=True)
+                mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
+
+    def test_check_sudo_privilege(self) -> None:
+        from drift.file_utils import check_sudo_privilege
+
+        # If sudo is not required, does nothing
+        check_sudo_privilege(sudo_required=False)
+
+        # Linux root
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
+            check_sudo_privilege(sudo_required=True)
+
+        # Linux non-root success
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+            with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
+                check_sudo_privilege(sudo_required=True)
+                mock_run.assert_called_with(["sudo", "-v"], check=False)
+
+        # Linux non-root failure
+        with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
+            with patch("subprocess.run", return_value=MagicMock(returncode=1)):
+                with self.assertRaises(PermissionError):
+                    check_sudo_privilege(sudo_required=True)
+
+        # Windows non-admin failure
+        with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=False):
+            with self.assertRaises(PermissionError):
+                check_sudo_privilege(sudo_required=True)
+
+        # Windows admin success
+        with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=True):
+            check_sudo_privilege(sudo_required=True)
+
 
 if __name__ == "__main__":
     unittest.main()

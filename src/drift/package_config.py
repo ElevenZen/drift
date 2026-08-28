@@ -513,6 +513,20 @@ class PackageConfig:
         if target_dir_winos:
             target_dir_winos = expand_user_and_env(target_dir_winos)
             
+        hooks_data = data.get("hooks", {})
+        if not isinstance(hooks_data, dict):
+            hooks_data = {}
+        else:
+            hooks_data = dict(hooks_data)
+
+        if sys.platform == "win32":
+            winos_hooks = hooks_data.get("winos")
+            if not isinstance(winos_hooks, dict):
+                winos_hooks = data.get("hooks_winos")
+            if isinstance(winos_hooks, dict):
+                for k, v in winos_hooks.items():
+                    hooks_data[k] = v
+
         raw_timeout = hooks_data.get("timeout", 120)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
             raw_timeout = int(raw_timeout)

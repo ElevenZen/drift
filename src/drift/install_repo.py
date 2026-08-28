@@ -804,6 +804,13 @@ def run_primitive_5_install_deployment(
     pkg_metadata_map = { pkg: load_config_for_install(install_base, pkg)
                         for pkg in discovered_packages
                         if (install_base / pkg).is_dir() }
+
+    # Pre-flight check for administrator/sudo privileges if any active package requires sudo
+    needs_sudo = any(m.sudo for pkg, m in pkg_metadata_map.items() if force or m.enable_install)
+    if needs_sudo:
+        from .file_utils import check_sudo_privilege
+        check_sudo_privilege(True)
+
     for pkg, metadata in pkg_metadata_map.items():
         if force or metadata.enable_install:
             metadata.hooks.check_hook_files(install_base / pkg)

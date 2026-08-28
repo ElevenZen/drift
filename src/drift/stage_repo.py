@@ -232,6 +232,12 @@ def run_primitive_4_stage_render_to_install(
     if not pkg_metadata:
         raise RuntimeError("No active packages are enabled for installation/deployment.")
 
+    # Pre-flight check for administrator/sudo privileges if any active package requires sudo
+    needs_sudo = any(m.sudo for m in pkg_metadata.values())
+    if needs_sudo:
+        from .file_utils import check_sudo_privilege
+        check_sudo_privilege(True)
+
     # Check every package folder in install/ if it has uncommitted local modifications.
     # If so and the force flag is not present, raise an Error.
     if not force:
