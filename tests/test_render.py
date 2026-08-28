@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typing import cast, Any, List, Tuple, Union
 
@@ -1590,6 +1591,59 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         created_file = pkg_src_dir / "generated_file.txt"
         self.assertTrue(created_file.is_file())
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "CREATED_BY_pkg_hook")
+
+    def test_python_envsubst_direct(self) -> None:
+        from drift.render_core import python_envsubst
+        from drift.exceptions import RenderError, ConfigError
+
+        # Valid substitutions with custom env dict
+        env = {"USER": "alice", "APP_PORT": "8080"}
+        res = python_envsubst("Hello $USER on ${APP_PORT}!", env=env)
+        self.assertEqual(res, "Hello alice on 8080!")
+
+        # Missing variable raises RenderError by default
+        with self.assertRaises(RenderError) as ctx:
+            python_envsubst("Missing: $NOT_SET_VAR", env=env)
+        self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
+
+        # Missing variable raises ConfigError when error_cls=ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            python_envsubst("Missing: ${NOT_SET_VAR}", env=env, error_cls=ConfigError)
+        self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
+
+    def test_render_template_envsubst_internal_fallback(self) -> None:
+        from drift.render_core import render_template
+
+        template_path = self.drift_root / "template.envst.txt"
+        template_path.write_text("Value: ${FALLBACK_VAR}", encoding="utf-8")
+
+        engine_config = RenderEngineConfig(
+            name="envsubst",
+            input_file=Path("envsubst.bash"),
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'"
+        )
+
+        with patch.dict(os.environ, {"FALLBACK_VAR": "internal_rendered"}):
+            # When shutil.which("bash") or shutil.which("envsubst") returns None
+            with patch("shutil.which", return_value=None):
+                out = render_template(
+                    engine_config=engine_config,
+                    drift_root=self.drift_root,
+                    template_file_path=template_path
+                )
+                self.assertEqual(out, "Value: internal_rendered")
+
+            # When missing variable, internal fallback raises RenderError
+            with patch("shutil.which", return_value=None):
+                bad_template = self.drift_root / "bad.envst.txt"
+                bad_template.write_text("Value: ${UNKNOWN_VAR_XYZ}", encoding="utf-8")
+                with self.assertRaises(RenderError):
+                    render_template(
+                        engine_config=engine_config,
+                        drift_root=self.drift_root,
+                        template_file_path=bad_template
+                    )
 
 
 if __name__ == "__main__":

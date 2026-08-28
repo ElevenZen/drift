@@ -1,16 +1,50 @@
-"""Core rendering engine template compiler functions using pathlib."""
-
+import os
+import re
+import shutil
 import logging
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Type
 
 from .workspace_config import RenderEngineConfig
 from .constants import CONFIG_DIR_NAME
 from .file_utils import run_command
-from .exceptions import RenderError
+from .exceptions import DriftError, RenderError
 
 logger = logging.getLogger(__name__)
+
+
+def python_envsubst(
+    template_content: str,
+    env: Optional[Dict[str, str]] = None,
+    error_cls: Type[DriftError] = RenderError
+) -> str:
+    """Pure-Python envsubst equivalent for platforms without GNU gettext or as fallback.
+
+    Args:
+        template_content: Raw template string containing $VAR or ${VAR}.
+        env: Optional dictionary of environment variables (defaults to os.environ).
+        error_cls: Exception class to raise on missing variable (RenderError or ConfigError).
+
+    Returns:
+        The rendered template content as a string.
+
+    Raises:
+        error_cls: If any referenced variable is not defined in the environment.
+    """
+    environ = env if env is not None else os.environ
+    pattern = re.compile(r"\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))")
+
+    def replace_var(match: re.Match) -> str:
+        var_name = match.group(1) or match.group(2)
+        if var_name not in environ:
+            raise error_cls(
+                f"Environment variable '${var_name}' referenced in template "
+                f"was not found in [env], secrets.env, or process environment."
+            )
+        return str(environ[var_name])
+
+    return pattern.sub(replace_var, template_content)
 
 
 def resolve_render_template_args(
@@ -18,7 +52,7 @@ def resolve_render_template_args(
     engine_config_input_relative_to: Path,
     template_file_path: Path,
     input_file_path_override: Optional[Path] = None
-    ) -> Path:
+) -> Path:
     """Checks the validity of the arguments for rendering a template and resolves the input file path."""
     if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
@@ -60,6 +94,7 @@ def render_template(
 
     The engine configuration provides the render command (e.g. "bash -c 'source %i && envsubst < %s'"),
     where %i is replaced with the path to the input file and %s with the template file.
+    If the engine is 'envsubst' and 'bash' or 'envsubst' is not available, falls back to python_envsubst.
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
@@ -75,6 +110,15 @@ def render_template(
         ValueError: If placeholders are missing in the render command.
         RenderError: If the render engine is disabled or subprocess fails.
     """
+    if engine_config.name == "envsubst" and (shutil.which("bash") is None or shutil.which("envsubst") is None):
+        if not template_file_path.exists():
+            raise FileNotFoundError(f"Template file not found: {template_file_path}")
+        if engine_config.is_disabled:
+            raise RenderError(f"Render engine '{engine_config.name}' is disabled.")
+        logger.info(f"Using internal python_envsubst engine for '{template_file_path}' (bash or envsubst not found)")
+        content = template_file_path.read_text(encoding="utf-8")
+        return python_envsubst(content, error_cls=RenderError)
+
     resolved_input_file: Path = resolve_render_template_args(
         engine_config=engine_config,
         engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
@@ -88,11 +132,17 @@ def render_template(
     try:
         result = run_command(cmd, shell=True, text=True)
         return result.stdout
-    except subprocess.CalledProcessError as e:
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        if engine_config.name == "envsubst":
+            logger.warning(
+                f"External envsubst command failed ({e}). Falling back to internal python_envsubst for '{template_file_path}'."
+            )
+            content = template_file_path.read_text(encoding="utf-8")
+            return python_envsubst(content, error_cls=RenderError)
         err_msg = (
-            f"Render command failed with exit code {e.returncode}.\n"
+            f"Render command failed with exit code {getattr(e, 'returncode', 'unknown')}.\n"
             f"Command: {cmd}\n"
-            f"Stderr: {e.stderr}"
+            f"Stderr: {getattr(e, 'stderr', str(e))}"
         )
         raise RenderError(err_msg) from e
 

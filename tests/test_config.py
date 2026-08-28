@@ -959,6 +959,25 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.render_directory, Path("templated_render"))
         self.assertEqual(config.install_directory, Path("templated_install"))
 
+    def test_meta_rendering_drift_envst_toml_missing_var_raises_config_error(self) -> None:
+        from drift.workspace_config import load_workspace_config
+        from drift.exceptions import ConfigError
+
+        os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
+        base, ext = os.path.splitext(GLOBAL_CONFIG_FILE_NAME)
+        config_envst_name = base + ".envst" + ext
+        envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
+        with open(envst_toml_path, "w", encoding="utf-8") as f:
+            f.write("""
+            [workspace]
+            render_directory = "$UNSET_TEST_RENDER_DIR_XYZ"
+            """)
+
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(ConfigError) as ctx:
+                load_workspace_config(Path(self.temp_dir.name))
+            self.assertIn("Environment variable '$UNSET_TEST_RENDER_DIR_XYZ' referenced in template was not found", str(ctx.exception))
+
     def test_package_discovery_methods(self) -> None:
         """Verifies package discovery methods on WorkspaceConfig correctly find folders from source, render, and install dirs."""
         from drift.workspace_config import WorkspaceConfig

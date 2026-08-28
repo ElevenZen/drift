@@ -435,23 +435,14 @@ class WorkspaceConfig:
         return config
 
 
-def render_envsubst_string(template_content: str) -> str:
-    """Renders envsubst template content using environment variables."""
-    pattern = r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}|\$([a-zA-Z_][a-zA-Z0-9_]*)'
-    def replace_var(match: re.Match) -> str:
-        var_name = match.group(1) or match.group(2)
-        return os.environ.get(var_name, "")
-
-    return re.sub(pattern, replace_var, template_content)
-
-
 def render_workspace_config_toml(envst_path: Path) -> str:
     """
-    Renders the drift.envst.toml template using env variables.
+    Renders the drift.envst.toml template using python_envsubst.
     returning the rendered output.
     """
+    from .render_core import python_envsubst
     content = envst_path.read_text(encoding="utf-8")
-    rendered_content = render_envsubst_string(content)
+    rendered_content = python_envsubst(content, error_cls=ConfigError)
     logger.debug(f"Rendered workspace config from template '{envst_path}':\n{rendered_content}")
     return rendered_content
     
