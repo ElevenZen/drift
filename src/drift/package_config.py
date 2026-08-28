@@ -7,7 +7,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict, Iterator
+from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
 from .constants import (
@@ -15,6 +15,7 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST,
     LIFECYCLE_HOOK_NAMES,
+    WINDOWS_PLATFORM_ALIASES,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 from .exceptions import ConfigError
@@ -61,6 +62,94 @@ class PackageHooks:
         if self.timeout <= 0:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ValueError(f"timeout must be a positive integer{name_str}.")
+
+    @classmethod
+    def _validate_hook_dict(
+        cls,
+        hook_dict: Dict[str, Any],
+        package_name: str = "",
+        is_subtable: bool = False
+    ) -> None:
+        """Helper to validate unknown keys, value types, and platform sub-tables in a hook dictionary."""
+        known_keys = set(LIFECYCLE_HOOK_NAMES) | {"timeout"}
+        if not is_subtable:
+            known_keys |= set(WINDOWS_PLATFORM_ALIASES)
+
+        for key in hook_dict:
+            if key not in known_keys:
+                context = "package [hooks]" if not is_subtable else "platform hooks sub-table"
+                logger.warning(f"Unknown hook option in {context}: '{key}'")
+
+        for hook_name in LIFECYCLE_HOOK_NAMES:
+            val = hook_dict.get(hook_name)
+            if val is not None and not isinstance(val, str):
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise TypeError(f"{hook_name} must be a string{name_str}.")
+
+        if not is_subtable:
+            for alias in WINDOWS_PLATFORM_ALIASES:
+                val = hook_dict.get(alias)
+                if val is not None:
+                    if not isinstance(val, dict):
+                        name_str = f" for package '{package_name}'" if package_name else ""
+                        raise TypeError(f"'{alias}' hooks sub-table must be a dictionary{name_str}.")
+                    cls._validate_hook_dict(val, package_name=package_name, is_subtable=True)
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        package_name: str = ""
+    ) -> "PackageHooks":
+        """Parses, validates, and resolves a PackageHooks instance from a hooks dictionary.
+
+        Args:
+            data: The [hooks] dictionary.
+            package_name: Optional name of the package for error messages.
+
+        Returns:
+            A validated PackageHooks instance.
+        """
+        hooks_dict = dict(data) if isinstance(data, dict) else {}
+
+        # Validate top-level hooks table and any nested platform sub-tables
+        cls._validate_hook_dict(hooks_dict, package_name=package_name)
+
+        # On Windows, resolve platform-specific hook overrides from sub-tables
+        effective_hooks = dict(hooks_dict)
+        if sys.platform == "win32":
+            for alias in WINDOWS_PLATFORM_ALIASES:
+                windows_hooks = hooks_dict.get(alias)
+                if isinstance(windows_hooks, dict):
+                    for k, v in windows_hooks.items():
+                        if k in LIFECYCLE_HOOK_NAMES or k == "timeout":
+                            effective_hooks[k] = v
+                    break
+
+        raw_timeout = effective_hooks.get("timeout", 120)
+        if isinstance(raw_timeout, str) and raw_timeout.isdigit():
+            raw_timeout = int(raw_timeout)
+        if not isinstance(raw_timeout, int):
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise TypeError(f"timeout must be an integer{name_str}.")
+        if raw_timeout <= 0:
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise ValueError(f"timeout must be a positive integer{name_str}.")
+
+        hooks = cls(
+            pre_source=effective_hooks.get("pre_source"),
+            pre_install=effective_hooks.get("pre_install"),
+            post_install=effective_hooks.get("post_install"),
+            pre_update=effective_hooks.get("pre_update"),
+            post_update=effective_hooks.get("post_update"),
+            pre_uninstall=effective_hooks.get("pre_uninstall"),
+            post_uninstall=effective_hooks.get("post_uninstall"),
+            post_render=effective_hooks.get("post_render"),
+            health=effective_hooks.get("health"),
+            timeout=raw_timeout
+        )
+        hooks.validate(package_name)
+        return hooks
 
     def trigger(self, hook_name: str, hook_dir: Path, cwd: Path) -> None:
         """Executes a package lifecycle hook script if specified and found."""
@@ -198,7 +287,7 @@ class PackageConfig:
     enable_install: bool = True
     install_method: Optional[str] = None
     target_directory: Optional[Path] = None
-    target_directory_winos: Optional[Path] = None
+    target_directory_windows: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
@@ -219,7 +308,7 @@ class PackageConfig:
         enable_install: bool = True,
         install_method: Optional[str] = None,
         target_directory: Optional[Path] = None,
-        target_directory_winos: Optional[Path] = None,
+        target_directory_windows: Optional[Path] = None,
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
@@ -240,7 +329,7 @@ class PackageConfig:
         self.enable_install = enable_install
         self.install_method = install_method
         self.target_directory = expand_user_and_env(target_directory) if target_directory else None
-        self.target_directory_winos = expand_user_and_env(target_directory_winos) if target_directory_winos else None
+        self.target_directory_windows = expand_user_and_env(target_directory_windows) if target_directory_windows else None
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
 
@@ -396,8 +485,8 @@ class PackageConfig:
         return file_path in self.source_files
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
-        if sys.platform == "win32" and self.target_directory_winos is not None:
-            return expand_user_and_env(self.target_directory_winos)
+        if sys.platform == "win32" and self.target_directory_windows is not None:
+            return expand_user_and_env(self.target_directory_windows)
         return expand_user_and_env(self.target_directory or workspace_config.default_target_path)
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
@@ -485,20 +574,19 @@ class PackageConfig:
             "enable_install",
             "install_method",
             "target_directory",
-            "target_directory_winos",
             "sudo",
             "fully_controlled_dirs"
-        }
+        } | {f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES}
         for key in package_data:
             if key not in known_package_keys:
                 logger.warning(f"Unknown package option: '{key}'")
 
-        # Warning for unknown hooks options
-        known_hooks_keys = set(LIFECYCLE_HOOK_NAMES) | {"timeout"}
-        for key in hooks_data:
-            if key not in known_hooks_keys:
-                logger.warning(f"Unknown hook option: '{key}'")
-            
+        # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
+        hooks = PackageHooks.from_dict(
+            data.get("hooks", {}),
+            package_name=str(name)
+        )
+
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
             fcd = [fcd]
@@ -510,42 +598,12 @@ class PackageConfig:
         if target_dir:
             target_dir = expand_user_and_env(target_dir)
 
-        target_dir_winos = package_data.get("target_directory_winos")
-        if target_dir_winos:
-            target_dir_winos = expand_user_and_env(target_dir_winos)
-            
-        hooks_data = data.get("hooks", {})
-        if not isinstance(hooks_data, dict):
-            hooks_data = {}
-        else:
-            hooks_data = dict(hooks_data)
-
-        if sys.platform == "win32":
-            winos_hooks = hooks_data.get("winos")
-            if not isinstance(winos_hooks, dict):
-                winos_hooks = data.get("hooks_winos")
-            if isinstance(winos_hooks, dict):
-                for k, v in winos_hooks.items():
-                    hooks_data[k] = v
-
-        raw_timeout = hooks_data.get("timeout", 120)
-        if isinstance(raw_timeout, str) and raw_timeout.isdigit():
-            raw_timeout = int(raw_timeout)
-        if not isinstance(raw_timeout, int):
-            raise TypeError(f"timeout must be an integer for package '{name}'.")
-
-        hooks = PackageHooks(
-            pre_source=hooks_data.get("pre_source"),
-            pre_install=hooks_data.get("pre_install"),
-            post_install=hooks_data.get("post_install"),
-            pre_update=hooks_data.get("pre_update"),
-            post_update=hooks_data.get("post_update"),
-            pre_uninstall=hooks_data.get("pre_uninstall"),
-            post_uninstall=hooks_data.get("post_uninstall"),
-            post_render=hooks_data.get("post_render"),
-            health=hooks_data.get("health"),
-            timeout=raw_timeout
-        )
+        target_dir_windows = None
+        for alias in WINDOWS_PLATFORM_ALIASES:
+            val = package_data.get(f"target_directory_{alias}")
+            if val:
+                target_dir_windows = expand_user_and_env(val)
+                break
 
         config = cls(
             name=str(name),
@@ -553,7 +611,7 @@ class PackageConfig:
             enable_install=bool(package_data.get("enable_install", True)),
             install_method=package_data.get("install_method"),
             target_directory=target_dir,
-            target_directory_winos=target_dir_winos,
+            target_directory_windows=target_dir_windows,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
             hooks=hooks
@@ -574,7 +632,10 @@ def load_package_config_rendered(
         raise FileNotFoundError(f"Package configuration file not found: {package_toml_path}")
     content = package_toml_path.read_text(encoding="utf-8")
     data = parse_toml(content)
-    config = PackageConfig.from_dict(data, package_name=pkg_name, source_files=[package_toml_path])
+    try:
+        config = PackageConfig.from_dict(data, package_name=pkg_name, source_files=[package_toml_path])
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_toml_path}': {e}") from e
     return config
 
 
@@ -692,9 +753,12 @@ def load_package_config_from_source_dir(
             raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
         local_dict, local_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
         combined_dict = merge_toml(base_dict, local_dict)
-        return PackageConfig.from_dict(combined_dict,
-                                       package_name=pkg_name,
-                                       source_files=[base_path, local_path])
+        try:
+            return PackageConfig.from_dict(combined_dict,
+                                           package_name=pkg_name,
+                                           source_files=[base_path, local_path])
+        except (TypeError, ValueError) as e:
+            raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
 
     base_info, local_info = get_package_config_file_info(package_dir, workspace_config)
     logger.debug(f"Base package config info: {base_info}")
@@ -722,8 +786,11 @@ def load_package_config_from_source_dir(
             pass
 
     # Load from the rendered path
-    config = PackageConfig.from_dict(combined_dict,
-                                     package_name=pkg_name,
-                                     source_files=source_files)
+    try:
+        config = PackageConfig.from_dict(combined_dict,
+                                         package_name=pkg_name,
+                                         source_files=source_files)
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
     return config
 

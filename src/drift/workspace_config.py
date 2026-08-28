@@ -506,7 +506,12 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     if isinstance(env_dict, dict):
         load_env_settings(list(env_dict.items()), overwrite=False, env_keep=INITIAL_ENV)
 
-    return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
+    try:
+        return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
+    except ConfigError:
+        raise
+    except (TypeError, ValueError) as e:
+        raise ConfigError(f"Invalid workspace configuration in '{file_path}': {e}") from e
 
 
 def parse_secrets_env(drift_root: Path) -> List[Tuple[str, str]]:

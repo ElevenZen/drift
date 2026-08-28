@@ -357,6 +357,33 @@ class TestConfigClasses(unittest.TestCase):
         config.post_render = "scripts/render.sh"
         self.assertEqual(config.hooks.post_render, "scripts/render.sh")
 
+    def test_package_hooks_from_dict_and_validation(self) -> None:
+        """Verifies PackageHooks.from_dict method, validation, and error handling."""
+        # 1. Valid dict parsing
+        raw = {
+            "pre_source": "scripts/gen.sh",
+            "post_install": "scripts/post.sh",
+            "timeout": "60"
+        }
+        hooks = PackageHooks.from_dict(raw, package_name="my_pkg")
+        self.assertEqual(hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(hooks.post_install, "scripts/post.sh")
+        self.assertEqual(hooks.timeout, 60)
+
+        # 2. Non-string hook value raises TypeError
+        with self.assertRaises(TypeError):
+            PackageHooks.from_dict({"pre_source": 12345}, package_name="bad_pkg")
+
+        # 3. Non-dict Windows subtable raises TypeError
+        with self.assertRaises(TypeError):
+            PackageHooks.from_dict({"windows": "not_a_dict"}, package_name="bad_pkg")
+
+        # 4. Invalid timeout raises TypeError / ValueError
+        with self.assertRaises(TypeError):
+            PackageHooks.from_dict({"timeout": "abc"}, package_name="bad_pkg")
+        with self.assertRaises(ValueError):
+            PackageHooks.from_dict({"timeout": -10}, package_name="bad_pkg")
+
     def test_load_package_config_with_hooks_table(self) -> None:
         """Verifies parsing package configuration with dedicated [hooks] table."""
         toml_dict = {
@@ -392,35 +419,36 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.timeout, 45)
         self.assertEqual(config.hook_timeout, 45)
 
-    def test_load_package_config_with_hooks_winos(self) -> None:
-        """Verifies [hooks.winos] override table behaviour on Windows vs POSIX."""
-        toml_dict = {
-            "package": {
-                "install_method": "copy",
-            },
-            "hooks": {
-                "pre_install": "scripts/bootstrap.sh",
-                "post_install": "scripts/setup.sh",
-                "winos": {
-                    "pre_install": "scripts/bootstrap.ps1",
-                    "post_install": "scripts/setup.ps1",
-                    "post_update": "scripts/update.bat",
+    def test_load_package_config_with_hooks_windows_and_aliases(self) -> None:
+        """Verifies [hooks.windows] and alias sub-tables (win32, winos, win) override default hooks on Windows."""
+        for alias in ["windows", "win32", "winos", "win"]:
+            toml_dict = {
+                "package": {
+                    "install_method": "copy",
+                },
+                "hooks": {
+                    "pre_install": "scripts/bootstrap.sh",
+                    "post_install": "scripts/setup.sh",
+                    alias: {
+                        "pre_install": "scripts/bootstrap.ps1",
+                        "post_install": "scripts/setup.ps1",
+                        "post_update": "scripts/update.bat",
+                    }
                 }
             }
-        }
-        # On POSIX (Linux/macOS), winos subtable is ignored
-        with patch("sys.platform", "linux"):
-            config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-            self.assertEqual(config_linux.hooks.pre_install, "scripts/bootstrap.sh")
-            self.assertEqual(config_linux.hooks.post_install, "scripts/setup.sh")
-            self.assertIsNone(config_linux.hooks.post_update)
+            # On POSIX (Linux/macOS), windows subtable is ignored
+            with patch("sys.platform", "linux"):
+                config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
+                self.assertEqual(config_linux.hooks.pre_install, "scripts/bootstrap.sh")
+                self.assertEqual(config_linux.hooks.post_install, "scripts/setup.sh")
+                self.assertIsNone(config_linux.hooks.post_update)
 
-        # On Windows, winos subtable overrides default hooks
-        with patch("sys.platform", "win32"):
-            config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-            self.assertEqual(config_win.hooks.pre_install, "scripts/bootstrap.ps1")
-            self.assertEqual(config_win.hooks.post_install, "scripts/setup.ps1")
-            self.assertEqual(config_win.hooks.post_update, "scripts/update.bat")
+            # On Windows, windows subtable overrides default hooks
+            with patch("sys.platform", "win32"):
+                config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
+                self.assertEqual(config_win.hooks.pre_install, "scripts/bootstrap.ps1")
+                self.assertEqual(config_win.hooks.post_install, "scripts/setup.ps1")
+                self.assertEqual(config_win.hooks.post_update, "scripts/update.bat")
 
     def test_build_hook_execution_command(self) -> None:
         """Verifies cross-platform command building for lifecycle hook dispatch."""
@@ -664,29 +692,31 @@ class TestConfigClasses(unittest.TestCase):
         with patch("sys.platform", "win32"):
             self.assertEqual(pkg_config.get_install_method(ws_config), "copy")
 
-    def test_package_config_target_directory_winos(self) -> None:
+    def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
             drift_root_path=Path("/test"),
             default_target_directory=Path("/default/target"),
         )
-        data = {
-            "package": {
-                "name": "nvim",
-                "target_directory": "~/.config/nvim",
-                "target_directory_winos": "%LOCALAPPDATA%/nvim"
-            }
-        }
-        pkg_config = PackageConfig.from_dict(data, package_name="nvim")
-
-        # On Linux/POSIX, returns standard target_directory
         home = Path.home()
-        with patch("sys.platform", "linux"):
-            self.assertEqual(pkg_config.get_target_directory(ws_config), home / ".config" / "nvim")
 
-        # On Windows, returns target_directory_winos expanded
-        with patch("sys.platform", "win32"):
-            with patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/testuser/AppData/Local"}):
-                self.assertEqual(pkg_config.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/nvim"))
+        for alias in ["windows", "win32", "winos", "win"]:
+            data = {
+                "package": {
+                    "name": "nvim",
+                    "target_directory": "~/.config/nvim",
+                    f"target_directory_{alias}": "%LOCALAPPDATA%/nvim"
+                }
+            }
+            pkg_config = PackageConfig.from_dict(data, package_name="nvim")
+
+            # On Linux/POSIX, returns standard target_directory
+            with patch("sys.platform", "linux"):
+                self.assertEqual(pkg_config.get_target_directory(ws_config), home / ".config" / "nvim")
+
+            # On Windows, returns target_directory_<alias> expanded
+            with patch("sys.platform", "win32"):
+                with patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/testuser/AppData/Local"}):
+                    self.assertEqual(pkg_config.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/nvim"))
 
 
 class TestConfigLoaders(unittest.TestCase):
@@ -719,6 +749,16 @@ class TestConfigLoaders(unittest.TestCase):
         # Verify absolute drift_root_path computation
         self.assertEqual(config.drift_root_path, self.drift_root)
 
+        # Invalid default_install_method raises ConfigError
+        config_path.write_text("""
+            [workspace]
+            default_install_method = "invalid_method"
+            [packages.enable]
+            DEFAULT = true
+            """, encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_workspace_config(self.drift_root)
+
     def test_load_package_config(self) -> None:
         pkg_config_path = self.drift_root / PACKAGE_CONFIG_FILE_NAME
 
@@ -738,6 +778,16 @@ class TestConfigLoaders(unittest.TestCase):
         config = load_package_config_rendered(pkg_config_path, package_name_override="my_actual_package")
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
+
+        # Invalid hook type raises ConfigError
+        pkg_config_path.write_text("""
+            [package]
+            install_method = "copy"
+            [hooks]
+            pre_source = 12345
+            """, encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_package_config_rendered(pkg_config_path, package_name_override="my_actual_package")
 
     def test_locate_package_config_file_and_load_from_dir(self) -> None:
         pkg_dir = self.drift_root / "my_pkg_folder"
@@ -761,6 +811,16 @@ class TestConfigLoaders(unittest.TestCase):
         config = load_package_config_from_source_dir(pkg_dir)
         self.assertEqual(config.name, "my_pkg_folder")
         self.assertEqual(config.install_method, "copy")
+
+        # Invalid config raises ConfigError
+        alt_config_path.write_text("""
+            [package]
+            install_method = "copy"
+            [hooks]
+            timeout = "not_an_int"
+            """, encoding="utf-8")
+        with self.assertRaises(ConfigError):
+            load_package_config_from_source_dir(pkg_dir)
 
     def test_get_package_config_file_info(self) -> None:
         from drift.workspace_config import RenderEngineConfig

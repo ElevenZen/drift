@@ -17,7 +17,8 @@ target_directory = "~/.config/my_app"
 # Optional Windows-specific target folder path.
 # Used instead of target_directory when running on Windows (win32).
 # Supports %USERPROFILE%, %APPDATA%, %LOCALAPPDATA%, ~, etc.
-# target_directory_winos = "%LOCALAPPDATA%/my_app"
+# Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
+# target_directory_windows = "%LOCALAPPDATA%/my_app"
 
 # Advanced Flags
 
@@ -74,13 +75,14 @@ health = "scripts/health_check.sh"
 # Optional Windows-specific hook overrides.
 # When running on Windows (win32), hook paths defined here automatically
 # override the default [hooks] entries.
+# Aliases accepted: [hooks.windows], [hooks.win32], [hooks.winos], [hooks.win].
 # On Windows, '.exe' binary files are executed directly as native executables,
 # and following file types are automatically executed via their respective interpreters:
 #   • .ps1  -> powershell.exe -NoProfile -ExecutionPolicy Bypass -File <script>
 #   • .bat / .cmd -> cmd.exe /c <script>
 #   • .py   -> python <script>
 #   • .sh / .bash -> bash.exe <script> (if available in PATH)
-[hooks.winos]
+[hooks.windows]
 pre_install = "scripts/bootstrap.exe"
 post_install = "scripts/setup.ps1"
 post_update = "scripts/reload_service.bat"
