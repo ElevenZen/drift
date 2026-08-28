@@ -14,6 +14,11 @@ install_method = "stow"
 # Falls back to "default_target_directory" in drift.toml if unspecified.
 target_directory = "~/.config/my_app"
 
+# Optional Windows-specific target folder path.
+# Used instead of target_directory when running on Windows (win32).
+# Supports %USERPROFILE%, %APPDATA%, %LOCALAPPDATA%, ~, etc.
+# target_directory_winos = "%LOCALAPPDATA%/my_app"
+
 # Advanced Flags
 
 # Execute physical file deployments and installation/update lifecycle hooks with root privileges (sudo).

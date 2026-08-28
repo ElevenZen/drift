@@ -550,6 +550,30 @@ class TestConfigClasses(unittest.TestCase):
         with patch("sys.platform", "win32"):
             self.assertEqual(pkg_config.get_install_method(ws_config), "copy")
 
+    def test_package_config_target_directory_winos(self) -> None:
+        ws_config = WorkspaceConfig(
+            drift_root_path=Path("/test"),
+            default_target_directory=Path("/default/target"),
+        )
+        data = {
+            "package": {
+                "name": "nvim",
+                "target_directory": "~/.config/nvim",
+                "target_directory_winos": "%LOCALAPPDATA%/nvim"
+            }
+        }
+        pkg_config = PackageConfig.from_dict(data, package_name="nvim")
+
+        # On Linux/POSIX, returns standard target_directory
+        home = Path.home()
+        with patch("sys.platform", "linux"):
+            self.assertEqual(pkg_config.get_target_directory(ws_config), home / ".config" / "nvim")
+
+        # On Windows, returns target_directory_winos expanded
+        with patch("sys.platform", "win32"):
+            with patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/testuser/AppData/Local"}):
+                self.assertEqual(pkg_config.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/nvim"))
+
 
 class TestConfigLoaders(unittest.TestCase):
     def setUp(self) -> None:

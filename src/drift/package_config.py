@@ -17,6 +17,7 @@ from .constants import (
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 from .exceptions import ConfigError
+from .file_utils import expand_user_and_env
 
 from dataclasses import dataclass, field
 
@@ -196,6 +197,7 @@ class PackageConfig:
     enable_install: bool = True
     install_method: Optional[str] = None
     target_directory: Optional[Path] = None
+    target_directory_winos: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
@@ -216,6 +218,7 @@ class PackageConfig:
         enable_install: bool = True,
         install_method: Optional[str] = None,
         target_directory: Optional[Path] = None,
+        target_directory_winos: Optional[Path] = None,
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
@@ -235,7 +238,8 @@ class PackageConfig:
         self.enable_render = enable_render
         self.enable_install = enable_install
         self.install_method = install_method
-        self.target_directory = Path(target_directory).expanduser() if target_directory else None
+        self.target_directory = expand_user_and_env(target_directory) if target_directory else None
+        self.target_directory_winos = expand_user_and_env(target_directory_winos) if target_directory_winos else None
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
 
@@ -391,7 +395,9 @@ class PackageConfig:
         return file_path in self.source_files
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
-        return (self.target_directory or workspace_config.default_target_path).expanduser()
+        if sys.platform == "win32" and self.target_directory_winos is not None:
+            return expand_user_and_env(self.target_directory_winos)
+        return expand_user_and_env(self.target_directory or workspace_config.default_target_path)
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
         if sys.platform == "win32":
@@ -400,7 +406,7 @@ class PackageConfig:
 
     def load_package_envs(
         self,
-        workspace_config: Optional[WorkspaceConfig] = None,
+        workspace_config: WorkspaceConfig,
         overwrite: bool = True
     ) -> Optional[List[Tuple[str, Optional[str]]]]:
         """Loads default package-specific environment variables into os.environ.
@@ -416,20 +422,12 @@ class PackageConfig:
         Returns:
             A list of (key, original_value) tuples for modified variables.
         """
-        if workspace_config is not None:
-            target_dir = self.get_target_directory(workspace_config)
-            target_dir_str = str(target_dir)
-            install_method_str = self.get_install_method(workspace_config)
-            source_dir_str = str(workspace_config.source_path / self.name)
-            render_dir_str = str(workspace_config.render_path / self.name)
-            install_dir_str = str(workspace_config.install_path / self.name)
-        else:
-            target_dir = (self.target_directory or Path("~")).expanduser()
-            target_dir_str = str(target_dir)
-            install_method_str = self.install_method or "stow"
-            source_dir_str = ""
-            render_dir_str = ""
-            install_dir_str = ""
+        target_dir = self.get_target_directory(workspace_config)
+        target_dir_str = str(target_dir)
+        install_method_str = self.get_install_method(workspace_config)
+        source_dir_str = str(workspace_config.source_path / self.name)
+        render_dir_str = str(workspace_config.render_path / self.name)
+        install_dir_str = str(workspace_config.install_path / self.name)
 
         envs = [
             ("drift_package_name", self.name),
@@ -452,7 +450,7 @@ class PackageConfig:
     @contextmanager
     def package_envs(
         self,
-        workspace_config: Optional[WorkspaceConfig] = None,
+        workspace_config: WorkspaceConfig,
         overwrite: bool = True
     ) -> Iterator[None]:
         """Context manager to activate package-specific environment variables in os.environ."""
@@ -486,6 +484,7 @@ class PackageConfig:
             "enable_install",
             "install_method",
             "target_directory",
+            "target_directory_winos",
             "sudo",
             "fully_controlled_dirs"
         }
@@ -505,10 +504,14 @@ class PackageConfig:
         elif not isinstance(fcd, list):
             fcd = []
 
-        # Expand home directory for target_directory on load
+        # Expand home directory and env vars for target_directory on load
         target_dir = package_data.get("target_directory")
         if target_dir:
-            target_dir = Path(target_dir).expanduser()
+            target_dir = expand_user_and_env(target_dir)
+
+        target_dir_winos = package_data.get("target_directory_winos")
+        if target_dir_winos:
+            target_dir_winos = expand_user_and_env(target_dir_winos)
             
         raw_timeout = hooks_data.get("timeout", 120)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
@@ -535,6 +538,7 @@ class PackageConfig:
             enable_install=bool(package_data.get("enable_install", True)),
             install_method=package_data.get("install_method"),
             target_directory=target_dir,
+            target_directory_winos=target_dir_winos,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
             hooks=hooks

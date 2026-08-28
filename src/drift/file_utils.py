@@ -1,15 +1,82 @@
 """Utility functions for file and directory operations using pathlib."""
 
 import os
+import sys
 import hashlib
 import logging
 import shutil
 import subprocess
+import re
 import shlex
 from pathlib import Path
 from typing import Optional, Union, List, Any
 
 logger = logging.getLogger(__name__)
+
+COMMON_WINDOWS_PATH_ENVS = {
+    "USERPROFILE": lambda: str(Path.home()),
+    "APPDATA": lambda: str(Path.home() / "AppData" / "Roaming"),
+    "LOCALAPPDATA": lambda: str(Path.home() / "AppData" / "Local"),
+    "PROGRAMDATA": lambda: r"C:\ProgramData",
+    "HOMEDRIVE": lambda: Path.home().drive or "C:",
+    "HOMEPATH": lambda: str(Path.home().relative_to(Path.home().anchor)) if Path.home().drive else str(Path.home()),
+    "TEMP": lambda: os.environ.get("TEMP") or os.environ.get("TMP") or str(Path.home() / "AppData" / "Local" / "Temp"),
+    "TMP": lambda: os.environ.get("TMP") or os.environ.get("TEMP") or str(Path.home() / "AppData" / "Local" / "Temp"),
+    "SYSTEMROOT": lambda: os.environ.get("SYSTEMROOT") or r"C:\Windows",
+    "WINDIR": lambda: os.environ.get("WINDIR") or r"C:\Windows",
+    "ALLUSERSPROFILE": lambda: os.environ.get("ALLUSERSPROFILE") or r"C:\ProgramData",
+    "PROGRAMFILES": lambda: os.environ.get("PROGRAMFILES") or r"C:\Program Files",
+    "PROGRAMFILES(X86)": lambda: os.environ.get("PROGRAMFILES(X86)") or r"C:\Program Files (x86)",
+}
+
+
+def expand_user_and_env(path_input: Union[str, Path]) -> Path:
+    """Expands '~', Windows-style '%VAR%', and standard '$VAR' in path inputs."""
+    raw = str(path_input).strip()
+    if not raw:
+        return Path(".")
+
+    # 1. Expand %VAR% syntax ONLY on Windows
+    if sys.platform == "win32" and "%" in raw:
+        def replace_win_env(match: re.Match) -> str:
+            var_name = match.group(1)
+            var_upper = var_name.upper()
+            if var_name in os.environ:
+                return os.environ[var_name]
+            if var_upper in os.environ:
+                return os.environ[var_upper]
+            if var_upper in COMMON_WINDOWS_PATH_ENVS:
+                return COMMON_WINDOWS_PATH_ENVS[var_upper]()
+            return f"%{var_name}%"
+
+        raw = re.sub(r"%([A-Za-z0-9_()]+)%", replace_win_env, raw)
+
+    # 2. Expand $VAR / ${VAR} syntax
+    raw = os.path.expandvars(raw)
+
+    # 3. Expand ~ or ~/ or ~\ at beginning of path cleanly across platforms
+    if raw == "~":
+        return Path.home()
+    if raw.startswith("~/") or raw.startswith("~\\"):
+        subpath = raw[2:].lstrip("/\\")
+        parts = [p for p in re.split(r"[/\\]+", subpath) if p]
+        return Path.home().joinpath(*parts)
+
+    # 4. Normalize backslashes to forward slashes for cross-platform consistency
+    if sys.platform == "win32" and "\\" in raw:
+        raw = raw.replace("\\", "/")
+
+    # 5. Final expanduser call to ensure clean Path conversion
+    return Path(raw).expanduser()
+
+
+def safe_relative_to(path: Path, other: Path) -> Path:
+    """Safely calculates relative path, returning path.resolve() if across different Windows drives."""
+    try:
+        return path.resolve().relative_to(other.resolve())
+    except ValueError:
+        return path.resolve()
+
 
 def is_relative_to(path: Path, other: Path) -> bool:
     """Robust fallback implementation of Path.is_relative_to for Python < 3.9."""
@@ -31,10 +98,10 @@ def run_command(cmd: Union[str, List[str]], **kwargs: Any) -> "subprocess.Comple
 def resolve_system_target(relative_path: Path, relative_base: Path) -> Path:
     """
     Applies relative file path to base path,
-    expanding user home and applying dot prefix conversion.
+    expanding user home/envs and applying dot prefix conversion.
     """
     translated_path = translate_dot_prefixes(relative_path)
-    target_path = relative_base.expanduser()
+    target_path = expand_user_and_env(relative_base)
     return target_path / translated_path
 
 

@@ -445,6 +445,59 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(dest_link.is_symlink())
         self.assertEqual(os.readlink(dest_link), "nested_non_existent")
 
+    def test_expand_user_and_env(self) -> None:
+        from drift.file_utils import expand_user_and_env
+
+        # 1. Test empty string
+        self.assertEqual(expand_user_and_env(""), Path("."))
+
+        # 2. Test '~' expansion
+        home = Path.home()
+        self.assertEqual(expand_user_and_env("~"), home)
+        self.assertEqual(expand_user_and_env("~/my_config"), home / "my_config")
+        self.assertEqual(expand_user_and_env(r"~\my_config"), home / "my_config")
+
+        # 3. Test Windows %VAR% expansion when platform is win32
+        with patch("sys.platform", "win32"):
+            with patch.dict(os.environ, {"CUSTOM_APP_PATH": "/custom/path", "USERPROFILE": "/custom/user"}):
+                self.assertEqual(expand_user_and_env("%CUSTOM_APP_PATH%/sub"), Path("/custom/path/sub"))
+                self.assertEqual(expand_user_and_env("%USERPROFILE%/config"), Path("/custom/user/config"))
+
+            # Test Windows %VAR% expansion with fallback dictionary (when not in os.environ)
+            with patch.dict(os.environ, {}, clear=True):
+                res_appdata = expand_user_and_env("%APPDATA%/myapp")
+                self.assertEqual(res_appdata, home / "AppData" / "Roaming" / "myapp")
+
+                res_localappdata = expand_user_and_env("%LOCALAPPDATA%/myapp")
+                self.assertEqual(res_localappdata, home / "AppData" / "Local" / "myapp")
+
+        # 4. Test non-Windows platform preserves %VAR% literally
+        with patch("sys.platform", "linux"):
+            self.assertEqual(expand_user_and_env("%USERPROFILE%/config"), Path("%USERPROFILE%/config"))
+
+        # 5. Test POSIX $VAR / ${VAR} expansion across platforms
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/xdg/config"}):
+            self.assertEqual(expand_user_and_env("$XDG_CONFIG_HOME/app"), Path("/xdg/config/app"))
+            self.assertEqual(expand_user_and_env("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
+
+    def test_safe_relative_to(self) -> None:
+        from drift.file_utils import safe_relative_to
+
+        # Normal relative path within same directory tree
+        child = self.root / "a" / "b" / "file.txt"
+        base = self.root / "a"
+        self.assertEqual(safe_relative_to(child, base), Path("b/file.txt"))
+
+        # Cross-drive or unrelated path simulation (where relative_to raises ValueError)
+        other_path = MagicMock(spec=Path)
+        other_path.resolve.return_value = other_path
+        other_path.relative_to.side_effect = ValueError("Different drives")
+        base_mock = MagicMock(spec=Path)
+        base_mock.resolve.return_value = base_mock
+
+        res = safe_relative_to(other_path, base_mock)
+        self.assertEqual(res, other_path)
+
 
 if __name__ == "__main__":
     unittest.main()

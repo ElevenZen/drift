@@ -18,6 +18,7 @@ from .constants import (
 )
 from .toml_utils import parse_toml, merge_toml
 from .exceptions import ConfigError
+from .file_utils import expand_user_and_env
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class WorkspaceConfig:
         self.render_directory = Path(self.render_directory)
         self.install_directory = Path(self.install_directory)
         self.backup_directory = Path(self.backup_directory)
-        self.default_target_directory = Path(self.default_target_directory).expanduser()
+        self.default_target_directory = expand_user_and_env(self.default_target_directory)
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -414,8 +415,8 @@ class WorkspaceConfig:
             for k, v in env_data.items():
                 env[str(k)] = str(v)
 
-        # Expand home directory for default_target_directory on load
-        default_target_dir = Path(workspace_data.get("default_target_directory", "~")).expanduser()
+        # Expand home directory and env vars for default_target_directory on load
+        default_target_dir = expand_user_and_env(workspace_data.get("default_target_directory", "~"))
 
         config = cls(
             drift_root_path=Path(drift_root_path).resolve(),
