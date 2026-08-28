@@ -249,7 +249,7 @@ def compute_file_hash(file_path: Path) -> str:
     return h.hexdigest()
 
 
-from .constants import LineEnding, LineEndings
+from .constants import LineEnding
 
 
 def is_binary_file(file_path: Path) -> bool:

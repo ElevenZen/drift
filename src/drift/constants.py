@@ -27,9 +27,6 @@ class LineEnding(str, Enum):
     PRESERVE = "preserve"
 
 
-LineEndings = LineEnding
-
-
 class ExitCode(IntEnum):
     """Standardized exit codes for the Drift CLI and automated pipeline integration."""
     SUCCESS = 0
