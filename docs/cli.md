@@ -306,11 +306,46 @@ Audits and repairs damaged, missing, or partially-initialized workspace componen
 
 ---
 
-### L. Mini User Manual: `drift help [topic]`
+### L. Workspace Cloning & Bootstrapping: `drift clone <repository> [destination] [--branch] [--depth] [--json]`
+Clones a remote or local Git repository and immediately reconstructs and heals the workspace for deployment in a single operation.
+*   **Command Signature**: `drift clone <repository> [destination] [--branch / -b <branch>] [--depth <depth>] [--no-repair] [--json]`
+*   **Workflow**:
+    1.  **Repository Clone**: Clones the remote repository using `git clone` with optional branch and shallow `--depth` settings.
+    2.  **Autonomous Bootstrap Healing**:
+        - **Existing Drift Workspace**: Reconstructs untracked runtime state databases (`render/` and `install/` Git repos, `install/state.toml`, `.gitignore`, `config/drift.local.toml`, `config/secrets.env`).
+        - **Plain / Legacy Dotfiles Repository**: Automatically migrates root dotfiles into a package folder (`src/<pkg>/`), initializes `drift_package.toml` with `stow` install method, generates `.drift_ignore`, and enables the package in `config/drift.toml`.
+    3.  **Actionable Post-Clone Guidance**: Outputs next steps for configuring machine-specific overrides and deploying.
+
+---
+
+### M. Package Runtime Health Probing: `drift health [packages...] [--timeout] [--json]`
+Executes runtime health check probes on installed packages to verify if deployed services, daemons, terminal environments, and host tools are operating properly on the host machine.
+*   **Command Signature**: `drift health [packages...] [--timeout <seconds>] [--json]`
+*   **Configuration (`drift_package.toml`)**:
+    ```toml
+    [package]
+    install_method = "stow"
+    target_directory = "~/.config/tmux"
+
+    [hooks]
+    health = "scripts/health_check.sh"
+    timeout = 15
+    ```
+*   **Execution Invariants**:
+    1.  **Probe Source**: Script is executed from the installed package directory in `install/<pkg>/`.
+    2.  **Working Directory (CWD)**: Runs with the package's **host target directory** as the active working directory (`cwd = target_directory`).
+    3.  **Environment Injection**: Standard Drift variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_install_method`, etc.) are automatically injected.
+    4.  **Sudo Privileges**: Executes with `sudo` elevation if `sudo = true` is configured for the package.
+    5.  **Exit Code Evaluation**: `0` = Healthy, non-zero = Unhealthy.
+
+---
+
+### N. Mini User Manual: `drift help [topic]`
 Provides built-in documentation with automatic terminal pager fallback.
 *   **Syntax**: `drift help [topic]`
 *   **Available Topics**:
     - *(no topic)*: Architectural loop diagram, command map, and data-flow model.
+    - `overall`: High-level system overview and architectural diagrams.
     - `package`: Package structure, directory layouts, and configuration options.
     - `src`: Declarative source rules and `dot-` prefix translation.
     - `render`: Sandbox compilation, isolated rendering, and DAG pipelines.
@@ -320,10 +355,13 @@ Provides built-in documentation with automatic terminal pager fallback.
     - `drift_package.toml`: Full reference for package configuration.
     - `drift.toml`: Full reference for workspace settings.
     - `workspace`: Multi-environment workflows and local overrides.
+    - `health`: Package runtime health check probes and configurations.
+    - `clone`: Workspace cloning, bootstrap healing, and legacy migration.
+    - `faq`: Frequently asked questions and troubleshooting guides.
 
 ---
 
-### M. Low-Level Control Commands
+### O. Low-Level Control Commands
 For advanced continuous integration, scripting, and automation:
 
 1.  **`drift render [packages...] [--json]`**: Compiles source templates to sandbox `render/` (`Primitive 2`).
@@ -361,6 +399,20 @@ default_target_directory = "~"
 # Default deployment method: "stow" (symlink) or "copy" (physical)
 default_install_method = "stow"
 
+# ---------------------------------------------------------------------
+# Static Global Environment Variables
+# ---------------------------------------------------------------------
+[env]
+DRIFT_THEME = "catppuccin-mocha"
+DRIFT_FONT = "JetBrainsMono Nerd Font"
+
+# ---------------------------------------------------------------------
+# Template Rendering Engines (DAG Pipeline)
+# ---------------------------------------------------------------------
+[render.var]
+suffix = "var"
+render_command = "internal"
+
 [render.envsubst]
 input_file = "envsubst.bash"
 suffix = "envst"
@@ -396,10 +448,21 @@ proxychains = false
 4.  **Template Engine**: Modular DAG-based compiler supporting arbitrary external or shell-based engines configured via `drift.toml`.
 5.  **Serialization Models**: Native Python dataclasses inheriting from `SerializableModel` for pure standard-library `--json` output without third-party dependencies.
 
-### B. High-Signal Console Aesthetics (Rich Styling)
+### B. Standardized Process Exit Codes
+
+| Exit Code | Semantic Meaning | Description |
+| :---: | :--- | :--- |
+| **`0`** | **`SUCCESS` / `HEALTHY`** | The command completed cleanly; status is clean, diffs match, or all health probes passed. |
+| **`1`** | **`GENERAL_ERROR` / `UNHEALTHY`** | Runtime failure, subprocess crash, unresolved file collision, or unhealthy probe. |
+| **`2`** | **`CONFIG_ERROR`** | Missing or malformed `drift.toml`, `drift_package.toml`, or invalid configuration types. |
+| **`3`** | **`DRIFT_DETECTED`** | Sentinel safety guard tripped: uncommitted runtime system changes detected on host. |
+| **`4`** | **`RENDER_ERROR`** | Template compilation failure or missing required environment variable. |
+
+### C. High-Signal Console Aesthetics (Rich Styling)
 *   `✨` **Gold/Yellow**: Primary action success / Initiation.
 *   `🔍` **Cyan**: Analysis, search, and status checks.
 *   `🚀` **Green**: Deployments, additions, and successful updates.
 *   `❌` **Bold Red**: Sentinel-blocked operations, aborts, and configuration errors.
 *   `💥` **Inverted Bold Red**: Critical execution midway crashes.
 *   `⚠️` **Orange/Yellow**: Collision guard warnings, safety backup prompts.
+*   `🩺` **Cyan/Teal**: Health audit and runtime probing checks.
