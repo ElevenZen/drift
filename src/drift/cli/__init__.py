@@ -17,6 +17,14 @@ def check_sudo_and_root() -> None:
     """Ensures that the user is not running the program under sudo (which pollutes expand_home),
     and check that the user does not have root privilege unless they are actually the root user.
     """
+    if sys.platform == "win32":
+        # On Windows, elevated Administrator shell is allowed and sudo/root checks do not apply.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        return
+
     # 1. Check if running under sudo (SUDO_USER or SUDO_UID environment variables exist)
     is_sudo = "SUDO_USER" in os.environ or "SUDO_UID" in os.environ
 
@@ -25,7 +33,7 @@ def check_sudo_and_root() -> None:
     try:
         has_root_privilege = (os.getuid() == 0)
     except AttributeError:
-        # Windows / non-POSIX platforms
+        # Non-POSIX platforms
         pass
 
     if is_sudo:

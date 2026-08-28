@@ -112,7 +112,4 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
 
     # After moving all children, if src was a directory, we need to remove the empty directory shell
     if src.is_dir() and not src.is_symlink():
-        del_cmd = ["rm", "-rf", str(src)]
-        if sudo:
-            del_cmd.insert(0, "sudo")
-        run_command(del_cmd)
+        remove_file_or_dir_with_sudo(src, sudo)

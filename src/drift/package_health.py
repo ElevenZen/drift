@@ -106,17 +106,23 @@ def execute_package_health_probe(
         logger.warning(f"Could not ensure execute permission on hook '{hook_path}': {e}")
 
     timeout = custom_timeout if custom_timeout is not None else (pkg_config.hook_timeout or 120)
-    cmd = ["sudo", str(hook_path)] if (pkg_config.sudo and "health" in SUDO_ELIGIBLE_HOOKS) else [str(hook_path)]
+    from .lifecycle_hooks import build_hook_execution_command
+    from .file_utils import run_sudo_command
+
+    cmd = build_hook_execution_command(hook_path)
+    use_sudo = bool(pkg_config.sudo and "health" in SUDO_ELIGIBLE_HOOKS)
 
     start_time = time.perf_counter()
     with pkg_config.package_envs(workspace_config):
         try:
-            res = subprocess.run(
+            res = run_sudo_command(
                 cmd,
+                sudo=use_sudo,
                 cwd=str(target_dir),
                 capture_output=True,
                 text=True,
-                timeout=timeout
+                timeout=timeout,
+                check=False
             )
             duration_ms = (time.perf_counter() - start_time) * 1000
             status = PackageHealthStatus.HEALTHY if res.returncode == 0 else PackageHealthStatus.UNHEALTHY

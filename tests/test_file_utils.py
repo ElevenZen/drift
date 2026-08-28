@@ -316,6 +316,37 @@ class TestFileUtils(unittest.TestCase):
         copy_or_move_file_or_dir_external(src, dst, sudo=False, chown=False, move=True, resolve_symlinks=False)
         mock_run.assert_any_call(["mv", str(src), str(dst)], check=True, capture_output=True)
 
+    def test_file_operations_windows_fallback(self) -> None:
+        """Verifies that all sudo/external file operations fallback to Python builtins on Windows."""
+        src_file = self.root / "win_src.txt"
+        src_file.write_text("windows file content", encoding="utf-8")
+        dst_file = self.root / "win_dst.txt"
+        target_dir = self.root / "win_dir"
+
+        with patch("sys.platform", "win32"), patch("subprocess.run") as mock_run:
+            # 1. ensure_dir_exists_with_sudo
+            ensure_dir_exists_with_sudo(target_dir, sudo=True)
+            self.assertTrue(target_dir.is_dir())
+            mock_run.assert_not_called()
+
+            # 2. copy_file_contents_with_sudo
+            copy_file_contents_with_sudo(src_file, dst_file, sudo=True)
+            self.assertTrue(dst_file.exists())
+            self.assertEqual(dst_file.read_text(encoding="utf-8"), "windows file content")
+            mock_run.assert_not_called()
+
+            # 3. copy_or_move_file_or_dir_external (copy)
+            dst_copy = self.root / "win_copy.txt"
+            copy_or_move_file_or_dir_external(src_file, dst_copy, sudo=True)
+            self.assertTrue(dst_copy.exists())
+            self.assertEqual(dst_copy.read_text(encoding="utf-8"), "windows file content")
+            mock_run.assert_not_called()
+
+            # 4. remove_file_or_dir_with_sudo
+            remove_file_or_dir_with_sudo(dst_copy, sudo=True)
+            self.assertFalse(dst_copy.exists())
+            mock_run.assert_not_called()
+
     def test_reverse_sync_file_or_dir_deletion(self) -> None:
         # If src does not exist, and dst exists, dst should be deleted
         src = self.root / "nonexistent"

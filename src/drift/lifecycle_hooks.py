@@ -9,7 +9,7 @@ if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
 
 from .package_config import PackageConfig
-from .file_utils import run_command, is_relative_to
+from .file_utils import run_command, run_sudo_command, is_relative_to
 from .constants import SUDO_ELIGIBLE_HOOKS
 
 logger = logging.getLogger(__name__)
@@ -43,12 +43,9 @@ def execute_hook_command(
     use_sudo: bool = False
 ) -> subprocess.CompletedProcess:
     """Executes a lifecycle hook command with sudo handling and timeout."""
-    final_cmd = list(cmd)
-    if use_sudo and sys.platform != "win32":
-        if not final_cmd or final_cmd[0] != "sudo":
-            final_cmd.insert(0, "sudo")
-    return run_command(
-        final_cmd,
+    return run_sudo_command(
+        cmd,
+        sudo=use_sudo,
         cwd=str(cwd),
         text=True,
         timeout=timeout_seconds

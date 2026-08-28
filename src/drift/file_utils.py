@@ -341,12 +341,25 @@ def copy_or_move_file_or_dir_external(
     move: bool = False,
     resolve_symlinks: bool = True,
 ) -> None:
-    """
-    Use external utility commands to moves or copies file/directory,
-    using sudo if requested, chown after copy if requested,
+    """Use external utility commands or Python builtins to move or copy file/directory,
+
+    using sudo on POSIX if requested, chown after copy if requested,
     resolving symlinks recursively if resolve_symlinks is True.
+    On Windows, falls back directly to Python standard library (shutil/pathlib).
     """
     dst.parent.mkdir(parents=True, exist_ok=True)
+
+    if sys.platform == "win32":
+        if move:
+            if dst.exists() or dst.is_symlink():
+                remove_file_or_dir(dst)
+            shutil.move(str(src), str(dst))
+        else:
+            if src.is_dir() and not src.is_symlink():
+                shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
+            else:
+                shutil.copy2(str(src), str(dst), follow_symlinks=resolve_symlinks)
+        return
 
     if move and not resolve_symlinks:
         cmd = ["mv", str(src), str(dst)]
@@ -355,28 +368,23 @@ def copy_or_move_file_or_dir_external(
             cmd = ["cp", "-RP" if not resolve_symlinks else "-RL", str(src), str(dst)]
         else:
             cmd = ["cp", "-P" if not resolve_symlinks else "-L", str(src), str(dst)]
-            
-    if sudo:
-        cmd.insert(0, "sudo")
-        
-    run_command(cmd)
-    
+
+    run_sudo_command(cmd, sudo=sudo)
+
     if sudo and chown:
         # Attempt to chown the backup to the current process owner if sudo was used, to avoid permission issues later.
         try:
             uid = os.getuid()
             gid = os.getgid()
             if uid is not None and gid is not None:
-                chown_cmd = ["sudo", "chown", "-R", f"{uid}:{gid}", str(dst)]
-                run_command(chown_cmd)
+                chown_cmd = ["chown", "-R", f"{uid}:{gid}", str(dst)]
+                run_sudo_command(chown_cmd, sudo=True)
         except Exception as e:
             logger.warning(f"Failed to chown backup to process owner: {e}")
-            
+
     if move:
         del_cmd = ["rm", "-rf", str(src)]
-        if sudo:
-            del_cmd.insert(0, "sudo")
-        run_command(del_cmd)
+        run_sudo_command(del_cmd, sudo=sudo)
 
 
 def ensure_directory_writable(path: Path, sudo: bool) -> None:
@@ -401,11 +409,11 @@ def ensure_directory_writable(path: Path, sudo: bool) -> None:
 
 
 def ensure_dir_exists_with_sudo(path: Path, sudo: bool) -> None:
-    """Ensures directory exists, creating with sudo if requested."""
+    """Ensures directory exists, creating with sudo on POSIX if requested, or pathlib on Windows."""
     if path.exists():
         return
-    if sudo:
-        run_command(["sudo", "mkdir", "-p", str(path)])
+    if sudo and sys.platform != "win32":
+        run_sudo_command(["mkdir", "-p", str(path)], sudo=True)
     else:
         path.mkdir(parents=True, exist_ok=True)
 
@@ -420,34 +428,37 @@ def remove_file_or_dir(path: Path) -> None:
 
 
 def remove_file_or_dir_with_sudo(path: Path, sudo: bool) -> None:
-    """Safely removes a file, symlink, or directory using sudo if requested."""
+    """Safely removes a file, symlink, or directory using sudo on POSIX if requested, or Python builtins on Windows."""
     if path.exists() or path.is_symlink():
-        cmd_rm = ["rm", "-rf" if path.is_dir() and not path.is_symlink() else "-f", str(path)]
-        if sudo:
-            cmd_rm.insert(0, "sudo")
-        run_command(cmd_rm)
+        if sudo and sys.platform != "win32":
+            cmd_rm = ["rm", "-rf" if path.is_dir() and not path.is_symlink() else "-f", str(path)]
+            run_sudo_command(cmd_rm, sudo=True)
+        else:
+            remove_file_or_dir(path)
 
 
 def create_symlink_manually_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
     """Creates a symlink from src to dst manually, cleaning up existing file/link with sudo if requested."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     remove_file_or_dir_with_sudo(dst, sudo)
-        
-    cmd = ["ln", "-s", str(src), str(dst)]
-    if sudo:
-        cmd.insert(0, "sudo")
-    run_command(cmd)
+
+    if sys.platform == "win32" or not sudo:
+        dst.symlink_to(src, target_is_directory=src.is_dir())
+    else:
+        cmd = ["ln", "-s", str(src), str(dst)]
+        run_sudo_command(cmd, sudo=True)
 
 
 def copy_file_contents_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
-    """Copies a physical file from src to dst, with sudo if requested."""
+    """Copies a physical file from src to dst, with sudo on POSIX if requested, or shutil on Windows."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
     remove_file_or_dir_with_sudo(dst, sudo)
-    cmd = ["cp", str(src), str(dst)]
-    if sudo:
-        cmd.insert(0, "sudo")
-    run_command(cmd)
+    if sys.platform == "win32" or not sudo:
+        shutil.copy2(src, dst)
+    else:
+        cmd = ["cp", str(src), str(dst)]
+        run_sudo_command(cmd, sudo=True)
 
 
 def sync_broken_symlink(src: Path, dst: Path) -> None:

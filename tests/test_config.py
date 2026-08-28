@@ -462,7 +462,7 @@ class TestConfigClasses(unittest.TestCase):
         """Verifies execute_hook_command applies sudo correctly across platforms."""
         from drift.lifecycle_hooks import execute_hook_command
 
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.file_utils.run_command") as mock_run:
             mock_run.return_value = MagicMock()
 
             # POSIX with sudo
@@ -483,7 +483,7 @@ class TestConfigClasses(unittest.TestCase):
             mock_run.reset_mock()
 
             # Windows ignores 'sudo' binary prefix
-            with patch("sys.platform", "win32"):
+            with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=True):
                 execute_hook_command(
                     cmd=["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=Path(r"C:\app"),
@@ -496,6 +496,14 @@ class TestConfigClasses(unittest.TestCase):
                     text=True,
                     timeout=60
                 )
+
+    def test_check_sudo_and_root_windows(self) -> None:
+        """Verifies check_sudo_and_root passes unconditionally on Windows."""
+        from drift.cli import check_sudo_and_root
+
+        with patch("sys.platform", "win32"):
+            # Should not raise or exit
+            check_sudo_and_root()
 
     def test_package_hooks_check_hook_files(self) -> None:
         """Verifies check_hook_files validates existence and regular file status of configured hook files."""
