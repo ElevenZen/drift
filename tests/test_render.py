@@ -1645,6 +1645,33 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
                         template_file_path=bad_template
                     )
 
+    def test_render_template_internal_var_engine(self) -> None:
+        """Verifies an internal render engine (e.g. [render.var] with render_command='internal')."""
+        from drift.render_core import render_template
+
+        template_path = self.drift_root / "config.var.toml"
+        template_path.write_text("""
+        theme = "$APP_THEME"
+        port = ${APP_PORT}
+        """, encoding="utf-8")
+
+        engine_config = RenderEngineConfig(
+            name="var",
+            suffix="var",
+            render_command="internal"
+        )
+        self.assertTrue(engine_config.is_internal)
+        self.assertFalse(engine_config.is_disabled)
+
+        with patch.dict(os.environ, {"APP_THEME": "dracula", "APP_PORT": "9000"}):
+            out = render_template(
+                engine_config=engine_config,
+                drift_root=self.drift_root,
+                template_file_path=template_path
+            )
+            self.assertIn('theme = "dracula"', out)
+            self.assertIn('port = 9000', out)
+
 
 if __name__ == "__main__":
     unittest.main()

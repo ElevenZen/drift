@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Mapping, Dict, List, Optional
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 from .render_core import render_template_to_file
-from .constants import CONFIG_DIR_NAME
+from .constants import CONFIG_DIR_NAME, INTERNAL_RENDER_COMMAND
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,9 @@ def resolve_dependencies(engines: List[RenderEngineConfig]) -> Dict[str, Optiona
     """
     dependency_map: Dict[str, Optional[str]] = {}
     for engine in engines:
+        if engine.is_internal or not engine.input_file or str(engine.input_file) in ("", "."):
+            dependency_map[engine.name] = None
+            continue
         dep_engine = find_engine_for_file(str(engine.input_file), engines)
         # If dep_engine is the same as engine, it means the input file is static and not rendered by any other engine
         if dep_engine and dep_engine.name != engine.name:
@@ -78,8 +81,11 @@ def resolve_static_input_file(
 ) -> Path:
     """Resolves and validates a static input file path (handling both absolute and config-relative paths)."""
     if not input_file or str(input_file) in ("", "."):
-        logger.warning(f"Input file for render engine '{engine_name}' is not specified or empty. Engine '{engine_name}' is disabled.")
+        logger.warning(
+            f"Input file for render engine '{engine_name}' is not specified or empty. Engine '{engine_name}' is disabled."
+        )
         return Path("")
+
     if input_file.is_absolute():
         path = input_file
     else:
@@ -127,12 +133,17 @@ def render_input_templates(
         if engine.name in memo:
             return memo[engine.name]
 
+        if engine.is_internal:
+            memo[engine.name] = Path("")
+            return Path("")
+
         dep_name = dependency_map[engine.name]
         if dep_name:
             dep_engine = engines_by_name[dep_name]
             dep_input_file = get_or_render_input_file(dep_engine)
             if dep_input_file == Path(""):
-                logger.warning(f"Render engine '{engine.name}' is disabled because dependency engine '{dep_name}' has an invalid or missing input file.")
+                logger.warning(f"Render engine '{engine.name}' is disabled because dependent engine"
+                               f"'{dep_name}' is disabled")
                 memo[engine.name] = Path("")
                 return Path("")
 

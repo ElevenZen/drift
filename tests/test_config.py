@@ -922,6 +922,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                     "input_file": "mustache.envst.json",
                     "suffix": "mustache",
                     "render_command": "mustache %i %s"
+                },
+                "var": {
+                    "suffix": "var",
+                    "render_command": "internal"
                 }
             }
         }
@@ -930,6 +934,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.render_engine_config["envsubst"].suffix, "envst")
         self.assertIn("mustache", config.render_engine_configs)
         self.assertEqual(config.render_engine_configs["mustache"].input_file, Path("mustache.envst.json"))
+        self.assertIn("var", config.render_engine_configs)
+        self.assertTrue(config.render_engine_configs["var"].is_internal)
+        self.assertFalse(config.render_engine_configs["var"].is_disabled)
+        self.assertEqual(config.render_engine_configs["var"].input_file, Path(""))
 
     def test_meta_rendering_drift_envst_toml(self) -> None:
         from drift.workspace_config import load_workspace_config

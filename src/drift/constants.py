@@ -13,6 +13,7 @@ DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
 STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
 INSTALL_STOW_IGNORE_PATTERN = "^/state.toml"
+INTERNAL_RENDER_COMMAND = "internal"
 MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME, *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST]
 
 
@@ -139,6 +140,10 @@ install_directory = "install"
 backup_directory = "backup"
 default_target_directory = "~"
 default_install_method = "stow"
+
+[render.var]
+suffix = "var"
+render_command = "internal"
 
 [render.envsubst]
 input_file = "envsubst.bash"

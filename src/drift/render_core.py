@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional, Dict, Type
 
 from .workspace_config import RenderEngineConfig
-from .constants import CONFIG_DIR_NAME
+from .constants import CONFIG_DIR_NAME, INTERNAL_RENDER_COMMAND
 from .file_utils import run_command
 from .exceptions import DriftError, RenderError
 
@@ -47,6 +47,20 @@ def python_envsubst(
     return pattern.sub(replace_var, template_content)
 
 
+def python_envsubst_template(
+    template_file_path: Path,
+    engine_config: RenderEngineConfig,
+    error_cls: Type[DriftError] = RenderError
+) -> str:
+    """Validates template existence and engine status, then renders template content via python_envsubst."""
+    if not template_file_path.exists():
+        raise FileNotFoundError(f"Template file not found: {template_file_path}")
+    if engine_config.is_disabled:
+        raise RenderError(f"Render engine '{engine_config.name}' is disabled.")
+    content = template_file_path.read_text(encoding="utf-8")
+    return python_envsubst(content, error_cls=error_cls)
+
+
 def resolve_render_template_args(
     engine_config: RenderEngineConfig,
     engine_config_input_relative_to: Path,
@@ -56,6 +70,9 @@ def resolve_render_template_args(
     """Checks the validity of the arguments for rendering a template and resolves the input file path."""
     if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
+
+    if engine_config.is_internal:
+        return Path("")
 
     # %i and %s placeholders must occur in the command string, otherwise raise an error
     if "%i" not in engine_config.render_command:
@@ -94,7 +111,8 @@ def render_template(
 
     The engine configuration provides the render command (e.g. "bash -c 'source %i && envsubst < %s'"),
     where %i is replaced with the path to the input file and %s with the template file.
-    If the engine is 'envsubst' and 'bash' or 'envsubst' is not available, falls back to python_envsubst.
+    If the engine is internal (render_command="internal") or if the engine is 'envsubst'
+    and 'bash' or 'envsubst' is not available, falls back to python_envsubst.
 
     Args:
         engine_config: The RenderEngineConfig instance to use.
@@ -110,14 +128,13 @@ def render_template(
         ValueError: If placeholders are missing in the render command.
         RenderError: If the render engine is disabled or subprocess fails.
     """
+    if engine_config.is_internal:
+        logger.debug(f"Using internal python_envsubst engine for '{template_file_path}'")
+        return python_envsubst_template(template_file_path, engine_config)
+
     if engine_config.name == "envsubst" and (shutil.which("bash") is None or shutil.which("envsubst") is None):
-        if not template_file_path.exists():
-            raise FileNotFoundError(f"Template file not found: {template_file_path}")
-        if engine_config.is_disabled:
-            raise RenderError(f"Render engine '{engine_config.name}' is disabled.")
         logger.info(f"Using internal python_envsubst engine for '{template_file_path}' (bash or envsubst not found)")
-        content = template_file_path.read_text(encoding="utf-8")
-        return python_envsubst(content, error_cls=RenderError)
+        return python_envsubst_template(template_file_path, engine_config)
 
     resolved_input_file: Path = resolve_render_template_args(
         engine_config=engine_config,
@@ -137,8 +154,7 @@ def render_template(
             logger.warning(
                 f"External envsubst command failed ({e}). Falling back to internal python_envsubst for '{template_file_path}'."
             )
-            content = template_file_path.read_text(encoding="utf-8")
-            return python_envsubst(content, error_cls=RenderError)
+            return python_envsubst_template(template_file_path, engine_config)
         err_msg = (
             f"Render command failed with exit code {getattr(e, 'returncode', 'unknown')}.\n"
             f"Command: {cmd}\n"

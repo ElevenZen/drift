@@ -15,6 +15,7 @@ from .constants import (
         PACKAGE_CONFIG_FILE_NAME,
         SECRETS_ENV_FILE_NAME,
         INITIAL_ENV,
+        INTERNAL_RENDER_COMMAND,
 )
 from .toml_utils import parse_toml, merge_toml
 from .exceptions import ConfigError
@@ -27,30 +28,38 @@ logger = logging.getLogger(__name__)
 class RenderEngineConfig:
     """Represents a render engine configuration inside workspace configuration."""
     name: str
-    input_file: Path
-    suffix: str
-    render_command: str
+    input_file: Path = Path("")
+    suffix: str = ""
+    render_command: str = ""
 
     def __post_init__(self) -> None:
         """Coerces any string path fields to pathlib.Path objects for absolute safety."""
-        self.input_file = Path(self.input_file)
+        self.input_file = Path(self.input_file) if self.input_file is not None else Path("")
+
+    @property
+    def is_internal(self) -> bool:
+        """Returns True if the engine uses Drift's built-in Python substitution renderer."""
+        return self.render_command == INTERNAL_RENDER_COMMAND
 
     def validate(self) -> None:
         """Validates render engine configuration values."""
         if not self.name or not isinstance(self.name, str):
             raise ValueError("Render engine must have a non-empty 'name'.")
-        if not isinstance(self.input_file, Path) or str(self.input_file) == ".":
-            raise ValueError("input_file must be a non-empty Path.")
         if not self.suffix or not isinstance(self.suffix, str):
             raise ValueError("suffix must be a non-empty string.")
         if "." in self.suffix:
             raise ValueError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
         if not self.render_command or not isinstance(self.render_command, str):
             raise ValueError("render_command must be a non-empty string.")
+        if not self.is_internal:
+            if not isinstance(self.input_file, Path) or str(self.input_file) in ("", "."):
+                raise ValueError("input_file must be a non-empty Path.")
 
     @property
     def is_disabled(self) -> bool:
         """Returns True if the render engine is disabled due to missing or empty input file."""
+        if self.is_internal:
+            return False
         return not self.input_file or str(self.input_file) in ("", ".")
 
     def strip_suffix(self, filename: str) -> str:

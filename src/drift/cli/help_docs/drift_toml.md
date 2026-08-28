@@ -41,6 +41,13 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 # Render Engines Configurations
 # ---------------------------------------------------------------------
 
+# Built-in zero-dependency variable substitution engine (Windows + POSIX)
+# Strictly validates that all referenced variables ($VAR, ${VAR}) exist.
+[render.var]
+suffix = "var"
+render_command = "internal"
+
+
 [render.envsubst]
 # Input environment file relative to workspace 'config' folder
 input_file = "envsubst.bash"
