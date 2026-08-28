@@ -66,9 +66,15 @@ def execute_hook_script(
         raise FileNotFoundError(err_msg)
 
     try:
-        hook_path.chmod(0o755)
-    except Exception:
-        pass
+        current_mode = hook_path.stat().st_mode
+        if not (current_mode & 0o111):
+            logger.warning(
+                f"⚠️  Lifecycle hook script '{hook_path}' does not have executable permission. "
+                f"Automatically adding executable permission (chmod 0o755)."
+            )
+            hook_path.chmod(current_mode | 0o755)
+    except Exception as e:
+        logger.warning(f"Could not check or set executable permission on hook '{hook_path}': {e}")
 
     assert cwd.is_absolute(), f"Working directory '{cwd}' must be absolute."
 

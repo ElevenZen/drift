@@ -607,7 +607,13 @@ def handle_modification_non_interactive(
     """Processes a modification drift non-interactively."""
     if not has_conflict:
         if is_templated:
-            adopt_modification(src_file, patch_content)
+            has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
+            if has_content_hunks:
+                adopt_modification(src_file, patch_content)
+            try:
+                src_file.chmod(install_file.stat().st_mode)
+            except Exception:
+                pass
         else:
             shutil.copy2(install_file, src_file)
         return True
@@ -615,6 +621,10 @@ def handle_modification_non_interactive(
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into file: '{src_file.name}'")
             apply_source_patch(src_file, patch_content, accept_conflicts=True)
+            try:
+                src_file.chmod(install_file.stat().st_mode)
+            except Exception:
+                pass
             return True
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto file '{src_file.name}'. Skipping.")
@@ -641,7 +651,13 @@ def handle_modification_interactive(
             print("[3] Skip file")
             choice = input("Select option [1-3]: ").strip()
             if choice == "1":
-                adopt_modification(src_file, patch_content)
+                has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
+                if has_content_hunks:
+                    adopt_modification(src_file, patch_content)
+                try:
+                    src_file.chmod(install_file.stat().st_mode)
+                except Exception:
+                    pass
                 return True
             elif choice == "2":
                 return True
@@ -697,7 +713,7 @@ def handle_single_modification(
     """Handles drift reconciliation for a single file/template modification."""
     src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
     pkg_rel_path = Path(pkg) / rel_path
-    patch_content = generate_unified_patch(workspace_config.install_path, pkg_rel_path)
+    install_file = install_pkg_dir / rel_path
 
     if not src_file:
         # Symmetrically handle static file as an addition so the user has full choice in interactive mode.
@@ -705,8 +721,21 @@ def handle_single_modification(
                                       install_pkg_dir, rel_path, interactive)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
-    has_conflict = check_patch_conflicts(src_file, patch_content)
-    install_file = install_pkg_dir / rel_path
+    patch_content = generate_unified_patch(workspace_config.install_path, pkg_rel_path)
+
+    # Check if there are content diff hunks in the patch
+    has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
+
+    if not is_templated:
+        # Because the src folder is git clean, so we can safely overwrite.
+        # For static files, adopting simply overwrites src_file with install_file (including permissions)
+        has_conflict = False
+    elif not has_content_hunks:
+        # For templated files with only mode/permission changes, apply mode cleanly without patch conflict
+        has_conflict = False
+    else:
+        # For templated files with text changes, check if patch applies cleanly
+        has_conflict = check_patch_conflicts(src_file, patch_content)
 
     if not interactive:
         return handle_modification_non_interactive(
@@ -724,8 +753,12 @@ def adopt_single_package(
     interactive: bool = False,
     accept_conflicts: bool = False,
     dry_run: bool = False
-) -> None:
-    """Adopt drifts for a single package according to interactive or non-interactive choices."""
+) -> bool:
+    """Adopt drifts for a single package according to interactive or non-interactive choices.
+    
+    Returns True if all drifts in the package were resolved cleanly and can be committed;
+    returns False if any file was skipped or had unresolved conflicts.
+    """
     if not dry_run:
         # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
         subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
@@ -734,11 +767,13 @@ def adopt_single_package(
     
     if not additions and not deletions and not modifications and not renames:
         logger.info(f"✨ Package '{pkg}' has no drifts.")
-        return
+        if not dry_run:
+            subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
+        return True
 
     if dry_run:
         dry_run_adopt(workspace_config, pkg, additions, deletions, modifications, renames)
-        return
+        return True
 
     pkg_dir = workspace_config.source_path / pkg
     install_pkg_dir = workspace_config.install_path / pkg
@@ -782,10 +817,14 @@ def adopt_single_package(
     # Unstage any skipped/failed files so they remain as uncommitted local drift in install/
     if skipped_files:
         for rel_path in skipped_files:
+            rel_spec = (Path(pkg) / rel_path).as_posix()
             subprocess.run([
                 "git", "-C", str(workspace_config.install_path),
-                "restore", "--staged", "--", str(Path(pkg) / rel_path)
+                "restore", "--staged", "--", rel_spec
             ], capture_output=True)
+        return False
+
+    return True
 
 
 def run_primitive_adopt_drifts(
@@ -809,30 +848,26 @@ def run_primitive_adopt_drifts(
         check_source_cleanliness(workspace_config, pkg, force=force)
 
     # 3. Process each package
-    successfully_adopted = []
+    resolved_packages = []
     for pkg in package_names:
-        adopt_single_package(
+        is_resolved = adopt_single_package(
             workspace_config=workspace_config,
             pkg=pkg,
             interactive=interactive,
             accept_conflicts=accept_conflicts,
             dry_run=dry_run
         )
-        successfully_adopted.append(pkg)
+        if is_resolved:
+            resolved_packages.append(pkg)
 
-    # 4. Commit changes in install base if any files were discarded/staged
-    # (Since we run git add in install/ for discarding deletions or modifications, we commit them to lock state database)
-    if successfully_adopted and not dry_run:
-        # Check if there are uncommitted staged changes in install repo to commit
-        cmd = ["git", "-C", str(workspace_config.install_path), "status", "--porcelain"]
-        res = subprocess.run(cmd, capture_output=True, text=True)
-        if res.stdout.strip():
-            # Something was staged (discard/restore action)
-            from .git_utils import commit_repo_changes
-            commit_repo_changes(
-                repo_path=workspace_config.install_path,
-                commit_message=f"Adopt: Resolved and locked drifts for package(s) {', '.join(successfully_adopted)}",
-                repo_name="install repo"
-            )
+    # 4. Commit resolved packages in install base
+    if resolved_packages and not dry_run:
+        from .git_utils import commit_repo_changes
+        commit_repo_changes(
+            repo_path=workspace_config.install_path,
+            commit_message=f"Adopt: Resolved and locked drifts for package(s) {', '.join(resolved_packages)}",
+            target_pkgs=resolved_packages,
+            repo_name="install repo"
+        )
 
-    return successfully_adopted
+    return resolved_packages

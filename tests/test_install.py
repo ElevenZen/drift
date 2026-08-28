@@ -475,6 +475,36 @@ class TestInstallRepo(unittest.TestCase):
                 self.assertNotEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should NOT run with sudo when sudo=False")
                 self.assertEqual(called_cmd[0], str(hook_path))
 
+    def test_lifecycle_hook_non_executable_warns_and_chmods(self) -> None:
+        """Verifies that execute_hook_script logs a warning and adds execute permissions if missing."""
+        from unittest.mock import patch
+        from drift.lifecycle_hooks import execute_hook_script
+
+        pkg = "pkg_hook_perm"
+        pkg_install_dir = Path(self.install_dir) / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        hook_script = pkg_install_dir / "hook.sh"
+        hook_script.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+        hook_script.chmod(0o644)
+
+        config = PackageConfig(name=pkg)
+
+        with patch("drift.lifecycle_hooks.logger.warning") as mock_warn:
+            with patch("subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                execute_hook_script(
+                    hook_path=hook_script,
+                    pkg=pkg,
+                    hook_name="pre_install",
+                    metadata=config,
+                    cwd=Path(self.system_target_dir)
+                )
+                mock_warn.assert_called_once()
+                self.assertIn("does not have executable permission", mock_warn.call_args[0][0])
+                # Check that hook now has executable bit set
+                self.assertTrue(bool(hook_script.stat().st_mode & 0o111))
+
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
         """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_install_method in env."""
         from drift.install_repo import deploy_package_impl

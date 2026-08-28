@@ -571,6 +571,368 @@ class TestAdopt(unittest.TestCase):
             adopt_single_package(self.workspace_config, pkg, interactive=False)
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
+    def test_adopt_permission_only_drift_applies_cleanly(self) -> None:
+        """Verifies that adopting a file mode/permission drift updates source file permissions cleanly."""
+        pkg = "pkg_perm"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        src_script = src_pkg_dir / "script.sh"
+        src_script.write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
+        src_script.chmod(0o644)
+
+        install_script = pkg_install_dir / "script.sh"
+        install_script.write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
+        install_script.chmod(0o644)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src script"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init script"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Drift permissions in install/
+        install_script.chmod(0o755)
+
+        # Run adopt
+        run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+
+        # Source script should now have executable bit (0o755)
+        self.assertTrue(bool(src_script.stat().st_mode & 0o111))
+
+        # Check install/ git status - nothing should be staged
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        for line in res.stdout.splitlines():
+            if len(line) >= 2:
+                self.assertIn(line[0], [" ", "?"])
+
+    def test_adopt_conflict_leaves_file_unstaged_and_unresolved(self) -> None:
+        """Verifies that a patch conflict during adopt leaves the file as unresolved unstaged drift."""
+        pkg = "pkg_conflict"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a template in src/ and compiled version in install/
+        src_file = src_pkg_dir / "app.conf.envst"
+        src_file.write_text("TEMPLATE_VAR=$MY_VAR\nEXTRA_LINE=1\n", encoding="utf-8")
+
+        install_file = pkg_install_dir / "app.conf"
+        install_file.write_text("TEMPLATE_VAR=RENDERED_VALUE\nEXTRA_LINE=1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src app.conf"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init app.conf"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Record HEAD commit sha before adopt
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Modify install_file so that patch cannot apply cleanly to src_file template
+        install_file.write_text("CONFLICTING_MODIFICATION=VALUE\nEXTRA_LINE=999\n", encoding="utf-8")
+
+        # Run adopt
+        run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+
+        # HEAD commit in install/ repo MUST NOT have changed (install was not committed)
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # In install/ repo, the modified file must remain as an UNSTAGED drift (' M')
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(" M pkg_conflict/app.conf", res.stdout)
+        self.assertNotIn("M  pkg_conflict/app.conf", res.stdout)
+
+    def test_adopt_multi_package_commits_only_resolved_packages(self) -> None:
+        """Verifies that across multiple packages, only fully resolved packages are committed in install/ repo."""
+        pkg_clean = "pkg_clean"
+        pkg_conflict = "pkg_conflict_multi"
+
+        # Setup pkg_clean
+        src_clean = self.src_dir / pkg_clean
+        src_clean.mkdir(parents=True, exist_ok=True)
+        install_clean = self.install_dir / pkg_clean
+        install_clean.mkdir(parents=True, exist_ok=True)
+
+        (src_clean / "config.json").write_text('{"version": 1}', encoding="utf-8")
+        (install_clean / "config.json").write_text('{"version": 1}', encoding="utf-8")
+
+        # Setup pkg_conflict
+        src_conflict = self.src_dir / pkg_conflict
+        src_conflict.mkdir(parents=True, exist_ok=True)
+        install_conflict = self.install_dir / pkg_conflict
+        install_conflict.mkdir(parents=True, exist_ok=True)
+
+        (src_conflict / "server.conf.envst").write_text("HOST=$MY_HOST\nPORT=8080\n", encoding="utf-8")
+        (install_conflict / "server.conf").write_text("HOST=localhost\nPORT=8080\n", encoding="utf-8")
+
+        # Commit clean initial state in workspace and install
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init multi-pkg src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init multi-pkg install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Drift in install/
+        (install_clean / "config.json").write_text('{"version": 2}', encoding="utf-8")
+        (install_conflict / "server.conf").write_text("CONFLICTING_KEY=VALUE\nPORT=9999\n", encoding="utf-8")
+
+        # Run adopt across both packages
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg_clean, pkg_conflict], interactive=False)
+
+        # Only pkg_clean should be resolved
+        self.assertEqual(resolved, [pkg_clean])
+
+        # src/ for pkg_clean should be adopted
+        self.assertEqual((src_clean / "config.json").read_text(encoding="utf-8"), '{"version": 2}')
+        # src/ for pkg_conflict should be untouched
+        self.assertIn("HOST=$MY_HOST", (src_conflict / "server.conf.envst").read_text(encoding="utf-8"))
+
+        # In install/ repo:
+        # pkg_clean should be committed (not in status)
+        # pkg_conflict/server.conf should be UNSTAGED (' M')
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertNotIn(pkg_clean, res.stdout)
+        self.assertIn(f" M {pkg_conflict}/server.conf", res.stdout)
+        self.assertNotIn(f"M  {pkg_conflict}/server.conf", res.stdout)
+
+    def test_adopt_partial_conflict_in_single_package_unstages_and_skips_commit(self) -> None:
+        """Verifies that if one file in a package has a conflict, the entire package is un-staged and not committed."""
+        pkg = "pkg_partial"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "static_file.txt").write_text("static v1", encoding="utf-8")
+        (install_pkg / "static_file.txt").write_text("static v1", encoding="utf-8")
+
+        (src_pkg / "template_file.conf.envst").write_text("KEY=$VAL\nLINE=A\n", encoding="utf-8")
+        (install_pkg / "template_file.conf").write_text("KEY=RENDERED\nLINE=A\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init partial src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init partial install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Drift in install/: static_file is clean, template_file has conflict
+        (install_pkg / "static_file.txt").write_text("static v2", encoding="utf-8")
+        (install_pkg / "template_file.conf").write_text("CONFLICT=TRUE\nLINE=Z\n", encoding="utf-8")
+
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+
+        # Package was not fully resolved
+        self.assertEqual(resolved, [])
+
+        # HEAD commit in install/ did not change
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # Conflict file is UNSTAGED
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f" M {pkg}/template_file.conf", res.stdout)
+        self.assertNotIn(f"M  {pkg}/template_file.conf", res.stdout)
+
+    def test_adopt_permission_drift_on_templated_file_applies_cleanly(self) -> None:
+        """Verifies that a permission-only drift on a templated file adopts cleanly and commits."""
+        pkg = "pkg_template_perm"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        src_template = src_pkg / "template_script.sh.envst"
+        src_template.write_text("#!/bin/bash\nexport THEME=$THEME_NAME\n", encoding="utf-8")
+        src_template.chmod(0o644)
+
+        install_script = install_pkg / "template_script.sh"
+        install_script.write_text("#!/bin/bash\nexport THEME=Dark\n", encoding="utf-8")
+        install_script.chmod(0o644)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init template perm src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init template perm install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Drift mode to 0o755 in install/
+        install_script.chmod(0o755)
+
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+
+        # Package must be resolved cleanly
+        self.assertEqual(resolved, [pkg])
+
+        # Source template file must now have executable bit set
+        self.assertTrue(bool(src_template.stat().st_mode & 0o111))
+
+        # install/ repo should be committed and clean
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertEqual(res.stdout.strip(), "")
+
+    def test_adopt_interactive_skip_unstages_file_and_skips_commit(self) -> None:
+        """Verifies that choosing Skip in interactive mode unstages the file and skips commit in install/."""
+        from unittest.mock import patch
+
+        pkg = "pkg_interactive_skip"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "notes.txt").write_text("notes v1", encoding="utf-8")
+        (install_pkg / "notes.txt").write_text("notes v1", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init notes src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init notes install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Drift in install/
+        (install_pkg / "notes.txt").write_text("notes v2", encoding="utf-8")
+
+        # Mock input to choose [3] Skip file
+        with patch("builtins.input", return_value="3"):
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+
+        self.assertEqual(resolved, [])
+
+        # HEAD commit in install/ did not advance
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # File remains as UNSTAGED drift in install/
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f" M {pkg}/notes.txt", res.stdout)
+        self.assertNotIn(f"M  {pkg}/notes.txt", res.stdout)
+
+    def test_adopt_skipped_addition_stays_unstaged_in_install_repo(self) -> None:
+        """Verifies that an untracked addition that is skipped remains as untracked ('??') and unstaged."""
+        from unittest.mock import patch
+
+        pkg = "pkg_add_skip"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "base.txt").write_text("base", encoding="utf-8")
+        (install_pkg / "base.txt").write_text("base", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init add skip src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init add skip install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Add new untracked file in install/
+        (install_pkg / "wild_addition.txt").write_text("wild content", encoding="utf-8")
+
+        # Interactive choose [4] Skip file
+        with patch("builtins.input", return_value="4"):
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+
+        self.assertEqual(resolved, [])
+
+        # install/ repo HEAD did not advance
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # File is untracked '??', NOT staged 'A '
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f"?? {pkg}/wild_addition.txt", res.stdout)
+        self.assertNotIn(f"A  {pkg}/wild_addition.txt", res.stdout)
+
+    def test_adopt_skipped_deletion_stays_unstaged_in_install_repo(self) -> None:
+        """Verifies that a deletion that is skipped remains as unstaged deletion (' D') and not staged ('D ')."""
+        from unittest.mock import patch
+
+        pkg = "pkg_del_skip"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "delete_me.txt").write_text("del content", encoding="utf-8")
+        (install_pkg / "delete_me.txt").write_text("del content", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init del skip src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init del skip install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Delete file in install/
+        (install_pkg / "delete_me.txt").unlink()
+
+        # Interactive choose [3] Skip file
+        with patch("builtins.input", return_value="3"):
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+
+        self.assertEqual(resolved, [])
+
+        # install/ repo HEAD did not advance
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # File is unstaged deletion ' D', NOT staged 'D '
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f" D {pkg}/delete_me.txt", res.stdout)
+        self.assertNotIn(f"D  {pkg}/delete_me.txt", res.stdout)
+
+    def test_adopt_interactive_conflict_skip_stays_unstaged(self) -> None:
+        """Verifies that choosing Skip on a conflicted template in interactive mode leaves the file unstaged (' M')."""
+        from unittest.mock import patch
+
+        pkg = "pkg_conflict_interactive"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "service.conf.envst").write_text("PORT=$MY_PORT\nKEY=ABC\n", encoding="utf-8")
+        (install_pkg / "service.conf").write_text("PORT=8000\nKEY=ABC\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conflict interactive src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init conflict interactive install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+
+        # Conflicting modification in install/
+        (install_pkg / "service.conf").write_text("COMPLETELY_DIFFERENT=999\nOTHER=ZZZ\n", encoding="utf-8")
+
+        # Interactive choose [5] Skip file
+        with patch("builtins.input", return_value="5"):
+            resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
+
+        self.assertEqual(resolved, [])
+
+        # install/ repo HEAD did not advance
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+        # File is unstaged modification ' M', NOT staged 'M '
+        res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn(f" M {pkg}/service.conf", res.stdout)
+        self.assertNotIn(f"M  {pkg}/service.conf", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
