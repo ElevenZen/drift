@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import re
 import shlex
+import tempfile
 from pathlib import Path
 from typing import Optional, Union, List, Any
 
@@ -400,21 +401,87 @@ unlock_file_if_windows = unlock_file_or_dir_if_windows
 clear_readonly_attribute = unlock_file_or_dir_if_windows
 
 
+def atomic_copy_symlink(src: Path, dst: Path) -> None:
+    """Atomically copies/recreates a symlink from src to dst using a temporary sibling link."""
+    dst_parent = dst.parent
+    dst_parent.mkdir(parents=True, exist_ok=True)
+    unlock_file_or_dir_if_windows(dst)
+
+    link_target = os.readlink(src)
+    fd, temp_name = tempfile.mkstemp(dir=dst_parent, prefix=f".tmp_{dst.name}_")
+    os.close(fd)
+    temp_path = Path(temp_name)
+    try:
+        temp_path.unlink()
+        temp_path.symlink_to(link_target)
+        unlock_file_or_dir_if_windows(dst)
+        os.replace(temp_path, dst)
+    finally:
+        if temp_path.exists() or temp_path.is_symlink():
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
+
+def atomic_copy_file(
+    src: Path,
+    dst: Path,
+    line_ending: LineEnding = LineEnding.PRESERVE,
+    follow_symlinks: bool = True
+) -> None:
+    """Atomically copies a single file from src to dst using a temporary sibling file and atomic replacement.
+
+    Guarantees destination is never left in a truncated, empty, or partially-written state.
+    On POSIX, os.replace performs an atomic directory inode pointer swap (rename(2)).
+    On Windows, clears read-only attributes before replacement.
+    """
+    dst_parent = dst.parent
+    dst_parent.mkdir(parents=True, exist_ok=True)
+    unlock_file_or_dir_if_windows(dst)
+
+    if not follow_symlinks and src.is_symlink():
+        atomic_copy_symlink(src, dst)
+        return
+
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=dst_parent, prefix=f".tmp_{dst.name}_", delete=False) as tf:
+            temp_path = Path(tf.name)
+
+        if line_ending != LineEnding.PRESERVE and not is_binary_file(src):
+            raw_bytes = src.read_bytes()
+            converted = normalize_newlines_bytes(raw_bytes, line_ending=line_ending)
+            temp_path.write_bytes(converted)
+            try:
+                shutil.copymode(src, temp_path, follow_symlinks=follow_symlinks)
+            except Exception:
+                pass
+        else:
+            shutil.copy2(src, temp_path, follow_symlinks=follow_symlinks)
+
+        unlock_file_or_dir_if_windows(dst)
+        os.replace(temp_path, dst)
+    finally:
+        if temp_path and (temp_path.exists() or temp_path.is_symlink()):
+            try:
+                temp_path.unlink()
+            except Exception:
+                pass
+
+
 def backup_and_delete_one_file(
     file_path: Path,
     backup_dest: Path,
     limit_dir: Optional[Path] = None
 ) -> None:
-    """Backs up a file to backup_dest, deletes it, and cleans up empty parent directories up to limit_dir."""
+    """Backs up a file to backup_dest atomically, deletes it, and cleans up empty parent directories up to limit_dir."""
     if not file_path.exists():
         return
 
-    # Safely remove backup_dest if it already exists, to avoid conflicts.
     unlock_file_or_dir_if_windows(backup_dest)
-    remove_file_or_dir(backup_dest)
-
     backup_dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(file_path, backup_dest)
+    atomic_copy_file(file_path, backup_dest)
     unlock_file_or_dir_if_windows(file_path)
     remove_file_or_dir(file_path)
     if limit_dir:
@@ -449,7 +516,7 @@ def copy_or_move_file_or_dir_external(
             if src.is_dir() and not src.is_symlink():
                 shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
             else:
-                shutil.copy2(str(src), str(dst), follow_symlinks=resolve_symlinks)
+                atomic_copy_file(src, dst, follow_symlinks=resolve_symlinks)
         return
 
     if move and not resolve_symlinks:
@@ -549,37 +616,37 @@ def write_file_contents_with_sudo(
     sudo: bool = False,
     permission: Optional[int] = None
 ) -> None:
-    """Writes string or bytes content to dst file with directory creation, sudo handling, and permission setting."""
+    """Writes string or bytes content to dst file atomically with directory creation, sudo handling, and permission setting."""
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     unlock_file_or_dir_if_windows(dst)
-    remove_file_or_dir_with_sudo(dst, sudo)
 
-    if sys.platform == "win32" or not sudo:
-        if isinstance(content, str):
-            dst.write_text(content, encoding="utf-8")
-        else:
-            dst.write_bytes(content)
-        if permission is not None:
-            try:
-                dst.chmod(permission)
-            except Exception:
-                pass
-    else:
-        import tempfile
-        with tempfile.NamedTemporaryFile(delete=False) as tf:
+    temp_dir = dst.parent if not sudo else None
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=temp_dir, prefix=f".tmp_{dst.name}_", delete=False) as tf:
             temp_path = Path(tf.name)
             if isinstance(content, str):
                 tf.write(content.encode("utf-8"))
             else:
                 tf.write(content)
-        try:
-            if permission is not None:
+        if permission is not None:
+            try:
                 temp_path.chmod(permission)
-            cmd = ["cp", "-p", str(temp_path), str(dst)]
+            except Exception:
+                pass
+        if sys.platform == "win32" or not sudo:
+            unlock_file_or_dir_if_windows(dst)
+            os.replace(temp_path, dst)
+        else:
+            # POSIX with sudo: mv -f performs atomic replacement (rename)
+            cmd = ["mv", "-f", str(temp_path), str(dst)]
             run_sudo_command(cmd, sudo=True)
-        finally:
-            if temp_path.exists():
+    finally:
+        if temp_path and (temp_path.exists() or temp_path.is_symlink()):
+            try:
                 temp_path.unlink()
+            except Exception:
+                pass
 
 
 def copy_file_contents_with_sudo(
@@ -588,26 +655,28 @@ def copy_file_contents_with_sudo(
     sudo: bool = False,
     line_ending: LineEnding = LineEnding.PRESERVE
 ) -> None:
-    """Copies a physical file from src to dst, with sudo on POSIX if requested, or shutil on Windows.
+    """Copies a physical file atomically from src to dst, with sudo on POSIX if requested.
 
     If line_ending is not LineEnding.PRESERVE and src is a text file, translates newlines.
     """
     ensure_dir_exists_with_sudo(dst.parent, sudo)
-    # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
     unlock_file_or_dir_if_windows(dst)
-    remove_file_or_dir_with_sudo(dst, sudo)
 
+    if sys.platform == "win32" or not sudo:
+        atomic_copy_file(src, dst, line_ending=line_ending)
+        return
+
+    # POSIX system and sudo
     if line_ending != LineEnding.PRESERVE and not is_binary_file(src):
         raw_bytes = src.read_bytes()
         converted = normalize_newlines_bytes(raw_bytes, line_ending=line_ending)
         perm = src.stat().st_mode if src.exists() else None
-        write_file_contents_with_sudo(dst, converted, sudo=sudo, permission=perm)
-    else:
-        if sys.platform == "win32" or not sudo:
-            shutil.copy2(src, dst)
-        else:
-            cmd = ["cp", "-p", str(src), str(dst)]
-            run_sudo_command(cmd, sudo=True)
+        write_file_contents_with_sudo(dst, converted, sudo=True, permission=perm)
+        return
+
+    # For privileged destinations on POSIX, copy using elevated 'cp -p' command
+    cmd = ["cp", "-p", str(src), str(dst)]
+    run_sudo_command(cmd, sudo=True)
 
 
 def sync_broken_symlink(src: Path, dst: Path) -> None:

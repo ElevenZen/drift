@@ -12,6 +12,7 @@ from .file_utils import (
     translate_dot_prefixes_reverse,
     is_relative_to,
     resolve_system_target,
+    atomic_copy_file,
 )
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore
@@ -144,7 +145,7 @@ def run_primitive_11_add_resources(
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_on_system, dest_path)
+        atomic_copy_file(src_on_system, dest_path)
 
     if dry_run:
         return

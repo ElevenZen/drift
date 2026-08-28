@@ -15,7 +15,7 @@ from .git_utils import (
     is_git_tracked,
     run_command
 )
-from .file_utils import remove_file_or_dir
+from .file_utils import remove_file_or_dir, atomic_copy_file
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +175,7 @@ def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None
     """Copies a wild host-side added file into the declarative source folder."""
     dest = pkg_dir / rel_path
     dest.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(install_pkg_dir / rel_path, dest)
+    atomic_copy_file(install_pkg_dir / rel_path, dest)
 
 
 def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
@@ -280,8 +280,8 @@ def adopt_rename(
 def fallback_over_render(src_file: Path, static_file: Path) -> None:
     """Backs up the original template to .bak and overwrites it with static file content (freezing template)."""
     bak_file = src_file.with_suffix(src_file.suffix + ".bak")
-    shutil.copy2(src_file, bak_file)
-    shutil.copy2(static_file, src_file)
+    atomic_copy_file(src_file, bak_file)
+    atomic_copy_file(static_file, src_file)
     logger.warning(f"⚠️  [FREEZE] Overwrote template '{src_file.name}' with static content. Original template backed up to '{bak_file.name}'.")
 
 
@@ -610,7 +610,7 @@ def handle_modification_non_interactive(
             except Exception:
                 pass
         else:
-            shutil.copy2(install_file, src_file)
+            atomic_copy_file(install_file, src_file)
         return True
     else:
         if accept_conflicts:
@@ -666,7 +666,7 @@ def handle_modification_interactive(
             print("[3] Skip file")
             choice = input("Select option [1-3]: ").strip()
             if choice == "1":
-                shutil.copy2(install_file, src_file)
+                atomic_copy_file(install_file, src_file)
                 return True
             elif choice == "2":
                 return True

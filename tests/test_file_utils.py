@@ -690,6 +690,37 @@ class TestFileUtils(unittest.TestCase):
         self.assertFalse(target_file.exists())
         self.assertFalse(target_dir.exists())
 
+    def test_atomic_copy_file(self) -> None:
+        from drift.file_utils import atomic_copy_file, LineEnding
+        src = self.root / "source.txt"
+        dst = self.root / "dest_dir" / "dest.txt"
+        src.write_text("hello atomic copy", encoding="utf-8")
+
+        # 1. Normal atomic copy to new destination
+        atomic_copy_file(src, dst)
+        self.assertTrue(dst.exists())
+        self.assertEqual(dst.read_text(encoding="utf-8"), "hello atomic copy")
+
+        # 2. Overwrite existing file atomically
+        src.write_text("updated atomic copy", encoding="utf-8")
+        atomic_copy_file(src, dst)
+        self.assertEqual(dst.read_text(encoding="utf-8"), "updated atomic copy")
+
+        # 3. Copy with CRLF normalization
+        src_crlf = self.root / "crlf.txt"
+        src_crlf.write_bytes(b"line1\r\nline2\r\n")
+        dst_lf = self.root / "dest_dir" / "dest_lf.txt"
+        atomic_copy_file(src_crlf, dst_lf, line_ending=LineEnding.LF)
+        self.assertEqual(dst_lf.read_bytes(), b"line1\nline2\n")
+
+        # 4. Copy symlink without following
+        symlink_src = self.root / "sym_src.txt"
+        symlink_src.symlink_to(src)
+        dst_sym = self.root / "dest_dir" / "dest_sym.txt"
+        atomic_copy_file(symlink_src, dst_sym, follow_symlinks=False)
+        self.assertTrue(dst_sym.is_symlink())
+        self.assertEqual(os.readlink(dst_sym), str(src))
+
 
 if __name__ == "__main__":
     unittest.main()

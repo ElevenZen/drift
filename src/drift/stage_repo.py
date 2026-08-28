@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_rendered, PackageConfig
-from .file_utils import file_contents_differ, backup_and_delete_one_file, remove_file_or_dir
+from .file_utils import file_contents_differ, backup_and_delete_one_file, remove_file_or_dir, atomic_copy_file
 from .folder_diff import compare_folders
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
@@ -146,7 +146,7 @@ def process_package_changes(
             continue
         logger.info(f"📦 Adding: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        atomic_copy_file(src, dst)
 
     # C. Process Modifications
     for rel_file in all_diff.modified:
@@ -157,7 +157,7 @@ def process_package_changes(
             continue
         logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        atomic_copy_file(src, dst)
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
     copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
@@ -174,7 +174,7 @@ def copy_ignore_and_config_files(
     if render_ignore.is_file():
         install_ignore = install_pkg_dir / DRIFT_IGNORE_FILE_NAME
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(render_ignore, install_ignore)
+        atomic_copy_file(render_ignore, install_ignore)
 
     # 2. Create physical .stow-local-ignore
     create_stow_ignore_file(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
@@ -186,7 +186,7 @@ def copy_ignore_and_config_files(
         
     install_config = install_pkg_dir / PACKAGE_CONFIG_FILE_NAME
     install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(render_config, install_config)
+    atomic_copy_file(render_config, install_config)
 
 
 def run_primitive_4_stage_render_to_install(

@@ -18,7 +18,7 @@ from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
 from .lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
 from .result_models import PackageRenderResult, RenderResult
-from .file_utils import remove_file_or_dir
+from .file_utils import remove_file_or_dir, atomic_copy_file
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +62,7 @@ def render_or_copy_file(
         logger.info(f"📄 Copying: {relative_path}")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file_path, dest_path)
+        atomic_copy_file(file_path, dest_path)
         return (relative_path.as_posix(), False)
 
 
@@ -102,7 +102,7 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
             )
         dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(correct_path, dest_correct)
+        atomic_copy_file(correct_path, dest_correct)
     elif misspelled_path.is_file():
         logger.warning(
             f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
@@ -110,7 +110,7 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
         )
         dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(misspelled_path, dest_correct)
+        atomic_copy_file(misspelled_path, dest_correct)
 
 
 def render_package_files(
