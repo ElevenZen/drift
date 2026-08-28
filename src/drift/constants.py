@@ -172,8 +172,8 @@ DEFAULT_SECRETS_ENV_CONTENT = (
 DEFAULT_ENVSUBST_BASH_CONTENT = (
     "#!/bin/bash\n"
     "# Propagates variables defined in the workspace config [env] section\n"
-    "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-default-theme}\"\n"
-    "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-default-editor}\"\n"
+    "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-UnixDefaultTheme}\"\n"
+    "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-UnixDefaultEditor}\"\n"
 )
 
 DEFAULT_MUSTACHE_ENVST_JSON_CONTENT = json.dumps({

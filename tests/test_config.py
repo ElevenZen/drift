@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 from typing import cast, Any
 from drift.constants import (
@@ -533,6 +534,21 @@ class TestConfigClasses(unittest.TestCase):
             package_warn_messages = [call[0][0] for call in mock_package_warn.call_args_list]
             self.assertTrue(any("Unknown top-level package config section: 'another_unknown_top_section'" in msg for msg in package_warn_messages))
             self.assertTrue(any("Unknown package option: 'unknown_pkg_opt'" in msg for msg in package_warn_messages))
+
+    def test_package_config_get_install_method(self) -> None:
+        ws_config = WorkspaceConfig(
+            drift_root_path=Path("/test"),
+            default_install_method="stow",
+        )
+        pkg_config = PackageConfig(name="test_pkg", install_method="stow")
+
+        # On non-Windows, returns stow
+        with patch("sys.platform", "linux"):
+            self.assertEqual(pkg_config.get_install_method(ws_config), "stow")
+
+        # On Windows (win32), always forces copy
+        with patch("sys.platform", "win32"):
+            self.assertEqual(pkg_config.get_install_method(ws_config), "copy")
 
 
 class TestConfigLoaders(unittest.TestCase):

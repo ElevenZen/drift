@@ -2,6 +2,7 @@
 
 import logging
 import os
+import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -393,6 +394,8 @@ class PackageConfig:
         return (self.target_directory or workspace_config.default_target_path).expanduser()
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
+        if sys.platform == "win32":
+            return "copy"
         return self.install_method or workspace_config.default_install_method
 
     def load_package_envs(
