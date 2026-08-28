@@ -579,6 +579,84 @@ class TestFileUtils(unittest.TestCase):
         with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=True):
             check_sudo_privilege(sudo_required=True)
 
+    def test_is_binary_file(self) -> None:
+        from drift.file_utils import is_binary_file
+
+        text_file = self.root / "sample.txt"
+        text_file.write_text("Hello world!\nLine 2\n", encoding="utf-8")
+        self.assertFalse(is_binary_file(text_file))
+
+        bin_file = self.root / "sample.bin"
+        bin_file.write_bytes(b"\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00")
+        self.assertTrue(is_binary_file(bin_file))
+
+    def test_normalize_newlines_bytes(self) -> None:
+        from drift.file_utils import normalize_newlines_bytes
+        from drift.constants import LineEnding
+
+        # to CRLF
+        raw_lf = b"line1\nline2\nline3"
+        self.assertEqual(normalize_newlines_bytes(raw_lf, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
+
+        # to CRLF idempotent with existing CRLF
+        mixed = b"line1\r\nline2\nline3"
+        self.assertEqual(normalize_newlines_bytes(mixed, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
+
+        # to LF
+        crlf = b"line1\r\nline2\r\nline3"
+        self.assertEqual(normalize_newlines_bytes(crlf, line_ending=LineEnding.LF), b"line1\nline2\nline3")
+
+        # PRESERVE
+        self.assertEqual(normalize_newlines_bytes(raw_lf, line_ending=LineEnding.PRESERVE), raw_lf)
+
+    def test_write_file_contents_with_sudo(self) -> None:
+        from drift.file_utils import write_file_contents_with_sudo
+
+        target_file = self.root / "nested" / "dir" / "out.txt"
+        write_file_contents_with_sudo(target_file, "text content", sudo=False, permission=0o755)
+
+        self.assertTrue(target_file.is_file())
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "text content")
+        self.assertTrue(bool(target_file.stat().st_mode & 0o111))
+
+    def test_copy_file_contents_with_sudo_crlf_translation(self) -> None:
+        from drift.file_utils import copy_file_contents_with_sudo
+        from drift.constants import LineEnding
+
+        # 1. Text file: LF -> CRLF
+        src_text = self.root / "src_text.txt"
+        src_text.write_bytes(b"hello\nworld\n")
+        dst_crlf = self.root / "dst_crlf.txt"
+        copy_file_contents_with_sudo(src_text, dst_crlf, sudo=False, line_ending=LineEnding.CRLF)
+        self.assertEqual(dst_crlf.read_bytes(), b"hello\r\nworld\r\n")
+
+        # 2. Text file: CRLF -> LF
+        dst_lf = self.root / "dst_lf.txt"
+        copy_file_contents_with_sudo(dst_crlf, dst_lf, sudo=False, line_ending=LineEnding.LF)
+        self.assertEqual(dst_lf.read_bytes(), b"hello\nworld\n")
+
+        # 3. Binary file: remains byte-identical regardless of line_ending
+        src_bin = self.root / "src.bin"
+        src_bin.write_bytes(b"data\x00with\nnulls\r\n")
+        dst_bin = self.root / "dst.bin"
+        copy_file_contents_with_sudo(src_bin, dst_bin, sudo=False, line_ending=LineEnding.CRLF)
+        self.assertEqual(dst_bin.read_bytes(), b"data\x00with\nnulls\r\n")
+
+    def test_file_contents_differ_convert_line_endings(self) -> None:
+        from drift.file_utils import file_contents_differ
+
+        f1 = self.root / "f1.txt"
+        f2 = self.root / "f2.txt"
+
+        f1.write_bytes(b"line1\nline2\n")
+        f2.write_bytes(b"line1\r\nline2\r\n")
+
+        # convert_line_endings=True: they match
+        self.assertFalse(file_contents_differ(f1, f2, convert_line_endings=True))
+
+        # convert_line_endings=False: they differ
+        self.assertTrue(file_contents_differ(f1, f2, convert_line_endings=False))
+
 
 if __name__ == "__main__":
     unittest.main()

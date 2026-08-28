@@ -84,9 +84,14 @@ class TestAdopt(unittest.TestCase):
             packages_enable={},
             render_engine_config = {"envsubst": env_engine}
         )
-        
+
+        from unittest.mock import patch
+        from io import StringIO
+        self.stdout_patcher = patch("sys.stdout", StringIO())
+        self.stdout_patcher.start()
 
     def tearDown(self) -> None:
+        self.stdout_patcher.stop()
         self.temp_dir.cleanup()
 
     def test_get_drifted_packages(self) -> None:

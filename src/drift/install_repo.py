@@ -13,7 +13,7 @@ from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_package_config_rendered
-from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME
+from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME, LineEnding
 from .exceptions import CollisionError
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
@@ -364,7 +364,12 @@ def deploy_single_copy_file(
     """Helper to deploy a single file using Copy method."""
     src_file = install_pkg_dir / rel_file
     system_target = resolve_system_target(rel_file, target_dir)
-    copy_file_contents_with_sudo(src_file, system_target, sudo)
+    copy_file_contents_with_sudo(
+        src_file,
+        system_target,
+        sudo,
+        line_ending=(LineEnding.CRLF if sys.platform == "win32" else LineEnding.PRESERVE)
+    )
 
 
 def delete_single_system_file(

@@ -248,8 +248,37 @@ def compute_file_hash(file_path: Path) -> str:
     return h.hexdigest()
 
 
-def file_contents_differ(file1: Path, file2: Path) -> bool:
-    """Returns True if the contents of file1 and file2 differ using stream comparison."""
+from .constants import LineEnding, LineEndings
+
+
+def is_binary_file(file_path: Path) -> bool:
+    """Detects whether a file is binary by scanning for null bytes in the first 8KB."""
+    try:
+        with file_path.open("rb") as f:
+            chunk = f.read(8192)
+            return b"\x00" in chunk
+    except Exception:
+        return False
+
+
+def normalize_newlines_bytes(content: bytes, line_ending: LineEnding = LineEnding.LF) -> bytes:
+    """Translates newlines between LF, CRLF, or PRESERVE at the byte level.
+    
+    Preserves raw encoding and special characters without Unicode decoding errors.
+    """
+    if line_ending == LineEnding.CRLF:
+        return content.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    elif line_ending == LineEnding.LF:
+        return content.replace(b"\r\n", b"\n")
+    else:
+        return content
+
+
+def file_contents_differ(file1: Path, file2: Path, convert_line_endings: Optional[bool] = None) -> bool:
+    """Returns True if the contents of file1 and file2 differ using stream comparison.
+    
+    If convert_line_endings is True (default on Windows), ignores LF vs CRLF line ending differences on text files.
+    """
     if not file1.exists() and not file2.exists():
         return False
     if not file1.exists() or not file2.exists():
@@ -258,13 +287,33 @@ def file_contents_differ(file1: Path, file2: Path) -> bool:
         raise ValueError("Both paths must be files for content comparison.")
     if file1.resolve() == file2.resolve():
         return False
-    if file1.stat().st_size != file2.stat().st_size:
-        return True
-    with file1.open("rb") as f1, file2.open("rb") as f2:
-        for chunk1, chunk2 in zip(iter(lambda: f1.read(65536), b""), iter(lambda: f2.read(65536), b"")):
-            if chunk1 != chunk2:
+
+    if convert_line_endings is None:
+        convert_line_endings = (sys.platform == "win32")
+
+    if convert_line_endings:
+        # If either file is binary, compare byte sizes and stream chunks
+        if is_binary_file(file1) or is_binary_file(file2):
+            if file1.stat().st_size != file2.stat().st_size:
                 return True
-    return False
+            with file1.open("rb") as f1, file2.open("rb") as f2:
+                for chunk1, chunk2 in zip(iter(lambda: f1.read(65536), b""), iter(lambda: f2.read(65536), b"")):
+                    if chunk1 != chunk2:
+                        return True
+            return False
+        else:
+            # Text files: compare LF-normalized bytes
+            b1 = normalize_newlines_bytes(file1.read_bytes(), line_ending=LineEnding.LF)
+            b2 = normalize_newlines_bytes(file2.read_bytes(), line_ending=LineEnding.LF)
+            return b1 != b2
+    else:
+        if file1.stat().st_size != file2.stat().st_size:
+            return True
+        with file1.open("rb") as f1, file2.open("rb") as f2:
+            for chunk1, chunk2 in zip(iter(lambda: f1.read(65536), b""), iter(lambda: f2.read(65536), b"")):
+                if chunk1 != chunk2:
+                    return True
+        return False
 
 
 def rmdir_parents(dir_path: Path, limit_dir: Path) -> None:
@@ -449,16 +498,69 @@ def create_symlink_manually_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
         run_sudo_command(cmd, sudo=True)
 
 
-def copy_file_contents_with_sudo(src: Path, dst: Path, sudo: bool) -> None:
-    """Copies a physical file from src to dst, with sudo on POSIX if requested, or shutil on Windows."""
+def write_file_contents_with_sudo(
+    dst: Path,
+    content: Union[str, bytes],
+    sudo: bool = False,
+    permission: Optional[int] = None
+) -> None:
+    """Writes string or bytes content to dst file with directory creation, sudo handling, and permission setting."""
+    ensure_dir_exists_with_sudo(dst.parent, sudo)
+    remove_file_or_dir_with_sudo(dst, sudo)
+
+    if sys.platform == "win32" or not sudo:
+        if isinstance(content, str):
+            dst.write_text(content, encoding="utf-8")
+        else:
+            dst.write_bytes(content)
+        if permission is not None:
+            try:
+                dst.chmod(permission)
+            except Exception:
+                pass
+    else:
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False) as tf:
+            temp_path = Path(tf.name)
+            if isinstance(content, str):
+                tf.write(content.encode("utf-8"))
+            else:
+                tf.write(content)
+        try:
+            if permission is not None:
+                temp_path.chmod(permission)
+            cmd = ["cp", "-p", str(temp_path), str(dst)]
+            run_sudo_command(cmd, sudo=True)
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+
+def copy_file_contents_with_sudo(
+    src: Path,
+    dst: Path,
+    sudo: bool = False,
+    line_ending: LineEnding = LineEnding.PRESERVE
+) -> None:
+    """Copies a physical file from src to dst, with sudo on POSIX if requested, or shutil on Windows.
+
+    If line_ending is not LineEnding.PRESERVE and src is a text file, translates newlines.
+    """
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     # remove ensure copy won't be contaminated by existing symlink, read-only file or directory.
     remove_file_or_dir_with_sudo(dst, sudo)
-    if sys.platform == "win32" or not sudo:
-        shutil.copy2(src, dst)
+
+    if line_ending != LineEnding.PRESERVE and not is_binary_file(src):
+        raw_bytes = src.read_bytes()
+        converted = normalize_newlines_bytes(raw_bytes, line_ending=line_ending)
+        perm = src.stat().st_mode if src.exists() else None
+        write_file_contents_with_sudo(dst, converted, sudo=sudo, permission=perm)
     else:
-        cmd = ["cp", "-p", str(src), str(dst)]
-        run_sudo_command(cmd, sudo=True)
+        if sys.platform == "win32" or not sudo:
+            shutil.copy2(src, dst)
+        else:
+            cmd = ["cp", "-p", str(src), str(dst)]
+            run_sudo_command(cmd, sudo=True)
 
 
 def sync_broken_symlink(src: Path, dst: Path) -> None:

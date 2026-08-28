@@ -1,5 +1,4 @@
-"""High-level synchronization and backup operations using FolderDiff."""
-
+import sys
 import logging
 import shutil
 from pathlib import Path
@@ -10,10 +9,11 @@ from .file_utils import (
     remove_file_or_dir,
     remove_file_or_dir_with_sudo,
     copy_or_move_file_or_dir_external,
+    copy_file_contents_with_sudo,
     sync_broken_symlink,
     run_command,
 )
-from .constants import MANAGED_CONFIG_FILES
+from .constants import MANAGED_CONFIG_FILES, LineEnding
 from .ignore import DriftIgnore
 
 
@@ -60,7 +60,12 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Drif
             logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
             remove_file_or_dir(target_dst)
             target_dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target_src, target_dst)
+            copy_file_contents_with_sudo(
+                target_src,
+                target_dst,
+                sudo=False,
+                line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
+            )
 
 
 def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolve_symlinks: bool = True) -> None:

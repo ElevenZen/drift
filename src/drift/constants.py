@@ -17,6 +17,19 @@ INTERNAL_RENDER_COMMAND = "internal"
 MANAGED_CONFIG_FILES = [PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME, *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST]
 
 
+from enum import Enum, IntEnum
+
+
+class LineEnding(str, Enum):
+    """Line ending modes for text files."""
+    LF = "lf"
+    CRLF = "crlf"
+    PRESERVE = "preserve"
+
+
+LineEndings = LineEnding
+
+
 class ExitCode(IntEnum):
     """Standardized exit codes for the Drift CLI and automated pipeline integration."""
     SUCCESS = 0
