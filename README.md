@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-406%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-451%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -26,41 +26,28 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 ## 📦 Installation & Packaging
 
-Drift requires **Python 3.8+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support). Choose the method that best fits your environment:
+Drift requires **Python 3.8+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support).
 
-### 1. ⚡ Quick Shell Wrapper Installer (*Recommended for restricted machines without `pip` access*)
-If you are on a machine without `pip`/`pipx` access, but have cloned or downloaded the Drift source repository, use the built-in installer to create a standalone executable wrapper in `~/.local/bin/drift`:
+### 1. ⚡ Shell Wrapper Installer (**Strongly Recommended**)
+
+> [!TIP]
+> **Why the Shell Wrapper is the Best Way to Install Drift**:  
+> Drift is currently under rapid active development. Because development builds do not constantly bump the version number in `pyproject.toml`, package managers like `pipx` or `uv tool` will cache previous builds and refuse to update or re-install when pointing to an unbumped version number.  
+>  
+> The **Shell Wrapper** sets up a lightweight executable launcher in `~/.local/bin/drift` that directly delegates to your local repository source code (`src/`). Any `git pull` updates, bug fixes, or new features are **immediately active without requiring reinstallation or manual version bumps!**
+
+To install the wrapper, clone the repository and run:
 ```bash
+git clone https://github.com/ElevenZen/drift.git
+cd drift
 ./script/shell_wrapper_installer.bash
 ```
 *   Pass `--force` (`-f`) to overwrite an existing wrapper.
 *   Pass `--dir <path>` (`-d`) to install into a custom directory.
 
-### 2. 🐍 Python Package Managers (`pipx`, `uv`, or `pip`)
+---
 
-#### A. Isolated Global CLI via `pipx` or `uv tool` (*Recommended*)
-Install Drift into an isolated environment and place it directly into your `$PATH`:
-```bash
-# Core standard-library mode (zero external dependencies)
-pipx install git+https://github.com/ElevenZen/drift.git
-
-# Or with uv:
-uv tool install git+https://github.com/ElevenZen/drift.git
-
-# With enhanced Rich console UI:
-pipx install "git+https://github.com/ElevenZen/drift.git#egg=drift[rich]"
-```
-
-#### B. Standard `pip install`
-Install locally or from a Git repository via `pip`:
-```bash
-pip install --user git+https://github.com/ElevenZen/drift.git
-
-# Or from a cloned local repository:
-pip install --user .
-```
-
-### 3. 📦 Standalone Executable (`zipapp`) & Release Artifacts
+### 2. 📦 Standalone Executable (`zipapp`) & Release Artifacts
 Because Drift is self-contained with pure standard library support, it can be packaged into a single portable binary file with Python's built-in `zipapp`:
 
 #### Automated Build & Verification Pipeline
@@ -90,6 +77,35 @@ chmod +x drift
 
 # Move to your PATH or copy to remote servers
 mv drift ~/.local/bin/
+```
+
+---
+
+### 3. 🐍 Python Package Managers (`pipx`, `uv`, or `pip`)
+
+> [!NOTE]
+> When using `pipx`, note that `pipx upgrade` or reinstalling will skip processing if the package version has not changed. Use `pipx install --force ...` to force updates if needed.
+
+#### A. Isolated Global CLI via `pipx` or `uv tool`
+Install Drift into an isolated environment and place it directly into your `$PATH`:
+```bash
+# Core standard-library mode (zero external dependencies)
+pipx install --force git+https://github.com/ElevenZen/drift.git
+
+# Or with uv:
+uv tool install --force git+https://github.com/ElevenZen/drift.git
+
+# With enhanced Rich console UI:
+pipx install --force "git+https://github.com/ElevenZen/drift.git#egg=drift[rich]"
+```
+
+#### B. Standard `pip install`
+Install locally or from a Git repository via `pip`:
+```bash
+pip install --user git+https://github.com/ElevenZen/drift.git
+
+# Or from a cloned local repository:
+pip install --user .
 ```
 
 ---
