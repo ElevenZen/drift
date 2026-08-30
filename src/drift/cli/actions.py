@@ -540,26 +540,8 @@ def execute_complete(
     valid_shells = {c.value for c in SHELLS}
 
     if install and shell is None:
-        target_shells = []
-        shell_env = os.environ.get("SHELL", "")
-        if shell_env:
-            primary_name = Path(shell_env).name.lower()
-            if primary_name in valid_shells:
-                target_shells.append(primary_name)
-
-        home = Path.home()
-        if (home / ".config" / "fish").is_dir() or shutil.which("fish"):
-            if "fish" not in target_shells:
-                target_shells.append("fish")
-        if (home / ".zshrc").exists() or (home / ".config" / "zsh").is_dir() or shutil.which("zsh"):
-            if "zsh" not in target_shells:
-                target_shells.append("zsh")
-        if (home / ".bashrc").exists() or shutil.which("bash"):
-            if "bash" not in target_shells:
-                target_shells.append("bash")
-
-        if not target_shells:
-            target_shells = ["bash"]
+        # Install completion scripts for all supported shells (bash, zsh, fish)
+        target_shells = [c.value for c in SHELLS]
     else:
         target_shell = shell
         if not target_shell:

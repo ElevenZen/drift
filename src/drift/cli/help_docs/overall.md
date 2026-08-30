@@ -41,6 +41,7 @@ audits active system drifts, and executes deployments using atomic, transactiona
 *   `drift diff`              Compares and visualizes template, deployment, or active system layers.
 *   `drift gc`                Purges orphan packages and zombie database directories.
 *   `drift repair`            Audits and self-heals workspace structure and Git databases.
+*   `drift complete [shell]`  Generates or installs interactive shell tab-completions.
 
 👉 For detailed documentation, run:
     `drift help package`               Understand the 'package' concept and config files.

@@ -155,6 +155,31 @@ class TestCompletionGenerators(unittest.TestCase):
                     fish_path = Path(data["installed"][0]["path"])
                     self.assertTrue(fish_path.is_file())
 
+    def test_cli_complete_install_all_shells(self):
+        """Verifies 'drift complete --install' writes completion files for all supported shells."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from drift.cli.argparse_backend import run_argparse_cli
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_home = Path(tmpdir)
+            with patch("pathlib.Path.home", return_value=fake_home):
+                with patch("sys.stdout.write") as mock_stdout:
+                    run_argparse_cli(["complete", "--install"])
+                    output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+                    self.assertIn("Installed bash completion script to:", output)
+                    self.assertIn("Installed zsh completion script to:", output)
+                    self.assertIn("Installed fish completion script to:", output)
+
+                    bash_file = fake_home / ".local" / "share" / "bash-completion" / "completions" / "drift"
+                    zsh_file = fake_home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
+                    fish_file = fake_home / ".config" / "fish" / "completions" / "drift.fish"
+
+                    self.assertTrue(bash_file.is_file())
+                    self.assertTrue(zsh_file.is_file())
+                    self.assertTrue(fish_file.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

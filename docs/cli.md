@@ -205,7 +205,7 @@ Generates zero-latency native shell tab-completion scripts compiled directly fro
 *   **Supported Shells**: `bash`, `zsh`, `fish`. (If omitted, auto-detects from `$SHELL`).
 *   **Auto-Installation to Standard Directories (`--install`)**:
     ```bash
-    drift complete --install          # Auto-detects active shells and installs completion files
+    drift complete --install          # Installs completion files for all supported shells (bash, zsh, fish)
     drift complete fish --install     # Installs directly to ~/.config/fish/completions/drift.fish
     drift complete bash --install     # Installs directly to ~/.local/share/bash-completion/completions/drift
     drift complete zsh --install      # Installs directly to ~/.local/share/zsh/site-functions/_drift

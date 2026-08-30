@@ -205,21 +205,32 @@ The generator suite translates `CompletionSchema` into native shell completion s
 
 ## 6. User Integration & Execution (`drift complete`)
 
-The `drift complete` command prints the compiled shell completion script:
+The `drift complete` command prints or directly installs compiled shell completion scripts:
 
+### A. Automatic File Installation (`--install` / `-i`)
+Automatically writes completion scripts into standard user-level XDG directories (no `sudo` required):
 ```bash
-# Bash setup:
-eval "$(drift complete bash)"            # Add to ~/.bashrc
+drift complete --install          # Installs completion scripts for all supported shells (bash, zsh, fish)
+drift complete fish --install     # Installs to ~/.config/fish/completions/drift.fish
+drift complete bash --install     # Installs to ~/.local/share/bash-completion/completions/drift
+drift complete zsh --install      # Installs to ~/.local/share/zsh/site-functions/_drift
+```
 
-# Zsh setup:
-eval "$(drift complete zsh)"             # Add to ~/.zshrc
+### B. Dynamic Startup Evaluation (Shell RC)
+```bash
+# Bash setup (~/.bashrc):
+eval "$(drift complete bash)"
 
-# Fish setup:
-drift complete fish | source             # Add to ~/.config/fish/config.fish
+# Zsh setup (~/.zshrc):
+eval "$(drift complete zsh)"
+
+# Fish setup (~/.config/fish/config.fish):
+drift complete fish | source
 
 # Auto-detect from $SHELL:
 drift complete
 
 # Machine-readable JSON output:
 drift complete zsh --json
+drift complete --install --json
 ```

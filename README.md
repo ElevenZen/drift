@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-480%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-481%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -116,7 +116,7 @@ pip install --user .
 Drift features built-in, zero-latency tab-completion generators for **Bash**, **Zsh**, and **Fish** with rich inline documentation hints and dynamic package discovery.
 
 #### Automatic Installation (Standard User Directories)
-Run `drift complete --install` to automatically detect your active shells and place completion scripts in standard user directories (`~/.config/fish/completions/drift.fish`, `~/.local/share/bash-completion/completions/drift`, `~/.local/share/zsh/site-functions/_drift`):
+Run `drift complete --install` to automatically install completion scripts for all supported shells into standard user directories (`~/.config/fish/completions/drift.fish`, `~/.local/share/bash-completion/completions/drift`, `~/.local/share/zsh/site-functions/_drift`), or specify a single shell (e.g. `drift complete fish --install`):
 ```bash
 drift complete --install
 ```
