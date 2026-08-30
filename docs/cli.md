@@ -202,10 +202,11 @@ Executes runtime health check probes on installed packages to verify if deployed
 ### N. Shell Tab-Completion Generation: `drift complete [<shell>] [--install] [--json]`
 Generates zero-latency native shell tab-completion scripts compiled directly from the authoritative CLI schema, or installs them directly into user completion directories.
 *   **Command Signature**: `drift complete [shell] [--install / -i] [--json]`
-*   **Supported Shells**: `bash`, `zsh`, `fish`. (If omitted, auto-detects from `$SHELL`).
+*   **Supported Shells**: `bash`, `zsh`, `fish`, `nu` (or `nushell`). (If omitted, auto-detects from `$SHELL`).
 *   **Auto-Installation to Standard Directories (`--install`)**:
     ```bash
-    drift complete --install          # Installs completion files for all supported shells (bash, zsh, fish)
+    drift complete --install          # Installs completion files for all supported shells (bash, zsh, fish, nu)
+    drift complete nu --install       # Installs directly to ~/.config/nushell/completions/drift.nu
     drift complete fish --install     # Installs directly to ~/.config/fish/completions/drift.fish
     drift complete bash --install     # Installs directly to ~/.local/share/bash-completion/completions/drift
     drift complete zsh --install      # Installs directly to ~/.local/share/zsh/site-functions/_drift
@@ -220,6 +221,9 @@ Generates zero-latency native shell tab-completion scripts compiled directly fro
 
     # Fish (~/.config/fish/config.fish)
     drift complete fish | source
+
+    # Nushell (~/.config/nushell/config.nu)
+    use ~/.config/nushell/completions/drift.nu *
     ```
 
 ---

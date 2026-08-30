@@ -109,6 +109,7 @@ SHELLS: List[Choice] = [
     Choice("bash", "GNU Bourne-Again Shell completion script"),
     Choice("zsh", "Z Shell completion script with rich descriptions"),
     Choice("fish", "Fish Shell declarative completion script"),
+    Choice("nu", "Nushell custom completion script"),
 ]
 
 GLOBAL_OPTIONS: List[OptionSpec] = [

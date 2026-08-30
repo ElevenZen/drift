@@ -201,6 +201,11 @@ The generator suite translates `CompletionSchema` into native shell completion s
 - Emits declarative `complete -c drift` rules with condition predicates (`__fish_use_subcommand` and `__fish_seen_subcommand_from`).
 - Defines `__drift_packages` helper and registers positional completions via token counting tests (`test (count (commandline -poc)) -eq N`).
 
+### 4. Nushell Generator (`src/drift/cli/completion/nushell.py`)
+- Emits strongly-typed Nushell `export extern "drift ..."` command declarations with long and short flag bindings (`--force(-f)`).
+- Defines custom completer commands (`def "nu-complete drift-packages" []`, `def "nu-complete drift-shells" []`) returning record lists with `{ value: "...", description: "..." }` for rich dropdown menus.
+- Binds completers to positional parameters (`string@"nu-complete drift-packages"`).
+
 ---
 
 ## 6. User Integration & Execution (`drift complete`)
@@ -210,7 +215,8 @@ The `drift complete` command prints or directly installs compiled shell completi
 ### A. Automatic File Installation (`--install` / `-i`)
 Automatically writes completion scripts into standard user-level XDG directories (no `sudo` required):
 ```bash
-drift complete --install          # Installs completion scripts for all supported shells (bash, zsh, fish)
+drift complete --install          # Installs completion scripts for all supported shells (bash, zsh, fish, nu)
+drift complete nu --install       # Installs to ~/.config/nushell/completions/drift.nu
 drift complete fish --install     # Installs to ~/.config/fish/completions/drift.fish
 drift complete bash --install     # Installs to ~/.local/share/bash-completion/completions/drift
 drift complete zsh --install      # Installs to ~/.local/share/zsh/site-functions/_drift
@@ -226,6 +232,9 @@ eval "$(drift complete zsh)"
 
 # Fish setup (~/.config/fish/config.fish):
 drift complete fish | source
+
+# Nushell setup (~/.config/nushell/config.nu):
+use ~/.config/nushell/completions/drift.nu *
 
 # Auto-detect from $SHELL:
 drift complete

@@ -6,6 +6,7 @@ from drift.cli.completion import (
     BashGenerator,
     ZshGenerator,
     FishGenerator,
+    NushellGenerator,
     generate_completion_script,
 )
 
@@ -72,6 +73,35 @@ class TestCompletionGenerators(unittest.TestCase):
         self.assertIn("post_render", script)
         self.assertIn("stow", script)
         self.assertIn("copy", script)
+
+    def test_nushell_generator_output(self):
+        """Verifies Nushell script generation with typed extern declarations and custom completers."""
+        import shutil
+        import subprocess
+        import tempfile
+        from pathlib import Path
+
+        script = generate_completion_script("nu", self.schema)
+        self.assertIsInstance(script, str)
+        self.assertIn("# Nushell completion script for drift", script)
+        self.assertIn('def "nu-complete drift-packages" []', script)
+        self.assertIn('def "nu-complete drift-shells" []', script)
+        self.assertIn('def "nu-complete drift-help-topics" []', script)
+        self.assertIn('export extern "main"', script)
+        self.assertIn('export extern "drift deploy"', script)
+        self.assertIn('export extern "drift status"', script)
+        self.assertIn('export extern "drift complete"', script)
+        self.assertIn('--force(-f)', script)
+        self.assertIn('string@"nu-complete drift-packages"', script)
+        self.assertIn('string@"nu-complete drift-shells"', script)
+
+        # If nu executable is present in PATH, verify it compiles cleanly without errors
+        if shutil.which("nu"):
+            with tempfile.TemporaryDirectory() as td:
+                drift_nu = Path(td) / "drift.nu"
+                drift_nu.write_text(script)
+                res = subprocess.run(["nu", "-c", f"use {drift_nu} *; help drift; help drift deploy"], capture_output=True, text=True)
+                self.assertEqual(res.returncode, 0, f"Nushell parse error: {res.stderr}")
 
     def test_supported_shells(self):
         """Verifies that all registered shells generate non-empty scripts."""
@@ -171,14 +201,37 @@ class TestCompletionGenerators(unittest.TestCase):
                     self.assertIn("Installed bash completion script to:", output)
                     self.assertIn("Installed zsh completion script to:", output)
                     self.assertIn("Installed fish completion script to:", output)
+                    self.assertIn("Installed nu completion script to:", output)
 
                     bash_file = fake_home / ".local" / "share" / "bash-completion" / "completions" / "drift"
                     zsh_file = fake_home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
                     fish_file = fake_home / ".config" / "fish" / "completions" / "drift.fish"
+                    nu_file = fake_home / ".config" / "nushell" / "completions" / "drift.nu"
 
                     self.assertTrue(bash_file.is_file())
                     self.assertTrue(zsh_file.is_file())
                     self.assertTrue(fish_file.is_file())
+                    self.assertTrue(nu_file.is_file())
+
+    def test_cli_complete_install_nushell(self):
+        """Verifies 'drift complete nu --install' writes file to standard nushell path."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from drift.cli.argparse_backend import run_argparse_cli
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_home = Path(tmpdir)
+            with patch("pathlib.Path.home", return_value=fake_home):
+                with patch("sys.stdout.write") as mock_stdout:
+                    run_argparse_cli(["complete", "nu", "--install"])
+                    output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+                    self.assertIn("Installed nu completion script to:", output)
+                    target_file = fake_home / ".config" / "nushell" / "completions" / "drift.nu"
+                    self.assertTrue(target_file.is_file())
+                    content = target_file.read_text()
+                    self.assertIn('export extern "main"', content)
+                    self.assertIn('export extern "drift deploy"', content)
 
 
 if __name__ == "__main__":

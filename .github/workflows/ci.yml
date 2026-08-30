@@ -52,6 +52,7 @@ jobs:
           drift complete bash
           drift complete zsh
           drift complete fish
+          drift complete nu
           drift help overall
 
   build-artifacts:
@@ -130,4 +131,5 @@ jobs:
           test -f "$HOME/.local/share/bash-completion/completions/drift"
           test -f "$HOME/.local/share/zsh/site-functions/_drift"
           test -f "$HOME/.config/fish/completions/drift.fish"
+          test -f "$HOME/.config/nushell/completions/drift.nu"
           echo "All shell completion files verified successfully on disk!"

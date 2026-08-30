@@ -522,6 +522,8 @@ def get_default_completion_path(shell: str) -> Path:
         return home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
     elif shell == "fish":
         return home / ".config" / "fish" / "completions" / "drift.fish"
+    elif shell in ("nu", "nushell"):
+        return home / ".config" / "nushell" / "completions" / "drift.nu"
     else:
         raise ValueError(f"Unknown shell '{shell}'")
 

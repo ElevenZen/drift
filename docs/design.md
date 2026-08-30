@@ -262,7 +262,7 @@ The `drift` Python command provides a unified interface for all primitives and h
 *   **`drift diff [packages...] [-t/--template] [-s/--system] [--stat] [-y/--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
 *   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
 *   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
-*   **`drift complete [<shell>] [--install] [--json]`**: Generates or installs native interactive shell tab-completion scripts (bash, zsh, fish).
+*   **`drift complete [<shell>] [--install] [--json]`**: Generates or installs native interactive shell tab-completion scripts (bash, zsh, fish, nu).
 *   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
 
 ### Low-Level Control Commands (Ordered by Pipeline Lifecycle)
