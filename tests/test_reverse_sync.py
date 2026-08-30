@@ -9,7 +9,15 @@ from pathlib import Path
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
-from drift.reverse_sync import run_primitive_1_reverse_sync
+from drift.ignore import DriftIgnore
+from drift.reverse_sync import (
+    run_primitive_1_reverse_sync,
+    reverse_sync_package,
+    sync_tracked_files,
+    sync_single_fcd,
+    sync_fully_controlled_dirs,
+    record_sync_result,
+)
 
 
 class TestReverseSync(unittest.TestCase):
@@ -635,6 +643,167 @@ class TestReverseSync(unittest.TestCase):
         # 4. Subsequent stow deployment succeeds without collision errors
         res_dep2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertEqual(res_dep2.status, "SUCCESS")
+
+    def test_reverse_sync_tracked_dot_prefix_files_modification_and_deletion(self) -> None:
+        """Verifies that tracked files using 'dot-' prefix in install/ are accurately detected
+        and reverse-synced when modified or deleted on the host system.
+        """
+        pkg = "pkg_dot_tracked"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        # 1. Setup tracked files in install/ with 'dot-' prefixes
+        dot_zshrc_install = pkg_install_dir / "dot-zshrc"
+        dot_zshrc_install.write_text("export ORIGINAL=1\n", encoding="utf-8")
+
+        nested_dot_dir = pkg_install_dir / "dot-config" / "myapp"
+        nested_dot_dir.mkdir(parents=True, exist_ok=True)
+        dot_settings_install = nested_dot_dir / "dot-settings.json"
+        dot_settings_install.write_text('{"version": 1}', encoding="utf-8")
+
+        normal_conf_install = nested_dot_dir / "config.ini"
+        normal_conf_install.write_text("theme=light\n", encoding="utf-8")
+
+        dot_local_data_install = pkg_install_dir / "dot-local" / "share" / "data.txt"
+        dot_local_data_install.parent.mkdir(parents=True, exist_ok=True)
+        dot_local_data_install.write_text("historical data\n", encoding="utf-8")
+
+        # 2. Setup host system state:
+        # - .zshrc is MODIFIED on host
+        # - .config/myapp/.settings.json is DELETED on host (missing)
+        # - .config/myapp/config.ini is MODIFIED on host
+        # - .local/share/data.txt is DELETED on host (missing)
+        host_zshrc = self.system_target_dir / ".zshrc"
+        host_zshrc.write_text("export MODIFIED_ON_HOST=2\n", encoding="utf-8")
+
+        host_myapp_dir = self.system_target_dir / ".config" / "myapp"
+        host_myapp_dir.mkdir(parents=True, exist_ok=True)
+        # Note: host_myapp_dir / ".settings.json" is deliberately NOT created (simulating deletion)
+        host_config_ini = host_myapp_dir / "config.ini"
+        host_config_ini.write_text("theme=dark\n", encoding="utf-8")
+        # Note: self.system_target_dir / ".local" / "share" / "data.txt" is NOT created (simulating deletion)
+
+        # 3. Run reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        pkg_res = res.packages[0]
+        self.assertEqual(pkg_res.status, "SUCCESS")
+
+        # 4. Assert:
+        # A. Modified dot-file is updated in install/
+        self.assertTrue(dot_zshrc_install.exists())
+        self.assertEqual(dot_zshrc_install.read_text(encoding="utf-8"), "export MODIFIED_ON_HOST=2\n")
+
+        # B. Deleted nested dot-file is removed from install/
+        self.assertFalse(dot_settings_install.exists(), "dot-config/myapp/dot-settings.json should have been deleted!")
+
+        # C. Modified regular file inside dot-folder is updated
+        self.assertTrue(normal_conf_install.exists())
+        self.assertEqual(normal_conf_install.read_text(encoding="utf-8"), "theme=dark\n")
+
+        # D. Deleted deep dot-path is removed from install/
+        self.assertFalse(dot_local_data_install.exists(), "dot-local/share/data.txt should have been deleted!")
+
+        # Verify reported drifted and synced lists
+        self.assertIn(".zshrc", pkg_res.drifted_files)
+        self.assertIn("dot-zshrc", pkg_res.synced_files)
+        self.assertIn(".config/myapp/.settings.json", pkg_res.drifted_files)
+        self.assertIn("dot-config/myapp/dot-settings.json", pkg_res.synced_files)
+        self.assertIn(".config/myapp/config.ini", pkg_res.drifted_files)
+        self.assertIn("dot-config/myapp/config.ini", pkg_res.synced_files)
+        self.assertIn(".local/share/data.txt", pkg_res.drifted_files)
+        self.assertIn("dot-local/share/data.txt", pkg_res.synced_files)
+
+    def test_record_sync_result_helper(self) -> None:
+        """Verifies that record_sync_result correctly deduplicates entries."""
+        drifted: list[str] = []
+        synced: list[str] = []
+
+        record_sync_result(".bashrc", "dot-bashrc", drifted, synced)
+        self.assertEqual(drifted, [".bashrc"])
+        self.assertEqual(synced, ["dot-bashrc"])
+
+        # Duplicate addition should be ignored
+        record_sync_result(".bashrc", "dot-bashrc", drifted, synced)
+        self.assertEqual(drifted, [".bashrc"])
+        self.assertEqual(synced, ["dot-bashrc"])
+
+        # Different file should be appended
+        record_sync_result(".zshrc", "dot-zshrc", drifted, synced)
+        self.assertEqual(drifted, [".bashrc", ".zshrc"])
+        self.assertEqual(synced, ["dot-bashrc", "dot-zshrc"])
+
+    def test_sync_tracked_files_helper_direct(self) -> None:
+        """Directly verifies the sync_tracked_files helper function."""
+        pkg_dir = self.install_dir / "pkg_direct"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "dot-gitconfig").write_text("[user]\n  name = Original\n", encoding="utf-8")
+        (pkg_dir / "deleted.conf").write_text("old=true\n", encoding="utf-8")
+
+        # Host system has modified .gitconfig and missing deleted.conf
+        (self.system_target_dir / ".gitconfig").write_text("[user]\n  name = Updated\n", encoding="utf-8")
+
+        ignore_handler = DriftIgnore()
+        drifted: list[str] = []
+        synced: list[str] = []
+
+        sync_tracked_files(pkg_dir, self.system_target_dir, ignore_handler, drifted, synced)
+
+        # Assert:
+        # dot-gitconfig updated
+        self.assertEqual((pkg_dir / "dot-gitconfig").read_text(encoding="utf-8"), "[user]\n  name = Updated\n")
+        # deleted.conf removed
+        self.assertFalse((pkg_dir / "deleted.conf").exists())
+        self.assertIn(".gitconfig", drifted)
+        self.assertIn("dot-gitconfig", synced)
+        self.assertIn("deleted.conf", drifted)
+        self.assertIn("deleted.conf", synced)
+
+    def test_sync_fully_controlled_dirs_helpers_direct(self) -> None:
+        """Directly verifies sync_single_fcd and sync_fully_controlled_dirs helper functions."""
+        pkg_dir = self.install_dir / "pkg_fcd_direct"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        host_fcd1 = self.system_target_dir / "fcd_one"
+        host_fcd1.mkdir(parents=True, exist_ok=True)
+        (host_fcd1 / "extra1.txt").write_text("extra 1", encoding="utf-8")
+
+        host_fcd2 = self.system_target_dir / ".fcd_two"
+        host_fcd2.mkdir(parents=True, exist_ok=True)
+        (host_fcd2 / ".wild.json").write_text('{"wild": true}', encoding="utf-8")
+
+        ignore_handler = DriftIgnore()
+        drifted: list[str] = []
+        synced: list[str] = []
+
+        sync_fully_controlled_dirs(
+            fully_controlled_dirs=[Path("fcd_one"), Path("dot-fcd_two")],
+            install_pkg_dir=pkg_dir,
+            target_dir_path=self.system_target_dir,
+            ignore_handler=ignore_handler,
+            drifted_files=drifted,
+            synced_files=synced
+        )
+
+        # Assert:
+        self.assertTrue((pkg_dir / "fcd_one" / "extra1.txt").exists())
+        self.assertEqual((pkg_dir / "fcd_one" / "extra1.txt").read_text(encoding="utf-8"), "extra 1")
+
+        self.assertTrue((pkg_dir / "dot-fcd_two" / "dot-wild.json").exists())
+        self.assertEqual((pkg_dir / "dot-fcd_two" / "dot-wild.json").read_text(encoding="utf-8"), '{"wild": true}')
+
+        self.assertIn("fcd_one/extra1.txt", drifted)
+        self.assertIn("fcd_one/extra1.txt", synced)
+        self.assertIn(".fcd_two/.wild.json", drifted)
+        self.assertIn("dot-fcd_two/dot-wild.json", synced)
 
 
 if __name__ == "__main__":
