@@ -14,13 +14,13 @@ from .file_utils import (
     run_command,
 )
 from .constants import MANAGED_CONFIG_FILES, LineEnding
-from .ignore import DriftIgnore
+from .ignore import IgnoreHandler
 
 
 logger = logging.getLogger(__name__)
 
 
-def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[DriftIgnore] = None) -> None:
+def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[IgnoreHandler] = None) -> None:
     """
     Performs reverse sync for a single file, directory, or link from src (typically on the system)
     back to dst (typically in the local install state database).

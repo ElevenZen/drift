@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, List, Tuple
-from .ignore import DriftIgnore
+from .ignore import IgnoreHandler
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ class FolderDiff:
 def compare_folders(
     src_dir: Path,
     dst_dir: Path,
-    ignore_handler: Optional[DriftIgnore] = None,
+    ignore_handler: Optional[IgnoreHandler] = None,
     resolve_symlinks: bool = True,
     translate_mode: Optional[str] = None,
     src_only: bool = False
@@ -256,7 +256,7 @@ def compare_folders(
 def list_folder_paths(
     src_dir: Path,
     base_rel: Optional[Path] = None,
-    ignore_handler: Optional[DriftIgnore] = None,
+    ignore_handler: Optional[IgnoreHandler] = None,
     resolve_symlinks: bool = True,
     translate_mode: Optional[str] = None
 ) -> List[Path]:

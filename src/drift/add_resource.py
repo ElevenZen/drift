@@ -1,9 +1,7 @@
 """Primitive 11: Resource Import (Add files/folders to package)."""
 
 import logging
-import shutil
 import os
-import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
@@ -15,8 +13,8 @@ from .file_utils import (
     atomic_copy_file,
 )
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
-from .ignore import DriftIgnore
-from .folder_diff import compare_folders
+from .ignore import DriftIgnore, IgnoreHandler
+from .folder_diff import list_folder_paths
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +41,7 @@ def generate_import_worklist(
     workspace_config: WorkspaceConfig,
     target_base: Path,
     import_paths: List[Path],
-    ignore_handler: DriftIgnore
+    ignore_handler: IgnoreHandler
 ) -> List[Tuple[Path, Path]]:
     """
     Generates a list of (absolute_source_path, target_relative_path) for all files to be imported.
@@ -52,43 +50,39 @@ def generate_import_worklist(
     worklist: List[Tuple[Path, Path]] = []
     
     # We use a persistent temp dir for all directory comparisons in this run
-    with tempfile.TemporaryDirectory(prefix="drift-import-") as tmp_dir_name:
-        tmp_dir = Path(tmp_dir_name)
+    for path in import_paths:
+        abs_import = path.resolve()
+        if not abs_import.exists():
+            raise FileNotFoundError(f"Import path does not exist: {path}")
+
+        if not is_relative_to(abs_import, target_base):
+            raise ValueError(f"Import path '{abs_import}' is not inside package target directory '{target_base}'")
         
-        for path in import_paths:
-            abs_import = path.resolve()
-            if not abs_import.exists():
-                raise FileNotFoundError(f"Import path does not exist: {path}")
+        rel_root_target = abs_import.relative_to(target_base)
+        # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
+        repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
 
-            if not is_relative_to(abs_import, target_base):
-                raise ValueError(f"Import path '{abs_import}' is not inside package target directory '{target_base}'")
-            
-            rel_root_target = abs_import.relative_to(target_base)
-            # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
-            repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
+        # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
+        class ScopedIgnore:
+            def match_path(self, rel_repo: Path) -> bool:
+                # rel_repo is already dot-prefixed by list_folder_paths(translate_mode="reverse")
+                return ignore_handler.match_path(repo_prefix / rel_repo)
 
-            # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
-            class ScopedIgnore:
-                def match_path(self, rel_repo: Path) -> bool:
-                    # rel_repo is already dot-prefixed by compare_folders(translate_mode="reverse")
-                    return ignore_handler.match_path(repo_prefix / rel_repo)
+        scoped_ignore: IgnoreHandler = ScopedIgnore()
 
-            scoped_ignore: Any = ScopedIgnore()
-
-            # Use compare_folders to get a clean list of files from system.
-            # translate_mode="reverse" ensures the ignore handler receives repo-style paths.
-            diff = compare_folders(
-                abs_import, 
-                tmp_dir, 
-                ignore_handler=scoped_ignore,
-                resolve_symlinks=True,
-                translate_mode="reverse"
-            )
-            
-            for rel_path in diff.added:
-                # rel_path is relative to abs_import (system style, e.g. leading dots)
-                full_rel_target = rel_root_target / rel_path if rel_path != Path("") else rel_root_target
-                worklist.append((abs_import / rel_path, full_rel_target))
+        # Use list_folder_paths to get a clean list of files from system.
+        # translate_mode="reverse" ensures the ignore handler receives repo-style paths.
+        file_paths = list_folder_paths(
+            abs_import,
+            ignore_handler=scoped_ignore,
+            resolve_symlinks=True,
+            translate_mode="reverse"
+        )
+        
+        for rel_path in file_paths:
+            # rel_path is relative to abs_import (system style, e.g. leading dots)
+            full_rel_target = rel_root_target / rel_path if rel_path != Path("") else rel_root_target
+            worklist.append((abs_import / rel_path, full_rel_target))
                 
     return worklist
 

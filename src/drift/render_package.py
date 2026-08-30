@@ -122,7 +122,7 @@ def render_package_files(
 ) -> PackageRenderResult:
     """Renders package source files, copies static assets, and triggers lifecycle hooks."""
     from .ignore import DriftIgnore
-    from .folder_diff import compare_folders
+    from .folder_diff import list_folder_paths
     package_name = package_dir.name
 
     # Trigger pre_source hook before reading / processing source files
@@ -140,13 +140,13 @@ def render_package_files(
     # Proactively check for nested ignore files and trigger clean validation
     DriftIgnore.load_from_dir(package_dir)
 
-    # Use compare_folders to walk every file in package_dir, resolving symlinks to directories
-    diff = compare_folders(package_dir, render_pkg_dir, resolve_symlinks=True, src_only=True)
+    # Use list_folder_paths to walk every file in package_dir, resolving symlinks to directories
+    all_files = list_folder_paths(package_dir, resolve_symlinks=True)
 
     rendered_files: List[str] = []
     copied_files: List[str] = []
 
-    for file in diff.added:
+    for file in all_files:
         file_path = package_dir / file
 
         # Skip if the file is the package config file or its template itself

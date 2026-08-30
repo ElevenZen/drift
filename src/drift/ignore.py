@@ -3,14 +3,30 @@
 import re
 import logging
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Protocol, runtime_checkable
 
 from .constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, DEFAULT_STOW_IGNORE_PATTERNS
 
 logger = logging.getLogger(__name__)
 
 
-class DriftIgnore:
+@runtime_checkable
+class IgnoreHandler(Protocol):
+    """Protocol for ignore path matching."""
+
+    def match_path(self, rel_path: Path) -> bool:
+        """Determines whether a relative path should be ignored.
+
+        Args:
+            rel_path: Relative Path object to check against ignore rules.
+
+        Returns:
+            True if the path should be ignored, False otherwise.
+        """
+        ...
+
+
+class DriftIgnore(IgnoreHandler):
     """Handles parsing and match evaluation of drift ignore patterns."""
 
     def __init__(self, patterns: Optional[List[str]] = None) -> None:

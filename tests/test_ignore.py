@@ -206,3 +206,21 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertIn("Nested ignore files are not allowed", str(ctx.exception))
         self.assertIn("Found nested '.driftignore'", str(ctx.exception))
 
+    def test_ignore_handler_protocol_compliance(self) -> None:
+        """Verifies that DriftIgnore and custom matchers satisfy the IgnoreHandler protocol."""
+        from drift.ignore import IgnoreHandler
+
+        # 1. DriftIgnore instance satisfies IgnoreHandler
+        drift_ignore = DriftIgnore()
+        self.assertTrue(isinstance(drift_ignore, IgnoreHandler))
+
+        # 2. Custom duck-typed class satisfying match_path protocol
+        class CustomIgnore:
+            def match_path(self, rel_path: Path) -> bool:
+                return rel_path.name.endswith(".tmp")
+
+        custom_ignore = CustomIgnore()
+        self.assertTrue(isinstance(custom_ignore, IgnoreHandler))
+        self.assertTrue(custom_ignore.match_path(Path("test.tmp")))
+        self.assertFalse(custom_ignore.match_path(Path("test.txt")))
+
