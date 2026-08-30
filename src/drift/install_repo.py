@@ -17,10 +17,11 @@ from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCA
 from .exceptions import CollisionError
 from .ignore import DriftIgnore
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
-from .folder_diff import compare_folders, list_folder_paths, find_links_pointing_into
+from .folder_diff import compare_folders, list_folder_paths
 from .stage_repo import PackageStageChanges
 from .file_utils import (
         resolve_system_target,
+        translate_dot_prefixes,
         translate_dot_prefixes_reverse,
         copy_file_contents_with_sudo,
         create_symlink_manually_with_sudo,
@@ -79,12 +80,12 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
 
 def handle_collision_error(
     pkg: str,
-    rel_path: Union[Path, str],
+    rel_path: Path,
     system_target: Path,
     workspace_config: WorkspaceConfig,
     sudo: bool,
     reason: str,
-    resolve_symlinks: bool,
+    resolve_symlinks: bool = True,
     backup_subfolder: str = "overwritten"
 ) -> None:
     """Helper to backup and report a collision/error at a system target path."""
@@ -108,26 +109,51 @@ def handle_internal_symlink_conflicts(
     resolve_symlinks: bool,
     processed_paths: set
 ) -> None:
-    """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
+    """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files.
 
-    # not necessary to follow_symlinks here,
-    # because dir pointing into drift_root will always trigger backup and removal.
-    # so dig deep inside is meaningless.
-    links = find_links_pointing_into(target_dir, workspace_config.drift_root, follow_symlinks=False)
-    for link in links:
+    Instead of recursively scanning the entire target_dir (which could be the whole HOME directory),
+    we inspect only the specific target paths and ancestor directories covered by install_pkg_dir.
+    """
+    if not (install_pkg_dir.exists() and install_pkg_dir.is_dir()):
+        return
+
+    # 1. Collect all relative paths inside the package
+    pkg_items = list_folder_paths(
+        src_dir=install_pkg_dir,
+        base_rel=Path(""),
+        ignore_handler=ignore_handler,
+        resolve_symlinks=resolve_symlinks,
+    )
+
+    # 2. Build the set of target relative paths and all intermediate parent directories
+    target_candidates = set()
+    for repo_rel in pkg_items:
+        target_rel = translate_dot_prefixes(repo_rel)
+        curr = target_rel
+        while curr != Path(".") and str(curr) not in ("", "."):
+            target_candidates.add(curr)
+            curr = curr.parent
+
+    # 3. Sort candidates from shallowest to deepest so parents are checked before children
+    sorted_candidates = sorted(target_candidates, key=lambda p: len(p.parts))
+
+    abs_drift_root = workspace_config.drift_root.resolve()
+    abs_install_pkg = install_pkg_dir.resolve()
+
+    for t_rel in sorted_candidates:
+        system_target = target_dir / t_rel
+        if not system_target.is_symlink():
+            continue
+
         try:
-            rel_in_target = link.relative_to(target_dir)
-        except ValueError:
+            target_resolved = system_target.resolve()
+            if not is_relative_to(target_resolved, abs_drift_root):
+                continue
+        except Exception:
             continue
 
-        repo_rel = translate_dot_prefixes_reverse(rel_in_target)
+        repo_rel = translate_dot_prefixes_reverse(t_rel)
         repo_path = install_pkg_dir / repo_rel
-
-        # Check if the relative path matches a non-ignored file/dir in install_pkg_dir
-        if not (repo_path.exists() or repo_path.is_symlink()):
-            continue
-        if ignore_handler.match_path(repo_rel):
-            continue
 
         # If install method is stow and link points into our pkg install dir, it's valid for this package
         if metadata.get_install_method(workspace_config) == "stow":
@@ -137,10 +163,10 @@ def handle_internal_symlink_conflicts(
                 # And we restrict the result to not contain linked dir as parent dir.
                 # so dir pointing to the same install_pkg_dir is considered invalid, and trigger backup and removal.
                 # Other cases must trigger backup and removal, including symlinked directories.
-                link_content = Path(os.readlink(link))
-                if not link_content.is_absolute() and not link.is_dir():
-                    link_target = (link.parent / os.readlink(link)).resolve()
-                    if is_relative_to(link_target, install_pkg_dir.resolve()):
+                link_content = Path(os.readlink(system_target))
+                if not link_content.is_absolute() and not system_target.is_dir():
+                    link_target = (system_target.parent / os.readlink(system_target)).resolve()
+                    if is_relative_to(link_target, abs_install_pkg):
                         continue
             except Exception:
                 pass
@@ -162,7 +188,7 @@ def handle_internal_symlink_conflicts(
         handle_collision_error(
             pkg=pkg,
             rel_path=repo_rel,
-            system_target=link,
+            system_target=system_target,
             workspace_config=workspace_config,
             sudo=metadata.sudo,
             reason="Internal symlink parent error",
@@ -171,7 +197,7 @@ def handle_internal_symlink_conflicts(
 
         # If repo expects a directory here, recreate it as physical to avoid cycles
         if repo_path.is_dir() and not repo_path.is_symlink():
-            ensure_dir_exists_with_sudo(link, metadata.sudo)
+            ensure_dir_exists_with_sudo(system_target, metadata.sudo)
 
 
 def run_collision_guard(

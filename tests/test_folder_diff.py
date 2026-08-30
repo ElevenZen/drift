@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 
 from drift.constants import set_test_mode
-from drift.folder_diff import compare_folders, list_folder_paths, find_links_pointing_into, FolderDiff
+from drift.folder_diff import compare_folders, list_folder_paths, FolderDiff
 from drift.ignore import DriftIgnore
 
 
@@ -516,69 +516,6 @@ class TestFolderDiffSymlinks(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
         self.assertEqual(diff.matches, [Path("dir_link/f.txt")])
         self.assertEqual(diff.modified, [])
-
-    def test_find_links_pointing_into(self) -> None:
-        """Verifies find_links_pointing_into finds symlinks whose targets lie inside target_dir."""
-        target_root = self.base / "drift_target"
-        target_root.mkdir()
-        drift_file = target_root / "internal.txt"
-        drift_file.write_text("internal", encoding="utf-8")
-
-        outside_dir = self.base / "outside"
-        outside_dir.mkdir()
-        outside_file = outside_dir / "external.txt"
-        outside_file.write_text("external", encoding="utf-8")
-
-        search_dir = self.base / "search_area"
-        search_dir.mkdir()
-
-        # 1. Symlink pointing into target_root
-        link_inside = search_dir / "link_inside.txt"
-        link_inside.symlink_to(drift_file)
-
-        # 2. Symlink pointing outside
-        link_outside = search_dir / "link_outside.txt"
-        link_outside.symlink_to(outside_file)
-
-        # 3. Regular file
-        normal_file = search_dir / "normal.txt"
-        normal_file.write_text("normal", encoding="utf-8")
-
-        # 4. Nested directory with symlink inside
-        nested = search_dir / "sub" / "deep"
-        nested.mkdir(parents=True)
-        nested_link_inside = nested / "deep_link.txt"
-        nested_link_inside.symlink_to(drift_file)
-
-        found = find_links_pointing_into(search_dir, target_root)
-        self.assertEqual(set(found), {link_inside, nested_link_inside})
-
-        # Test single file search_path
-        self.assertEqual(find_links_pointing_into(link_inside, target_root), [link_inside])
-        self.assertEqual(find_links_pointing_into(link_outside, target_root), [])
-
-    def test_find_links_pointing_into_follow_symlinks(self) -> None:
-        """Verifies follow_symlinks=True traverses into symlinked directories."""
-        target_root = self.base / "drift_target"
-        target_root.mkdir()
-        drift_file = target_root / "internal.txt"
-        drift_file.write_text("internal", encoding="utf-8")
-
-        real_sub = self.base / "real_sub"
-        real_sub.mkdir()
-        (real_sub / "nested_in_symdir.txt").symlink_to(drift_file)
-
-        search_dir = self.base / "search_dir"
-        search_dir.mkdir()
-        sym_dir = search_dir / "sym_dir"
-        sym_dir.symlink_to(real_sub)
-
-        # follow_symlinks=False does not traverse inside sym_dir
-        self.assertEqual(find_links_pointing_into(search_dir, target_root, follow_symlinks=False), [])
-
-        # follow_symlinks=True traverses inside sym_dir
-        found = find_links_pointing_into(search_dir, target_root, follow_symlinks=True)
-        self.assertEqual(found, [sym_dir / "nested_in_symdir.txt"])
 
 
 class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
