@@ -14,6 +14,23 @@ Dotfiles management systems constantly balance three competing goals:
     *   If an application *writes directly* into the symlink, it modifies the file inside `install/`. Since `install/` is usually generated or ignored, the next run of a template-rendering script will silently overwrite these changes, causing a **Lost Update**.
 *   **Chezmoi (Monolithic State)**: Uses a central repository and renders files directly into `$HOME`. It lacks the modular "package-based" categorization of GNU Stow, making it difficult to enable/disable specific modules per host easily, and it handles GUI-driven bidirectional configuration drifts poorly without heavy manual intervention.
 
+### Competitive Edge & Market Comparison
+
+Comparing **drift** to popular dotfiles managers listed on `dotfiles.github.io/utilities`:
+
+| Feature | **drift** (Python) | **Chezmoi** (Go) | **Dotbot** (Python) | **GNU Stow** (Perl) | **VCSH** (Shell) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **State Engine** | **Dual Local Git Repos** | Single Repo + BoltDB | None (YAML links) | Symlink Farm | Bare Git on `$HOME` |
+| **Pipeline Stages** | **2-Stage (Render $\rightarrow$ DB $\rightarrow$ System)** | 1-Stage (Compile $\rightarrow$ System) | 1-Stage (Link) | 1-Stage (Link) | 1-Stage (Direct Git) |
+| **Active Drift Audit**| **Yes (Automatic Reverse Sync)** | Yes (Manual `re-add/merge`)| No | No | Rely on Git status |
+| **Dry-Run Fidelity** | **Absolute (Diff Δ comparison)** | Dry-run on templates | No | Stow `-n` simulation | No |
+| **Mid-Fail Rollback** | **Yes (Dedicated Function)** | Manual cleanup | No | Stow `-D` unlink | No |
+| **Machine Output** | **Yes (`--json` across all commands)** | Partial JSON | No | No | No |
+
+#### Key Differentiators:
+*   **Over Chezmoi**: Chezmoi hides state in an opaque BoltDB binary database. Under drift, your `install/` state database is a **pure Git repository**. You can walk into `install/`, run `git log`, `git checkout`, or hook up git GUI clients (like Lazygit or GitKraken) to review your deployment history.
+*   **Over Dotbot / Stow**: They are strictly one-way bootstrap scripts. They do not comprehend drift, leaving you susceptible to silently lost runtime configurations.
+
 ### The Solution: Decoupled Two-Stage Git-Backed Architecture
 
 This design introduces a **sandbox rendering folder (`render/`)** and a **deployment folder (`install/`)**, both managed as **local-only, untracked Git repositories**. 
@@ -232,29 +249,31 @@ Audits and self-heals workspace structure, repositories, configuration templates
 The `drift` Python command provides a unified interface for all primitives and high-level workflows with `--json` machine-readable output support.
 
 ### High-Level Commands (Ordered by Lifecycle)
-*   **`drift clone <url> [dir] [-b branch] [--depth N] [--no-repair] [--json]`**: Clones a Git repo and auto-bootstraps/repairs the Drift workspace (Primitive 13).
-*   **`drift init [-f/--force] [--json]`**: Initializes a new drift workspace.
+*   **`drift clone <repository> [destination] [-b/--branch <branch>] [--depth <N>] [--no-repair] [--json]`**: Clones a Git repo and auto-bootstraps/repairs the Drift workspace (Primitive 13).
+*   **`drift init [-f/--force] [--no-git-root] [--json]`**: Initializes a new drift workspace.
 *   **`drift new <package> [-f/--force] [-t/--target <dir>] [-m/--method <stow|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
-*   **`drift add <package> <paths...> [--dry-run] [--json]`**: Imports active system files into a declarative package (Primitive 11).
-*   **`drift adopt [packages...] [-i/--interactive] [--accept-conflicts] [-f/--force] [--dry-run] [--json]`**: Reconciles system drift into templates.
-*   **`drift deploy [packages...] [-f/--force] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
+*   **`drift add <package> <paths...> [--dry-run] [--no-hooks] [--json]`**: Imports active system files into a declarative package (Primitive 11).
+*   **`drift adopt [packages...] [-i/--interactive] [--accept-conflicts] [-f/--force] [--dry-run] [--no-hooks] [--json]`**: Reconciles system drift into templates.
+*   **`drift deploy [packages...] [-f/--force] [--no-hooks] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
 *   **`drift health [packages...] [-t/--timeout <secs>] [-v/--verbose] [--json]`**: Runs runtime health check probes on installed packages (Primitive 12).
-*   **`drift uninstall <packages...> [-f/--force] [--detach] [--dry-run] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
-*   **`drift rollback [packages...] [-f/--force] [--json]`**: Emergency recovery after midway failure (Primitive 8).
+*   **`drift uninstall <packages...> [-f/--force] [--detach] [--dry-run] [--no-hooks] [--json]`**: Safely cleans or detaches a package from the system (Primitive 7).
+*   **`drift rollback [packages...] [-f/--force] [--no-hooks] [--json]`**: Emergency recovery after midway failure (Primitive 8).
 *   **`drift status [packages...] [--json]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
 *   **`drift diff [packages...] [-t/--template] [-s/--system] [--stat] [-y/--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
-*   **`drift gc [--dry-run] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
+*   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
 *   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
+*   **`drift complete [<shell>] [--json]`**: Generates native interactive shell tab-completion scripts (bash, zsh, fish).
 *   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
 
 ### Low-Level Control Commands (Ordered by Pipeline Lifecycle)
 These commands are for advanced users or CI/CD pipelines to trigger specific primitives:
 *   **`drift reverse-sync [packages...] [--json]`**: Trigger Primitive 1 (System $\rightarrow$ install/).
-*   **`drift render [packages...] [--json]`**: Trigger Primitive 2 (Render).
+*   **`drift render [packages...] [--no-hooks] [--json]`**: Trigger Primitive 2 (Render).
 *   **`drift render-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 3 (Commit Render).
 *   **`drift stage [packages...] [--force] [--json]`**: Trigger Primitive 4 (Staging).
-*   **`drift apply [packages...] [--force] [--resolve-symlinks/--no-resolve-symlinks] [--json]`**: Trigger Primitive 5 (Physical Deployment).
+*   **`drift apply [packages...] [--force] [--no-hooks] [--json]`**: Trigger Primitive 5 (Physical Deployment).
 *   **`drift install-commit [packages...] -m <msg> [--json]`**: Trigger Primitive 6 (Commit install/).
+*   **`drift hook <package> <hook_name> [--json]`**: Directly executes a specific lifecycle hook script for a single package.
 
 ---
 
@@ -443,11 +462,23 @@ enable_install = true
 # Deployment method. Options: 
 #   - "stow" : Creates symbolic links from target_directory to install/ folder. (Standard for user dotfiles)
 #   - "copy" : Physically copies files from install/ to target_directory. (Standard for system/etc configs)
+# Falls back to "default_install_method" in drift.toml if unspecified.
 install_method = "stow"
 
-# The physical path where this package should be deployed.
+# The physical path where this package should be deployed on Unix/Linux/macOS hosts.
 # Supports home expansion (~ at the beginning).
+# Falls back to "default_target_directory" in drift.toml if unspecified.
 target_directory = "~/.config/example"
+
+# Optional Windows-specific target folder path.
+# Used instead of target_directory when running on Windows (win32).
+# Supports %USERPROFILE%, %APPDATA%, %LOCALAPPDATA%, ~, etc.
+# Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
+# target_directory_windows = "%LOCALAPPDATA%/example"
+
+# Optional subfolder within src/<package_name>/ to render and deploy (defaults to ".").
+# If specified, only files in this subfolder are compiled and deployed to the host.
+# source_directory = "dotfiles"
 
 # If true, all physical file creation, copying, deletion, and symlinking operations
 # for this package, as well as installation/update lifecycle hooks (pre/post_install, pre/post_update),
@@ -508,11 +539,18 @@ pre_uninstall = "pre-uninstall.bash"
 # Run after package uninstallation (CWD: target_directory). Runs with sudo if sudo = true.
 post_uninstall = "post-uninstall.bash"
 
-# Run runtime health check probe on installed package (CWD: target_directory). Runs with sudo if sudo = true.
+# Run runtime health check probe on installed package (CWD: target_directory). Always runs in user space without sudo.
 health = "health.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 timeout = 120
+
+# Optional Windows-specific hook overrides (aliases: [hooks.windows], [hooks.win32], [hooks.winos], [hooks.win]).
+# [hooks.windows]
+# pre_install = "scripts/bootstrap.exe"
+# post_install = "scripts/setup.ps1"
+# post_update = "scripts/reload_service.bat"
+# health = "scripts/health_check.ps1"
 ```
 
 #### Lifecycle Hooks Execution Matrix
@@ -526,7 +564,7 @@ timeout = 120
 | `post_update` | After incremental/full update deploy | `target_directory` | Runs with `sudo` if `sudo = true` |
 | `pre_uninstall` | Before unlinking/deleting files | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
 | `post_uninstall`| After unlinking/deleting files | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `health` | During `drift health` probe execution | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `health` | During `drift health` probe execution | `target_directory` | Always user space (No sudo) |
 
 #### Default Package Environment Variables & Precedence
 After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
@@ -849,502 +887,6 @@ For each redeployable package:
 #### 6. Stage 3: Post-Deployment Workspace Garbage Collection (Primitive 9 - Bulk Mode Only)
 *   **Workspace GC**: If a bulk deployment (all active packages) succeeds, the engine automatically triggers **Primitive 9: Workspace Garbage Collection**.
 *   This uninstalls orphan packages (previously installed but now disabled in workspace config) and purges "zombie" directory folders in `render/` and `install/` which lack valid package configuration files, auto-committing the database cleanup to lock in a clean workspace environment.
-
----
-
-### Detailed Workflow Control Flow & Pseudocode  
-
-#### 1. Command Orchestration & Deployment Control Flow
-
-```python
-def run_primitive_deploy_pipeline(workspace_config: WorkspaceConfig, packages_to_deploy: Optional[List[str]] = None, force: bool = False) -> DeployResult:
-    # 0. Pre-flight checks: Verify git committability
-    check_repo_can_commit(workspace_config.render_path)
-    check_repo_can_commit(workspace_config.install_path)
-
-    # Discover active packages
-    target_pkgs = workspace_config.get_discovered_packages(
-        custom_dir=workspace_config.source_path,
-        target_pkgs=packages_to_deploy
-    )
-    if not target_pkgs:
-        return DeployResult(
-            command="deploy",
-            status="SUCCESS",
-            is_global_deploy=(packages_to_deploy is None),
-            target_packages=[],
-            deployed_packages=[]
-        )
-
-    # --- Stage 1: Sentinel Drift Auditing ---
-    drifted_packages, drifted_files = check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
-
-    # --- Stage 2: Sequential Compile & Apply ---
-    deployed_packages, completed_steps = execute_sequential_compile_and_apply(workspace_config, target_pkgs, force=force)
-
-    # --- Stage 3: Post-Deployment Workspace Garbage Collection (Bulk mode only) ---
-    gc_res = None
-    if not packages_to_deploy:
-        gc_res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False)
-
-    return DeployResult(
-        command="deploy",
-        status="SUCCESS",
-        is_global_deploy=(packages_to_deploy is None),
-        target_packages=target_pkgs,
-        deployed_packages=deployed_packages,
-        gc=gc_res,
-        completed_steps=completed_steps
-    )
-
-
-def check_and_prevent_system_drifts(workspace_config: WorkspaceConfig, target_pkgs: List[str], force: bool = False) -> Tuple[List[str], List[str]]:
-    # Run silent reverse-sync on existing packages
-    syncable_pkgs = [pkg for pkg in target_pkgs if (workspace_config.install_path / pkg).is_dir()]
-    if syncable_pkgs:
-        run_primitive_1_reverse_sync(workspace_config, package_names=syncable_pkgs)
-
-    drifted_packages = []
-    drifted_files = []
-    for pkg in syncable_pkgs:
-        git_status = get_git_status_porcelain(workspace_config.install_path, f"{pkg}/")
-        if git_status:
-            drifted_packages.append(pkg)
-            drifted_files.extend(git_status)
-
-    if drifted_packages and not force:
-        first_pkg = drifted_packages[0]
-        raise RuntimeError(
-            f"[DEPLOY ABORTED] System drift detected in package '{first_pkg}'!\n"
-            f"Run 'drift diff -s {first_pkg}' to view modifications or 'drift adopt {first_pkg}' to incorporate them."
-        )
-
-    return drifted_packages, drifted_files
-
-
-def execute_sequential_compile_and_apply(workspace_config: WorkspaceConfig, target_pkgs: List[str], force: bool = False) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
-    completed_steps = []
-
-    # Step 1: Render raw templates into sandbox render/
-    run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs)
-    completed_steps.append(CompletedStep(1, "template_rendering"))
-
-    # Step 2: Commit sandbox render repository
-    pkgs_label = ", ".join(target_pkgs)
-    run_primitive_3_commit_render_repo(workspace_config, f"Deploy Render: Automatically compile templates for {pkgs_label}", target_pkgs=target_pkgs)
-    completed_steps.append(CompletedStep(2, "render_commit"))
-
-    # Step 3: Stage render sandbox into install state database
-    package_changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=target_pkgs, force=force)
-    completed_steps.append(CompletedStep(3, "sandbox_staging"))
-
-    # Step 4: Physical deployment delivery
-    install_res = run_primitive_5_install_deployment(
-        workspace_config,
-        packages_to_redeploy=target_pkgs,
-        resolve_symlinks=True,
-        force=force,
-        package_changes=package_changes
-    )
-    completed_steps.append(CompletedStep(4, "physical_install"))
-
-    # Step 5: Commit install repository state
-    run_primitive_6_commit_install_repo(workspace_config, f"Deploy Install: Automatically commit deployed changes for {pkgs_label}", target_pkgs=target_pkgs)
-    completed_steps.append(CompletedStep(5, "install_commit"))
-
-    return install_res.packages, completed_steps
-```
-
----
-
-#### 2. Primitive 1: Reverse Sync (Host $\rightarrow$ `install/`)
-
-```python
-def run_primitive_1_reverse_sync(workspace_config: WorkspaceConfig, package_names: Optional[List[str]] = None) -> ReverseSyncResult:
-    install_base = workspace_config.install_path
-    if not install_base.exists():
-        return ReverseSyncResult(status="FAILED", error_message="Install state database directory does not exist.")
-
-    discovered_packages = workspace_config.get_discovered_packages(custom_dir=install_base, target_pkgs=package_names)
-    results = []
-
-    for pkg in discovered_packages:
-        metadata = load_config_for_install(install_base, pkg)
-        if not metadata.enable_install:
-            results.append(PackageReverseSyncResult(package=pkg, target_directory=str(metadata.get_target_directory(workspace_config)), status="SKIPPED"))
-            continue
-
-        target_dir_path = metadata.get_target_directory(workspace_config)
-        if not target_dir_path.exists():
-            results.append(PackageReverseSyncResult(package=pkg, target_directory=str(target_dir_path), status="SKIPPED"))
-            continue
-
-        install_pkg_dir = install_base / pkg
-        ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
-
-        # Unified Reverse Folder Comparison
-        diff = compare_folders(
-            src_dir=target_dir_path,
-            dst_dir=install_pkg_dir,
-            ignore_handler=ignore_handler,
-            resolve_symlinks=True,
-            translate_mode="reverse"
-        )
-
-        drifted_files = []
-        synced_files = []
-
-        # 1. Handle system deletions
-        for rel in diff.deleted:
-            repo_rel = translate_dot_prefixes_reverse(rel)
-            repo_file = install_pkg_dir / repo_rel
-            if repo_file.exists():
-                remove_file_or_dir(repo_file)
-                drifted_files.append(str(rel))
-                synced_files.append(str(repo_rel))
-
-        # 2. Handle system modifications
-        for rel in diff.modified:
-            drifted_str, synced_str = sync_file_to_install(rel, target_dir_path, install_pkg_dir, ignore_handler)
-            drifted_files.append(drifted_str)
-            synced_files.append(synced_str)
-
-        # 3. Handle wild files (FCD) or promoted tracked files
-        added_to_sync = filter_added_files_to_sync(diff.added, diff.deleted, metadata.fully_controlled_dirs)
-        for rel in added_to_sync:
-            drifted_str, synced_str = sync_file_to_install(rel, target_dir_path, install_pkg_dir, ignore_handler)
-            drifted_files.append(drifted_str)
-            synced_files.append(synced_str)
-
-        results.append(PackageReverseSyncResult(
-            package=pkg,
-            target_directory=str(target_dir_path),
-            drifted_files=drifted_files,
-            synced_files=synced_files,
-            status="SUCCESS"
-        ))
-
-    return ReverseSyncResult(status="SUCCESS", packages=results)
-```
-
----
-
-#### 3. Primitives 4, 5, 6, 7 & 8: Reconcile, Deploy, Commit, Uninstall & Rollback
-
-```python
-def run_primitive_4_stage_render_to_install(
-    workspace_config: WorkspaceConfig,
-    target_pkgs: Optional[List[str]] = None,
-    force: bool = False
-) -> List[PackageStageChanges]:
-    """Reconciles sandbox render/ into install/ state database (Primitive 4). Does NOT touch host files."""
-    install_base = workspace_config.install_path
-    render_base = workspace_config.render_path
-    state_file = install_base / "state.toml"
-    state_registry = load_state_registry(state_file)
-
-    discovered_packages = workspace_config.get_discovered_packages(custom_dir=render_base, target_pkgs=target_pkgs)
-    stage_changes = []
-
-    for pkg in discovered_packages:
-        pkg_metadata = load_config_for_install(render_base, pkg)
-        if not (force or pkg_metadata.enable_install):
-            continue
-
-        current_state = state_registry.get_package_state(pkg)
-        if not force and current_state in ("staging", "deploying"):
-            raise RuntimeError(f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state. Run 'drift rollback {pkg}'.")
-
-        state_registry.set_package_state(pkg, "staging", install_method=pkg_metadata.get_install_method(workspace_config))
-        save_state_registry(state_file, state_registry)
-
-        render_pkg_dir = render_base / pkg
-        install_pkg_dir = install_base / pkg
-        backup_pkg_dir = workspace_config.backup_path / pkg / "deleted_files"
-
-        ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
-        diff = compare_folders(render_pkg_dir, install_pkg_dir, ignore_handler=ignore_handler, resolve_symlinks=True)
-
-        # 1. Process Deletions: Move deleted files from install/ to backup/
-        deleted_list = []
-        for rel in diff.deleted:
-            if rel.name in MANAGED_CONFIG_FILES:
-                continue
-            src_file = install_pkg_dir / rel
-            dst_file = backup_pkg_dir / rel
-            dst_file.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(src_file, dst_file)
-            deleted_list.append(rel)
-
-        # 2. Process Additions and Modifications: Copy from render/ to install/
-        added_list = []
-        modified_list = []
-        for rel in diff.added:
-            dest = install_pkg_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(render_pkg_dir / rel, dest)
-            added_list.append(rel)
-
-        for rel in diff.modified:
-            dest = install_pkg_dir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(render_pkg_dir / rel, dest)
-            modified_list.append(rel)
-
-        changes = PackageStageChanges(
-            package_name=pkg,
-            added_files=added_list,
-            modified_files=modified_list,
-            deleted_files=deleted_list
-        )
-        stage_changes.append(changes)
-
-        state_registry.set_package_state(pkg, "staged", install_method=pkg_metadata.get_install_method(workspace_config))
-        save_state_registry(state_file, state_registry)
-
-    return stage_changes
-
-
-def deploy_package_impl(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    state_registry: StateRegistry,
-    state_file: Path,
-    resolve_symlinks: bool,
-    force: bool,
-    package_changes: Optional[PackageStageChanges] = None
-) -> PackageInstallResult:
-    """Core function to physically deploy a single package configuration."""
-    install_base = workspace_config.install_path
-    metadata = load_config_for_install(install_base, pkg)
-
-    if not (force or metadata.enable_install):
-        return PackageInstallResult(
-            package=pkg,
-            install_method=metadata.get_install_method(workspace_config),
-            target_directory=str(metadata.get_target_directory(workspace_config)),
-            status="SKIPPED",
-            error="enable_install is False"
-        )
-
-    target_dir = metadata.get_target_directory(workspace_config)
-    abs_target = target_dir.absolute()
-    abs_drift_root = workspace_config.drift_root.absolute()
-    if abs_target == abs_drift_root or is_relative_to(abs_target, abs_drift_root):
-        raise ValueError(f"Safety Abort: The target directory written in config '{target_dir}' cannot be inside or equal to drift workspace root.")
-
-    ensure_directory_writable(target_dir, metadata.sudo)
-
-    current_state = state_registry.get_package_state(pkg)
-    if not force and current_state in ("staging", "deploying"):
-        raise RuntimeError(f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state. Run 'drift rollback {pkg}'.")
-
-    pkg_state = state_registry.packages.get(pkg)
-    is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
-
-    state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
-    save_state_registry(state_file, state_registry)
-
-    install_pkg_dir = install_base / pkg
-    if not install_pkg_dir.is_dir():
-        return PackageInstallResult(
-            package=pkg,
-            install_method=metadata.get_install_method(workspace_config),
-            target_directory=str(target_dir),
-            status="SKIPPED",
-            error=f"Package installation directory '{install_pkg_dir}' does not exist."
-        )
-
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
-
-    # 1. Physical Collision Guard Pre-Deployment Audit
-    run_collision_guard(
-        workspace_config=workspace_config,
-        pkg=pkg,
-        install_pkg_dir=install_pkg_dir,
-        metadata=metadata,
-        ignore_handler=ignore_handler,
-        target_dir=target_dir,
-        is_first_time=is_first_time,
-        resolve_symlinks=resolve_symlinks,
-        install_base=install_base
-    )
-
-    full_redeploy = (package_changes is None)
-    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
-
-    if full_redeploy:
-        reconcile_orphaned_files(
-            pkg=pkg,
-            target_dir=target_dir,
-            current_files=current_files,
-            state_registry=state_registry,
-            workspace_config=workspace_config,
-            metadata=metadata,
-            resolve_symlinks=resolve_symlinks
-        )
-
-    # 2. Trigger Pre-deployment Lifecycle Hook (CWD: install_pkg_dir)
-    if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir)
-    else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir)
-
-    # 3. Physical File Delivery
-    stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
-    stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
-
-    if full_redeploy:
-        run_full_file_delivery(
-            workspace_config=workspace_config,
-            pkg=pkg,
-            install_base=install_base,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata,
-            deployable_files=current_files,
-            stow_sufficient=stow_sufficient
-        )
-    else:
-        run_incremental_file_delivery(
-            workspace_config=workspace_config,
-            package_changes=package_changes,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata
-        )
-
-    # 4. Trigger Post-deployment Lifecycle Hook (CWD: target_dir)
-    if is_first_time:
-        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir)
-    else:
-        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir)
-
-    # 5. Lock Final State and Manifest
-    now_str = datetime.datetime.now().isoformat()
-    state_registry.set_package_state(pkg, "installed", last_deployed=now_str, install_method=metadata.get_install_method(workspace_config))
-
-    if full_redeploy:
-        state_registry.set_package_deployed_files(pkg, current_files)
-    else:
-        new_deployed = set(state_registry.get_package_deployed_files(pkg))
-        if package_changes:
-            for rel in package_changes.deleted_files:
-                new_deployed.discard(rel)
-            for rel in package_changes.added_files:
-                new_deployed.add(rel)
-        state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
-
-    save_state_registry(state_file, state_registry)
-
-    ops = FileOperations()
-    if package_changes is not None:
-        ops.added = [str(p) for p in package_changes.added_files]
-        ops.modified = [str(p) for p in package_changes.modified_files]
-        ops.deleted = [str(p) for p in package_changes.deleted_files]
-    else:
-        ops.added = [str(p) for p in current_files]
-
-    return PackageInstallResult(
-        package=pkg,
-        install_method=metadata.get_install_method(workspace_config),
-        target_directory=str(target_dir),
-        operations=ops,
-        is_first_time=is_first_time,
-        status="SUCCESS"
-    )
-
-
-def run_primitive_7_uninstall_packages(
-    workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
-    force: bool = False,
-    detach: bool = False,
-    dry_run: bool = False
-) -> UninstallResult:
-    """Removes or detaches packages from the system (Primitive 7)."""
-    install_base = workspace_config.install_path
-    state_file = install_base / "state.toml"
-    registry = load_state_registry(state_file)
-
-    safe_map, rejected_pkgs = filter_uninstallable_packages(workspace_config, registry, package_names, force=force)
-    if rejected_pkgs and not force:
-        raise RuntimeError(f"Safeguard abort: Package(s) {', '.join(rejected_pkgs)} are active.")
-
-    package_results = []
-    successfully_uninstalled = []
-
-    for pkg, pkg_state in safe_map.items():
-        target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
-        if uninstall_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run, detach=detach):
-            if not dry_run:
-                registry.remove_package(pkg)
-                successfully_uninstalled.append(pkg)
-            package_results.append(PackageUninstallResult(
-                package=pkg,
-                install_method=pkg_state.install_method or "stow",
-                target_directory=str(target_dir),
-                detach_mode=detach,
-                removed_files=list(pkg_state.deployed_files) if not detach else [],
-                converted_symlinks=list(pkg_state.deployed_files) if detach else [],
-                status="SUCCESS"
-            ))
-
-    if dry_run:
-        return UninstallResult(status="SUCCESS", detach_mode=detach, packages=package_results)
-
-    save_state_registry(state_file, registry)
-
-    if successfully_uninstalled:
-        action_name = "Detach" if detach else "Uninstall"
-        commit_msg = f"{action_name}: Removed package(s) {', '.join(successfully_uninstalled)}"
-        run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
-
-    return UninstallResult(status="SUCCESS", detach_mode=detach, packages=package_results)
-
-
-def run_primitive_8_rollback_recovery(
-    workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
-    force: bool = False
-) -> RollbackResult:
-    """Restores system and state database to the last clean committed deployment state (Primitive 8)."""
-    install_base = workspace_config.install_path
-    state_file = install_base / "state.toml"
-    registry = load_state_registry(state_file)
-
-    if not force:
-        has_conflict = any(s.state in ("staging", "deploying") for s in registry.packages.values())
-        if not has_conflict:
-            raise RuntimeError("Safeguard abort: No package is in a conflict state ('staging' or 'deploying'). Use --force to proceed.")
-
-    # 1. Reset state.toml from HEAD
-    run_command(["git", "checkout", "HEAD", "--", "state.toml"], cwd=install_base)
-
-    # 2. Reset package directories from HEAD and clean untracked files
-    target_pkgs = package_names if package_names is not None else list(registry.packages.keys())
-    for pkg in target_pkgs:
-        if (install_base / pkg).exists():
-            run_command(["git", "checkout", "HEAD", "--", pkg], cwd=install_base)
-            run_command(["git", "clean", "-fd", pkg], cwd=install_base)
-
-    # 3. Trigger full redeploy fallback
-    run_primitive_5_install_deployment(
-        workspace_config,
-        packages_to_redeploy=package_names,
-        resolve_symlinks=True,
-        force=True
-    )
-
-    # 4. Restore state registry package status to "installed"
-    restored_registry = load_state_registry(state_file)
-    for pkg in target_pkgs:
-        if pkg in restored_registry.packages:
-            restored_registry.set_package_state(pkg, "installed")
-    save_state_registry(state_file, restored_registry)
-
-    return RollbackResult(command="rollback", status="SUCCESS")
-```
 
 ---
 

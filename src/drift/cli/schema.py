@@ -490,6 +490,22 @@ def build_completion_schema() -> CompletionSchema:
                 ],
                 options=[]
             ),
+            "complete": CommandSpec(
+                name="complete",
+                description="Generate interactive shell tab-completion scripts for bash, zsh, or fish",
+                positionals=[
+                    PositionalSpec(
+                        name="shell",
+                        description="Target shell (bash, zsh, or fish). If omitted, automatically detects active shell from $SHELL",
+                        source_type=SourceType.FIXED_CHOICES,
+                        choices=SHELLS,
+                        nargs="?",
+                        default=None,
+                        required=False
+                    )
+                ],
+                options=[]
+            ),
 
             # =================================================================
             # Low-Level Control Commands (Ordered by Pipeline Lifecycle)

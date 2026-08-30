@@ -32,6 +32,7 @@ from .actions import (
     execute_clone,
     execute_help,
     execute_hook,
+    execute_complete,
 )
 
 

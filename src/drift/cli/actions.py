@@ -513,3 +513,39 @@ def execute_hook(
         sys.exit(ExitCode.GENERAL_ERROR)
 
 
+def execute_complete(
+    shell: Optional[str] = None,
+    json_mode: bool = False
+) -> None:
+    """Core function to generate interactive shell tab-completion scripts."""
+    import os
+    import json
+    from .completion import generate_completion_script, SHELLS
+
+    target_shell = shell
+    if not target_shell:
+        shell_env = os.environ.get("SHELL", "")
+        if shell_env:
+            shell_name = Path(shell_env).name.lower()
+            valid_shells = {c.value for c in SHELLS}
+            if shell_name in valid_shells:
+                target_shell = shell_name
+            else:
+                target_shell = "bash"
+        else:
+            target_shell = "bash"
+
+    script = generate_completion_script(target_shell)
+
+    if json_mode:
+        data = {
+            "command": "complete",
+            "status": "SUCCESS",
+            "shell": target_shell,
+            "script": script
+        }
+        print(json.dumps(data, indent=2))
+    else:
+        print(script)
+
+

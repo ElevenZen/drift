@@ -25,6 +25,7 @@ from .actions import (
     execute_clone,
     execute_help,
     execute_hook,
+    execute_complete,
 )
 from ..result_models import DiffType
 from .error_boundary import cli_error_boundary
@@ -296,6 +297,16 @@ def handle_help(
         execute_help(topic)
 
 
+def handle_complete(
+    ctx: Optional[Any] = None,
+    shell: Optional[str] = None
+) -> None:
+    """Generate interactive shell tab-completion scripts for bash, zsh, or fish."""
+    cli_ctx = _extract_cli_context(ctx)
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+        execute_complete(shell=shell, json_mode=cli_ctx.json_mode)
+
+
 def handle_reverse_sync(
     ctx: Any,
     packages: Optional[List[str]] = None
@@ -407,6 +418,7 @@ CLI_HANDLERS: Dict[str, Callable[..., Any]] = {
     "gc": handle_gc,
     "repair": handle_repair,
     "help": handle_help,
+    "complete": handle_complete,
     "reverse-sync": handle_reverse_sync,
     "render": handle_render,
     "render-commit": handle_render_commit,
