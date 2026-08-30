@@ -381,14 +381,14 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         from drift.cli import run_argparse_cli
 
         commands_to_test = [
-            ("render", "drift.cli.typer_backend.execute_render", "drift.cli.argparse_backend.execute_render", ["render"]),
-            ("apply", "drift.cli.typer_backend.execute_apply", "drift.cli.argparse_backend.execute_apply", ["apply"]),
-            ("deploy", "drift.cli.typer_backend.execute_deploy", "drift.cli.argparse_backend.execute_deploy", ["deploy"]),
-            ("adopt", "drift.cli.typer_backend.execute_adopt", "drift.cli.argparse_backend.execute_adopt", ["adopt", "pkg_a"]),
-            ("add", "drift.cli.typer_backend.execute_add", "drift.cli.argparse_backend.execute_add", ["add", "pkg_a", "/dev/null"]),
-            ("uninstall", "drift.cli.typer_backend.execute_uninstall", "drift.cli.argparse_backend.execute_uninstall", ["uninstall", "pkg_a"]),
-            ("rollback", "drift.cli.typer_backend.execute_rollback", "drift.cli.argparse_backend.execute_rollback", ["rollback"]),
-            ("gc", "drift.cli.typer_backend.execute_gc", "drift.cli.argparse_backend.execute_gc", ["gc"]),
+            ("render", "drift.cli.cli_handlers.execute_render", "drift.cli.cli_handlers.execute_render", ["render"]),
+            ("apply", "drift.cli.cli_handlers.execute_apply", "drift.cli.cli_handlers.execute_apply", ["apply"]),
+            ("deploy", "drift.cli.cli_handlers.execute_deploy", "drift.cli.cli_handlers.execute_deploy", ["deploy"]),
+            ("adopt", "drift.cli.cli_handlers.execute_adopt", "drift.cli.cli_handlers.execute_adopt", ["adopt", "pkg_a"]),
+            ("add", "drift.cli.cli_handlers.execute_add", "drift.cli.cli_handlers.execute_add", ["add", "pkg_a", "/dev/null"]),
+            ("uninstall", "drift.cli.cli_handlers.execute_uninstall", "drift.cli.cli_handlers.execute_uninstall", ["uninstall", "pkg_a"]),
+            ("rollback", "drift.cli.cli_handlers.execute_rollback", "drift.cli.cli_handlers.execute_rollback", ["rollback"]),
+            ("gc", "drift.cli.cli_handlers.execute_gc", "drift.cli.cli_handlers.execute_gc", ["gc"]),
         ]
 
         for flag in ["--no-hooks", "--no-hook"]:
