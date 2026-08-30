@@ -8,7 +8,7 @@ isolation, while modern build frontends can read pyproject.toml directly.
 from pathlib import Path
 from setuptools import setup, find_packages
 
-README_PATH = Path(__file__).parent / "docs" / "design.md"
+README_PATH = Path(__file__).parent / "README.md"
 long_description = README_PATH.read_text(encoding="utf-8") if README_PATH.exists() else ""
 
 setup(
@@ -17,7 +17,7 @@ setup(
     description="Decoupled Two-Stage Git-Backed Dotfiles Manager",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    python_requires=">=3.8",
+    python_requires=">=3.9",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     package_data={
@@ -34,6 +34,13 @@ setup(
         "rich": [
             "typer>=0.9.0",
             "rich>=13.0.0",
+        ],
+        "dev": [
+            "typer>=0.9.0",
+            "rich>=13.0.0",
+            "coverage>=7.0.0",
+            "pytest>=7.0.0",
+            "build>=0.10.0",
         ],
     },
     classifiers=[

@@ -27,7 +27,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 ## 📦 Installation & Packaging
 
-Drift requires **Python 3.8+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support).
+Drift requires **Python 3.9+** and has **zero mandatory third-party dependencies** in its core mode (with optional `[rich]` terminal UI support).
 
 ### 1. ⚡ Shell Wrapper Installer (**Strongly Recommended**)
 

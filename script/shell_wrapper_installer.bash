@@ -105,7 +105,7 @@ set -e
 
 DRIFT_SRC="${DRIFT_SRC_DIR}"
 
-# Locate Python interpreter (Python >= 3.8 supported)
+# Locate Python interpreter (Python >= 3.9 supported)
 if command -v python3 >/dev/null 2>&1; then
     PYTHON_BIN="python3"
 elif command -v python >/dev/null 2>&1; then
