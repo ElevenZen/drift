@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Ensure standard user & package manager binary paths are in PATH
+export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
+
+if ! command -v gitleaks &> /dev/null; then
+    echo "Error: gitleaks binary not found in PATH." >&2
+    exit 1
+fi
+
+if [[ -n ${ORG_NAME:-} ]]; then
+    export ORG_NAME_RULE='
+[[rules]]
+id = "org_name"
+description = "Organization Name"
+regex = "(?i)'"$ORG_NAME"'"
+tags = ["system", "org_name"]
+'
+fi
+
+root_dir="$(git rev-parse --show-toplevel)"
+
+envsubst < "$root_dir/.githooks/gitleaks.envst.toml" > "$root_dir/.gitleaks.toml"
+
+# To prevent gitleaks affected by git config, we unset GIT_CONFIG_PARAMETERS
+unset GIT_CONFIG_PARAMETERS
+
+gitleaks protect --staged --verbose --redact
