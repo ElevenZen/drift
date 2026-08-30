@@ -376,6 +376,12 @@ For advanced continuous integration, scripting, and automation:
 4.  **`drift stage [packages...] [--force] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`).
 5.  **`drift apply [packages...] [--force] [--resolve-symlinks/--no-resolve-symlinks] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
 6.  **`drift install-commit [packages...] -m "message" [--json]`**: Commits deployed configurations inside `install/` (`Primitive 6`).
+7.  **`drift hook <package> <hook-name> [--json]`**: Directly executes a specific lifecycle hook script for a single package.
+    *   `pre_source`: Loaded from package source (`src/<package>`) and executed with `cwd = src/<package>`.
+    *   `post_render`: Loaded from compiled sandbox (`render/<package>`) and executed with `cwd = render/<package>`.
+    *   `pre_install`, `pre_update`, `pre_uninstall`: Loaded from state database (`install/<package>`) and executed with `cwd = install/<package>`.
+    *   `post_install`, `post_update`, `post_uninstall`, `health`: Loaded from state database (`install/<package>`) and executed with `cwd = target_directory`.
+    *   Automatically injects package environment variables (`$drift_package_name`, `$drift_package_target_dir`, etc.) and honors `sudo = true` for eligible hooks.
 
 ---
 
@@ -463,6 +469,9 @@ proxychains = false
 | **`2`** | **`CONFIG_ERROR`** | Missing or malformed `drift.toml`, `drift_package.toml`, or invalid configuration types. |
 | **`3`** | **`DRIFT_DETECTED`** | Sentinel safety guard tripped: uncommitted runtime system changes detected on host. |
 | **`4`** | **`RENDER_ERROR`** | Template compilation failure or missing required environment variable. |
+| **`5`** | **`COLLISION_ERROR`** | Target file collision detected during install or apply. |
+| **`6`** | **`HEALTH_CHECK_FAILED`** | Package health check probe failed or returned non-zero exit status. |
+| **`7`** | **`HOOK_SKIPPED`** | Direct hook trigger bypassed or skipped because the hook is not configured or disabled. |
 
 ### C. High-Signal Console Aesthetics (Rich Styling)
 *   `✨` **Gold/Yellow**: Primary action success / Initiation.

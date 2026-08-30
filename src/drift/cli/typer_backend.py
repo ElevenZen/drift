@@ -26,7 +26,8 @@ from .actions import (
     execute_repair,
     execute_health,
     execute_clone,
-    execute_help
+    execute_help,
+    execute_hook,
 )
 from ..result_models import DiffType
 from .error_boundary import cli_error_boundary
@@ -718,3 +719,28 @@ def typer_install_commit(
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
         execute_install_commit(drift_root, message, packages)
+
+
+@app.command("hook")
+def typer_hook(
+    ctx: typer.Context,
+    package: str = typer.Argument(
+        ...,
+        help="Package name to trigger hook for"
+    ),
+    hook_name: str = typer.Argument(
+        ...,
+        help="Name of the lifecycle hook to execute (e.g. pre_source, post_render, pre_install, post_install, pre_update, post_update, pre_uninstall, post_uninstall, health)"
+    ),
+    json_mode: bool = typer.Option(
+        False,
+        "--json",
+        help="Output results in structured machine-readable JSON format"
+    )
+) -> None:
+    """(Low-Level) Trigger a specific lifecycle hook script for a single package."""
+    with cli_error_boundary(json_mode=json_mode, use_rich=True):
+        cli_ctx: DriftCLIContext = ctx.obj
+        drift_root = cli_ctx.get_drift_root()
+        execute_hook(drift_root, package, hook_name, json_mode=json_mode)
+

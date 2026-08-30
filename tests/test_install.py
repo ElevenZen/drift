@@ -325,7 +325,7 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
 
-        hook_dir = Path(pkg_install_dir)
+        hook_base_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
 
         # 1. Test CalledProcessError
@@ -341,7 +341,7 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
-                    hook_dir=hook_dir,
+                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
             self.assertIn("failed with exit code 5", str(ctx.exception))
@@ -360,7 +360,7 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
-                    hook_dir=hook_dir,
+                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
@@ -377,7 +377,7 @@ class TestInstallRepo(unittest.TestCase):
                 pkg=pkg,
                 hook_name="post_install",
                 metadata=config_missing,
-                hook_dir=hook_dir,
+                hook_base_dir=hook_base_dir,
                 cwd=cwd
             )
         self.assertIn("not found", str(ctx.exception))
@@ -410,7 +410,7 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
 
-        hook_dir = Path(pkg_install_dir)
+        hook_base_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
 
         from drift.constants import SUDO_ELIGIBLE_HOOKS
@@ -423,7 +423,7 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name=hook_name,
                     metadata=config_sudo,
-                    hook_dir=hook_dir,
+                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
                 called_cmd = mock_run.call_args[0][0]
@@ -439,7 +439,7 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name=hook_name,
                     metadata=config_sudo,
-                    hook_dir=hook_dir,
+                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
                 called_cmd = mock_run.call_args[0][0]
@@ -468,7 +468,7 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name=hook_name,
                     metadata=config_no_sudo,
-                    hook_dir=hook_dir,
+                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
                 called_cmd = mock_run.call_args[0][0]

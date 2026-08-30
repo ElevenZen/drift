@@ -1703,7 +1703,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_no_hooks_bypasses_pre_source_and_post_render_hooks(self) -> None:
         """Verifies that no_hooks=True completely bypasses pre_source and post_render hook execution."""
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
+        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
         from drift.render_package import render_package
 
         workspace_config = WorkspaceConfig(

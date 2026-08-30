@@ -1,4 +1,5 @@
 import sys
+import time
 import logging
 import shlex
 import subprocess
@@ -11,6 +12,7 @@ if TYPE_CHECKING:
 from .package_config import PackageConfig
 from .file_utils import run_command, run_sudo_command, is_relative_to
 from .constants import SUDO_ELIGIBLE_HOOKS
+from .result_models import HookResult
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +60,21 @@ def execute_hook_script(
     hook_name: str,
     metadata: PackageConfig,
     cwd: Path
-) -> None:
-    """Executes a hook script with chmod, sudo handling, cwd validation, and timeout/error handling."""
+) -> HookResult:
+    """Executes a hook script with chmod, sudo handling, cwd validation, and timeout/error handling.
+
+    This function always returns a successful HookResult (status="SUCCESS") upon completion,
+    or raises an Exception (FileNotFoundError, RuntimeError) if the hook script file is missing,
+    times out, or exits with a non-zero status code.
+
+    Returns:
+        HookResult: Structured result with status="SUCCESS", execution duration_ms, exit code,
+            hook path, CWD, and sudo elevation flag.
+
+    Raises:
+        FileNotFoundError: If the hook script file does not exist on disk.
+        RuntimeError: If the hook script command times out or exits with a non-zero return code.
+    """
     if not hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
         logger.error(err_msg)
@@ -86,14 +101,29 @@ def execute_hook_script(
     use_sudo = bool(metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS)
     timeout_seconds = metadata.hook_timeout
 
+    start_time = time.perf_counter()
+
     try:
-        execute_hook_command(
+        proc = execute_hook_command(
             cmd=cmd,
             cwd=cwd,
             timeout_seconds=timeout_seconds,
             use_sudo=use_sudo
         )
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        return HookResult(
+            command="hook",
+            package=pkg,
+            hook_name=hook_name,
+            status="SUCCESS",
+            exit_code=proc.returncode if proc else 0,
+            hook_path=str(hook_path),
+            cwd=str(cwd),
+            sudo=use_sudo,
+            duration_ms=duration_ms
+        )
     except subprocess.TimeoutExpired as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
         stdout_str = e.stdout or ""
         stderr_str = e.stderr or ""
         display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
@@ -108,6 +138,7 @@ def execute_hook_script(
         logger.error(err_msg)
         raise RuntimeError(err_msg) from e
     except subprocess.CalledProcessError as e:
+        duration_ms = (time.perf_counter() - start_time) * 1000
         stdout_str = e.stdout or ""
         stderr_str = e.stderr or ""
         display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
@@ -129,23 +160,25 @@ def trigger_pre_source_lifecycle_hook(
     pkg_config: Optional[PackageConfig] = None,
     load_envs: bool = False,
     no_hooks: bool = False,
-) -> None:
+) -> HookResult:
     """
     Executes the pre_source lifecycle hook for a package in the source directory.
-    If no_hooks is True, this function will return immediately.
-    If pkg_config (PackageConfig) is not provided, it will be loaded from the source directory.
-    If load_envs is True, wraps execution with package-specific environment variables.
-    If the nominal path of pre_source hook is located inside the package source directory (source_dir),
-    it is rendered or copied into the package render directory first via render_or_copy_file(),
-    and then executed with cwd set to the package source directory.
-    """
 
+    Returns:
+        HookResult detailing execution status ("SUCCESS", "SKIPPED", or "FAILED"), duration, and paths.
+
+    Raises:
+        FileNotFoundError: If a declared hook script file does not exist.
+        RuntimeError: If hook execution fails or times out.
+    """
     if no_hooks:
-        return
+        return HookResult.skipped(package=package_name, hook_name="pre_source")
 
     src_pkg_dir = workspace_config.source_path / package_name
-    if not src_pkg_dir.exists():
-        return
+    if not src_pkg_dir.exists() or not src_pkg_dir.is_dir():
+        raise FileNotFoundError(
+            f"Package '{package_name}' source directory not found: {src_pkg_dir}"
+        )
 
     if pkg_config is None:
         try:
@@ -155,15 +188,22 @@ def trigger_pre_source_lifecycle_hook(
                 workspace_config=workspace_config
             )
         except FileNotFoundError:
-            logger.error(f"Package Configuration file 'drift_package.toml' not found in '{src_pkg_dir}'. Skipping pre_source hook.")
-            return
+            # Package has no drift_package.toml -> no lifecycle hooks configured
+            # It's used for incomplete packages, static packages.
+            return HookResult.skipped(
+                package=package_name,
+                hook_name="pre_source",
+                cwd=src_pkg_dir,
+                hook_base_dir=src_pkg_dir
+            )
 
-    if not pkg_config:
-        logger.error(f"Package configuration file cannot be loaded from '{src_pkg_dir}'. Skipping pre_source hook.")
-        return
-
-    if not pkg_config.hooks or not pkg_config.hooks.pre_source:
-        return
+    if not pkg_config or not pkg_config.hooks or not pkg_config.hooks.pre_source:
+        return HookResult.skipped(
+            package=package_name,
+            hook_name="pre_source",
+            cwd=src_pkg_dir,
+            hook_base_dir=src_pkg_dir
+        )
 
     hook_file = pkg_config.hooks.pre_source
     hook_file_path = Path(hook_file)
@@ -177,7 +217,7 @@ def trigger_pre_source_lifecycle_hook(
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
 
-    def _execute() -> None:
+    def _execute() -> HookResult:
         # Check if nominal hook path is inside src_pkg_dir
         if is_relative_to(nominal_hook_path, src_pkg_dir):
             from .render_package import render_or_copy_file
@@ -192,59 +232,62 @@ def trigger_pre_source_lifecycle_hook(
         else:
             hook_exec_path = nominal_hook_path
 
-        execute_hook_script(
+        res = execute_hook_script(
             hook_path=hook_exec_path,
             pkg=package_name,
             hook_name="pre_source",
             metadata=pkg_config,
             cwd=src_pkg_dir
         )
+        res.hook_base_dir = str(src_pkg_dir)
+        return res
 
     if load_envs:
         with pkg_config.package_envs(workspace_config):
-            _execute()
+            return _execute()
     else:
-        _execute()
-
-
-def trigger_post_render_hook(
-    workspace_config: "WorkspaceConfig",
-    pkg_config: PackageConfig,
-    no_hooks: bool = False,
-) -> None:
-    """Triggers the post_render lifecycle hook for a package in the render directory."""
-    if no_hooks:
-        return
-
-    render_pkg_dir = workspace_config.render_path / pkg_config.name
-    if not render_pkg_dir.exists():
-        return
-
-    if pkg_config and pkg_config.hooks:
-        pkg_config.hooks.trigger_post_render(render_pkg_dir, no_hooks=no_hooks)
+        return _execute()
 
 
 def trigger_package_lifecycle_hook(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
-    hook_dir: Path,
+    hook_base_dir: Path,
     cwd: Path,
-    no_hooks: bool = False,
-) -> None:
-    """Executes a package lifecycle hook script if specified and found."""
-    if no_hooks:
-        return
+) -> HookResult:
+    """Executes a package lifecycle hook script if specified and found.
 
-    hook_file = getattr(metadata, hook_name, None)
+    This function automatically checks if the hook is configured on the package metadata.
+    If the hook is not set, it returns a HookResult with status="SKIPPED".
+    The `no_hooks` flag is handled upstream in PackageHooks.trigger().
+
+    Returns:
+        HookResult detailing execution status ("SUCCESS" or "SKIPPED"), duration, CWD, and script path.
+
+    Raises:
+        FileNotFoundError: If the configured hook script file does not exist on disk.
+        RuntimeError: If the hook script execution fails or times out.
+    """
+    hook_file = getattr(metadata.hooks, hook_name, None) if metadata and metadata.hooks else None
     if not hook_file:
-        return
+        return HookResult.skipped(
+            package=pkg,
+            hook_name=hook_name,
+            cwd=cwd,
+            hook_base_dir=hook_base_dir
+        )
 
-    hook_path = hook_dir / hook_file
-    execute_hook_script(
+    hook_file_path = Path(hook_file)
+    hook_path = hook_file_path if hook_file_path.is_absolute() else hook_base_dir / hook_file_path
+
+    res = execute_hook_script(
         hook_path=hook_path,
         pkg=pkg,
         hook_name=hook_name,
         metadata=metadata,
         cwd=cwd
     )
+    res.hook_base_dir = str(hook_base_dir)
+    return res
+

@@ -16,7 +16,7 @@ from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
-from .lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
+from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
 from .result_models import PackageRenderResult, RenderResult
 from .file_utils import remove_file_or_dir, atomic_copy_file
 
@@ -177,7 +177,7 @@ def render_package_files(
             copied_files.append(dest_rel)
 
     # Trigger post_render hook
-    trigger_post_render_hook(workspace_config, pkg_config, no_hooks=no_hooks)
+    pkg_config.hooks.trigger_post_render(render_dir=render_pkg_dir, no_hooks=no_hooks)
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
     return PackageRenderResult(

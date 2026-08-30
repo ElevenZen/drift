@@ -23,7 +23,8 @@ from .actions import (
     execute_repair,
     execute_health,
     execute_clone,
-    execute_help
+    execute_help,
+    execute_hook,
 )
 from ..result_models import DiffType
 from .error_boundary import cli_error_boundary
@@ -551,6 +552,25 @@ def make_parser() -> argparse.ArgumentParser:
         help="Commit message"
     )
 
+    # 13. hook
+    hook_parser = subparsers.add_parser(
+        "hook",
+        help="(Low-Level) Trigger a specific lifecycle hook script for a single package"
+    )
+    hook_parser.add_argument(
+        "package",
+        help="Package name to trigger hook for"
+    )
+    hook_parser.add_argument(
+        "hook_name",
+        help="Name of the lifecycle hook to execute"
+    )
+    hook_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Output results in structured machine-readable JSON format"
+    )
+
     return parser
 
 
@@ -753,6 +773,13 @@ def run_argparse_cli(argv=None) -> None:
                 no_repair=args.no_repair,
                 json_mode=json_mode
             )
+        elif args.command == "hook":
+            if args.no_git_root:
+                drift_root = base_dir
+            else:
+                drift_root = get_drift_root(base_dir)
+
+            execute_hook(drift_root, args.package, args.hook_name, json_mode=json_mode)
         elif args.command == "help":
             execute_help(args.topic)
         else:

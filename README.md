@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-453%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-464%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -290,6 +290,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
 | `drift apply` | Installs files from `install/` to package target directories. |
 | `drift install-commit` | Manually commits deployment state database changes inside `install/`. |
+| `drift hook <pkg> <hook>` | Directly triggers a specific lifecycle hook script for a single package. |
 
 ---
 
@@ -305,7 +306,7 @@ pre_install = "scripts/bootstrap.sh"
 post_update = "scripts/reload_plugins.sh"
 timeout = 60
 ```
-*   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths (e.g. `src/<pkg>` for `pre_source`, `install/<pkg>` for `pre_install`, and `render/<pkg>` for `post_render`).
+*   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_base_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths (e.g. `src/<pkg>` for `pre_source`, `install/<pkg>` for `pre_install`, and `render/<pkg>` for `post_render`).
 *   **Privilege Model**: When `sudo = true`, installation and update hooks (`pre/post_install`, `pre/post_update`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always execute in user space without `sudo`.
 
 ---

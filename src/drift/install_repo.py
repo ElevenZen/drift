@@ -77,9 +77,6 @@ def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
         raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 
 
-from .lifecycle_hooks import trigger_package_lifecycle_hook
-
-
 def handle_collision_error(
     pkg: str,
     rel_path: Union[Path, str],

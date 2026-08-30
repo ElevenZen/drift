@@ -106,6 +106,13 @@ health = "scripts/health_check.ps1"
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.
 
+> [!TIP]
+> **Triggering Hooks Directly**: You can trigger any individual lifecycle hook script in isolation using the low-level command:
+> ```bash
+> drift hook <package> <hook-name> [--json]
+> ```
+> This executes the hook with its standard working directory, stage directory context, environment variable injections, and sudo privileges.
+
 ## 🌐 Default Package Environment Variables & Precedence
 
 When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:

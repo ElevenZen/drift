@@ -173,6 +173,10 @@ target_directory = "{custom_target}"
                 execute_status(self.drift_root, ["status_pkg"])
             self.assertEqual(cm.exception.code, ExitCode.DRIFT_DETECTED)
 
+    def test_hook_skipped_exit_code_constant(self) -> None:
+        """Verifies that ExitCode.HOOK_SKIPPED is defined with value 7."""
+        self.assertEqual(ExitCode.HOOK_SKIPPED, 7)
+
 
 if __name__ == "__main__":
     unittest.main()

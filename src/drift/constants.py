@@ -38,6 +38,7 @@ class ExitCode(IntEnum):
     RENDER_ERROR = 4
     COLLISION_ERROR = 5
     HEALTH_CHECK_FAILED = 6
+    HOOK_SKIPPED = 7
 
 # This is the default list of ignore patterns used by GNU Stow when no custom .stow-local-ignore file is present in the package source.
 DEFAULT_STOW_IGNORE_PATTERNS = [

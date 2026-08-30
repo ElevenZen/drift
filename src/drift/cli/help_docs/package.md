@@ -31,6 +31,6 @@ or `drift_package.local.toml`. This file dictates:
     If `sudo = true`, installation, update, uninstallation, and health probe hooks (`pre/post_install`, `pre/post_update`, `pre/post_uninstall`, `health`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always run in user space without `sudo`.
 
 > [!TIP]
-> **Lifecycle Hooks Matrix**: For the complete lifecycle hooks execution table (trigger stages, working directories, privilege elevation, and default environment variables), see `drift help drift_package.toml`.
+> **Lifecycle Hooks Matrix**: For the complete lifecycle hooks execution table (trigger stages, working directories, privilege elevation, and default environment variables), see `drift help drift_package.toml`. You can test and execute any hook individually with `drift hook <package> <hook-name>`.
 
 👉 Run `drift help drift_package.toml` to view the comprehensive configuration reference.

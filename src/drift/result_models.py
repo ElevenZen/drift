@@ -511,3 +511,58 @@ class CloneResult(SerializableModel):
 
         return "\n".join(lines)
 
+
+# =============================================================================
+# Primitive: Direct Lifecycle Hook Execution
+# =============================================================================
+
+@dataclass
+class HookResult(SerializableModel):
+    """Structured result for drift hook execution."""
+    command: str = "hook"
+    package: str = ""
+    hook_name: str = ""
+    status: str = "SUCCESS"  # "SUCCESS", "SKIPPED", "FAILED"
+    exit_code: int = 0
+    hook_path: Optional[str] = None
+    cwd: Optional[str] = None
+    hook_base_dir: Optional[str] = None
+    sudo: bool = False
+    duration_ms: float = 0.0
+    error_message: Optional[str] = None
+
+    def __bool__(self) -> bool:
+        """Returns True if the hook executed successfully, False if skipped or failed."""
+        return self.status == "SUCCESS"
+
+    @classmethod
+    def skipped(
+        cls,
+        package: str = "",
+        hook_name: str = "",
+        cwd: Optional[Union[str, Path]] = None,
+        hook_base_dir: Optional[Union[str, Path]] = None,
+    ) -> "HookResult":
+        """Constructs a HookResult with status SKIPPED."""
+        return cls(
+            command="hook",
+            package=package,
+            hook_name=hook_name,
+            status="SKIPPED",
+            exit_code=0,
+            cwd=str(cwd) if cwd is not None else None,
+            hook_base_dir=str(hook_base_dir) if hook_base_dir is not None else None,
+            duration_ms=0.0
+        )
+
+    def format_text(self) -> str:
+        """Formats a human-readable summary of hook execution."""
+        if self.status == "SUCCESS":
+            return f"✨ Successfully executed hook '{self.hook_name}' for package '{self.package}' ({self.duration_ms:.1f}ms)!"
+        elif self.status == "SKIPPED":
+            return f"⏭️ Skipped hook '{self.hook_name}' for package '{self.package}'."
+        return f"❌ Failed to execute hook '{self.hook_name}' for package '{self.package}': {self.error_message}"
+
+
+
+

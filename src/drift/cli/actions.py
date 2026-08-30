@@ -36,6 +36,7 @@ from ..result_models import (
     PackageHealthResult,
     HealthResult,
     CloneResult,
+    HookResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -481,4 +482,34 @@ def execute_help(topic: Optional[str] = None) -> None:
     """Core function to display help documentation pages with paging fallback support."""
     from .help_docs import print_help_document
     print_help_document(topic)
+
+
+def execute_hook(
+    drift_root: Path,
+    package_name: str,
+    hook_name: str,
+    json_mode: bool = False
+) -> None:
+    """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
+    from ..package_hook import run_primitive_trigger_hook
+
+    workspace_config = load_workspace_config_default(drift_root)
+    res = run_primitive_trigger_hook(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        hook_name=hook_name
+    )
+
+    if json_mode:
+        print(res.to_json())
+    else:
+        text = res.format_text()
+        if text:
+            print(text)
+
+    if res.status == "SKIPPED":
+        sys.exit(ExitCode.HOOK_SKIPPED)
+    elif res.status != "SUCCESS":
+        sys.exit(ExitCode.GENERAL_ERROR)
+
 
