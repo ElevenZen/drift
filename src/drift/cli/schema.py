@@ -504,7 +504,13 @@ def build_completion_schema() -> CompletionSchema:
                         required=False
                     )
                 ],
-                options=[]
+                options=[
+                    OptionSpec(
+                        flags=["--install", "-i"],
+                        description="Install completion script directly into standard user completion directory on disk",
+                        action="store_true"
+                    )
+                ]
             ),
 
             # =================================================================

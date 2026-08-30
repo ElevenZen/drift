@@ -513,39 +513,104 @@ def execute_hook(
         sys.exit(ExitCode.GENERAL_ERROR)
 
 
+def get_default_completion_path(shell: str) -> Path:
+    """Returns the standard user-level completion file path for the given shell."""
+    home = Path.home()
+    if shell == "bash":
+        return home / ".local" / "share" / "bash-completion" / "completions" / "drift"
+    elif shell == "zsh":
+        return home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
+    elif shell == "fish":
+        return home / ".config" / "fish" / "completions" / "drift.fish"
+    else:
+        raise ValueError(f"Unknown shell '{shell}'")
+
+
 def execute_complete(
     shell: Optional[str] = None,
+    install: bool = False,
     json_mode: bool = False
 ) -> None:
-    """Core function to generate interactive shell tab-completion scripts."""
+    """Core function to generate or install interactive shell tab-completion scripts."""
     import os
     import json
+    import shutil
     from .completion import generate_completion_script, SHELLS
 
-    target_shell = shell
-    if not target_shell:
+    valid_shells = {c.value for c in SHELLS}
+
+    if install and shell is None:
+        target_shells = []
         shell_env = os.environ.get("SHELL", "")
         if shell_env:
-            shell_name = Path(shell_env).name.lower()
-            valid_shells = {c.value for c in SHELLS}
-            if shell_name in valid_shells:
-                target_shell = shell_name
+            primary_name = Path(shell_env).name.lower()
+            if primary_name in valid_shells:
+                target_shells.append(primary_name)
+
+        home = Path.home()
+        if (home / ".config" / "fish").is_dir() or shutil.which("fish"):
+            if "fish" not in target_shells:
+                target_shells.append("fish")
+        if (home / ".zshrc").exists() or (home / ".config" / "zsh").is_dir() or shutil.which("zsh"):
+            if "zsh" not in target_shells:
+                target_shells.append("zsh")
+        if (home / ".bashrc").exists() or shutil.which("bash"):
+            if "bash" not in target_shells:
+                target_shells.append("bash")
+
+        if not target_shells:
+            target_shells = ["bash"]
+    else:
+        target_shell = shell
+        if not target_shell:
+            shell_env = os.environ.get("SHELL", "")
+            if shell_env:
+                shell_name = Path(shell_env).name.lower()
+                if shell_name in valid_shells:
+                    target_shell = shell_name
+                else:
+                    target_shell = "bash"
             else:
                 target_shell = "bash"
+        target_shells = [target_shell]
+
+    if install:
+        installed_list = []
+        for s in target_shells:
+            script_content = generate_completion_script(s)
+            dest_path = get_default_completion_path(s)
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            dest_path.write_text(script_content, encoding="utf-8")
+            installed_list.append({"shell": s, "path": str(dest_path)})
+
+        if json_mode:
+            data = {
+                "command": "complete",
+                "status": "SUCCESS",
+                "installed": installed_list
+            }
+            print(json.dumps(data, indent=2))
         else:
-            target_shell = "bash"
-
-    script = generate_completion_script(target_shell)
-
-    if json_mode:
-        data = {
-            "command": "complete",
-            "status": "SUCCESS",
-            "shell": target_shell,
-            "script": script
-        }
-        print(json.dumps(data, indent=2))
+            for item in installed_list:
+                print(f"✨ Installed {item['shell']} completion script to:")
+                print(f"   {item['path']}")
+            if any(item["shell"] == "zsh" for item in installed_list):
+                print()
+                print("💡 [NOTE for Zsh]: Ensure your ~/.zshrc contains the following before compinit:")
+                print("   fpath=(~/.local/share/zsh/site-functions $fpath)")
+                print("   autoload -Uz compinit && compinit")
     else:
-        print(script)
+        target_shell = target_shells[0]
+        script = generate_completion_script(target_shell)
+        if json_mode:
+            data = {
+                "command": "complete",
+                "status": "SUCCESS",
+                "shell": target_shell,
+                "script": script
+            }
+            print(json.dumps(data, indent=2))
+        else:
+            print(script)
 
 

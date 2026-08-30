@@ -299,12 +299,13 @@ def handle_help(
 
 def handle_complete(
     ctx: Optional[Any] = None,
-    shell: Optional[str] = None
+    shell: Optional[str] = None,
+    install: bool = False
 ) -> None:
-    """Generate interactive shell tab-completion scripts for bash, zsh, or fish."""
+    """Generate or install interactive shell tab-completion scripts for bash, zsh, or fish."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
-        execute_complete(shell=shell, json_mode=cli_ctx.json_mode)
+        execute_complete(shell=shell, install=install, json_mode=cli_ctx.json_mode)
 
 
 def handle_reverse_sync(

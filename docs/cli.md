@@ -23,7 +23,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`repair`** | `drift repair [--dry-run] [--json]` | Self-heal damaged or missing workspace components and databases. |
 | **`clone`** | `drift clone <git_url> [destination] [-b <branch>] [--depth <N>] [--no-repair] [--json]` | Clone a Git repository and auto-bootstrap/repair the workspace. |
 | **`health`** | `drift health [packages...] [-t <seconds>] [-v] [--json]` | Execute runtime health check probes on installed packages. |
-| **`complete`** | `drift complete [<shell>] [--json]` | Generate native interactive tab-completion scripts (bash, zsh, fish). |
+| **`complete`** | `drift complete [<shell>] [--install] [--json]` | Generate or install native interactive tab-completion scripts (bash, zsh, fish). |
 | **`help`** | `drift help [topic]` | Display interactive mini-manual documentation pages. |
 | **`render`** | `drift render [packages...] [--no-hooks] [--json]` | *(Low-Level)* Compile declarative templates into `render/` sandbox. |
 | **`render-commit`** | `drift render-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit compiled sandbox changes. |
@@ -199,11 +199,18 @@ Executes runtime health check probes on installed packages to verify if deployed
 
 ---
 
-### N. Shell Tab-Completion Generation: `drift complete [<shell>] [--json]`
-Generates zero-latency native shell tab-completion scripts compiled directly from the authoritative CLI schema.
-*   **Command Signature**: `drift complete [shell] [--json]`
+### N. Shell Tab-Completion Generation: `drift complete [<shell>] [--install] [--json]`
+Generates zero-latency native shell tab-completion scripts compiled directly from the authoritative CLI schema, or installs them directly into user completion directories.
+*   **Command Signature**: `drift complete [shell] [--install / -i] [--json]`
 *   **Supported Shells**: `bash`, `zsh`, `fish`. (If omitted, auto-detects from `$SHELL`).
-*   **Integration**:
+*   **Auto-Installation to Standard Directories (`--install`)**:
+    ```bash
+    drift complete --install          # Auto-detects active shells and installs completion files
+    drift complete fish --install     # Installs directly to ~/.config/fish/completions/drift.fish
+    drift complete bash --install     # Installs directly to ~/.local/share/bash-completion/completions/drift
+    drift complete zsh --install      # Installs directly to ~/.local/share/zsh/site-functions/_drift
+    ```
+*   **Dynamic Startup Evaluation**:
     ```bash
     # Bash (~/.bashrc)
     eval "$(drift complete bash)"

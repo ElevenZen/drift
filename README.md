@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-471%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-480%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -20,6 +20,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.local.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
+* 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, and Fish** with rich inline documentation hints and dynamic workspace package discovery.
 * 📦 **Modular & Pluggable**: Pure standard-library core with DAG template pipelines, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
 
 ---
@@ -107,6 +108,34 @@ pip install --user git+https://github.com/ElevenZen/drift.git
 # Or from a cloned local repository:
 pip install --user .
 ```
+
+---
+
+### 4. 🐚 Interactive Shell Tab-Completion (`drift complete`)
+
+Drift features built-in, zero-latency tab-completion generators for **Bash**, **Zsh**, and **Fish** with rich inline documentation hints and dynamic package discovery.
+
+#### Automatic Installation (Standard User Directories)
+Run `drift complete --install` to automatically detect your active shells and place completion scripts in standard user directories (`~/.config/fish/completions/drift.fish`, `~/.local/share/bash-completion/completions/drift`, `~/.local/share/zsh/site-functions/_drift`):
+```bash
+drift complete --install
+```
+*(Note: If you used `./script/shell_wrapper_installer.bash`, tab-completions are installed automatically during setup!)*
+
+#### Dynamic Startup Evaluation (Shell RC)
+Alternatively, evaluate completions on-the-fly in your shell profile:
+*   **Bash** (`~/.bashrc`):
+    ```bash
+    eval "$(drift complete bash)"
+    ```
+*   **Zsh** (`~/.zshrc`):
+    ```zsh
+    eval "$(drift complete zsh)"
+    ```
+*   **Fish** (`~/.config/fish/config.fish`):
+    ```fish
+    drift complete fish | source
+    ```
 
 ---
 
@@ -278,6 +307,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers. |
 | `drift gc` | Purges orphan packages and zombie database directories in `render/` and `install/`. |
 | `drift repair` | Audits and self-heals workspace structure, repositories, config templates, and secrets. |
+| `drift complete [<shell>]` | Generates or installs native interactive shell tab-completion scripts (Bash, Zsh, Fish). |
 | `drift help [topic]` | Interactive mini user manual with pager fallback support. |
 
 ### 🔧 Low-Level Control Commands (Troubleshooting & Automation)

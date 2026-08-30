@@ -115,6 +115,46 @@ class TestCompletionGenerators(unittest.TestCase):
         self.assertEqual(res.exit_code, 0)
         self.assertIn("complete -c drift -f", res.output)
 
+    def test_cli_complete_install_argparse(self):
+        """Verifies 'drift complete zsh --install' writes file and reports path."""
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from drift.cli.argparse_backend import run_argparse_cli
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_home = Path(tmpdir)
+            with patch("pathlib.Path.home", return_value=fake_home):
+                with patch("sys.stdout.write") as mock_stdout:
+                    run_argparse_cli(["complete", "zsh", "--install"])
+                    output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+                    self.assertIn("Installed zsh completion script to:", output)
+                    target_file = fake_home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
+                    self.assertTrue(target_file.is_file())
+                    content = target_file.read_text()
+                    self.assertIn("#compdef drift", content)
+
+    def test_cli_complete_install_json(self):
+        """Verifies 'drift complete fish --install --json' outputs JSON with installed list."""
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from drift.cli.argparse_backend import run_argparse_cli
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            fake_home = Path(tmpdir)
+            with patch("pathlib.Path.home", return_value=fake_home):
+                with patch("sys.stdout.write") as mock_stdout:
+                    run_argparse_cli(["complete", "fish", "--install", "--json"])
+                    output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+                    data = json.loads(output)
+                    self.assertEqual(data["status"], "SUCCESS")
+                    self.assertEqual(len(data["installed"]), 1)
+                    self.assertEqual(data["installed"][0]["shell"], "fish")
+                    fish_path = Path(data["installed"][0]["path"])
+                    self.assertTrue(fish_path.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
 # =============================================================================
 # Installs a lightweight executable wrapper script for Drift into ~/.local/bin.
 # This allows running 'drift' globally without requiring virtual environments
-# or third-party package managers.
+# or third-party package managers, and installs native tab-completions.
 # =============================================================================
 
 set -euo pipefail
@@ -13,17 +13,20 @@ set -euo pipefail
 DEFAULT_BIN_DIR="${HOME}/.local/bin"
 TARGET_BIN_DIR="${DEFAULT_BIN_DIR}"
 FORCE=false
+INSTALL_COMPLETIONS=true
 
 print_usage() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Installs a shell wrapper for the 'drift' command into ~/.local/bin.
+Installs a shell wrapper for the 'drift' command into ~/.local/bin and
+configures native tab-completions for bash, zsh, and fish.
 
 Options:
-  -f, --force         Overwrite any existing 'drift' executable or wrapper
-  -d, --dir <DIR>     Custom destination directory (default: ~/.local/bin)
-  -h, --help          Display this help message and exit
+  -f, --force            Overwrite any existing 'drift' executable or wrapper
+  -d, --dir <DIR>        Custom destination directory (default: ~/.local/bin)
+      --no-completions   Skip automatic installation of shell tab-completion scripts
+  -h, --help             Display this help message and exit
 
 EOF
 }
@@ -42,6 +45,10 @@ while [[ $# -gt 0 ]]; do
             fi
             TARGET_BIN_DIR="$2"
             shift 2
+            ;;
+        --no-completions)
+            INSTALL_COMPLETIONS=false
+            shift
             ;;
         -h|--help)
             print_usage
@@ -74,7 +81,7 @@ WRAPPER_PATH="${TARGET_BIN_DIR}/drift"
 # Check if 'drift' is already available in PATH
 EXISTING_DRIFT="$(command -v drift 2>/dev/null || true)"
 
-if [[ -n "${EXISTING_DRIFT}" && "${FORCE}" = false ]]; then
+if [[ -n "${EXISTING_DRIFT}" && "${FORCE}" = false && "${EXISTING_DRIFT}" != "${WRAPPER_PATH}" ]]; then
     echo "✨ 'drift' command is already available in PATH at:"
     echo "   ${EXISTING_DRIFT}"
     echo
@@ -118,6 +125,18 @@ chmod +x "${WRAPPER_PATH}"
 echo "🎉 Successfully installed Drift shell wrapper to:"
 echo "   ${WRAPPER_PATH}"
 echo
+
+# Install tab-completions if enabled
+if [[ "${INSTALL_COMPLETIONS}" = true ]]; then
+    echo "🐚 Installing interactive shell tab-completions..."
+    if "${WRAPPER_PATH}" complete --install; then
+        echo "   Tab-completions successfully configured!"
+    else
+        echo "⚠️  Failed to automatically install completions via '${WRAPPER_PATH} complete --install'." >&2
+        echo "   You can manually run 'drift complete --install' anytime." >&2
+    fi
+    echo
+fi
 
 # Check if TARGET_BIN_DIR is currently in PATH
 PATH_NORMALIZED=":${PATH}:"
