@@ -11,14 +11,20 @@ if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig, RenderEngineConfig
     from .package_config import PackageConfig
 
-from .constants import DRIFT_IGNORE_FILE_NAME, INITIAL_ENV
+from .constants import (
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_LEGACY_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME_LIST,
+    INITIAL_ENV,
+)
 from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
+from .exceptions import ConfigError
 from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
 from .result_models import PackageRenderResult, RenderResult
-from .file_utils import remove_file_or_dir, atomic_copy_file
+from .file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +53,12 @@ def render_or_copy_file(
 
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
+        translated_dest = translate_dot_prefixes(Path(stripped_relative_path))
+        if translated_dest.name in DRIFT_IGNORE_FILE_NAME_LIST:
+            raise ConfigError(
+                f"Package '{package_dir.name}' cannot render template '{file_path.name}' to '{stripped_relative_path}'. "
+                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
+            )
         dest_path = render_pkg_dir / stripped_relative_path
         logger.info(f"🎨 Rendering: {relative_path} ({engine.name})")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
@@ -58,6 +70,13 @@ def render_or_copy_file(
         )
         return (stripped_relative_path, True)
     else:
+        translated_dest = translate_dot_prefixes(relative_path)
+        if (translated_dest.name in DRIFT_IGNORE_FILE_NAME_LIST
+                and relative_path.as_posix() not in DRIFT_IGNORE_FILE_NAME_LIST):
+            raise ConfigError(
+                f"Package '{package_dir.name}' cannot use '{file_path.name}' to represent '{DRIFT_IGNORE_FILE_NAME}'. "
+                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
+            )
         dest_path = render_pkg_dir / relative_path
         logger.info(f"📄 Copying: {relative_path}")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
@@ -89,7 +108,7 @@ def prepare_package_config(package_dir: Path, package_name: str,
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
     """Handles warning and copying of drift ignore files."""
     package_name = package_dir.name
-    misspelled_path = package_dir / ".driftignore"
+    misspelled_path = package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME
     correct_path = package_dir / DRIFT_IGNORE_FILE_NAME
 
     if correct_path.exists():
@@ -97,16 +116,16 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
             raise ValueError(f"The path '{correct_path}' is a directory, but must be a file.")
         if misspelled_path.is_file():
             logger.warning(
-                f"Both '{DRIFT_IGNORE_FILE_NAME}' and legacy '.driftignore' exist in package '{package_name}'. "
-                f"The misspelled file '.driftignore' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
+                f"Both '{DRIFT_IGNORE_FILE_NAME}' and legacy '{DRIFT_IGNORE_LEGACY_FILE_NAME}' exist in package '{package_name}'. "
+                f"The misspelled file '{DRIFT_IGNORE_LEGACY_FILE_NAME}' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
             )
         dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         atomic_copy_file(correct_path, dest_correct)
     elif misspelled_path.is_file():
         logger.warning(
-            f"Package '{package_name}' contains a misspelled ignore file '.driftignore'. "
-            "Please rename it to '.drift_ignore'."
+            f"Package '{package_name}' contains a misspelled ignore file '{DRIFT_IGNORE_LEGACY_FILE_NAME}'. "
+            f"Please rename it to '{DRIFT_IGNORE_FILE_NAME}'."
         )
         dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
@@ -136,38 +155,40 @@ def render_package_files(
 
     handle_driftignore_file(package_dir, render_pkg_dir)
 
-    # 3. Recursively process all other files inside the package directory
+    # 3. Recursively process all other files inside the package source directory to render
     # Proactively check for nested ignore files and trigger clean validation
     DriftIgnore.load_from_dir(package_dir)
 
-    # Use list_folder_paths to walk every file in package_dir, resolving symlinks to directories
-    all_files = list_folder_paths(package_dir, resolve_symlinks=True)
+    src_dir_to_render = pkg_config.get_source_directory_to_render(package_dir)
+    if not src_dir_to_render.exists() or not src_dir_to_render.is_dir():
+        raise FileNotFoundError(f"Package '{package_name}' source directory not found: '{src_dir_to_render}'")
+
+    # Use list_folder_paths to walk every file in src_dir_to_render, resolving symlinks to directories
+    all_files = list_folder_paths(src_dir_to_render, resolve_symlinks=True)
 
     rendered_files: List[str] = []
     copied_files: List[str] = []
 
     for file in all_files:
-        file_path = package_dir / file
+        file_path = src_dir_to_render / file
 
         # Skip if the file is the package config file or its template itself
         if pkg_config.is_package_config_file(file_path):
             continue
 
         # Skip any '.*' files (except .drift_ignore) in rendering process and print info
-        if file.name.startswith(".") and file.name not in [".drift_ignore", ".driftignore"]:
+        if file.name.startswith(".") and file.name not in DRIFT_IGNORE_FILE_NAME_LIST:
             logger.info(f"ℹ️  [SKIP] Skipping hidden file '{file}' in package rendering. All hidden files must use the 'dot-' prefix in source templates.")
             continue
 
-        if file == Path(".driftignore"):
+        if file.name in DRIFT_IGNORE_FILE_NAME_LIST:
+            if file_path.parent != package_dir:
+                raise ValueError(f"Ignore config '{DRIFT_IGNORE_FILE_NAME}' must be located at the root of the package directory.")
             continue
-
-        if ((file.name == ".driftignore" or file.name == ".drift_ignore")
-                and file_path.parent != package_dir):
-            raise ValueError("Ignore config '.drift_ignore' must be located at the root of the package directory.")
 
         dest_rel, was_rendered = render_or_copy_file(
             file_path=file_path,
-            package_dir=package_dir,
+            package_dir=src_dir_to_render,
             render_pkg_dir=render_pkg_dir,
             workspace_config=workspace_config
         )
@@ -243,26 +264,13 @@ def run_primitive_2_render_packages(
             try:
                 pkg_res = render_package(workspace_config, package_dir, no_hooks=no_hooks)
                 results.append(pkg_res)
-            except FileNotFoundError as e:
-                err_msg = f"File not found: {e}"
-                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
-                errors.append((package_name, err_msg, e))
-                results.append(PackageRenderResult(
-                    package=package_name,
-                    status="FAILED",
-                    error=err_msg
-                ))
-            except RenderError as e:
-                err_msg = f"Render failed: {e}"
-                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
-                errors.append((package_name, err_msg, e))
-                results.append(PackageRenderResult(
-                    package=package_name,
-                    status="FAILED",
-                    error=err_msg
-                ))
             except Exception as e:
-                err_msg = f"Error: {e}"
+                if isinstance(e, FileNotFoundError):
+                    err_msg = f"File not found: {e}"
+                elif isinstance(e, RenderError):
+                    err_msg = f"Render failed: {e}"
+                else:
+                    err_msg = f"Error: {e}"
                 logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
                 errors.append((package_name, err_msg, e))
                 results.append(PackageRenderResult(

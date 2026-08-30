@@ -18,24 +18,26 @@ from .folder_diff import list_folder_paths
 
 logger = logging.getLogger(__name__)
 
-def get_package_target_directory_from_source(
+def get_package_source_and_target_directory_from_source(
     workspace_config: WorkspaceConfig,
     src_pkg_dir: Path,
     package_name: str
-) -> Path:
-    """Resolves the target directory for a package, handling config templates."""
+) -> Tuple[Path, Path]:
+    """Resolves both source directory to render and host target directory for a package, handling config templates."""
     from .package_config import load_package_config_from_source_dir
     try:
         pkg_config = load_package_config_from_source_dir(
             package_dir=src_pkg_dir,
             workspace_config=workspace_config
         )
+        src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
         target_base = pkg_config.get_target_directory(workspace_config)
     except Exception as e:
         logger.warning(f"Failed to load package configuration in {src_pkg_dir}: {e}. Using defaults.")
+        src_dir_to_render = src_pkg_dir
         target_base = workspace_config.default_target_path
 
-    return target_base.resolve()
+    return src_dir_to_render.resolve(), target_base.resolve()
 
 def generate_import_worklist(
     workspace_config: WorkspaceConfig,
@@ -95,7 +97,7 @@ def run_primitive_11_add_resources(
 ) -> None:
     """
     Orchestrates importing multiple resources into a package.
-    1. Resolves package target directory.
+    1. Resolves package target directory and source render directory.
     2. Identifies all files to import, respecting ignores.
     3. Performs global conflict check before any copy.
     4. Executes the import with dot-prefix translation.
@@ -109,8 +111,9 @@ def run_primitive_11_add_resources(
     from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
     trigger_pre_source_lifecycle_hook(workspace_config, package_name, load_envs=True, no_hooks=no_hooks)
 
-    # 2. Resolve target directory and ignores
-    target_base = get_package_target_directory_from_source(workspace_config, src_pkg_dir, package_name)
+    # 2. Resolve source render directory, target directory and ignores
+    src_dir_to_render, target_base = get_package_source_and_target_directory_from_source(
+            workspace_config, src_pkg_dir, package_name)
     ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir)
 
     # 3. Generate global worklist of files to import
@@ -122,7 +125,7 @@ def run_primitive_11_add_resources(
 
     # 4. Global Conflict Check Phase
     for src_on_system, rel_target in full_worklist:
-        conflict = workspace_config.find_conflict_in_source_dir(src_pkg_dir, rel_target)
+        conflict = workspace_config.find_conflict_in_source_dir(src_dir_to_render, rel_target)
         if conflict:
             rel_conflict = conflict.path.relative_to(workspace_config.drift_root)
             raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
@@ -130,7 +133,7 @@ def run_primitive_11_add_resources(
     # 5. Execution Phase
     for src_on_system, rel_target in full_worklist:
         rel_src = translate_dot_prefixes_reverse(rel_target)
-        dest_path = src_pkg_dir / rel_src
+        dest_path = src_dir_to_render / rel_src
         
         if dry_run:
             logger.info(f"🔍 [DRY RUN] Would import '{src_on_system}' to '{dest_path.relative_to(workspace_config.drift_root)}'")

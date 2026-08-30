@@ -6,6 +6,7 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_LEGACY_FILE_NAME,
     get_default_drift_ignore_content,
 )
 
@@ -84,7 +85,7 @@ def run_primitive_10_create_new_package(
 
     # Generate default .drift_ignore if it doesn't already exist
     ignore_file = package_dir / DRIFT_IGNORE_FILE_NAME
-    if not ignore_file.exists() and not (package_dir / ".driftignore").exists():
+    if not ignore_file.exists() and not (package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME).exists():
         ignore_file.write_text(get_default_drift_ignore_content(), encoding="utf-8")
         logger.info(f"📝 Generated {DRIFT_IGNORE_FILE_NAME} at {ignore_file}")
     

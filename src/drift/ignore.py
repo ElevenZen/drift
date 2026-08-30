@@ -5,7 +5,12 @@ import logging
 from pathlib import Path
 from typing import List, Optional, Protocol, runtime_checkable
 
-from .constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, DEFAULT_STOW_IGNORE_PATTERNS
+from .constants import (
+    MANAGED_CONFIG_FILES,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME_LIST,
+    DEFAULT_STOW_IGNORE_PATTERNS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +75,7 @@ class DriftIgnore(IgnoreHandler):
             return cls(None)
 
         # Proactively check for nested ignore files in subdirectories
-        for ignore_name in [DRIFT_IGNORE_FILE_NAME, ".driftignore"]:
+        for ignore_name in DRIFT_IGNORE_FILE_NAME_LIST:
             for path in render_pkg_dir.rglob(ignore_name):
                 # Ensure the path is inside a subdirectory, not at the root
                 if path.parent != render_pkg_dir:

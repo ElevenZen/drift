@@ -20,6 +20,10 @@ target_directory = "~/.config/my_app"
 # Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
 # target_directory_windows = "%LOCALAPPDATA%/my_app"
 
+# Optional subfolder within src/<pkg>/ to render (defaults to ".").
+# If specified, only files in this subfolder are compiled and deployed to the host.
+# source_directory = "dotfiles"
+
 # Advanced Flags
 
 # Execute physical file deployments and installation/update lifecycle hooks with root privileges (sudo).

@@ -1312,6 +1312,43 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
 
+    def test_package_source_directory_config(self) -> None:
+        """Verifies parsing, defaults, validation, and resolution of source_directory."""
+        # 1. Default source_directory is Path(".")
+        pkg_default = PackageConfig(name="default_pkg")
+        self.assertEqual(pkg_default.source_directory, Path("."))
+        base_dir = Path("/home/user/workspace/src/default_pkg")
+        self.assertEqual(pkg_default.get_source_directory_to_render(base_dir), base_dir)
+
+        # 2. Custom relative source_directory
+        pkg_custom = PackageConfig(name="custom_pkg", source_directory="dotfiles/config")
+        self.assertEqual(pkg_custom.source_directory, Path("dotfiles/config"))
+        self.assertEqual(pkg_custom.get_source_directory_to_render(base_dir), base_dir / "dotfiles/config")
+
+        # 3. from_dict parsing
+        data = {
+            "package": {
+                "source_directory": "src_subfolder"
+            }
+        }
+        pkg_from_dict = PackageConfig.from_dict(data, package_name="parsed_pkg")
+        self.assertEqual(pkg_from_dict.source_directory, Path("src_subfolder"))
+        self.assertEqual(pkg_from_dict.get_source_directory_to_render(base_dir), base_dir / "src_subfolder")
+
+        # 4. Type validation error on from_dict
+        with self.assertRaises(TypeError):
+            PackageConfig.from_dict({"package": {"source_directory": 123}}, package_name="bad_pkg")
+
+        # 5. Absolute path rejected
+        with self.assertRaises(ConfigError):
+            pkg_abs = PackageConfig(name="abs_pkg", source_directory="/absolute/path")
+            pkg_abs.validate()
+
+        # 6. Path traversal escaping package dir rejected
+        pkg_escape = PackageConfig(name="escape_pkg", source_directory="../other_pkg")
+        with self.assertRaises(ConfigError):
+            pkg_escape.get_source_directory_to_render(base_dir)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -938,6 +938,51 @@ class TestAdopt(unittest.TestCase):
         self.assertIn(f" M {pkg}/service.conf", res.stdout)
         self.assertNotIn(f"M  {pkg}/service.conf", res.stdout)
 
+    def test_adopt_with_subfolder_source_directory(self) -> None:
+        """Verifies that adopting additions, modifications, and deletions operates inside source_directory subfolder."""
+        pkg = "pkg_adopt_subfolder"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        subfolder_dir = src_pkg / "dotfiles"
+        subfolder_dir.mkdir(parents=True, exist_ok=True)
+
+        pkg_toml = src_pkg / "drift_package.toml"
+        pkg_toml.write_text(f'[package]\nname = "{pkg}"\nsource_directory = "dotfiles"\n', encoding="utf-8")
+
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Existing file in source subfolder and install/
+        (subfolder_dir / "app.conf").write_text("setting=original\n", encoding="utf-8")
+        (install_pkg / "app.conf").write_text("setting=original\n", encoding="utf-8")
+
+        # Initial commit in src and install
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src subfolder"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install subfolder"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 1. Modify existing file on host (in install/)
+        (install_pkg / "app.conf").write_text("setting=modified_on_host\n", encoding="utf-8")
+
+        # 2. Add new file on host (in install/)
+        (install_pkg / "new_tool.conf").write_text("tool=active\n", encoding="utf-8")
+
+        # Run adopt
+        resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
+        self.assertEqual(resolved, [pkg])
+
+        # Verify modified file updated in source subfolder
+        self.assertEqual((subfolder_dir / "app.conf").read_text(encoding="utf-8"), "setting=modified_on_host\n")
+
+        # Verify added file created inside source subfolder
+        self.assertTrue((subfolder_dir / "new_tool.conf").is_file())
+        self.assertEqual((subfolder_dir / "new_tool.conf").read_text(encoding="utf-8"), "tool=active\n")
+
+        # Verify not created at package root
+        self.assertFalse((src_pkg / "new_tool.conf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

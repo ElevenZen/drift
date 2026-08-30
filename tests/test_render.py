@@ -1748,6 +1748,119 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         result = render_package(workspace_config, pkg_src_dir, no_hooks=True)
         self.assertEqual(result.status, "SUCCESS")
 
+    def test_render_package_with_subfolder_source_directory(self) -> None:
+        """Verifies that only files inside package source_directory subfolder are rendered."""
+        from drift.render_package import render_package
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_subfolder": True},
+            packages_enable_default=False
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "pkg_subfolder"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        subfolder_dir = pkg_src_dir / "dotfiles"
+        subfolder_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_subfolder"
+        source_directory = "dotfiles"
+        install_method = "copy"
+        """, encoding="utf-8")
+
+        # Root file outside subfolder - should NOT be rendered
+        (pkg_src_dir / "README.md").write_text("# Upstream Repo Readme", encoding="utf-8")
+
+        # Files inside subfolder - SHOULD be rendered
+        (subfolder_dir / "dot-config").mkdir(parents=True, exist_ok=True)
+        (subfolder_dir / "dot-config" / "app.conf").write_text("setting=true\n", encoding="utf-8")
+        (subfolder_dir / "dot-bashrc").write_text("export FOO=1\n", encoding="utf-8")
+
+        result = render_package(workspace_config, pkg_src_dir)
+        self.assertEqual(result.status, "SUCCESS")
+
+        render_pkg_dir = self.drift_root / "render" / "pkg_subfolder"
+        self.assertTrue((render_pkg_dir / "drift_package.toml").exists())
+        self.assertTrue((render_pkg_dir / "dot-config" / "app.conf").exists())
+        self.assertTrue((render_pkg_dir / "dot-bashrc").exists())
+        # README.md at root should not be rendered
+        self.assertFalse((render_pkg_dir / "README.md").exists())
+        # dotfiles subfolder itself should not be nested in render/
+        self.assertFalse((render_pkg_dir / "dotfiles").exists())
+
+    def test_render_package_with_missing_source_directory_raises_file_not_found(self) -> None:
+        """Verifies that a non-existent source_directory raises FileNotFoundError."""
+        from drift.render_package import render_package
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_missing_sub": True},
+            packages_enable_default=False
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "pkg_missing_sub"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_missing_sub"
+        source_directory = "non_existent_folder"
+        install_method = "copy"
+        """, encoding="utf-8")
+
+        with self.assertRaises(FileNotFoundError):
+            render_package(workspace_config, pkg_src_dir)
+
+    def test_render_template_to_drift_ignore_raises_config_error(self) -> None:
+        """Verifies that templates attempting to render to .drift_ignore raise ConfigError."""
+        from drift.render_package import render_package
+        from drift.exceptions import ConfigError
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_bad_ignore": True},
+            packages_enable_default=False,
+            render_engine_config={
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command="bash -c 'source %i && envsubst < %s'"
+                )
+            }
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "pkg_bad_ignore"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_bad_ignore"
+        install_method = "copy"
+        """, encoding="utf-8")
+
+        # Create a template that would render to .drift_ignore
+        (pkg_src_dir / "dot-drift_ignore.envst").write_text("*.tmp\n", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            render_package(workspace_config, pkg_src_dir)
+        self.assertIn("cannot render template", str(ctx.exception))
+        self.assertIn(".drift_ignore", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

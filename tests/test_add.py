@@ -305,6 +305,31 @@ class TestAddResource(unittest.TestCase):
             run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
+    def test_add_with_subfolder_source_directory(self):
+        """Verifies that adding a resource imports files into the configured source_directory subfolder."""
+        pkg = "pkg_add_subfolder"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        subfolder_dir = pkg_src_dir / "dotfiles"
+        subfolder_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname="{pkg}"\nsource_directory="dotfiles"\n'
+        )
+
+        target_file = self.system_target_dir / ".config" / "sub_app.conf"
+        target_file.parent.mkdir(parents=True, exist_ok=True)
+        target_file.write_text("sub_app_setting=1\n")
+
+        run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+
+        # File must be imported inside src/pkg_add_subfolder/dotfiles/dot-config/sub_app.conf
+        imported_file = subfolder_dir / "dot-config" / "sub_app.conf"
+        self.assertTrue(imported_file.is_file())
+        self.assertEqual(imported_file.read_text(), "sub_app_setting=1\n")
+        # Ensure it was not imported at root of package
+        self.assertFalse((pkg_src_dir / "dot-config" / "sub_app.conf").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

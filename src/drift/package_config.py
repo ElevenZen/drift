@@ -7,7 +7,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any
+from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
 from .constants import (
@@ -292,6 +292,7 @@ class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
     name: str
     source_files: List[Path] = field(default_factory=list)
+    source_directory: Path = field(default_factory=lambda: Path("."))
     enable_render: bool = True
     enable_install: bool = True
     install_method: Optional[str] = None
@@ -313,6 +314,7 @@ class PackageConfig:
         self,
         name: str,
         source_files: Optional[List[Path]] = None,
+        source_directory: Optional[Union[str, Path]] = None,
         enable_render: bool = True,
         enable_install: bool = True,
         install_method: Optional[str] = None,
@@ -334,6 +336,7 @@ class PackageConfig:
     ) -> None:
         self.name = name
         self.source_files = source_files if source_files is not None else []
+        self.source_directory = Path(source_directory) if source_directory else Path(".")
         self.enable_render = enable_render
         self.enable_install = enable_install
         self.install_method = install_method
@@ -485,6 +488,10 @@ class PackageConfig:
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
+        if not isinstance(self.source_directory, Path):
+            raise TypeError(f"source_directory must be a Path for package '{self.name}'.")
+        if self.source_directory.is_absolute():
+            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
         if not isinstance(self.hooks, PackageHooks):
             raise TypeError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
         self.hooks.validate(self.name)
@@ -492,6 +499,27 @@ class PackageConfig:
     def is_package_config_file(self, file_path: Path) -> bool:
         """Checks if the given file path is a package config file, its local override, or their template versions."""
         return file_path in self.source_files
+
+    def get_source_directory_to_render(self, package_dir: Path) -> Path:
+        """Returns the resolved absolute path of the subfolder to render within package_dir.
+
+        Raises:
+            ConfigError: If source_directory is absolute or escapes package_dir.
+        """
+        if not self.source_directory or self.source_directory == Path(".") or str(self.source_directory) in (".", ""):
+            return package_dir
+        rel = self.source_directory
+        if rel.is_absolute():
+            raise ConfigError(
+                f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path, not absolute."
+            )
+        resolved = (package_dir / rel).resolve()
+        from .file_utils import is_relative_to
+        if not is_relative_to(resolved, package_dir.resolve()):
+            raise ConfigError(
+                f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root '{package_dir}'."
+            )
+        return resolved
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         if sys.platform == "win32" and self.target_directory_windows is not None:
@@ -579,6 +607,7 @@ class PackageConfig:
         # Warning for unknown package options
         known_package_keys = {
             "name",
+            "source_directory",
             "enable_render",
             "enable_install",
             "install_method",
@@ -602,6 +631,15 @@ class PackageConfig:
         elif not isinstance(fcd, list):
             fcd = []
 
+        # Parse source_directory if provided
+        src_dir_val = package_data.get("source_directory")
+        if src_dir_val is not None:
+            if not isinstance(src_dir_val, (str, Path)):
+                raise TypeError(f"source_directory must be a string for package '{name}'.")
+            source_dir = Path(str(src_dir_val).strip())
+        else:
+            source_dir = Path(".")
+
         # Expand home directory and env vars for target_directory on load
         target_dir = package_data.get("target_directory")
         if target_dir:
@@ -616,6 +654,7 @@ class PackageConfig:
 
         config = cls(
             name=str(name),
+            source_directory=source_dir,
             enable_render=bool(package_data.get("enable_render", True)),
             enable_install=bool(package_data.get("enable_install", True)),
             install_method=package_data.get("install_method"),

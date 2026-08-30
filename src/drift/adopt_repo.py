@@ -155,13 +155,24 @@ def test_file_conflict(src_file: Path, install_file: Path, install_base: Path, p
     return check_patch_conflicts(src_file, patch_content)
 
 
-def resolve_source_file_path(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> Optional[Path]:
-    """Resolves the physical file path inside src/pkg_dir using find_source_file_for_rendered_names."""
+def get_package_source_render_dir(workspace_config: WorkspaceConfig, pkg: str) -> Path:
+    """Returns the package source directory to render."""
     src_pkg_dir = workspace_config.source_path / pkg
+    try:
+        from .package_config import load_package_config_from_source_dir
+        pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
+        return pkg_config.get_source_directory_to_render(src_pkg_dir)
+    except Exception:
+        return src_pkg_dir
+
+
+def resolve_source_file_path(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> Optional[Path]:
+    """Resolves the physical file path inside src_dir_to_render using find_source_file_for_rendered_names."""
+    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     
-    # Locate a file in src/pkg/rel_path.parent that renders to rel_path.name
+    # Locate a file in src_dir_to_render / rel_path.parent that renders to rel_path.name
     match_info = workspace_config.find_source_file_for_rendered_names(
-        src_pkg_dir / rel_path.parent,
+        src_dir_to_render / rel_path.parent,
         [rel_path.name]
     )
     if match_info:
@@ -198,7 +209,6 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
 
 def adopt_deletion(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> None:
     """Symmetrically deletes the corresponding file from declarative source folder."""
-    pkg_dir = workspace_config.source_path / pkg
     src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
         remove_file_or_dir(src_file)
@@ -257,18 +267,18 @@ def adopt_rename(
     accept_conflicts: bool = False
 ) -> None:
     """Symmetrically renames the source template file and applies any content patch."""
-    pkg_dir = workspace_config.source_path / pkg
+    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     old_src_file = resolve_source_file_path(workspace_config, pkg, old_rel_path)
     if old_src_file and old_src_file.exists():
         new_src_name = workspace_config.make_new_template_name(old_src_file.name,
                                                                new_rel_path.name)
-        new_src_file = pkg_dir / new_rel_path.parent / new_src_name
+        new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
 
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(old_src_file, new_src_file)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Creating a new template file for '{new_rel_path}'.")
-        new_src_file = pkg_dir / new_rel_path
+        new_src_file = src_dir_to_render / new_rel_path
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         new_src_file.touch()
         
@@ -384,9 +394,10 @@ def handle_single_addition(
                 return True
         return False
 
-    pkg_dir: Path = workspace_config.source_path / pkg
+    src_pkg_dir: Path = workspace_config.source_path / pkg
+    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     if not interactive:
-        adopt_addition(pkg_dir, install_pkg_dir, rel_path)
+        adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
         return True
     else:
         print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
@@ -397,10 +408,10 @@ def handle_single_addition(
         print("[4] Skip file")
         choice = input("Select option [1-4]: ").strip()
         if choice == "1":
-            adopt_addition(pkg_dir, install_pkg_dir, rel_path)
+            adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
             return True
         elif choice == "2":
-            ignore_addition(pkg_dir, install_pkg_dir, rel_path)
+            ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
             return True
         elif choice == "3":
             return True
@@ -772,6 +783,7 @@ def adopt_single_package(
         return True
 
     pkg_dir = workspace_config.source_path / pkg
+    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     install_pkg_dir = workspace_config.install_path / pkg
 
     # Trigger pre_source hook before adopting drifts into source directory
@@ -795,7 +807,7 @@ def adopt_single_package(
     # 3. Process Renames
     for old_rel_path, new_rel_path in renames:
         resolved = handle_single_rename(
-            workspace_config, pkg, pkg_dir, install_pkg_dir,
+            workspace_config, pkg, src_dir_to_render, install_pkg_dir,
             old_rel_path, new_rel_path, interactive, accept_conflicts
         )
         if not resolved:
@@ -805,7 +817,7 @@ def adopt_single_package(
     # 4. Process Modifications
     for rel_path in modifications:
         resolved = handle_single_modification(
-            workspace_config, pkg, pkg_dir, install_pkg_dir, rel_path, interactive, accept_conflicts
+            workspace_config, pkg, src_dir_to_render, install_pkg_dir, rel_path, interactive, accept_conflicts
         )
         if not resolved:
             skipped_files.append(rel_path)
