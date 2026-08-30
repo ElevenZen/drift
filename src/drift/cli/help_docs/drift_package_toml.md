@@ -69,7 +69,7 @@ post_uninstall = "scripts/cleanup_post.sh"
 # Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
 post_render = "scripts/generate_checksums.sh"
 
-# Run runtime health check probes on installed package (executed from host target directory; runs with sudo if sudo = true)
+# Run runtime health check probes on installed package (executed from host target directory; always runs without sudo)
 health = "scripts/health_check.sh"
 
 # Optional Windows-specific hook overrides.
@@ -101,7 +101,7 @@ health = "scripts/health_check.ps1"
 | `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | Runs with `sudo` if `sudo = true` |
 | `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
 | `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `health` | During `drift health` probe execution | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `health` | During `drift health` probe execution | `target_directory` | Always user space (No sudo) |
 
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.

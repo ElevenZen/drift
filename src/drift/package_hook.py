@@ -10,7 +10,12 @@ from .package_config import (
 )
 from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
 from .file_utils import ensure_dir_exists_with_sudo
-from .constants import PACKAGE_CONFIG_FILE_NAME, LIFECYCLE_HOOK_NAMES, SUDO_ELIGIBLE_HOOKS
+from .constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    LIFECYCLE_HOOK_NAMES,
+    INSTALL_CWD_HOOK_NAMES,
+    SUDO_ELIGIBLE_HOOKS,
+)
 from .exceptions import ConfigError
 from .result_models import HookResult
 
@@ -101,7 +106,7 @@ def _trigger_install_stage_hook(
             f"No '{hook_name}' hook configured for package '{package_name}'."
         )
 
-    if hook_name in ("pre_install", "pre_update", "pre_uninstall"):
+    if hook_name in INSTALL_CWD_HOOK_NAMES:
         cwd = install_pkg_dir
     else:
         cwd = pkg_config.get_target_directory(workspace_config)

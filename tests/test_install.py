@@ -430,8 +430,8 @@ class TestInstallRepo(unittest.TestCase):
                 self.assertEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should run with sudo when sudo=True")
                 self.assertEqual(called_cmd[1], str(hook_path))
 
-        # 2. sudo=True: source/compilation hooks (pre_source, post_render) MUST NOT execute with sudo
-        sudo_ineligible = ["pre_source", "post_render"]
+        # 2. sudo=True: source/compilation/health hooks (pre_source, post_render, health) MUST NOT execute with sudo
+        sudo_ineligible = ["pre_source", "post_render", "health"]
         for hook_name in sudo_ineligible:
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value.returncode = 0

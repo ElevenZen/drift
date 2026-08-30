@@ -187,8 +187,8 @@ exit 0
         res = run_single_package_health_probe(self.workspace_config, "non_existent_pkg")
         self.assertEqual(res.status, PackageHealthStatus.NOT_INSTALLED)
 
-    def test_health_sudo_elevation(self):
-        """Verifies that a health probe runs with sudo if sudo = true on the package."""
+    def test_health_runs_without_sudo_elevation(self):
+        """Verifies that a health probe runs without sudo even if sudo = true on the package."""
         pkg = "pkg_sudo_health"
         pkg_install_dir = self.install_dir / pkg
         scripts_dir = pkg_install_dir / "scripts"
@@ -214,8 +214,8 @@ exit 0
             mock_run.return_value.stderr = ""
             res = run_single_package_health_probe(self.workspace_config, pkg)
             called_cmd = mock_run.call_args[0][0]
-            self.assertEqual(called_cmd[0], "sudo")
-            self.assertEqual(called_cmd[1], str(hook_script))
+            self.assertNotEqual(called_cmd[0], "sudo")
+            self.assertEqual(called_cmd[0], str(hook_script))
             self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
 
     def test_primitive_health_checks_aggregation(self):

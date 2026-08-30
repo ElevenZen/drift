@@ -100,6 +100,12 @@ UNINSTALL_HOOK_NAMES = (
     "post_uninstall",
 )
 
+INSTALL_CWD_HOOK_NAMES = (
+    "pre_install",
+    "pre_update",
+    "pre_uninstall",
+)
+
 SUDO_ELIGIBLE_HOOKS = (
     "pre_install",
     "post_install",
@@ -107,7 +113,6 @@ SUDO_ELIGIBLE_HOOKS = (
     "post_update",
     "pre_uninstall",
     "post_uninstall",
-    "health",
 )
 
 import json

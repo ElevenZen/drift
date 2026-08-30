@@ -202,9 +202,11 @@ class TestPackageHook(unittest.TestCase):
         from drift.cli.actions import execute_hook
         from drift.constants import ExitCode
         from unittest.mock import patch
+        from io import StringIO
         from drift.result_models import HookResult
 
-        with patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config):
+        stdout_buf = StringIO()
+        with patch("sys.stdout", stdout_buf), patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config):
             # 1. Skipped hook
             with patch("drift.package_hook.run_primitive_trigger_hook") as mock_trigger:
                 mock_trigger.return_value = HookResult.skipped(package="pkg_a", hook_name="pre_source")
