@@ -55,6 +55,11 @@ class TestCompletionGenerators(unittest.TestCase):
         self.assertIn("pre_source", script)
         self.assertIn("post_render", script)
 
+        # Check that option specs are formatted individually without unexpanded braces
+        self.assertIn("'(-C --directory)-C[", script)
+        self.assertIn("'(-C --directory)--directory[", script)
+        self.assertNotIn("{-C,--directory}", script)
+
     def test_fish_generator_output(self):
         """Verifies Fish script generation with declarative complete rules."""
         script = generate_completion_script("fish", self.schema)

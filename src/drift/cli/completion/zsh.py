@@ -158,7 +158,8 @@ class ZshGenerator:
 
         # Global options
         for opt in self.schema.global_options:
-            lines.append(f"        {self._format_zsh_option(opt)} \\")
+            for opt_spec in self._format_zsh_options(opt):
+                lines.append(f"        {opt_spec} \\")
 
         lines.extend([
             "        '1: :->command' \\",
@@ -188,13 +189,15 @@ class ZshGenerator:
 
             # Command options
             for opt in cmd.options:
-                lines.append(f"                        {self._format_zsh_option(opt)} \\")
+                for opt_spec in self._format_zsh_options(opt):
+                    lines.append(f"                        {opt_spec} \\")
 
             # Movable global options (e.g. --json, -v/--verbose)
             existing_flags = {f for o in cmd.options for f in o.flags}
             for g_opt in self.schema.global_options:
                 if is_movable_global_option(g_opt) and not any(f in existing_flags for f in g_opt.flags):
-                    lines.append(f"                        {self._format_zsh_option(g_opt)} \\")
+                    for opt_spec in self._format_zsh_options(g_opt):
+                        lines.append(f"                        {opt_spec} \\")
 
             # Positional arguments
             for idx, pos in enumerate(cmd.positionals, start=1):
@@ -250,7 +253,8 @@ class ZshGenerator:
 
         return lines
 
-    def _format_zsh_option(self, opt: OptionSpec) -> str:
+    def _format_zsh_options(self, opt: OptionSpec) -> List[str]:
+        """Formats an OptionSpec into valid individual Zsh _arguments option specifications."""
         cli = self.schema.cli_name
         desc = self._escape_zsh_desc(opt.description)
 
@@ -259,23 +263,22 @@ class ZshGenerator:
         if len(opt.flags) > 1:
             mutex = f"({' '.join(opt.flags)})"
 
-        flag_str = opt.flags[0] if len(opt.flags) == 1 else "{" + ",".join(opt.flags) + "}"
-
-        if not opt.takes_value:
-            return f"'{mutex}{flag_str}[{desc}]'"
-
         action = ""
-        arg_name = opt.dest or "value"
-        if opt.choices:
-            action = f":{arg_name}:_{cli}_{arg_name}_choices"
-        elif opt.is_directory:
-            action = f":directory:_files -/"
-        elif opt.is_file:
-            action = f":file:_files"
-        else:
-            action = f":{arg_name}:"
+        if opt.takes_value:
+            arg_name = opt.dest or "value"
+            if opt.choices:
+                action = f":{arg_name}:_{cli}_{arg_name}_choices"
+            elif opt.is_directory:
+                action = f":directory:_files -/"
+            elif opt.is_file:
+                action = f":file:_files"
+            else:
+                action = f":{arg_name}:"
 
-        return f"'{mutex}{flag_str}[{desc}]{action}'"
+        result = []
+        for flag in opt.flags:
+            result.append(f"'{mutex}{flag}[{desc}]{action}'")
+        return result
 
     def _format_zsh_positional(self, index: int, pos: PositionalSpec) -> str:
         cli = self.schema.cli_name
