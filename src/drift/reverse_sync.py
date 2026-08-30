@@ -6,7 +6,7 @@ from typing import List, Optional, Union
 
 from .workspace_config import WorkspaceConfig
 from .constants import MANAGED_CONFIG_FILES
-from .ignore import DriftIgnore
+from .ignore import DriftIgnore, IgnoreHandler
 from .file_utils import (
     is_relative_to,
     resolve_system_target,
@@ -65,8 +65,185 @@ def filter_added_files_to_sync(
     return to_sync
 
 
+def _record_sync_result(
+    drifted_str: str,
+    synced_str: str,
+    drifted_files: List[str],
+    synced_files: List[str]
+) -> None:
+    """Helper to append unique drifted and synced file path records."""
+    if drifted_str not in drifted_files:
+        drifted_files.append(drifted_str)
+        synced_files.append(synced_str)
+
+
+def _sync_tracked_files(
+    install_pkg_dir: Path,
+    target_dir_path: Path,
+    ignore_handler: DriftIgnore,
+    drifted_files: List[str],
+    synced_files: List[str]
+) -> None:
+    """Probes and synchronizes tracked package files against the host system without scanning the rest of target_dir."""
+    diff = compare_folders(
+        src_dir=install_pkg_dir,
+        dst_dir=target_dir_path,
+        ignore_handler=ignore_handler,
+        resolve_symlinks=True,
+        translate_mode="forward",
+        src_only=True
+    )
+
+    # 1. Handle diff.added (items in install/ where host counterpart differs in type or is missing)
+    for repo_rel in diff.added:
+        if repo_rel.name in MANAGED_CONFIG_FILES:
+            continue
+        if ignore_handler and ignore_handler.match_path(repo_rel):
+            continue
+        target_rel = translate_dot_prefixes(repo_rel)
+        system_target = target_dir_path / target_rel
+        repo_file = install_pkg_dir / repo_rel
+
+        if system_target.exists() or system_target.is_symlink():
+            # Host target exists (e.g. type changed from file to directory)
+            drifted_str, synced_str = sync_file_to_install(
+                rel=target_rel,
+                target_dir_path=target_dir_path,
+                install_pkg_dir=install_pkg_dir,
+                ignore_handler=ignore_handler
+            )
+            _record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+        else:
+            # Host target is missing -> System Deletion
+            if repo_file.exists() or repo_file.is_symlink():
+                logger.info(f"System Deletion: '{system_target}' is missing. Deleting counterpart '{repo_file}' from install/...")
+                remove_file_or_dir(repo_file)
+                _record_sync_result(str(target_rel), str(repo_rel), drifted_files, synced_files)
+
+    # 2. Handle system modifications (items modified on host)
+    for repo_rel in diff.modified:
+        if repo_rel.name in MANAGED_CONFIG_FILES:
+            continue
+        if ignore_handler and ignore_handler.match_path(repo_rel):
+            continue
+        target_rel = translate_dot_prefixes(repo_rel)
+        drifted_str, synced_str = sync_file_to_install(
+            rel=target_rel,
+            target_dir_path=target_dir_path,
+            install_pkg_dir=install_pkg_dir,
+            ignore_handler=ignore_handler
+        )
+        _record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+
+    # 3. Handle diff.deleted (sub-items created inside directories on host when repo was a file)
+    for target_rel in diff.deleted:
+        repo_rel = translate_dot_prefixes_reverse(target_rel)
+        if repo_rel.name in MANAGED_CONFIG_FILES:
+            continue
+        if ignore_handler and ignore_handler.match_path(repo_rel):
+            continue
+        system_target = target_dir_path / target_rel
+        if system_target.exists() or system_target.is_symlink():
+            drifted_str, synced_str = sync_file_to_install(
+                rel=target_rel,
+                target_dir_path=target_dir_path,
+                install_pkg_dir=install_pkg_dir,
+                ignore_handler=ignore_handler
+            )
+            _record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+
+
+def _sync_single_fcd(
+    fcd: Path,
+    install_pkg_dir: Path,
+    target_dir_path: Path,
+    ignore_handler: DriftIgnore,
+    drifted_files: List[str],
+    synced_files: List[str]
+) -> None:
+    """Reverse-syncs wild additions, modifications, and deletions within a single Fully-Controlled Directory."""
+    fcd_repo_rel = translate_dot_prefixes_reverse(fcd)
+    fcd_target_rel = translate_dot_prefixes(fcd)
+    fcd_system_dir = target_dir_path / fcd_target_rel
+    fcd_install_dir = install_pkg_dir / fcd_repo_rel
+
+    if not fcd_system_dir.exists() and not fcd_system_dir.is_symlink():
+        return
+
+    # Handle file or broken symlink at FCD root
+    if fcd_system_dir.is_file() or (fcd_system_dir.is_symlink() and not fcd_system_dir.is_dir()):
+        if not ignore_handler.match_path(fcd_repo_rel):
+            drifted_str, synced_str = sync_file_to_install(
+                rel=fcd_target_rel,
+                target_dir_path=target_dir_path,
+                install_pkg_dir=install_pkg_dir,
+                ignore_handler=ignore_handler
+            )
+            _record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+        return
+
+    class ScopedIgnore(IgnoreHandler):
+        def match_path(self, rel_path: Path) -> bool:
+            repo_sub = fcd_repo_rel / translate_dot_prefixes_reverse(rel_path) if rel_path != Path("") else fcd_repo_rel
+            return ignore_handler.match_path(repo_sub)
+
+    fcd_diff = compare_folders(
+        src_dir=fcd_system_dir,
+        dst_dir=fcd_install_dir,
+        ignore_handler=ScopedIgnore(),
+        resolve_symlinks=True,
+        translate_mode="reverse"
+    )
+
+    for sub_rel in fcd_diff.added + fcd_diff.modified:
+        if sub_rel.name in MANAGED_CONFIG_FILES:
+            continue
+        full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
+        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
+        if ignore_handler.match_path(full_repo_rel):
+            continue
+        drifted_str, synced_str = sync_file_to_install(
+            rel=full_target_rel,
+            target_dir_path=target_dir_path,
+            install_pkg_dir=install_pkg_dir,
+            ignore_handler=ignore_handler
+        )
+        _record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+
+    for sub_rel in fcd_diff.deleted:
+        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
+        if full_repo_rel.name in MANAGED_CONFIG_FILES or ignore_handler.match_path(full_repo_rel):
+            continue
+        repo_file = install_pkg_dir / full_repo_rel
+        if repo_file.exists() or repo_file.is_symlink():
+            full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
+            logger.info(f"System Deletion (FCD): '{target_dir_path / full_target_rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
+            remove_file_or_dir(repo_file)
+            _record_sync_result(str(full_target_rel), str(full_repo_rel), drifted_files, synced_files)
+
+
+def _sync_fully_controlled_dirs(
+    fully_controlled_dirs: List[Path],
+    install_pkg_dir: Path,
+    target_dir_path: Path,
+    ignore_handler: DriftIgnore,
+    drifted_files: List[str],
+    synced_files: List[str]
+) -> None:
+    """Iterates and synchronizes all designated Fully-Controlled Directories."""
+    for fcd in fully_controlled_dirs:
+        _sync_single_fcd(
+            fcd=fcd,
+            install_pkg_dir=install_pkg_dir,
+            target_dir_path=target_dir_path,
+            ignore_handler=ignore_handler,
+            drifted_files=drifted_files,
+            synced_files=synced_files
+        )
+
+
 def reverse_sync_package(pkg: str, install_base: Path, workspace_config: WorkspaceConfig) -> PackageReverseSyncResult:
-    """Performs the reverse sync process for a single package."""
+    """Performs the reverse sync process for a single package without scanning the entire target_dir."""
     install_pkg_dir = install_base / pkg
     try:
         metadata = load_config_for_install(install_base, pkg)
@@ -100,57 +277,27 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     # Load ignore patterns
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
 
-    # Use compare_folders to detect all changes (modifications and wild files in FCD)
-    diff = compare_folders(
-        src_dir=target_dir_path,
-        dst_dir=install_pkg_dir,
-        ignore_handler=ignore_handler,
-        resolve_symlinks=True,
-        translate_mode="reverse"
-    )
-
     drifted_files: List[str] = []
     synced_files: List[str] = []
 
-    # 1. Handle system deletions (deleted in system but exist in repo, or blocking dirs)
-    for rel in diff.deleted:
-        repo_rel = translate_dot_prefixes_reverse(rel)
-        if ignore_handler and ignore_handler.match_path(repo_rel):
-            continue
-        repo_file = install_pkg_dir / repo_rel
-        
-        if repo_file.exists():
-            logger.info(f"System Deletion: '{target_dir_path / rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
-            remove_file_or_dir(repo_file)
-            drifted_files.append(str(rel))
-            synced_files.append(str(repo_rel))
-
-    # 2. Handle system modifications
-    for rel in diff.modified:
-        drifted_str, synced_str = sync_file_to_install(
-            rel=rel,
-            target_dir_path=target_dir_path,
-            install_pkg_dir=install_pkg_dir,
-            ignore_handler=ignore_handler
-        )
-        drifted_files.append(drifted_str)
-        synced_files.append(synced_str)
-
-    # 3. Handle wild files in FCD and promoted tracked files (added on system but not in repo)
-    added_to_sync = filter_added_files_to_sync(
-        added_files=diff.added,
-        deleted_files=diff.deleted,
-        fully_controlled_dirs=metadata.fully_controlled_dirs
+    # 1. Sync tracked package files
+    _sync_tracked_files(
+        install_pkg_dir=install_pkg_dir,
+        target_dir_path=target_dir_path,
+        ignore_handler=ignore_handler,
+        drifted_files=drifted_files,
+        synced_files=synced_files
     )
-    for rel in added_to_sync:
-        drifted_str, synced_str = sync_file_to_install(
-            rel=rel,
-            target_dir_path=target_dir_path,
-            install_pkg_dir=install_pkg_dir,
-            ignore_handler=ignore_handler
-        )
-        drifted_files.append(drifted_str)
-        synced_files.append(synced_str)
+
+    # 2. Sync Fully-Controlled Directories
+    _sync_fully_controlled_dirs(
+        fully_controlled_dirs=metadata.fully_controlled_dirs,
+        install_pkg_dir=install_pkg_dir,
+        target_dir_path=target_dir_path,
+        ignore_handler=ignore_handler,
+        drifted_files=drifted_files,
+        synced_files=synced_files
+    )
 
     return PackageReverseSyncResult(
         package=pkg,
