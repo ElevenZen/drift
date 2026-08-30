@@ -15,6 +15,10 @@ class TestHelpDocs(unittest.TestCase):
         self.assertIn("Next-Gen Transactional Dotfile Manager", overall)
         self.assertIn("The Drift Data-Flow Loop", overall)
 
+        # Explicit overall / overview topic
+        self.assertEqual(get_help_page("overall"), overall)
+        self.assertEqual(get_help_page("overview"), overall)
+
         # package
         pkg = get_help_page("package")
         self.assertIn("The 'Package' Concept in Drift", pkg)

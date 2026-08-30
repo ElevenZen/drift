@@ -17,9 +17,11 @@ class TestIntegration(unittest.TestCase):
         self.system_target_dir = self.base_path / "system_home"
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
         
-        # Override HOME environment variable for the duration of the test
+        # Override HOME and USERPROFILE environment variables for the duration of the test
         self._old_home = os.environ.get("HOME")
+        self._old_userprofile = os.environ.get("USERPROFILE")
         os.environ["HOME"] = str(self.system_target_dir)
+        os.environ["USERPROFILE"] = str(self.system_target_dir)
         
         # 1. Initialize drift workspace via CLI logic
         from drift.workspace_init import init_drift_workspace
@@ -44,6 +46,10 @@ class TestIntegration(unittest.TestCase):
             os.environ["HOME"] = self._old_home
         else:
             os.environ.pop("HOME", None)
+        if self._old_userprofile:
+            os.environ["USERPROFILE"] = self._old_userprofile
+        else:
+            os.environ.pop("USERPROFILE", None)
         self.temp_dir.cleanup()
 
     def test_lifecycle_stow_basic(self):
@@ -251,6 +257,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_template_engine_dependency_chain(self):
         """Scenario: mustache template depends on envsubst-rendered JSON input."""
+        import sys
         from drift.render_package import run_primitive_2_render_packages
         from drift.stage_repo import run_primitive_4_stage_render_to_install
         from drift.install_repo import run_primitive_5_install_deployment
@@ -258,6 +265,12 @@ class TestIntegration(unittest.TestCase):
         pkg = "pkg_templating"
         self.workspace_config.packages_enable[pkg] = True
         
+        # Override the mustache engine's render_command to use python so it doesn't depend on an external 'mustache' binary
+        py_bin = sys.executable.replace("\\", "/")
+        for eng in self.workspace_config.render_engine_config.values():
+            if eng.name == "mustache":
+                eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text()); tmpl=pathlib.Path(sys.argv[2]).read_text(); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'
+
         # 1. Setup envsubst template for mustache input
         # Note: drift_root/config/ contains the source templates for engine inputs
         envsubst_input_src = self.drift_root / "config" / "mustache.envst.json"

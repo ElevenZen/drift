@@ -501,7 +501,9 @@ class PackageConfig:
         return file_path in self.source_files
 
     def get_source_directory_to_render(self, package_dir: Path) -> Path:
-        """Returns the resolved absolute path of the subfolder to render within package_dir.
+        """
+        Returns the path of the subfolder to render within package_dir.
+        The result is always a subdirectory of package_dir, and cannot escape it.
 
         Raises:
             ConfigError: If source_directory is absolute or escapes package_dir.
@@ -513,13 +515,16 @@ class PackageConfig:
             raise ConfigError(
                 f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path, not absolute."
             )
-        resolved = (package_dir / rel).resolve()
-        from .file_utils import is_relative_to
-        if not is_relative_to(resolved, package_dir.resolve()):
+        # Note: We validate using os.path.normpath rather than Path.resolve().
+        # On macOS (APFS firmlink architecture), calling .resolve() dereferences standard
+        # root paths like /home or /tmp into /System/Volumes/Data/home or /private/tmp,
+        # which mutates path prefixes unexpectedly and breaks prefix consistency.
+        norm_rel = os.path.normpath(str(rel))
+        if norm_rel == ".." or norm_rel.startswith(".." + os.sep) or norm_rel.startswith("../"):
             raise ConfigError(
                 f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root '{package_dir}'."
             )
-        return resolved
+        return package_dir / rel
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         if sys.platform == "win32" and self.target_directory_windows is not None:
