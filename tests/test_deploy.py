@@ -193,7 +193,7 @@ target_directory = "{self.system_target_dir}"
     def test_global_deploy_calls_gc(self, mock_gc) -> None:
         """Verifies that global deploy (packages_to_deploy=None) calls GC at the end."""
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=None)
-        mock_gc.assert_called_once_with(self.workspace_config, dry_run=False)
+        mock_gc.assert_called_once_with(self.workspace_config, dry_run=False, no_hooks=False)
 
     def test_deploy_pipeline_checks_git_configs(self) -> None:
         """Verifies that deploy pipeline verifies git config user.name and user.email exists."""

@@ -376,6 +376,37 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
 
         self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", stdout.getvalue())
 
+    def test_cli_no_hooks_flags_across_commands(self) -> None:
+        """Verifies that both --no-hooks and --no-hook flags pass no_hooks=True to action handlers."""
+        from drift.cli import run_argparse_cli
+
+        commands_to_test = [
+            ("render", "drift.cli.typer_backend.execute_render", "drift.cli.argparse_backend.execute_render", ["render"]),
+            ("apply", "drift.cli.typer_backend.execute_apply", "drift.cli.argparse_backend.execute_apply", ["apply"]),
+            ("deploy", "drift.cli.typer_backend.execute_deploy", "drift.cli.argparse_backend.execute_deploy", ["deploy"]),
+            ("adopt", "drift.cli.typer_backend.execute_adopt", "drift.cli.argparse_backend.execute_adopt", ["adopt", "pkg_a"]),
+            ("add", "drift.cli.typer_backend.execute_add", "drift.cli.argparse_backend.execute_add", ["add", "pkg_a", "/dev/null"]),
+            ("uninstall", "drift.cli.typer_backend.execute_uninstall", "drift.cli.argparse_backend.execute_uninstall", ["uninstall", "pkg_a"]),
+            ("rollback", "drift.cli.typer_backend.execute_rollback", "drift.cli.argparse_backend.execute_rollback", ["rollback"]),
+            ("gc", "drift.cli.typer_backend.execute_gc", "drift.cli.argparse_backend.execute_gc", ["gc"]),
+        ]
+
+        for flag in ["--no-hooks", "--no-hook"]:
+            for cmd_name, typer_target, argparse_target, cmd_args in commands_to_test:
+                with patch(typer_target) as mock_typer_action:
+                    with patch("sys.stdout", StringIO()):
+                        main(["-C", self.drift_root] + cmd_args + [flag])
+                    self.assertTrue(mock_typer_action.called, f"Typer {cmd_name} with {flag} was not called")
+                    _, kwargs = mock_typer_action.call_args
+                    self.assertTrue(kwargs.get("no_hooks"), f"Typer {cmd_name} with {flag} did not pass no_hooks=True")
+
+                with patch(argparse_target) as mock_argparse_action:
+                    with patch("sys.stdout", StringIO()):
+                        run_argparse_cli(["-C", self.drift_root] + cmd_args + [flag])
+                    self.assertTrue(mock_argparse_action.called, f"Argparse {cmd_name} with {flag} was not called")
+                    _, kwargs = mock_argparse_action.call_args
+                    self.assertTrue(kwargs.get("no_hooks"), f"Argparse {cmd_name} with {flag} did not pass no_hooks=True")
+
 
 if __name__ == "__main__":
     unittest.main()

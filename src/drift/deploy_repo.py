@@ -101,7 +101,8 @@ successfully committed configurations.
 def execute_sequential_compile_and_apply(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
-    force: bool = False
+    force: bool = False,
+    no_hooks: bool = False
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
@@ -111,7 +112,7 @@ def execute_sequential_compile_and_apply(
     failed_step = "Step 1 (Template Rendering)"
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
-        render_res = run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs)
+        render_res = run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs, no_hooks=no_hooks)
         if render_res.status == "FAILED":
             raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
         completed_steps.append(CompletedStep(1, "template_rendering"))
@@ -159,7 +160,8 @@ def execute_sequential_compile_and_apply(
             packages_to_redeploy=target_pkgs,
             resolve_symlinks=True,
             force=force,
-            package_changes=package_changes
+            package_changes=package_changes,
+            no_hooks=no_hooks
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except Exception as e:
@@ -192,7 +194,8 @@ def execute_sequential_compile_and_apply(
 def run_primitive_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Optional[List[str]] = None,
-    force: bool = False
+    force: bool = False,
+    no_hooks: bool = False
 ) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply."""
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
@@ -219,13 +222,15 @@ def run_primitive_deploy_pipeline(
     check_and_prevent_system_drifts(workspace_config, target_pkgs, force=force)
 
     # Stage 2: Deploy Pipeline Execution
-    deployed_packages, completed_steps = execute_sequential_compile_and_apply(workspace_config, target_pkgs, force=force)
+    deployed_packages, completed_steps = execute_sequential_compile_and_apply(
+        workspace_config, target_pkgs, force=force, no_hooks=no_hooks
+    )
 
     # Stage 3: Call garbage collection on global deploy
     gc_res: Optional[GcResult] = None
     if not packages_to_deploy:
         logger.info("🧹 Performing global deployment garbage collection...")
-        gc_res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False)
+        gc_res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False, no_hooks=no_hooks)
 
     logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(target_pkgs)}")
 

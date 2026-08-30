@@ -58,7 +58,8 @@ def rollback_uninstalled_first_time_package(
 def run_primitive_8_rollback_recovery(
     workspace_config: WorkspaceConfig,
     package_names: Optional[List[str]] = None,
-    force: bool = False
+    force: bool = False,
+    no_hooks: bool = False
 ) -> List[str]:
     """Reverts failed midway deployments and restores system files to the last committed clean state."""
     state_file = workspace_config.install_path / "state.toml"
@@ -114,7 +115,8 @@ def run_primitive_8_rollback_recovery(
             workspace_config=workspace_config,
             packages_to_redeploy=packages_to_redeploy,
             resolve_symlinks=True,
-            force=True
+            force=True,
+            no_hooks=no_hooks
         )
 
     # 5. Restore the state registry entries

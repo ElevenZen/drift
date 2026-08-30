@@ -747,7 +747,8 @@ def adopt_single_package(
     pkg: str,
     interactive: bool = False,
     accept_conflicts: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    no_hooks: bool = False
 ) -> bool:
     """Adopt drifts for a single package according to interactive or non-interactive choices.
     
@@ -775,7 +776,7 @@ def adopt_single_package(
 
     # Trigger pre_source hook before adopting drifts into source directory
     from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
-    trigger_pre_source_lifecycle_hook(workspace_config, pkg, load_envs=True)
+    trigger_pre_source_lifecycle_hook(workspace_config, pkg, load_envs=True, no_hooks=no_hooks)
 
     skipped_files = []
 
@@ -828,7 +829,8 @@ def run_primitive_adopt_drifts(
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
-    dry_run: bool = False
+    dry_run: bool = False,
+    no_hooks: bool = False
 ) -> List[str]:
     """High-level orchestrator for adopting system drifts back to declarative templates."""
     # 1. Discovery
@@ -850,7 +852,8 @@ def run_primitive_adopt_drifts(
             pkg=pkg,
             interactive=interactive,
             accept_conflicts=accept_conflicts,
-            dry_run=dry_run
+            dry_run=dry_run,
+            no_hooks=no_hooks
         )
         if is_resolved:
             resolved_packages.append(pkg)

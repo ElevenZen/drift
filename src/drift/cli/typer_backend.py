@@ -217,6 +217,12 @@ def typer_add(
         "--dry-run",
         help="Preview the import without making changes"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -227,7 +233,7 @@ def typer_add(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=json_mode)
+        execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("adopt")
@@ -259,6 +265,12 @@ def typer_adopt(
         "--dry-run",
         help="Simulate the adoption, previewing changes and conflict results"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -276,7 +288,8 @@ def typer_adopt(
             accept_conflicts=accept_conflicts,
             force=force,
             dry_run=dry_run,
-            json_mode=json_mode
+            json_mode=json_mode,
+            no_hooks=no_hooks
         )
 
 
@@ -293,6 +306,12 @@ def typer_deploy(
         "-f",
         help="Forcefully deploy and bypass system drift sentinel safeguards"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -303,7 +322,7 @@ def typer_deploy(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_deploy(drift_root, packages, force=force, json_mode=json_mode)
+        execute_deploy(drift_root, packages, force=force, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("health")
@@ -361,6 +380,12 @@ def typer_uninstall(
         "--detach",
         help="Remove management relationship but keep configurations as actual physical files on host system"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -371,7 +396,7 @@ def typer_uninstall(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=json_mode)
+        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("rollback")
@@ -387,6 +412,12 @@ def typer_rollback(
         "-f",
         help="Force the rollback and skip failed interlock checking"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -397,7 +428,7 @@ def typer_rollback(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_rollback(drift_root, packages, force=force, json_mode=json_mode)
+        execute_rollback(drift_root, packages, force=force, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("status")
@@ -475,6 +506,12 @@ def typer_gc(
         "--dry-run",
         help="Simulate the garbage collection without making changes"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -485,7 +522,7 @@ def typer_gc(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_gc(drift_root, dry_run=dry_run, json_mode=json_mode)
+        execute_gc(drift_root, dry_run=dry_run, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("repair")
@@ -558,6 +595,12 @@ def typer_render(
         None,
         help="Optional package name(s) to render specifically"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -568,7 +611,7 @@ def typer_render(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_render(drift_root, packages, json_mode=json_mode)
+        execute_render(drift_root, packages, json_mode=json_mode, no_hooks=no_hooks)
         if not json_mode:
             if packages:
                 pkgs_str = ", ".join(packages)
@@ -637,6 +680,12 @@ def typer_apply(
         "-f",
         help="Force deployment and bypass check"
     ),
+    no_hooks: bool = typer.Option(
+        False,
+        "--no-hooks",
+        "--no-hook",
+        help="Bypass and do not execute package lifecycle hooks"
+    ),
     json_mode: bool = typer.Option(
         False,
         "--json",
@@ -647,7 +696,7 @@ def typer_apply(
     with cli_error_boundary(json_mode=json_mode, use_rich=True):
         cli_ctx: DriftCLIContext = ctx.obj
         drift_root = cli_ctx.get_drift_root()
-        execute_apply(drift_root, packages, force=force, json_mode=json_mode)
+        execute_apply(drift_root, packages, force=force, json_mode=json_mode, no_hooks=no_hooks)
 
 
 @app.command("install-commit")

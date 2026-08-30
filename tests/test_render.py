@@ -1701,6 +1701,53 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertEqual(rendered_script.stat().st_mode & 0o777, template_script.stat().st_mode & 0o777)
         self.assertTrue(bool(rendered_script.stat().st_mode & 0o111))
 
+    def test_no_hooks_bypasses_pre_source_and_post_render_hooks(self) -> None:
+        """Verifies that no_hooks=True completely bypasses pre_source and post_render hook execution."""
+        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook, trigger_post_render_hook
+        from drift.render_package import render_package
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            packages_enable={"pkg_hooks_bypass": True},
+            packages_enable_default=False
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "pkg_hooks_bypass"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_hooks_bypass"
+        install_method = "copy"
+
+        [hooks]
+        pre_source = "scripts/fail_pre.sh"
+        post_render = "scripts/fail_post.sh"
+        """, encoding="utf-8")
+
+        # Create failing scripts that would fail if executed
+        (scripts_dir / "fail_pre.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (scripts_dir / "fail_post.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (scripts_dir / "fail_pre.sh").chmod(0o755)
+        (scripts_dir / "fail_post.sh").chmod(0o755)
+
+        # 1. Direct hook functions with no_hooks=True should return without error
+        trigger_pre_source_lifecycle_hook(
+            workspace_config=workspace_config,
+            package_name="pkg_hooks_bypass",
+            no_hooks=True
+        )
+
+        # 2. Rendering package with no_hooks=True should succeed without executing failing hooks
+        result = render_package(workspace_config, pkg_src_dir, no_hooks=True)
+        self.assertEqual(result.status, "SUCCESS")
+
 
 if __name__ == "__main__":
     unittest.main()

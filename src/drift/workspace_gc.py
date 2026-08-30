@@ -46,7 +46,8 @@ def purge_zombie_folders(
 
 def run_primitive_9_purge_workspace_garbage(
     workspace_config: WorkspaceConfig,
-    dry_run: bool = False
+    dry_run: bool = False,
+    no_hooks: bool = False
 ) -> GcResult:
     """
     Identifies and removes garbage from the drift workspace databases.
@@ -59,7 +60,8 @@ def run_primitive_9_purge_workspace_garbage(
         workspace_config, 
         package_names=None, 
         force=True, 
-        dry_run=dry_run
+        dry_run=dry_run,
+        no_hooks=no_hooks
     )
 
     # --- Part 2: Database Folder Purge (Zombie folders without config) ---

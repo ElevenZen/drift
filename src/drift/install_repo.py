@@ -524,7 +524,8 @@ def execute_package_deployment(
     state_file: Path,
     resolve_symlinks: bool,
     is_first_time: bool,
-    package_changes: Optional[PackageStageChanges] = None
+    package_changes: Optional[PackageStageChanges],
+    no_hooks: bool = False,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
     install_base = workspace_config.install_path
@@ -568,7 +569,7 @@ def execute_package_deployment(
         )
 
     # Persist the full target file manifest to state.toml before hooks & physical delivery
-    # so that midway crashes have an authoritative list of files to restore or uninstall
+    # so that midway crashes have an authoritative list of files to uninstall
     sync_deployed_files_manifest(
         state_registry=state_registry,
         pkg=pkg,
@@ -580,9 +581,9 @@ def execute_package_deployment(
     
     # 3. Lifecycle Hooks & State registry update
     if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir)
+        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
     else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir)
+        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
 
     # 2. Physical Deployment Execution
     stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
@@ -613,9 +614,9 @@ def execute_package_deployment(
     
     # Post Hooks
     if is_first_time:
-        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir)
+        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, no_hooks=no_hooks)
     else:
-        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir)
+        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, no_hooks=no_hooks)
         
     update_state_registry_post_deployment(
         state_registry=state_registry,
@@ -654,7 +655,8 @@ def deploy_package_impl(
     state_file: Path,
     resolve_symlinks: bool,
     force: bool,
-    package_changes: Optional[PackageStageChanges] = None
+    package_changes: Optional[PackageStageChanges] = None,
+    no_hooks: bool = False
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration."""
     install_base = workspace_config.install_path
@@ -715,7 +717,8 @@ def deploy_package_impl(
         )
 
     # Verify hook files exist and are regular files in install/
-    metadata.hooks.check_hook_files(install_pkg_dir)
+    if not no_hooks:
+        metadata.hooks.check_hook_files(install_pkg_dir)
     
     # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
@@ -734,7 +737,8 @@ def deploy_package_impl(
             state_file=state_file,
             resolve_symlinks=resolve_symlinks,
             is_first_time=is_first_time,
-            package_changes=package_changes
+            no_hooks=no_hooks,
+            package_changes=package_changes,
         )
 
 
@@ -745,7 +749,8 @@ def deploy_package(
     state_file: Path,
     resolve_symlinks: bool,
     force: bool,
-    package_changes: Optional[PackageStageChanges] = None
+    package_changes: Optional[PackageStageChanges] = None,
+    no_hooks: bool = False
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     try:
@@ -756,7 +761,8 @@ def deploy_package(
             state_file=state_file,
             resolve_symlinks=resolve_symlinks,
             force=force,
-            package_changes=package_changes
+            package_changes=package_changes,
+            no_hooks=no_hooks
         )
     except subprocess.CalledProcessError as e:
         stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
@@ -779,7 +785,8 @@ def run_primitive_5_install_deployment(
     packages_to_redeploy: Optional[List[str]] = None,
     resolve_symlinks: bool = True,
     force: bool = False,
-    package_changes: Optional[List[PackageStageChanges]] = None
+    package_changes: Optional[List[PackageStageChanges]] = None,
+    no_hooks: bool = False
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5)."""
     install_base = workspace_config.install_path
@@ -803,9 +810,10 @@ def run_primitive_5_install_deployment(
         from .file_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
-    for pkg, metadata in pkg_metadata_map.items():
-        if force or metadata.enable_install:
-            metadata.hooks.check_hook_files(install_base / pkg)
+    if not no_hooks:
+        for pkg, metadata in pkg_metadata_map.items():
+            if force or metadata.enable_install:
+                metadata.hooks.check_hook_files(install_base / pkg)
     
     results: List[PackageInstallResult] = []
     for pkg in discovered_packages:
@@ -821,7 +829,8 @@ def run_primitive_5_install_deployment(
             state_file=state_file,
             resolve_symlinks=resolve_symlinks,
             force=force,
-            package_changes=pkg_change
+            package_changes=pkg_change,
+            no_hooks=no_hooks
         )
         results.append(pkg_res)
 

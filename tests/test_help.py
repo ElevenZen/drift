@@ -18,6 +18,7 @@ class TestHelpDocs(unittest.TestCase):
         # package
         pkg = get_help_page("package")
         self.assertIn("The 'Package' Concept in Drift", pkg)
+        self.assertIn("Lifecycle Hooks Matrix", pkg)
 
         # src
         src = get_help_page("src")
@@ -34,6 +35,7 @@ class TestHelpDocs(unittest.TestCase):
         # drift_package.toml
         pkg_toml = get_help_page("drift_package.toml")
         self.assertIn("drift_package.toml Complete Configuration Reference", pkg_toml)
+        self.assertIn("Lifecycle Hooks Execution Matrix", pkg_toml)
 
         # drift_package.toml fallback
         drift_pkg_toml = get_help_page("drift_package.toml")
@@ -69,6 +71,7 @@ class TestHelpDocs(unittest.TestCase):
         faq_doc = get_help_page("faq")
         self.assertIn("Drift Frequently Asked Questions & Troubleshooting (FAQ)", faq_doc)
         self.assertIn("drift deploy --force", faq_doc)
+        self.assertIn("--no-hooks", faq_doc)
 
     def test_get_help_page_invalid_topic_raises_error(self) -> None:
         """Verifies that querying an unknown/invalid help topic raises ValueError."""

@@ -117,7 +117,8 @@ def render_package_files(
     workspace_config: WorkspaceConfig,
     package_dir: Path,
     pkg_config: PackageConfig,
-    render_pkg_dir: Path
+    render_pkg_dir: Path,
+    no_hooks: bool = False
 ) -> PackageRenderResult:
     """Renders package source files, copies static assets, and triggers lifecycle hooks."""
     from .ignore import DriftIgnore
@@ -128,8 +129,9 @@ def render_package_files(
     trigger_pre_source_lifecycle_hook(
         workspace_config=workspace_config,
         package_name=package_name,
+        pkg_config=pkg_config,
         load_envs=False,
-        pkg_config=pkg_config
+        no_hooks=no_hooks
     )
 
     handle_driftignore_file(package_dir, render_pkg_dir)
@@ -175,7 +177,7 @@ def render_package_files(
             copied_files.append(dest_rel)
 
     # Trigger post_render hook
-    trigger_post_render_hook(workspace_config, pkg_config)
+    trigger_post_render_hook(workspace_config, pkg_config, no_hooks=no_hooks)
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
     return PackageRenderResult(
@@ -186,7 +188,11 @@ def render_package_files(
     )
 
 
-def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> PackageRenderResult:
+def render_package(
+    workspace_config: WorkspaceConfig,
+    package_dir: Path,
+    no_hooks: bool = False
+) -> PackageRenderResult:
     """Renders all templates and copies static files in a package folder into the render directory."""
     package_name = package_dir.name
 
@@ -207,13 +213,16 @@ def render_package(workspace_config: WorkspaceConfig, package_dir: Path) -> Pack
             workspace_config=workspace_config,
             package_dir=package_dir,
             pkg_config=pkg_config,
-            render_pkg_dir=render_pkg_dir
+            render_pkg_dir=render_pkg_dir,
+            no_hooks=no_hooks
         )
 
 
 def run_primitive_2_render_packages(
-        workspace_config: WorkspaceConfig,
-        target_pkgs: Optional[List[str]] = None) -> RenderResult:
+    workspace_config: WorkspaceConfig,
+    target_pkgs: Optional[List[str]] = None,
+    no_hooks: bool = False
+) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []
@@ -232,7 +241,7 @@ def run_primitive_2_render_packages(
         for package_name in active_packages:
             package_dir = workspace_config.source_path / package_name
             try:
-                pkg_res = render_package(workspace_config, package_dir)
+                pkg_res = render_package(workspace_config, package_dir, no_hooks=no_hooks)
                 results.append(pkg_res)
             except FileNotFoundError as e:
                 err_msg = f"File not found: {e}"

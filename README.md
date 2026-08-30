@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-451%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-453%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 

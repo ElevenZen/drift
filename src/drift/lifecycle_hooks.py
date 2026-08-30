@@ -126,19 +126,23 @@ def execute_hook_script(
 def trigger_pre_source_lifecycle_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
-    load_envs: bool = False,
     pkg_config: Optional[PackageConfig] = None,
+    load_envs: bool = False,
+    no_hooks: bool = False,
 ) -> None:
-    """Executes the pre_source lifecycle hook for a package in the source directory.
-
-    If pkg_config (PackageConfig) is not provided, loads it from the source directory.
-    If load_envs is True, wraps execution with package-specific environment variables.
-
-    If the nominal path of pre_source hook is located inside the package source directory (source_dir),
-    it is rendered or copied into the package render directory first via render_or_copy_file()
-    (workspace_config is required for template rendering), and then executed with cwd set to
-    the package source directory.
     """
+    Executes the pre_source lifecycle hook for a package in the source directory.
+    If no_hooks is True, this function will return immediately.
+    If pkg_config (PackageConfig) is not provided, it will be loaded from the source directory.
+    If load_envs is True, wraps execution with package-specific environment variables.
+    If the nominal path of pre_source hook is located inside the package source directory (source_dir),
+    it is rendered or copied into the package render directory first via render_or_copy_file(),
+    and then executed with cwd set to the package source directory.
+    """
+
+    if no_hooks:
+        return
+
     src_pkg_dir = workspace_config.source_path / package_name
     if not src_pkg_dir.exists():
         return
@@ -205,15 +209,19 @@ def trigger_pre_source_lifecycle_hook(
 
 def trigger_post_render_hook(
     workspace_config: "WorkspaceConfig",
-    pkg_config: PackageConfig
+    pkg_config: PackageConfig,
+    no_hooks: bool = False,
 ) -> None:
     """Triggers the post_render lifecycle hook for a package in the render directory."""
+    if no_hooks:
+        return
+
     render_pkg_dir = workspace_config.render_path / pkg_config.name
     if not render_pkg_dir.exists():
         return
 
     if pkg_config and pkg_config.hooks:
-        pkg_config.hooks.trigger_post_render(render_pkg_dir)
+        pkg_config.hooks.trigger_post_render(render_pkg_dir, no_hooks=no_hooks)
 
 
 def trigger_package_lifecycle_hook(
@@ -221,14 +229,13 @@ def trigger_package_lifecycle_hook(
     hook_name: str,
     metadata: PackageConfig,
     hook_dir: Path,
-    cwd: Path
+    cwd: Path,
+    no_hooks: bool = False,
 ) -> None:
-    """Executes a package lifecycle hook script if specified and found.
+    """Executes a package lifecycle hook script if specified and found."""
+    if no_hooks:
+        return
 
-    The hook file is searched inside hook_dir.
-    The script executes with working directory cwd.
-    If the hook execution fails, times out, or the specified script is missing, a detailed error is raised.
-    """
     hook_file = getattr(metadata, hook_name, None)
     if not hook_file:
         return

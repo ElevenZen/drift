@@ -125,7 +125,7 @@ To support machine-specific configuration overrides (e.g. unique target home dir
 
 ---
 
-### C. Resource Import: `drift add <package> <paths...> [--dry-run] [--json]`
+### C. Resource Import: `drift add <package> <paths...> [--dry-run] [--no-hooks] [--json]`
 #### **Common Usage**
 Import physical active system configuration files or directories (like `~/.config/nvim/init.lua`) into your declarative source folder:
 ```bash
@@ -135,8 +135,9 @@ $ drift add nvim ~/.config/nvim/init.lua
 ```
 
 #### **Details & Logic**
-*   **Command Signature**: `drift add <package> <paths...> [--dry-run] [--json]`
+*   **Command Signature**: `drift add <package> <paths...> [--dry-run] [--no-hooks / --no-hook] [--json]`
 *   **Dry-Run Mode**: Passing `--dry-run` performs all symlink resolutions, prefix translations, and path calculations, previewing changes without touching disk.
+*   **Bypass Lifecycle Hooks**: Passing `--no-hooks` (or `--no-hook`) bypasses execution of the `pre_source` hook.
 *   **Dot-Prefix Translation (Symmetric Symmetry)**:
     - Files and directories starting with `.` are automatically translated to `dot-` prefixes (e.g., `.config/nvim/init.lua` $\rightarrow$ `dot-config/nvim/init.lua`).
 *   **Symlink Resolution Policy**:
@@ -190,7 +191,7 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 #### Stage 0: Pre-flight Checks
@@ -218,6 +219,8 @@ If no drift is detected (or `--force` is supplied):
 4.  **Install Deployment**: Delivers files via atomic stow/copy with collision checking (`Primitive 5`).
 5.  **Commit Install**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
 
+*Pass `--no-hooks` (or `--no-hook`) to completely bypass executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.*
+
 #### Stage 3: Post-deploy Garbage Collection
 *   *Global Deploy*: When deploying without specific package names, Drift automatically runs `drift gc` (`Primitive 9`) to clean orphan packages and purge zombie directories.
 
@@ -238,17 +241,18 @@ In `--json` mode, returns `DeployFailure(next_action_type="rollback", requires_r
 
 ---
 
-### G. Recovery: `drift rollback [packages...] [--force] [--json]`
+### G. Recovery: `drift rollback [packages...] [--force] [--no-hooks] [--json]`
 *   **Mechanism (Primitive 8)**:
     1.  Resets `install/` database for target packages to the last clean HEAD commit.
     2.  Resets `install/state.toml` back to HEAD.
     3.  Performs a **Full Redeploy** (`force=True`) to restore physical target system files.
     4.  Restores state registry entries back to `"installed"`.
 *   **Operational Protection**: If no package is in an inconsistent state (`staging` or `deploying`), `drift rollback` aborts to prevent unintended file overwrites. Pass `--force` to bypass this check.
+*   **Bypass Lifecycle Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks during rollback redeployment.
 
 ---
 
-### H. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [--interactive] [--accept-conflicts] [--force] [--dry-run] [--json]`
+### H. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [--interactive] [--accept-conflicts] [--force] [--dry-run] [--no-hooks] [--json]`
 Incorporate runtime system/GUI changes back into your declarative templates under `src/`.
 
 #### Command Options:
@@ -257,6 +261,7 @@ Incorporate runtime system/GUI changes back into your declarative templates unde
 *   `--accept-conflicts`: Apply conflicting patches, writing merge conflict markers directly into templates.
 *   `--force / -f`: Force adoption even if the package source directory has uncommitted modifications.
 *   `--dry-run`: Simulate adoption without writing changes to disk.
+*   `--no-hooks / --no-hook`: Bypass execution of `pre_source` lifecycle hooks during adoption.
 *   `--json`: Return structured `AdoptResult`.
 
 #### Interactive Options:
@@ -268,8 +273,8 @@ Incorporate runtime system/GUI changes back into your declarative templates unde
 
 ---
 
-### I. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [--dry-run] [--json]`
-*   **Command Signature**: `drift uninstall <packages...> [--force / -f] [--detach] [--dry-run] [--json]`
+### I. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [--dry-run] [--no-hooks] [--json]`
+*   **Command Signature**: `drift uninstall <packages...> [--force / -f] [--detach] [--dry-run] [--no-hooks / --no-hook] [--json]`
 *   **Standard Mode (Default)**:
     1.  Removes active symlinks (stow) or deletes deployed files (copy).
     2.  Restores collision backups from `backup/<package>/overwritten/`.
@@ -279,14 +284,15 @@ Incorporate runtime system/GUI changes back into your declarative templates unde
     2.  Converts symlinks to physical files in place.
     3.  Leaves backups untouched in `backup/`.
     4.  Deletes `install/<package>/` and commits with a `Detach:` prefix.
+*   **Bypass Lifecycle Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip execution of `pre_uninstall` and `post_uninstall` hooks.
 
 ---
 
-### J. Garbage Collection: `drift gc [--dry-run] [--json]`
+### J. Garbage Collection: `drift gc [--dry-run] [--no-hooks] [--json]`
 Identifies and purges orphaned and untracked database entities across the workspace.
-*   **Command Signature**: `drift gc [--dry-run] [--json]`
+*   **Command Signature**: `drift gc [--dry-run] [--no-hooks / --no-hook] [--json]`
 *   **Actions (Primitive 9)**:
-    1.  **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift.toml`.
+    1.  **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift.toml` (skipping uninstall hooks if `--no-hooks` is provided).
     2.  **Zombie Folders**: Identifies and removes package subdirectories in `render/` and `install/` that lack valid configuration files.
     3.  **Database Commits**: Automatically commits purged zombie cleanups in both repositories.
 
@@ -364,11 +370,11 @@ Provides built-in documentation with automatic terminal pager fallback.
 ### O. Low-Level Control Commands
 For advanced continuous integration, scripting, and automation:
 
-1.  **`drift render [packages...] [--json]`**: Compiles source templates to sandbox `render/` (`Primitive 2`).
+1.  **`drift render [packages...] [--no-hooks] [--json]`**: Compiles source templates to sandbox `render/` (`Primitive 2`).
 2.  **`drift render-commit [packages...] -m "message" [--json]`**: Stages and commits compiled sandbox changes (`Primitive 3`).
 3.  **`drift reverse-sync [packages...] [--json]`**: Pulls live host configuration changes into `install/` (`Primitive 1`).
 4.  **`drift stage [packages...] [--force] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`).
-5.  **`drift apply [packages...] [--force] [--resolve-symlinks/--no-resolve-symlinks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
+5.  **`drift apply [packages...] [--force] [--resolve-symlinks/--no-resolve-symlinks] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
 6.  **`drift install-commit [packages...] -m "message" [--json]`**: Commits deployed configurations inside `install/` (`Primitive 6`).
 
 ---

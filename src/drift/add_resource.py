@@ -96,7 +96,8 @@ def run_primitive_11_add_resources(
     workspace_config: WorkspaceConfig,
     package_name: str,
     import_paths: List[Path],
-    dry_run: bool = False
+    dry_run: bool = False,
+    no_hooks: bool = False
 ) -> None:
     """
     Orchestrates importing multiple resources into a package.
@@ -112,7 +113,7 @@ def run_primitive_11_add_resources(
 
     # Trigger pre_source hook before reading/writing source directory
     from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
-    trigger_pre_source_lifecycle_hook(workspace_config, package_name, load_envs=True)
+    trigger_pre_source_lifecycle_hook(workspace_config, package_name, load_envs=True, no_hooks=no_hooks)
 
     # 2. Resolve target directory and ignores
     target_base = get_package_target_directory_from_source(workspace_config, src_pkg_dir, package_name)

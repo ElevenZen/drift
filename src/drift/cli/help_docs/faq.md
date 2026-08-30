@@ -15,8 +15,8 @@ Quick solutions and battle-tested recipes for common day-to-day scenarios and tr
 **Situation**: A package was manually tampered with, uncommitted file conflicts exist on the host, or you want to restart its deployment from a clean slate.  
 **Solution**: **Uninstall and redeploy**:
 ```bash
-# 1. Cleanly remove host mappings and state tracking
-drift uninstall <pkg> --force
+# 1. Cleanly remove host mappings and state tracking (use --no-hooks if hooks fail)
+drift uninstall <pkg> --force [--no-hooks]
 
 # 2. Inspect/clean host destination folder if any leftover unmanaged files remain
 # e.g., rm -rf ~/.config/<pkg>
@@ -47,6 +47,7 @@ drift deploy <pkg>
 **Situation**: A template syntax error, permission failure, or hook script crash stopped `drift deploy` halfway through, leaving files in a transitional state.  
 **Solution**: Run **`drift rollback <pkg>`** (or `drift rollback`).
 *   Drift resets `install/` to the last committed clean HEAD, removes half-written untracked files, and redeploys the last known stable state to your active host.
+*   If hook scripts themselves are broken or crashing during rollback, append **`--no-hooks`** (or **`--no-hook`**) to perform pure file-level recovery.
 
 ---
 
@@ -56,6 +57,20 @@ drift deploy <pkg>
 1.  Add PCRE ignore patterns into `src/<pkg>/.drift_ignore` (e.g., `\.swp$`, `\.bak$`, `/cache/`, `/logs/`).
 2.  For Fully-Controlled Directories (FCDs), run `drift adopt <pkg> --interactive` (`-i`) and choose **Option [2] Ignore** on the detected untracked file to automatically append the ignore rule.
 *   👉 Run `drift help ignore` for complete pattern syntax and GNU Stow matching rules.
+
+---
+
+### Q7: What if `rollback` or `uninstall` doesn't run well in a broken install due to failing hook scripts?
+**Situation**: In a damaged, broken, or half-configured install, lifecycle hooks (such as `pre_uninstall`, `post_uninstall`, `pre_update`, or `post_update`) may fail because of missing system dependencies, broken interpreters, or invalid script syntax, blocking you from rolling back or uninstalling the package.  
+**Solution**: Pass the **`--no-hooks`** (or **`--no-hook`**) flag to bypass hook executions and perform only the essential file and database operations:
+```bash
+# Safely restore clean state without executing broken hooks:
+drift rollback <pkg> --no-hooks
+
+# Forcefully remove a broken package and restore backups without executing hooks:
+drift uninstall <pkg> --force --no-hooks
+```
+*   This skips all hook scripts and directly performs physical file operations (symlink unlinking, file removals, backup restorations, and state database cleanups).
 
 ---
 

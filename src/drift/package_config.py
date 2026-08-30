@@ -151,8 +151,10 @@ class PackageHooks:
         hooks.validate(package_name)
         return hooks
 
-    def trigger(self, hook_name: str, hook_dir: Path, cwd: Path) -> None:
+    def trigger(self, hook_name: str, hook_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Executes a package lifecycle hook script if specified and found."""
+        if no_hooks:
+            return
         from .lifecycle_hooks import trigger_package_lifecycle_hook
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
@@ -161,19 +163,23 @@ class PackageHooks:
             hook_name=hook_name,
             metadata=self._package_config,
             hook_dir=hook_dir,
-            cwd=cwd
+            cwd=cwd,
+            no_hooks=no_hooks
         )
 
     def trigger_pre_source(
         self,
         source_dir: Path,
-        workspace_config: Optional["WorkspaceConfig"] = None
+        workspace_config: Optional["WorkspaceConfig"] = None,
+        no_hooks: bool = False
     ) -> None:
         """Triggers the pre_source hook inside source_dir.
 
         If workspace_config is provided, the hook is executed via trigger_pre_source_lifecycle_hook
         (rendering or copying into render/ as needed). Otherwise, it executes directly from source_dir.
         """
+        if no_hooks:
+            return
         if self.pre_source:
             if self._package_config is None:
                 raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
@@ -182,8 +188,9 @@ class PackageHooks:
                 trigger_pre_source_lifecycle_hook(
                     workspace_config=workspace_config,
                     package_name=self._package_config.name,
+                    pkg_config=self._package_config,
                     load_envs=False,
-                    pkg_config=self._package_config
+                    no_hooks=no_hooks
                 )
             else:
                 from .lifecycle_hooks import execute_hook_script
@@ -197,32 +204,32 @@ class PackageHooks:
                     cwd=source_dir
                 )
 
-    def trigger_post_render(self, render_dir: Path) -> None:
+    def trigger_post_render(self, render_dir: Path, no_hooks: bool = False) -> None:
         """Triggers the post_render hook inside render_dir."""
         if self.post_render:
-            self.trigger("post_render", hook_dir=render_dir, cwd=render_dir)
+            self.trigger("post_render", hook_dir=render_dir, cwd=render_dir, no_hooks=no_hooks)
 
-    def trigger_pre_install(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_pre_install(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the pre_install hook."""
         if self.pre_install:
-            self.trigger("pre_install", hook_dir=install_dir, cwd=cwd)
+            self.trigger("pre_install", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_post_install(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_post_install(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the post_install hook."""
         if self.post_install:
-            self.trigger("post_install", hook_dir=install_dir, cwd=cwd)
+            self.trigger("post_install", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_pre_update(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_pre_update(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the pre_update hook."""
         if self.pre_update:
-            self.trigger("pre_update", hook_dir=install_dir, cwd=cwd)
+            self.trigger("pre_update", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_post_update(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_post_update(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the post_update hook."""
         if self.post_update:
-            self.trigger("post_update", hook_dir=install_dir, cwd=cwd)
+            self.trigger("post_update", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_pre_uninstall(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_pre_uninstall(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the pre_uninstall hook.
 
         Note:
@@ -230,9 +237,9 @@ class PackageHooks:
             file ('drift_package.toml') is available in the install/ directory.
         """
         if self.pre_uninstall:
-            self.trigger("pre_uninstall", hook_dir=install_dir, cwd=cwd)
+            self.trigger("pre_uninstall", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_post_uninstall(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_post_uninstall(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the post_uninstall hook.
 
         Note:
@@ -240,12 +247,12 @@ class PackageHooks:
             file ('drift_package.toml') is available in the install/ directory.
         """
         if self.post_uninstall:
-            self.trigger("post_uninstall", hook_dir=install_dir, cwd=cwd)
+            self.trigger("post_uninstall", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
-    def trigger_health(self, install_dir: Path, cwd: Path) -> None:
+    def trigger_health(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> None:
         """Triggers the health probe hook."""
         if self.health:
-            self.trigger("health", hook_dir=install_dir, cwd=cwd)
+            self.trigger("health", hook_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
 
     def check_hook_files(
         self,

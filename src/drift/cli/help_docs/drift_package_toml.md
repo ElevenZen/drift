@@ -89,6 +89,23 @@ post_update = "scripts/reload_service.bat"
 health = "scripts/health_check.ps1"
 ```
 
+## 🪝 Lifecycle Hooks Execution Matrix
+
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Sudo Elevation Model |
+| :--- | :--- | :--- | :--- |
+| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` | Always user space (No sudo) |
+| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` | Always user space (No sudo) |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | Runs with `sudo` if `sudo = true` |
+| `health` | During `drift health` probe execution | `target_directory` | Runs with `sudo` if `sudo = true` |
+
+> [!NOTE]
+> Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.
+
 ## 🌐 Default Package Environment Variables & Precedence
 
 When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:

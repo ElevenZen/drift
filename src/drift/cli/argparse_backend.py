@@ -161,6 +161,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Preview the import without making changes"
     )
     add_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    add_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -197,6 +203,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Simulate the adoption, previewing changes and conflict results"
     )
     adopt_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    adopt_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -216,6 +228,12 @@ def make_parser() -> argparse.ArgumentParser:
         "-f", "--force",
         action="store_true",
         help="Forcefully deploy and bypass system drift sentinel safeguards"
+    )
+    deploy_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
     )
     deploy_parser.add_argument(
         "--json",
@@ -271,6 +289,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Remove management relationship but keep configurations as actual physical files on host system"
     )
     uninstall_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    uninstall_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -290,6 +314,12 @@ def make_parser() -> argparse.ArgumentParser:
         "-f", "--force",
         action="store_true",
         help="Force the rollback and skip failed interlock checking"
+    )
+    rollback_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
     )
     rollback_parser.add_argument(
         "--json",
@@ -361,6 +391,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Simulate the garbage collection without making changes"
     )
     gc_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    gc_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -424,6 +460,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Optional package name(s) to render specifically"
     )
     render_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    render_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -482,6 +524,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Force deployment and bypass check"
     )
     apply_parser.add_argument(
+        "--no-hooks", "--no-hook",
+        action="store_true",
+        dest="no_hooks",
+        help="Bypass and do not execute package lifecycle hooks"
+    )
+    apply_parser.add_argument(
         "--json",
         action="store_true",
         help="Output results in structured machine-readable JSON format"
@@ -536,7 +584,7 @@ def run_argparse_cli(argv=None) -> None:
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_render(drift_root, args.packages, json_mode=json_mode)
+            execute_render(drift_root, args.packages, json_mode=json_mode, no_hooks=args.no_hooks)
             if not json_mode:
                 if args.packages:
                     print(f"✨ Successfully rendered package(s) '{', '.join(args.packages)}'!")
@@ -555,7 +603,7 @@ def run_argparse_cli(argv=None) -> None:
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_apply(drift_root, args.packages, force=args.force, json_mode=json_mode)
+            execute_apply(drift_root, args.packages, force=args.force, json_mode=json_mode, no_hooks=args.no_hooks)
         elif args.command == "render-commit":
             if args.no_git_root:
                 drift_root = base_dir
@@ -602,7 +650,15 @@ def run_argparse_cli(argv=None) -> None:
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_uninstall(drift_root, args.packages, force=args.force, dry_run=args.dry_run, detach=args.detach, json_mode=json_mode)
+            execute_uninstall(
+                drift_root,
+                args.packages,
+                force=args.force,
+                dry_run=args.dry_run,
+                detach=args.detach,
+                json_mode=json_mode,
+                no_hooks=args.no_hooks
+            )
         elif args.command == "adopt":
             if args.no_git_root:
                 drift_root = base_dir
@@ -616,7 +672,8 @@ def run_argparse_cli(argv=None) -> None:
                 accept_conflicts=args.accept_conflicts,
                 force=args.force,
                 dry_run=args.dry_run,
-                json_mode=json_mode
+                json_mode=json_mode,
+                no_hooks=args.no_hooks
             )
         elif args.command == "status":
             if args.no_git_root:
@@ -631,7 +688,7 @@ def run_argparse_cli(argv=None) -> None:
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_gc(drift_root, dry_run=args.dry_run, json_mode=json_mode)
+            execute_gc(drift_root, dry_run=args.dry_run, json_mode=json_mode, no_hooks=args.no_hooks)
         elif args.command == "diff":
             if args.no_git_root:
                 drift_root = base_dir
@@ -651,21 +708,21 @@ def run_argparse_cli(argv=None) -> None:
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run, json_mode=json_mode)
+            execute_add(drift_root, args.package_name, args.paths, dry_run=args.dry_run, json_mode=json_mode, no_hooks=args.no_hooks)
         elif args.command == "rollback":
             if args.no_git_root:
                 drift_root = base_dir
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_rollback(drift_root, args.packages, force=args.force, json_mode=json_mode)
+            execute_rollback(drift_root, args.packages, force=args.force, json_mode=json_mode, no_hooks=args.no_hooks)
         elif args.command == "deploy":
             if args.no_git_root:
                 drift_root = base_dir
             else:
                 drift_root = get_drift_root(base_dir)
 
-            execute_deploy(drift_root, args.packages, force=args.force, json_mode=json_mode)
+            execute_deploy(drift_root, args.packages, force=args.force, json_mode=json_mode, no_hooks=args.no_hooks)
         elif args.command == "repair":
             if args.no_git_root:
                 drift_root = base_dir
