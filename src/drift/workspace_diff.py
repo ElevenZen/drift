@@ -5,7 +5,7 @@ import subprocess
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .result_models import DiffType
@@ -14,9 +14,9 @@ logger = logging.getLogger(__name__)
 
 def run_repo_diff(
     repo_path: Path,
-    packages: List[str],
-    git_options: List[str],
-    managed_files: List[str],
+    packages: Sequence[str],
+    git_options: Sequence[str],
+    managed_files: Sequence[str],
     repo_name: str
 ) -> None:
     """Helper to run git diff within a specific repository for a set of packages."""
@@ -26,7 +26,7 @@ def run_repo_diff(
 
     for pkg in packages:
         # We use pathspecs after '--' to avoid revision ambiguity
-        cmd = ["git", "-C", str(repo_path), "diff"] + git_options + ["--", f"{pkg}/"]
+        cmd = ["git", "-C", str(repo_path), "diff"] + list(git_options) + ["--", f"{pkg}/"]
         for f in managed_files:
             cmd.append(f":!{pkg}/{f}")
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -37,7 +37,7 @@ def run_repo_diff(
 
 def get_pending_delta_worklist(
     workspace_config: WorkspaceConfig,
-    packages: List[str]
+    packages: Sequence[str]
 ) -> Tuple[List[Tuple[str, Path, Path]], List[str], List[str]]:
     """
     Classifies packages based on their presence in render/ and install/ directories.
@@ -66,9 +66,9 @@ def get_pending_delta_worklist(
 
 def run_pending_delta_diff(
     workspace_config: WorkspaceConfig,
-    packages: List[str],
-    git_options: List[str],
-    managed_files: List[str]
+    packages: Sequence[str],
+    git_options: Sequence[str],
+    managed_files: Sequence[str]
 ) -> None:
     """Helper to run git diff --no-index between render/ and install/ layers."""
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
@@ -86,7 +86,7 @@ def run_pending_delta_diff(
     os.chdir(str(workspace_config.drift_root_path))
     
     try:
-        base_cmd = ["git", "diff", "--no-index"] + git_options
+        base_cmd = ["git", "diff", "--no-index"] + list(git_options)
         for pkg, rel_install, rel_render in to_diff:
             cmd = base_cmd + [str(rel_install), str(rel_render), "--"]
             for f in managed_files:
