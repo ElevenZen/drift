@@ -63,10 +63,10 @@ def generate_import_worklist(
         repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
 
         # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
-        class ScopedIgnore:
-            def match_path(self, rel_repo: Path) -> bool:
+        class ScopedIgnore(IgnoreHandler):
+            def match_path(self, rel_path: Path) -> bool:
                 # rel_repo is already dot-prefixed by list_folder_paths(translate_mode="reverse")
-                return ignore_handler.match_path(repo_prefix / rel_repo)
+                return ignore_handler.match_path(repo_prefix / rel_path)
 
         scoped_ignore: IgnoreHandler = ScopedIgnore()
 
