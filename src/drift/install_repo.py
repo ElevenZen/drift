@@ -661,6 +661,12 @@ def execute_package_deployment(
             resolve_symlinks=resolve_symlinks
         )
 
+    # 2. Lifecycle Hooks & State registry update
+    if is_first_time:
+        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
+    else:
+        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
+
     # Persist the full target file manifest to state.toml before hooks & physical delivery
     # so that midway crashes have an authoritative list of files to uninstall
     sync_deployed_files_manifest(
@@ -672,13 +678,7 @@ def execute_package_deployment(
     )
     save_state_registry(state_file, state_registry)
     
-    # 3. Lifecycle Hooks & State registry update
-    if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
-    else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
-
-    # 2. Physical Deployment Execution
+    # 3. Physical Deployment Execution
     stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
     stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
     

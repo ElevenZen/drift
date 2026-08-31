@@ -328,6 +328,32 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 
 ---
 
+## 📦 Deployment Methods (`stow` vs. `copy`) & Event Ordering
+
+Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift.toml`):
+
+| Feature | `install_method = "stow"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
+| :--- | :--- | :--- |
+| **Mechanism** | Symlinks host files to `install/<pkg>/` | Copies physical file contents to host |
+| **Storage Overhead** | Zero extra disk usage (symlink pointers) | Duplicate physical file on disk |
+| **Hot-Edits & Inotify** | Edits reflected instantly through symlink | Managed strictly via deploy passes |
+| **Windows Behavior** | Automatically falls back to safe copies | Native file copy |
+| **Lifecycle Event Order** | Content live at Staging before `pre_update` | **Strict event order** (`pre_update` $\rightarrow$ copy $\rightarrow$ `post_update`) |
+
+### ⚠️ Event Ordering & Lifecycle Hook Semantics
+
+Because Drift decouples template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file updates relative to hook scripts differs:
+
+*   **`stow` (Symlink Pointers)**:
+    Since the host file is a symlink directly targeting `install/<pkg>/`, updating file contents in `install/` during Staging (Primitive 4) makes those modifications immediately visible to the host **before** `pre_update` executes in Primitive 5. New file symlinks and deleted symlinks are still processed after `pre_update`.
+*   **`copy` (Discrete Physical Files — Recommended for Daemons)**:
+    Host files remain completely untouched at their previous version until Primitive 5 copies them over. This guarantees that `pre_update` runs while host files are **strictly in their old state**, followed by physical file delivery, and finally `post_update`.
+
+> [!TIP]
+> **When to use `copy`**: If you are managing background services or daemons (e.g. `systemd` services with `inotify` watchers) that must be cleanly stopped in `pre_update` *before* configuration contents change on disk, configure the package with **`install_method = "copy"`**.
+
+---
+
 ## 🪝 Robust Lifecycle Hook Integration
 Packages can declare automated hook scripts inside `drift_package.toml` to integrate with external packages:
 ```toml

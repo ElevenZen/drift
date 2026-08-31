@@ -565,6 +565,21 @@ timeout = 120
 | `post_uninstall`| After unlinking/deleting files | `target_directory` | Runs with `sudo` if `sudo = true` |
 | `health` | During `drift health` probe execution | `target_directory` | Always user space (No sudo) |
 
+#### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
+Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:
+
+*   **`install_method = "copy"` (Strict Event Ordering)**:
+    *   Host target files remain strictly in their previous state during the Staging phase (Primitive 4).
+    *   `pre_update` executes while host files are strictly at their prior version.
+    *   Physical files are then copied, updated, or removed on the host during Primitive 5.
+    *   `post_update` executes after host files have received the new state.
+    *   👉 **Recommendation**: If your package configuration is watched by active system services or daemons (e.g. `systemd` user units with inotify watchers) that must be cleanly stopped in `pre_update` before configuration files change, use **`install_method = "copy"`**.
+
+*   **`install_method = "stow"` (Symlink Pointers)**:
+    *   Because active host paths are symbolic links pointing into `install/<pkg>/`, modifying file contents in `install/` during Staging (Primitive 4) makes content modifications immediately visible on the host **before** `pre_update` runs in Primitive 5.
+    *   Structural changes (creating symlinks for new files or pruning deleted symlinks) are applied during Primitive 5 after `pre_update`.
+    *   👉 **Recommendation**: Ideal for standard user dotfiles (e.g. `.zshrc`, `.tmux.conf`, Neovim configs) where instant reflection and symlink transparency are preferred.
+
 #### Default Package Environment Variables & Precedence
 After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
 *   **`drift_package_name`**: Name / directory name of the package.

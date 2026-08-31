@@ -74,5 +74,16 @@ drift uninstall <pkg> --force --no-hooks
 
 ---
 
+### Q8: When should I choose `install_method = "copy"` instead of `"stow"`? (Event Ordering & Daemons)
+**Situation**: You have a daemon or system service (e.g., `systemd` user service, application with active `inotify` file watchers) that monitors a config file. You need your `pre_update` hook script to shut down the service *before* the configuration file content changes.  
+**Solution**: Use **`install_method = "copy"`** in `drift_package.toml`:
+*   **Why**: With `install_method = "stow"`, the host file is a symlink directly pointing into `install/<pkg>/`. When Drift stages compiled templates to `install/` during Primitive 4, the host system immediately sees the updated file contents **before** `pre_update` runs in Primitive 5.
+*   **With `copy`**: The host target file remains completely untouched at the old version while `pre_update` runs. Physical files are updated only during host delivery in Primitive 5, providing **strict and predictable event ordering** (`staging` $\rightarrow$ `pre_update` $\rightarrow$ `file copy` $\rightarrow$ `post_update`).
+*   **Rule of Thumb**:
+    *   Use **`stow`** for interactive user configs (shell, tmux, vim, git) for instant reflection and lightweight symlinks.
+    *   Use **`copy`** for services, daemons, or when exact lifecycle hook timing is essential.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.
