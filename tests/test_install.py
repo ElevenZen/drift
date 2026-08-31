@@ -23,6 +23,7 @@ from drift.install_repo import (
         find_internal_symlink_conflicts,
         resolve_single_internal_symlink_conflict,
         handle_internal_symlink_conflicts,
+        deploy_single_stow_file,
 )
 from drift.file_utils import (
         ensure_dir_exists_with_sudo,
@@ -1803,6 +1804,55 @@ class TestInstallRepo(unittest.TestCase):
         # System target remains untouched as a symlink and not marked in processed_paths
         self.assertTrue(system_target.is_symlink())
         self.assertEqual(len(processed_paths), 0)
+
+    @patch("drift.install_repo.create_symlink_manually_with_sudo")
+    def test_deploy_single_stow_file_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
+        """Verifies deploy_single_stow_file skips recreating symlink if target already points to source."""
+        pkg = "pkg_stow_skip"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        src_file = pkg_install_dir / "app.conf"
+        src_file.write_text("config data", encoding="utf-8")
+
+        system_target = self.system_target_dir / "app.conf"
+        self.system_target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Target does not exist -> creates symlink
+        deploy_single_stow_file(
+            rel_file=Path("app.conf"),
+            install_pkg_dir=pkg_install_dir,
+            target_dir=self.system_target_dir,
+            sudo=False
+        )
+        self.assertEqual(mock_create_symlink.call_count, 1)
+
+        # Create the actual relative symlink on filesystem
+        rel_target = os.path.relpath(src_file, self.system_target_dir)
+        os.symlink(rel_target, system_target)
+        mock_create_symlink.reset_mock()
+
+        # 2. Target already exists and points to src_file -> should skip recreation
+        deploy_single_stow_file(
+            rel_file=Path("app.conf"),
+            install_pkg_dir=pkg_install_dir,
+            target_dir=self.system_target_dir,
+            sudo=False
+        )
+        mock_create_symlink.assert_not_called()
+
+        # 3. Target points to an invalid/different location -> should call create_symlink
+        system_target.unlink()
+        other_file = Path(tempfile.gettempdir()) / "other.conf"
+        other_file.write_text("other", encoding="utf-8")
+        os.symlink(other_file, system_target)
+
+        deploy_single_stow_file(
+            rel_file=Path("app.conf"),
+            install_pkg_dir=pkg_install_dir,
+            target_dir=self.system_target_dir,
+            sudo=False
+        )
+        self.assertEqual(mock_create_symlink.call_count, 1)
 
 
 class TestStowVersionDetection(unittest.TestCase):

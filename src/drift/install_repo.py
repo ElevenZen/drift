@@ -416,6 +416,18 @@ def deploy_single_stow_file(
     src_file = install_pkg_dir / rel_file
     system_target = resolve_system_target(rel_file, target_dir)
     relative_target = get_relative_path(system_target.parent, src_file)
+
+    # If the target already points into the source, do not create the symlink again
+    if system_target.is_symlink():
+        try:
+            link_target_raw = Path(os.readlink(system_target))
+            if link_target_raw == relative_target:
+                return
+            if (system_target.parent / link_target_raw).resolve() == src_file.resolve():
+                return
+        except Exception:
+            pass
+
     create_symlink_manually_with_sudo(relative_target, system_target, sudo)
 
 

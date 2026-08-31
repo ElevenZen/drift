@@ -774,6 +774,60 @@ class TestConfigClasses(unittest.TestCase):
                 with patch.dict(os.environ, {"LOCALAPPDATA": "C:/Users/testuser/AppData/Local"}):
                     self.assertEqual(pkg_config.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/nvim"))
 
+    def test_target_directory_windows_forward_and_mixed_slashes(self) -> None:
+        """Verifies that forward slashes '/' and mixed slashes in target_directory_windows are supported and parsed correctly."""
+        ws_config = WorkspaceConfig(
+            drift_root_path=Path("/test"),
+            default_target_directory=Path("/default/target"),
+        )
+        home = Path.home()
+
+        with patch("sys.platform", "win32"):
+            with patch.dict(os.environ, {
+                "LOCALAPPDATA": "C:/Users/testuser/AppData/Local",
+                "USERPROFILE": "C:/Users/testuser",
+                "APPDATA": "C:/Users/testuser/AppData/Roaming",
+            }):
+                # 1. Pure forward slashes with %VAR%
+                data1 = {
+                    "package": {
+                        "name": "pkg1",
+                        "target_directory_windows": "%LOCALAPPDATA%/my_app/config"
+                    }
+                }
+                cfg1 = PackageConfig.from_dict(data1, package_name="pkg1")
+                self.assertEqual(cfg1.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/my_app/config"))
+
+                # 2. Pure forward slashes with drive letter
+                data2 = {
+                    "package": {
+                        "name": "pkg2",
+                        "target_directory_windows": "C:/Custom/Path/To/App"
+                    }
+                }
+                cfg2 = PackageConfig.from_dict(data2, package_name="pkg2")
+                self.assertEqual(cfg2.get_target_directory(ws_config), Path("C:/Custom/Path/To/App"))
+
+                # 3. Pure forward slashes with ~ (tilde)
+                data3 = {
+                    "package": {
+                        "name": "pkg3",
+                        "target_directory_windows": "~/AppData/Local/nvim"
+                    }
+                }
+                cfg3 = PackageConfig.from_dict(data3, package_name="pkg3")
+                self.assertEqual(cfg3.get_target_directory(ws_config), home / "AppData" / "Local" / "nvim")
+
+                # 4. Mixed slashes
+                data4 = {
+                    "package": {
+                        "name": "pkg4",
+                        "target_directory_windows": "%USERPROFILE%\\AppData/Roaming\\alacritty/nested"
+                    }
+                }
+                cfg4 = PackageConfig.from_dict(data4, package_name="pkg4")
+                self.assertEqual(cfg4.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Roaming/alacritty/nested"))
+
 
 class TestConfigLoaders(unittest.TestCase):
     def setUp(self) -> None:
