@@ -735,6 +735,32 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(dst_sym.is_symlink())
         self.assertEqual(os.readlink(dst_sym), str(src))
 
+    def test_file_permissions_differ_and_mode_only(self) -> None:
+        import sys
+        from drift.file_utils import file_permissions_differ, is_mode_only_change, copy_file_mode_with_sudo, atomic_copy_file
+        if sys.platform == "win32":
+            return
+
+        f1 = self.root / "f1.sh"
+        f2 = self.root / "f2.sh"
+        f1.write_text("#!/bin/bash\n", encoding="utf-8")
+        f2.write_text("#!/bin/bash\n", encoding="utf-8")
+        f1.chmod(0o755)
+        f2.chmod(0o644)
+
+        self.assertTrue(file_permissions_differ(f1, f2))
+        self.assertTrue(is_mode_only_change(f1, f2))
+
+        # Copy mode directly
+        copy_file_mode_with_sudo(f1, f2, sudo=False)
+        self.assertFalse(file_permissions_differ(f1, f2))
+        self.assertFalse(is_mode_only_change(f1, f2))
+
+        # Test atomic_copy_file mode-only update
+        f2.chmod(0o644)
+        atomic_copy_file(f1, f2)
+        self.assertTrue(bool(f2.stat().st_mode & 0o111))
+
 
 if __name__ == "__main__":
     unittest.main()

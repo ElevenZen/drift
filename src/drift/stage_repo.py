@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
 from .workspace_config import WorkspaceConfig
 from .package_config import load_package_config_rendered, PackageConfig
-from .file_utils import file_contents_differ, backup_and_delete_one_file, remove_file_or_dir, atomic_copy_file
+from .file_utils import (
+    file_contents_differ,
+    backup_and_delete_one_file,
+    remove_file_or_dir,
+    atomic_copy_file,
+    copy_file_mode_with_sudo
+)
 from .folder_diff import compare_folders
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
@@ -168,7 +174,10 @@ def process_package_changes(
             continue
         logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
         dst.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(src, dst)
+        if all_diff.is_mode_only_change(rel_file, render_pkg_dir, install_pkg_dir):
+            copy_file_mode_with_sudo(src, dst, sudo=False)
+        else:
+            atomic_copy_file(src, dst)
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
     copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)

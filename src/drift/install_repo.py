@@ -421,9 +421,9 @@ def deploy_single_stow_file(
     if system_target.is_symlink():
         try:
             link_target_raw = Path(os.readlink(system_target))
-            if link_target_raw == relative_target:
-                return
-            if (system_target.parent / link_target_raw).resolve() == src_file.resolve():
+            if (link_target_raw == relative_target
+                    or (system_target.parent / link_target_raw).resolve() == src_file.resolve()):
+                logger.debug(f"   Skipping symlink creation for '{system_target}' as it already points to '{relative_target}'")
                 return
         except Exception:
             pass

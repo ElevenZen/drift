@@ -14,6 +14,30 @@ class FolderDiff:
     deleted: List[Path] = field(default_factory=list)
     matches: List[Path] = field(default_factory=list)
 
+    def is_mode_only_change(
+        self,
+        rel_path: Path,
+        src_dir: Path,
+        dst_dir: Path,
+        translate_mode: Optional[str] = None
+    ) -> bool:
+        """Checks if a relative path in modified list is a mode-only change (content matches, executable mode differs)."""
+        from .file_utils import (
+            is_mode_only_change as _is_mode_only,
+            translate_dot_prefixes,
+            translate_dot_prefixes_reverse
+        )
+
+        src_file = src_dir / rel_path
+        if translate_mode == "forward":
+            dst_file = dst_dir / translate_dot_prefixes(rel_path)
+        elif translate_mode == "reverse":
+            dst_file = dst_dir / translate_dot_prefixes_reverse(rel_path)
+        else:
+            dst_file = dst_dir / rel_path
+
+        return _is_mode_only(src_file, dst_file)
+
 def compare_folders(
     src_dir: Path,
     dst_dir: Path,
@@ -46,7 +70,8 @@ def compare_folders(
         into source directories.
     """
     from .file_utils import (
-        file_contents_differ, 
+        file_contents_differ,
+        file_permissions_differ,
         translate_dot_prefixes, 
         translate_dot_prefixes_reverse,
         is_relative_to
@@ -260,7 +285,7 @@ def compare_folders(
                 visited.remove(pair_key)
 
         elif p_src.is_file() and p_dst.is_file():
-            if file_contents_differ(p_src, p_dst):
+            if file_contents_differ(p_src, p_dst) or file_permissions_differ(p_src, p_dst):
                 diff.modified.append(rel)
             else:
                 diff.matches.append(rel)

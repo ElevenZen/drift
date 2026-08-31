@@ -1,6 +1,7 @@
 """Comprehensive unit tests for compare_folders in drift.folder_diff."""
 
 import os
+import sys
 import shutil
 import tempfile
 import unittest
@@ -103,6 +104,43 @@ class TestFolderDiffBasic(unittest.TestCase):
         self.assertEqual(diff.modified, [Path("mod.txt")])
         self.assertEqual(diff.added, [Path("add.txt")])
         self.assertEqual(diff.deleted, [Path("del.txt")])
+
+    def test_permission_change_detected_as_modified_and_mode_only_helper(self) -> None:
+        if sys.platform == "win32":
+            return
+
+        # 1. Same content, executable bit difference (src: 0755, dst: 0644)
+        src_script = self.src / "run.sh"
+        dst_script = self.dst / "run.sh"
+        src_script.write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
+        dst_script.write_text("#!/bin/bash\necho hello\n", encoding="utf-8")
+        src_script.chmod(0o755)
+        dst_script.chmod(0o644)
+
+        # 2. Both content and mode different
+        src_mod = self.src / "mod.sh"
+        dst_mod = self.dst / "mod.sh"
+        src_mod.write_text("src_version", encoding="utf-8")
+        dst_mod.write_text("dst_version", encoding="utf-8")
+        src_mod.chmod(0o755)
+        dst_mod.chmod(0o644)
+
+        # 3. Same content and same mode
+        src_same = self.src / "same.sh"
+        dst_same = self.dst / "same.sh"
+        src_same.write_text("same", encoding="utf-8")
+        dst_same.write_text("same", encoding="utf-8")
+        src_same.chmod(0o755)
+        dst_same.chmod(0o755)
+
+        diff = compare_folders(self.src, self.dst)
+        self.assertEqual(diff.matches, [Path("same.sh")])
+        self.assertEqual(sorted(diff.modified), [Path("mod.sh"), Path("run.sh")])
+
+        # Verify is_mode_only_change
+        self.assertTrue(diff.is_mode_only_change(Path("run.sh"), self.src, self.dst))
+        self.assertFalse(diff.is_mode_only_change(Path("mod.sh"), self.src, self.dst))
+        self.assertFalse(diff.is_mode_only_change(Path("same.sh"), self.src, self.dst))
 
 
 class TestFolderDiffSingleFile(unittest.TestCase):

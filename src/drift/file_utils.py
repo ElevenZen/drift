@@ -318,6 +318,44 @@ def file_contents_differ(file1: Path, file2: Path, convert_line_endings: Optiona
         return False
 
 
+def file_permissions_differ(file1: Path, file2: Path) -> bool:
+    """Returns True if the executable permissions of file1 and file2 differ on POSIX.
+    
+    Always returns False on Windows (win32) or if either file does not exist.
+    """
+    if sys.platform == "win32":
+        return False
+    if not file1.exists() or not file2.exists():
+        return False
+    try:
+        mode1 = file1.stat().st_mode
+        mode2 = file2.stat().st_mode
+        return bool(mode1 & 0o111) != bool(mode2 & 0o111)
+    except Exception:
+        return False
+
+
+def is_mode_only_change(file1: Path, file2: Path, convert_line_endings: Optional[bool] = None) -> bool:
+    """Returns True if the byte contents of file1 and file2 match, but their executable permissions differ."""
+    return not file_contents_differ(file1, file2, convert_line_endings=convert_line_endings) and file_permissions_differ(file1, file2)
+
+
+def copy_file_mode_with_sudo(src: Path, dst: Path, sudo: bool = False) -> None:
+    """Copies file mode (permissions) from src to dst without rewriting file contents."""
+    if sys.platform == "win32" or not src.exists() or not dst.exists():
+        return
+    mode = src.stat().st_mode
+    if not sudo:
+        try:
+            dst.chmod(mode)
+        except Exception:
+            pass
+    else:
+        octal_mode = oct(mode & 0o777)[2:]
+        cmd = ["chmod", octal_mode, str(dst)]
+        run_sudo_command(cmd, sudo=True)
+
+
 def rmdir_parents(dir_path: Path, limit_dir: Path) -> None:
     """Recursively removes empty directories from dir_path up to limit_dir."""
     curr = dir_path.resolve()
@@ -442,6 +480,10 @@ def atomic_copy_file(
 
     if not follow_symlinks and src.is_symlink():
         atomic_copy_symlink(src, dst)
+        return
+
+    if dst.exists() and not dst.is_symlink() and not src.is_symlink() and is_mode_only_change(src, dst):
+        copy_file_mode_with_sudo(src, dst, sudo=False)
         return
 
     temp_path = None
@@ -661,6 +703,10 @@ def copy_file_contents_with_sudo(
     """
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     unlock_file_or_dir_if_windows(dst)
+
+    if dst.exists() and not dst.is_symlink() and not src.is_symlink() and is_mode_only_change(src, dst):
+        copy_file_mode_with_sudo(src, dst, sudo=sudo)
+        return
 
     if sys.platform == "win32" or not sudo:
         atomic_copy_file(src, dst, line_ending=line_ending)
