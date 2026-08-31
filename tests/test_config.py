@@ -671,6 +671,58 @@ class TestConfigClasses(unittest.TestCase):
             with self.assertRaises(ValueError):
                 config.get_discovered_packages(root_path, target_pkgs=["pkg_a", "pkg_c"])
 
+    def test_get_source_packages_and_rendered_installed(self) -> None:
+        """Verifies get_source_packages finds all packages in src/, and get_rendered/installed find packages with config."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir).resolve()
+            src_dir = root / "src"
+            render_dir = root / "render"
+            install_dir = root / "install"
+            src_dir.mkdir()
+            render_dir.mkdir()
+            install_dir.mkdir()
+
+            # In src: pkg_a has drift_package.toml, pkg_b has drift_package.envst.toml, pkg_c has no config
+            (src_dir / "pkg_a").mkdir()
+            (src_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+
+            (src_dir / "pkg_b").mkdir()
+            (src_dir / "pkg_b" / "drift_package.envst.toml").touch()
+
+            (src_dir / "pkg_c").mkdir()
+
+            # In render: pkg_a and pkg_b compiled with drift_package.toml
+            (render_dir / "pkg_a").mkdir()
+            (render_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+            (render_dir / "pkg_b").mkdir()
+            (render_dir / "pkg_b" / PACKAGE_CONFIG_FILE_NAME).touch()
+
+            # In install: pkg_a staged with drift_package.toml
+            (install_dir / "pkg_a").mkdir()
+            (install_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+
+            config = WorkspaceConfig(
+                drift_root_path=root,
+                source_directory=Path("src"),
+                render_directory=Path("render"),
+                install_directory=Path("install"),
+                packages_enable={"pkg_a": True, "pkg_b": True, "pkg_c": False},
+                packages_enable_default=False
+            )
+
+            # get_source_packages discovers all subdirs in src/ (pkg_a, pkg_b, pkg_c)
+            # When target_pkgs is None, returns enabled: pkg_a, pkg_b
+            self.assertEqual(config.get_source_packages(), ["pkg_a", "pkg_b"])
+
+            # Explicit target_pkgs includes disabled pkg_c
+            self.assertEqual(config.get_source_packages(target_pkgs=["pkg_c"]), ["pkg_c"])
+
+            # get_rendered_packages discovers pkg_a and pkg_b from render/
+            self.assertEqual(config.get_rendered_packages(), ["pkg_a", "pkg_b"])
+
+            # get_installed_packages discovers pkg_a from install/
+            self.assertEqual(config.get_installed_packages(), ["pkg_a"])
+
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
         # Using an absolute directory is valid

@@ -887,8 +887,7 @@ def run_primitive_5_install_deployment(
     
     state_registry = load_state_registry(state_file)
     
-    discovered_packages = workspace_config.get_discovered_packages(
-        custom_dir=workspace_config.install_path,
+    discovered_packages = workspace_config.get_installed_packages(
         target_pkgs=packages_to_redeploy,
     )
 

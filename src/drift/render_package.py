@@ -256,9 +256,7 @@ def run_primitive_2_render_packages(
         )
 
         # 2. Identify and render packages
-        candidates = workspace_config.get_package_names_from_source_dir()
-        active_packages = workspace_config.get_packages(
-                candidates, target_pkgs, custom_dir=workspace_config.source_path)
+        active_packages = workspace_config.get_source_packages(target_pkgs=target_pkgs)
         for package_name in active_packages:
             package_dir = workspace_config.source_path / package_name
             try:

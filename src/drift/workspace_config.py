@@ -235,13 +235,35 @@ class WorkspaceConfig:
             return self.packages_enable[package_name]
         return self.packages_enable_default
 
-    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Optional[List[str]]):
+    def get_source_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
         """
-        Discovers packages in the given directory, filtering by target packages if provided.
-        Discovered packages are those that have a package config file with name PACKAGE_CONFIG_FILE_NAME. 
-        If target_pkgs is None or empty, all discovered packages that are enabled in the workspace config are returned.
-        Otherwise, only the target packages that are discovered are returned, regardless of whether they are enabled or not.
-        Raises ValueError if any target package is not found in the directory.
+        Discovers and validates packages in the source directory (src/).
+        Finds all package subdirectories in src/ (regardless of whether drift_package.toml is static,
+        templated, or default), and filters by target_pkgs and enablement.
+        """
+        candidates = self.get_package_names_from_source_dir()
+        return self.get_packages(candidates, target_pkgs, custom_dir=self.source_path)
+
+    def get_rendered_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
+        """
+        Discovers and validates compiled packages in the render directory (render/).
+        Packages in render/ are compiled and guaranteed to have a literal drift_package.toml.
+        """
+        discovered = self.get_package_names_with_config_file_from_dir(self.render_path)
+        return self.get_packages(discovered, target_pkgs, custom_dir=self.render_path)
+
+    def get_installed_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
+        """
+        Discovers and validates staged/installed packages in the install directory (install/).
+        Packages in install/ are staged and guaranteed to have a literal drift_package.toml.
+        """
+        discovered = self.get_package_names_with_config_file_from_dir(self.install_path)
+        return self.get_packages(discovered, target_pkgs, custom_dir=self.install_path)
+
+    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Optional[List[str]] = None) -> List[str]:
+        """
+        Discovers packages in the given directory that contain a literal PACKAGE_CONFIG_FILE_NAME (drift_package.toml),
+        filtering by target packages if provided.
         """
         discovered = self.get_package_names_with_config_file_from_dir(custom_dir)
         return self.get_packages(discovered, target_pkgs, custom_dir)

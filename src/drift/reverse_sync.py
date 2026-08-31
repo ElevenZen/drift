@@ -324,9 +324,8 @@ def run_primitive_1_reverse_sync(
             error_message=f"Install state database directory '{install_base}' does not exist."
         )
 
-    # Determine packages to process
-    discovered_packages = workspace_config.get_discovered_packages(
-        custom_dir=install_base,
+    # Determine packages to process from install directory
+    discovered_packages = workspace_config.get_installed_packages(
         target_pkgs=package_names,
     )
 

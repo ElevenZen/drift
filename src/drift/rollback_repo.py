@@ -66,8 +66,7 @@ def run_primitive_8_rollback_recovery(
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = workspace_config.get_discovered_packages(
-        custom_dir=workspace_config.source_path,
+    discovered = workspace_config.get_source_packages(
         target_pkgs=package_names
     )
 

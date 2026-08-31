@@ -213,11 +213,8 @@ def run_primitive_4_stage_render_to_install(
     if isinstance(target_pkgs, str):
         target_pkgs = [target_pkgs]
 
-    # Load active packages
-    active_packages = workspace_config.get_discovered_packages(
-        custom_dir=workspace_config.render_path,
-        target_pkgs=target_pkgs
-    )
+    # Load active packages from render directory
+    active_packages = workspace_config.get_rendered_packages(target_pkgs=target_pkgs)
 
     # If active_packages is empty, we should just return empty lists and not proceed further.
     if not active_packages:
