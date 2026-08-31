@@ -25,7 +25,7 @@ from drift.file_utils import (
     remove_file_or_dir_with_sudo,
     create_symlink_manually_with_sudo,
     atomic_copy_file_with_sudo,
-    sync_broken_symlink,
+    atomic_copy_symlink,
 )
 from drift.sync_ops import (
     backup_file_or_dir_external,
@@ -413,15 +413,26 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(dst.is_symlink())
         self.assertEqual(os.readlink(dst), "non_existent")
 
-    def test_sync_broken_symlink(self) -> None:
-        # Verify direct sync_broken_symlink execution
+    def test_atomic_copy_symlink(self) -> None:
+        # 1. Broken symlink
         src = self.root / "broken_link"
         src.symlink_to("another_non_existent")
         dst = self.root / "dst_link"
         
-        sync_broken_symlink(src, dst)
+        atomic_copy_symlink(src, dst)
         self.assertTrue(dst.is_symlink())
         self.assertEqual(os.readlink(dst), "another_non_existent")
+
+        # 2. Valid symlink
+        target_file = self.root / "target.txt"
+        target_file.write_text("content", encoding="utf-8")
+        src_valid = self.root / "valid_link"
+        src_valid.symlink_to(target_file)
+        dst_valid = self.root / "dst_valid_link"
+
+        atomic_copy_symlink(src_valid, dst_valid)
+        self.assertTrue(dst_valid.is_symlink())
+        self.assertEqual(os.readlink(dst_valid), str(target_file))
 
     def test_reverse_sync_file_or_dir_valid_symlink(self) -> None:
         # If src is a valid symlink, it should recursively sync the resolved target content

@@ -10,7 +10,7 @@ from .file_utils import (
     remove_file_or_dir_with_sudo,
     copy_or_move_file_or_dir_external,
     atomic_copy_file,
-    sync_broken_symlink,
+    atomic_copy_symlink,
     run_command,
 )
 from .constants import MANAGED_CONFIG_FILES, LineEnding
@@ -57,7 +57,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
                 is_broken = True
 
         if is_broken:
-            sync_broken_symlink(target_src, target_dst)
+            atomic_copy_symlink(target_src, target_dst)
             continue
 
         logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")

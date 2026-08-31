@@ -654,7 +654,8 @@ def write_file_contents_with_sudo(
     ensure_dir_exists_with_sudo(dst.parent, sudo)
     unlock_file_or_dir_if_windows(dst)
 
-    temp_dir = dst.parent if not sudo else None
+    # Use dst.parent for temporary file if it is writable; otherwise fallback to system temp dir (None)
+    temp_dir = dst.parent if (dst.parent.exists() and os.access(dst.parent, os.W_OK)) else None
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile(dir=temp_dir, prefix=f".tmp_{dst.name}_", delete=False) as tf:
@@ -745,22 +746,5 @@ def atomic_copy_file_with_sudo(
     # Direct fallback from Exception
     cmd = ["cp", "-p", str(src), str(dst)]
     run_sudo_command(cmd, sudo=True)
-
-
-def sync_broken_symlink(src: Path, dst: Path) -> None:
-    """
-    Safely copies/syncs a broken symlink from src to dst.
-    Reads the raw link value and recreates it at dst if it does not already match.
-    """
-    try:
-        link_val = os.readlink(src)
-        if not dst.is_symlink() or os.readlink(dst) != link_val:
-            logger.info(f"Broken Link Sync: '{src}' is a broken symlink pointing to '{link_val}'. Copying symlink itself...")
-            unlock_file_or_dir_if_windows(dst)
-            remove_file_or_dir(dst)
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            dst.symlink_to(link_val)
-    except Exception as e:
-        logger.warning(f"Failed to copy broken symlink '{src}': {e}")
 
 
