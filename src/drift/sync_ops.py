@@ -9,7 +9,7 @@ from .file_utils import (
     remove_file_or_dir,
     remove_file_or_dir_with_sudo,
     copy_or_move_file_or_dir_external,
-    copy_file_contents_with_sudo,
+    atomic_copy_file,
     sync_broken_symlink,
     run_command,
 )
@@ -63,10 +63,9 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
         logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
         remove_file_or_dir(target_dst)
         target_dst.parent.mkdir(parents=True, exist_ok=True)
-        copy_file_contents_with_sudo(
+        atomic_copy_file(
             target_src,
             target_dst,
-            sudo=False,
             line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
         )
 

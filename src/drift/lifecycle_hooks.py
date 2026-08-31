@@ -17,25 +17,61 @@ from .result_models import HookResult
 logger = logging.getLogger(__name__)
 
 
-def build_hook_execution_command(hook_path: Path) -> List[str]:
-    """Generates cross-platform invocation command based on file extension and OS."""
-    if sys.platform == "win32":
-        ext = hook_path.suffix.lower()
-        if ext == ".exe":
-            return [str(hook_path)]
-        elif ext == ".ps1":
-            return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(hook_path)]
-        elif ext in (".bat", ".cmd"):
-            return ["cmd.exe", "/c", str(hook_path)]
-        elif ext == ".py":
-            return [sys.executable, str(hook_path)]
-        elif ext in (".sh", ".bash"):
-            # Fallback to Git Bash / bash if present in PATH
-            return ["bash.exe", str(hook_path)]
-        else:
-            return [str(hook_path)]
+def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
+    """Generates Windows invocation command based on file extension."""
+    ext = hook_path.suffix.lower()
+    if ext == ".exe":
+        return [str(hook_path)]
+    elif ext == ".ps1":
+        return ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(hook_path)]
+    elif ext in (".bat", ".cmd"):
+        return ["cmd.exe", "/c", str(hook_path)]
+    elif ext == ".py":
+        return [sys.executable, str(hook_path)]
+    elif ext in (".sh", ".bash"):
+        # Fallback to Git Bash / bash if present in PATH
+        return ["bash.exe", str(hook_path)]
     else:
         return [str(hook_path)]
+
+
+def build_hook_execution_command_posix(hook_path: Path) -> List[str]:
+    """Generates POSIX invocation command based on permissions, file extension, and shebang."""
+    try:
+        is_exec = bool(hook_path.stat().st_mode & 0o111)
+    except Exception:
+        is_exec = True
+
+    if is_exec:
+        return [str(hook_path)]
+
+    # If not executable on disk, fallback to interpreter to avoid mutating disk permissions at runtime
+    ext = hook_path.suffix.lower()
+    if ext in (".sh", ".bash"):
+        return ["/bin/bash", str(hook_path)]
+    elif ext == ".py":
+        return [sys.executable, str(hook_path)]
+
+    # Check shebang line
+    try:
+        with hook_path.open("r", encoding="utf-8", errors="ignore") as f:
+            first_line = f.readline().strip()
+            if first_line.startswith("#!"):
+                shebang = first_line[2:].strip()
+                shebang_args = shlex.split(shebang)
+                if shebang_args:
+                    return shebang_args + [str(hook_path)]
+    except Exception:
+        pass
+
+    return ["/bin/bash", str(hook_path)]
+
+
+def build_hook_execution_command(hook_path: Path) -> List[str]:
+    """Generates cross-platform invocation command based on file extension, shebang, permissions, and OS."""
+    if sys.platform == "win32":
+        return build_hook_execution_command_win32(hook_path)
+    return build_hook_execution_command_posix(hook_path)
 
 
 def execute_hook_command(
@@ -61,7 +97,7 @@ def execute_hook_script(
     metadata: PackageConfig,
     cwd: Path
 ) -> HookResult:
-    """Executes a hook script with chmod, sudo handling, cwd validation, and timeout/error handling.
+    """Executes a hook script with sudo handling, cwd validation, and timeout/error handling.
 
     This function always returns a successful HookResult (status="SUCCESS") upon completion,
     or raises an Exception (FileNotFoundError, RuntimeError) if the hook script file is missing,
@@ -79,17 +115,6 @@ def execute_hook_script(
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
-
-    try:
-        current_mode = hook_path.stat().st_mode
-        if not (current_mode & 0o111):
-            logger.warning(
-                f"⚠️  Lifecycle hook script '{hook_path}' does not have executable permission. "
-                f"Automatically adding executable permission (chmod 0o755)."
-            )
-            hook_path.chmod(current_mode | 0o755)
-    except Exception as e:
-        logger.warning(f"Could not check or set executable permission on hook '{hook_path}': {e}")
 
     assert cwd.is_absolute(), f"Working directory '{cwd}' must be absolute."
 
@@ -226,7 +251,8 @@ def trigger_pre_source_lifecycle_hook(
                 file_path=nominal_hook_path,
                 package_dir=src_pkg_dir,
                 render_pkg_dir=target_render_dir,
-                workspace_config=workspace_config
+                workspace_config=workspace_config,
+                pkg_config=pkg_config
             )
             hook_exec_path = target_render_dir / dest_rel_path
         else:

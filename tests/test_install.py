@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import tempfile
 import unittest
@@ -413,6 +414,7 @@ class TestInstallRepo(unittest.TestCase):
         hook_path = os.path.join(pkg_install_dir, "hook.sh")
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
+        os.chmod(hook_path, 0o755)
 
         hook_base_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
@@ -479,8 +481,8 @@ class TestInstallRepo(unittest.TestCase):
                 self.assertNotEqual(called_cmd[0], "sudo", f"Hook '{hook_name}' should NOT run with sudo when sudo=False")
                 self.assertEqual(called_cmd[0], str(hook_path))
 
-    def test_lifecycle_hook_non_executable_warns_and_chmods(self) -> None:
-        """Verifies that execute_hook_script logs a warning and adds execute permissions if missing."""
+    def test_lifecycle_hook_non_executable_runs_via_interpreter_fallback(self) -> None:
+        """Verifies that execute_hook_script falls back to interpreter without mutating disk permissions."""
         from unittest.mock import patch
         from drift.lifecycle_hooks import execute_hook_script
 
@@ -494,20 +496,22 @@ class TestInstallRepo(unittest.TestCase):
 
         config = PackageConfig(name=pkg)
 
-        with patch("drift.lifecycle_hooks.logger.warning") as mock_warn:
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value.returncode = 0
-                execute_hook_script(
-                    hook_path=hook_script,
-                    pkg=pkg,
-                    hook_name="pre_install",
-                    metadata=config,
-                    cwd=Path(self.system_target_dir)
-                )
-                mock_warn.assert_called_once()
-                self.assertIn("does not have executable permission", mock_warn.call_args[0][0])
-                # Check that hook now has executable bit set
-                self.assertTrue(bool(hook_script.stat().st_mode & 0o111))
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value.returncode = 0
+            execute_hook_script(
+                hook_path=hook_script,
+                pkg=pkg,
+                hook_name="pre_install",
+                metadata=config,
+                cwd=Path(self.system_target_dir)
+            )
+            called_cmd = mock_run.call_args[0][0]
+            # On POSIX, non-executable .sh runs via /bin/bash fallback
+            if sys.platform != "win32":
+                self.assertEqual(called_cmd[0], "/bin/bash")
+                self.assertEqual(called_cmd[1], str(hook_script))
+                # Disk mode remains unchanged (no runtime mutation)
+                self.assertFalse(bool(hook_script.stat().st_mode & 0o111))
 
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
         """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_install_method in env."""

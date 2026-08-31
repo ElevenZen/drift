@@ -23,7 +23,7 @@ from .file_utils import (
         resolve_system_target,
         translate_dot_prefixes,
         translate_dot_prefixes_reverse,
-        copy_file_contents_with_sudo,
+        atomic_copy_file_with_sudo,
         create_symlink_manually_with_sudo,
         get_relative_path,
         get_symlinked_parent,
@@ -440,7 +440,7 @@ def deploy_single_copy_file(
     """Helper to deploy a single file using Copy method."""
     src_file = install_pkg_dir / rel_file
     system_target = resolve_system_target(rel_file, target_dir)
-    copy_file_contents_with_sudo(
+    atomic_copy_file_with_sudo(
         src_file,
         system_target,
         sudo,

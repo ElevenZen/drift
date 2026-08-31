@@ -72,14 +72,6 @@ def expand_user_and_env(path_input: Union[str, Path]) -> Path:
     return Path(raw).expanduser()
 
 
-def safe_relative_to(path: Path, other: Path) -> Path:
-    """Safely calculates relative path, returning path.resolve() if across different Windows drives."""
-    try:
-        return path.resolve().relative_to(other.resolve())
-    except ValueError:
-        return path.resolve()
-
-
 def is_relative_to(path: Path, other: Path) -> bool:
     """Robust fallback implementation of Path.is_relative_to for Python < 3.9."""
     try:
@@ -691,13 +683,16 @@ def write_file_contents_with_sudo(
                 pass
 
 
-def copy_file_contents_with_sudo(
+def atomic_copy_file_with_sudo(
     src: Path,
     dst: Path,
     sudo: bool = False,
     line_ending: LineEnding = LineEnding.PRESERVE
 ) -> None:
-    """Copies a physical file atomically from src to dst, with sudo on POSIX if requested.
+    """
+    Copies a physical file atomically from src to dst, with sudo on POSIX if requested.
+    Basically a wrapper around atomic_copy_file() with sudo handling and directory creation.
+    Currently only used in install_repo .
 
     If line_ending is not LineEnding.PRESERVE and src is a text file, translates newlines.
     """
@@ -709,7 +704,7 @@ def copy_file_contents_with_sudo(
         return
 
     if sys.platform == "win32" or not sudo:
-        atomic_copy_file(src, dst, line_ending=line_ending)
+        atomic_copy_file(src, dst, line_ending=line_ending, follow_symlinks=True)
         return
 
     # POSIX system and sudo

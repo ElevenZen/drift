@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import shutil
 import logging
 from pathlib import Path
@@ -40,7 +41,8 @@ def render_or_copy_file(
     file_path: Path,
     package_dir: Path,
     render_pkg_dir: Path,
-    workspace_config: WorkspaceConfig
+    workspace_config: WorkspaceConfig,
+    pkg_config: Optional[PackageConfig] = None
 ) -> Tuple[str, bool]:
     """Renders a single file using a matched engine, or copies it if no engine matches.
 
@@ -68,7 +70,8 @@ def render_or_copy_file(
             template_file_path=file_path,
             output_file_path=dest_path
         )
-        return (stripped_relative_path, True)
+        dest_rel = stripped_relative_path
+        is_rendered = True
     else:
         translated_dest = translate_dot_prefixes(relative_path)
         if (translated_dest.name in DRIFT_IGNORE_FILE_NAME_LIST
@@ -82,7 +85,51 @@ def render_or_copy_file(
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_copy_file(file_path, dest_path)
-        return (relative_path.as_posix(), False)
+        dest_rel = relative_path.as_posix()
+        is_rendered = False
+
+    # Ensure hook permissions on POSIX for declared lifecycle hooks
+    ensure_rendered_file_hook_permissions(
+        file_path=file_path,
+        dest_path=dest_path,
+        dest_rel=dest_rel,
+        relative_path=relative_path,
+        pkg_config=pkg_config
+    )
+
+    return (dest_rel, is_rendered)
+
+
+def ensure_rendered_file_hook_permissions(
+    file_path: Path,
+    dest_path: Path,
+    dest_rel: str,
+    relative_path: Path,
+    pkg_config: Optional[PackageConfig]
+) -> None:
+    """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
+
+    Since template rendering and atomic copying already preserve source file mode,
+    we only need to check if the file matches a configured lifecycle hook.
+    """
+    if sys.platform == "win32" or not pkg_config:
+        return
+
+    configured_hooks = pkg_config.hooks.get_configured_hook_paths()
+    if dest_rel not in configured_hooks and relative_path.as_posix() not in configured_hooks:
+        return
+
+    try:
+        if dest_path.exists() and dest_path.is_file():
+            dest_mode = dest_path.stat().st_mode
+            if not (dest_mode & 0o111):
+                dest_path.chmod(dest_mode | 0o755)
+        if file_path.exists() and file_path.is_file():
+            src_mode = file_path.stat().st_mode
+            if not (src_mode & 0o111):
+                file_path.chmod(src_mode | 0o755)
+    except Exception as e:
+        logger.debug(f"Could not ensure executable permission for hook file '{dest_path}': {e}")
 
 
 
@@ -190,7 +237,8 @@ def render_package_files(
             file_path=file_path,
             package_dir=src_dir_to_render,
             render_pkg_dir=render_pkg_dir,
-            workspace_config=workspace_config
+            workspace_config=workspace_config,
+            pkg_config=pkg_config
         )
         if was_rendered:
             rendered_files.append(dest_rel)

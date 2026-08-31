@@ -98,13 +98,6 @@ def execute_package_health_probe(
 ) -> PackageHealthResult:
     """Executes a validated package health probe hook script and captures results."""
     pkg = pkg_config.name
-    try:
-        current_mode = hook_path.stat().st_mode
-        if not (current_mode & 0o111):
-            hook_path.chmod(current_mode | 0o755)
-    except Exception as e:
-        logger.warning(f"Could not ensure execute permission on hook '{hook_path}': {e}")
-
     timeout = custom_timeout if custom_timeout is not None else pkg_config.hooks.timeout
     from .lifecycle_hooks import build_hook_execution_command
     from .file_utils import run_sudo_command

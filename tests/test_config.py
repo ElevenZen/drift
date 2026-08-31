@@ -301,7 +301,7 @@ class TestConfigClasses(unittest.TestCase):
         }
         config = PackageConfig.from_dict(data, package_name="my_pkg")
         self.assertEqual(config.name, "my_pkg")
-        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
         self.assertEqual(config.hooks.timeout, 60)
 
         # Test string casting for timeout
@@ -349,13 +349,13 @@ class TestConfigClasses(unittest.TestCase):
             timeout=30
         )
         config = PackageConfig(name="test_pkg", hooks=hooks)
-        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
         self.assertEqual(config.hooks.timeout, 30)
         self.assertIs(config.hooks.package_config, config)
 
         # Direct property modification on hooks
         config.hooks.post_render = "scripts/render.sh"
-        self.assertEqual(config.hooks.post_render, "scripts/render.sh")
+        self.assertEqual(config.hooks.post_render, Path("scripts/render.sh"))
 
     def test_package_hooks_from_dict_and_validation(self) -> None:
         """Verifies PackageHooks.from_dict method, validation, and error handling."""
@@ -366,8 +366,8 @@ class TestConfigClasses(unittest.TestCase):
             "timeout": "60"
         }
         hooks = PackageHooks.from_dict(raw, package_name="my_pkg")
-        self.assertEqual(hooks.pre_source, "scripts/gen.sh")
-        self.assertEqual(hooks.post_install, "scripts/post.sh")
+        self.assertEqual(hooks.pre_source, Path("scripts/gen.sh"))
+        self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
         self.assertEqual(hooks.timeout, 60)
 
         # 2. Non-string hook value raises TypeError
@@ -407,15 +407,15 @@ class TestConfigClasses(unittest.TestCase):
         config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks")
         self.assertEqual(config.name, "pkg_with_hooks")
         self.assertEqual(config.install_method, "copy")
-        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
-        self.assertEqual(config.hooks.pre_install, "scripts/pre_install.sh")
-        self.assertEqual(config.hooks.post_install, "scripts/post_install.sh")
-        self.assertEqual(config.hooks.pre_update, "scripts/pre_update.sh")
-        self.assertEqual(config.hooks.post_update, "scripts/post_update.sh")
-        self.assertEqual(config.hooks.pre_uninstall, "scripts/pre_uninstall.sh")
-        self.assertEqual(config.hooks.post_uninstall, "scripts/post_uninstall.sh")
-        self.assertEqual(config.hooks.post_render, "scripts/post_render.sh")
-        self.assertEqual(config.hooks.health, "scripts/health_check.sh")
+        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
+        self.assertEqual(config.hooks.pre_install, Path("scripts/pre_install.sh"))
+        self.assertEqual(config.hooks.post_install, Path("scripts/post_install.sh"))
+        self.assertEqual(config.hooks.pre_update, Path("scripts/pre_update.sh"))
+        self.assertEqual(config.hooks.post_update, Path("scripts/post_update.sh"))
+        self.assertEqual(config.hooks.pre_uninstall, Path("scripts/pre_uninstall.sh"))
+        self.assertEqual(config.hooks.post_uninstall, Path("scripts/post_uninstall.sh"))
+        self.assertEqual(config.hooks.post_render, Path("scripts/post_render.sh"))
+        self.assertEqual(config.hooks.health, Path("scripts/health_check.sh"))
         self.assertEqual(config.hooks.timeout, 45)
 
     def test_load_package_config_with_hooks_windows_and_aliases(self) -> None:
@@ -438,16 +438,16 @@ class TestConfigClasses(unittest.TestCase):
             # On POSIX (Linux/macOS), windows subtable is ignored
             with patch("sys.platform", "linux"):
                 config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-                self.assertEqual(config_linux.hooks.pre_install, "scripts/bootstrap.sh")
-                self.assertEqual(config_linux.hooks.post_install, "scripts/setup.sh")
+                self.assertEqual(config_linux.hooks.pre_install, Path("scripts/bootstrap.sh"))
+                self.assertEqual(config_linux.hooks.post_install, Path("scripts/setup.sh"))
                 self.assertIsNone(config_linux.hooks.post_update)
 
             # On Windows, windows subtable overrides default hooks
             with patch("sys.platform", "win32"):
                 config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-                self.assertEqual(config_win.hooks.pre_install, "scripts/bootstrap.ps1")
-                self.assertEqual(config_win.hooks.post_install, "scripts/setup.ps1")
-                self.assertEqual(config_win.hooks.post_update, "scripts/update.bat")
+                self.assertEqual(config_win.hooks.pre_install, Path("scripts/bootstrap.ps1"))
+                self.assertEqual(config_win.hooks.post_install, Path("scripts/setup.ps1"))
+                self.assertEqual(config_win.hooks.post_update, Path("scripts/update.bat"))
 
     def test_package_hooks_disabled_values_in_base_and_subtables(self) -> None:
         """Verifies that 'disable' and 'disabled' (case-insensitive) in base [hooks] or platform tables turn off hooks."""
@@ -473,7 +473,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIsNone(config.hooks.pre_update)
         self.assertIsNone(config.hooks.post_update)
         self.assertIsNone(config.hooks.pre_uninstall)
-        self.assertEqual(config.hooks.post_uninstall, "scripts/uninstall.sh")
+        self.assertEqual(config.hooks.post_uninstall, Path("scripts/uninstall.sh"))
 
         # 2. [hooks.windows] disabling a base hook on Windows
         override_dict = {
@@ -489,7 +489,7 @@ class TestConfigClasses(unittest.TestCase):
         }
         with patch("sys.platform", "linux"):
             config_linux = PackageConfig.from_dict(override_dict, package_name="pkg_override")
-            self.assertEqual(config_linux.hooks.post_install, "scripts/posix_post.sh")
+            self.assertEqual(config_linux.hooks.post_install, Path("scripts/posix_post.sh"))
 
         with patch("sys.platform", "win32"):
             config_win = PackageConfig.from_dict(override_dict, package_name="pkg_override")
@@ -498,7 +498,7 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_hooks_property_setters_with_disabled(self) -> None:
         """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
         hooks = PackageHooks(post_install="scripts/post.sh")
-        self.assertEqual(hooks.post_install, "scripts/post.sh")
+        self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
 
         hooks.post_install = "disabled"
         self.assertIsNone(hooks.post_install)
@@ -508,39 +508,86 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_build_hook_execution_command(self) -> None:
         """Verifies cross-platform command building for lifecycle hook dispatch."""
-        from drift.lifecycle_hooks import build_hook_execution_command
+        from drift.lifecycle_hooks import (
+            build_hook_execution_command,
+            build_hook_execution_command_win32,
+            build_hook_execution_command_posix,
+        )
 
-        # POSIX
-        with patch("sys.platform", "linux"):
-            cmd = build_hook_execution_command(Path("/scripts/setup.sh"))
-            self.assertEqual(cmd, ["/scripts/setup.sh"])
+        # 1. Windows direct builder
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.ps1")),
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", r"C:\scripts\install.ps1"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.bat")),
+            ["cmd.exe", "/c", r"C:\scripts\install.bat"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.cmd")),
+            ["cmd.exe", "/c", r"C:\scripts\install.cmd"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.py")),
+            [sys.executable, r"C:\scripts\install.py"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.sh")),
+            ["bash.exe", r"C:\scripts\install.sh"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\install.exe")),
+            [r"C:\scripts\install.exe"]
+        )
+        self.assertEqual(
+            build_hook_execution_command_win32(Path(r"C:\scripts\custom.bin")),
+            [r"C:\scripts\custom.bin"]
+        )
 
-        # Windows
+        # 2. POSIX direct builder with temp files
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = Path(tmpdir)
+
+            # Executable file
+            exec_file = tmppath / "exec.sh"
+            exec_file.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
+            exec_file.chmod(0o755)
+            self.assertEqual(build_hook_execution_command_posix(exec_file), [str(exec_file)])
+
+            # Non-executable .sh
+            non_exec_sh = tmppath / "hook.sh"
+            non_exec_sh.write_text("echo ok\n", encoding="utf-8")
+            non_exec_sh.chmod(0o644)
+            self.assertEqual(build_hook_execution_command_posix(non_exec_sh), ["/bin/bash", str(non_exec_sh)])
+
+            # Non-executable .py
+            non_exec_py = tmppath / "hook.py"
+            non_exec_py.write_text("print('ok')\n", encoding="utf-8")
+            non_exec_py.chmod(0o644)
+            self.assertEqual(build_hook_execution_command_posix(non_exec_py), [sys.executable, str(non_exec_py)])
+
+            # Non-executable with custom shebang
+            shebang_file = tmppath / "hook.custom"
+            shebang_file.write_text("#!/usr/bin/env python3\nprint('ok')\n", encoding="utf-8")
+            shebang_file.chmod(0o644)
+            self.assertEqual(build_hook_execution_command_posix(shebang_file), ["/usr/bin/env", "python3", str(shebang_file)])
+
+            # Non-executable without extension or shebang -> fallback to /bin/bash
+            plain_file = tmppath / "plain"
+            plain_file.write_text("echo plain\n", encoding="utf-8")
+            plain_file.chmod(0o644)
+            self.assertEqual(build_hook_execution_command_posix(plain_file), ["/bin/bash", str(plain_file)])
+
+        # 3. Cross-platform dispatcher
         with patch("sys.platform", "win32"):
             self.assertEqual(
                 build_hook_execution_command(Path(r"C:\scripts\install.ps1")),
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", r"C:\scripts\install.ps1"]
             )
-            self.assertEqual(
-                build_hook_execution_command(Path(r"C:\scripts\install.bat")),
-                ["cmd.exe", "/c", r"C:\scripts\install.bat"]
-            )
-            self.assertEqual(
-                build_hook_execution_command(Path(r"C:\scripts\install.cmd")),
-                ["cmd.exe", "/c", r"C:\scripts\install.cmd"]
-            )
-            self.assertEqual(
-                build_hook_execution_command(Path(r"C:\scripts\install.py")),
-                [sys.executable, r"C:\scripts\install.py"]
-            )
-            self.assertEqual(
-                build_hook_execution_command(Path(r"C:\scripts\install.sh")),
-                ["bash.exe", r"C:\scripts\install.sh"]
-            )
-            self.assertEqual(
-                build_hook_execution_command(Path(r"C:\scripts\install.exe")),
-                [r"C:\scripts\install.exe"]
-            )
+        with patch("sys.platform", "linux"):
+            with patch("drift.lifecycle_hooks.build_hook_execution_command_posix") as mock_posix:
+                mock_posix.return_value = ["/bin/bash", "/path/hook.sh"]
+                self.assertEqual(build_hook_execution_command(Path("/path/hook.sh")), ["/bin/bash", "/path/hook.sh"])
 
     def test_execute_hook_command_with_sudo(self) -> None:
         """Verifies execute_hook_command applies sudo correctly across platforms."""

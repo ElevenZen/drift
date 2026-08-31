@@ -7,7 +7,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union
+from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union, Set
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
 from .constants import (
@@ -28,37 +28,41 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
-def normalize_hook_value(val: Optional[str]) -> Optional[str]:
-    """Normalizes a lifecycle hook configuration value.
+def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
+    """Normalizes a lifecycle hook configuration value to Optional[Path].
 
     Returns None if val is None, empty string "", or "disable" / "disabled" (case-insensitive).
-    Otherwise returns the stripped path string.
+    Returns Path instances as-is.
     """
     if val is None:
         return None
-    s = val.strip()
-    if s == "" or s.lower() in ("disable", "disabled"):
-        return None
-    return s
+    if isinstance(val, Path):
+        return val
+    if isinstance(val, str):
+        s = val.strip()
+        if s == "" or s.lower() in ("disable", "disabled"):
+            return None
+        return Path(s)
+    raise TypeError(f"Hook value must be a string or Path, got {type(val).__name__}")
 
 
 @dataclass
 class PackageHooks:
     """Encapsulates lifecycle hook configurations and execution methods for a package."""
-    pre_source: Optional[str] = None
-    pre_install: Optional[str] = None
-    post_install: Optional[str] = None
-    pre_update: Optional[str] = None
-    post_update: Optional[str] = None
-    pre_uninstall: Optional[str] = None
-    post_uninstall: Optional[str] = None
-    post_render: Optional[str] = None
-    health: Optional[str] = None
+    pre_source: Optional[Path] = None
+    pre_install: Optional[Path] = None
+    post_install: Optional[Path] = None
+    pre_update: Optional[Path] = None
+    post_update: Optional[Path] = None
+    pre_uninstall: Optional[Path] = None
+    post_uninstall: Optional[Path] = None
+    post_render: Optional[Path] = None
+    health: Optional[Path] = None
     timeout: int = DEFAULT_HOOK_TIMEOUT
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        if name in LIFECYCLE_HOOK_NAMES and isinstance(value, str):
+        if name in LIFECYCLE_HOOK_NAMES:
             value = normalize_hook_value(value)
         super().__setattr__(name, value)
 
@@ -74,9 +78,9 @@ class PackageHooks:
         """Validates hook configurations."""
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = getattr(self, hook_name)
-            if val is not None and not isinstance(val, str):
+            if val is not None and not isinstance(val, Path):
                 name_str = f" for package '{package_name}'" if package_name else ""
-                raise TypeError(f"{hook_name} must be a string{name_str}.")
+                raise TypeError(f"{hook_name} must be a Path{name_str}.")
         if not isinstance(self.timeout, int):
             name_str = f" for package '{package_name}'" if package_name else ""
             raise TypeError(f"timeout must be an integer{name_str}.")
@@ -104,7 +108,7 @@ class PackageHooks:
 
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = hook_dict.get(hook_name)
-            if val is not None and not isinstance(val, str):
+            if val is not None and not isinstance(val, (str, Path)):
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise TypeError(f"{hook_name} must be a string{name_str}.")
 
@@ -172,6 +176,15 @@ class PackageHooks:
         )
         hooks.validate(package_name)
         return hooks
+
+    def get_configured_hook_paths(self) -> Set[str]:
+        """Returns a set of all normalized relative POSIX path strings for configured hooks."""
+        paths = set()
+        for hook_name in LIFECYCLE_HOOK_NAMES:
+            val = getattr(self, hook_name, None)
+            if val is not None:
+                paths.add(val.as_posix())
+        return paths
 
     def trigger(self, hook_name: str, hook_base_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
         """Executes a package lifecycle hook script if specified and found."""
@@ -344,15 +357,15 @@ class PackageConfig:
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
-        pre_source: Optional[str] = None,
-        pre_install: Optional[str] = None,
-        post_install: Optional[str] = None,
-        pre_update: Optional[str] = None,
-        post_update: Optional[str] = None,
-        pre_uninstall: Optional[str] = None,
-        post_uninstall: Optional[str] = None,
-        post_render: Optional[str] = None,
-        health: Optional[str] = None,
+        pre_source: Optional[Union[str, Path]] = None,
+        pre_install: Optional[Union[str, Path]] = None,
+        post_install: Optional[Union[str, Path]] = None,
+        pre_update: Optional[Union[str, Path]] = None,
+        post_update: Optional[Union[str, Path]] = None,
+        pre_uninstall: Optional[Union[str, Path]] = None,
+        post_uninstall: Optional[Union[str, Path]] = None,
+        post_render: Optional[Union[str, Path]] = None,
+        health: Optional[Union[str, Path]] = None,
         hook_timeout: Optional[int] = None
     ) -> None:
         self.name = name

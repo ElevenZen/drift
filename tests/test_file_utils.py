@@ -24,7 +24,7 @@ from drift.file_utils import (
     ensure_dir_exists_with_sudo,
     remove_file_or_dir_with_sudo,
     create_symlink_manually_with_sudo,
-    copy_file_contents_with_sudo,
+    atomic_copy_file_with_sudo,
     sync_broken_symlink,
 )
 from drift.sync_ops import (
@@ -44,7 +44,17 @@ class TestFileUtils(unittest.TestCase):
     def test_is_relative_to(self) -> None:
         path = self.root / "subdir" / "file.txt"
         self.assertTrue(is_relative_to(path, self.root))
+        self.assertTrue(is_relative_to(path, path))
         self.assertFalse(is_relative_to(self.root, path))
+
+        # Unrelated paths
+        unrelated = Path("/different/hierarchy/file.txt")
+        self.assertFalse(is_relative_to(path, unrelated))
+
+        # Cross-drive simulation (where relative_to raises ValueError)
+        mock_path = MagicMock(spec=Path)
+        mock_path.relative_to.side_effect = ValueError("Different drives: C: vs D:")
+        self.assertFalse(is_relative_to(mock_path, self.root))
 
     def test_resolve_system_target(self) -> None:
         base = self.root / "target"
@@ -291,7 +301,7 @@ class TestFileUtils(unittest.TestCase):
         mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True)
 
     @patch("subprocess.run")
-    def test_copy_file_contents_with_sudo(self, mock_run) -> None:
+    def test_atomic_copy_file_with_sudo(self, mock_run) -> None:
         src = self.root / "src_file"
         dst = self.root / "dst_file"
 
@@ -300,7 +310,7 @@ class TestFileUtils(unittest.TestCase):
         mock_proc.stdout = str(self.root / ".tmp_dst_file_123456")
         mock_run.return_value = mock_proc
 
-        copy_file_contents_with_sudo(src, dst, sudo=True)
+        atomic_copy_file_with_sudo(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"], check=True, capture_output=True, text=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True)
         mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True)
@@ -308,7 +318,7 @@ class TestFileUtils(unittest.TestCase):
         # 2. Fallback when mktemp fails
         mock_run.reset_mock()
         mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
-        copy_file_contents_with_sudo(src, dst, sudo=True)
+        atomic_copy_file_with_sudo(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
 
     @patch("subprocess.run")
@@ -343,8 +353,8 @@ class TestFileUtils(unittest.TestCase):
             self.assertTrue(target_dir.is_dir())
             mock_run.assert_not_called()
 
-            # 2. copy_file_contents_with_sudo
-            copy_file_contents_with_sudo(src_file, dst_file, sudo=True)
+            # 2. atomic_copy_file_with_sudo
+            atomic_copy_file_with_sudo(src_file, dst_file, sudo=True)
             self.assertTrue(dst_file.exists())
             self.assertEqual(dst_file.read_text(encoding="utf-8"), "windows file content")
             mock_run.assert_not_called()
@@ -525,24 +535,6 @@ class TestFileUtils(unittest.TestCase):
             self.assertEqual(expand_user_and_env("$XDG_CONFIG_HOME/app"), Path("/xdg/config/app"))
             self.assertEqual(expand_user_and_env("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
 
-    def test_safe_relative_to(self) -> None:
-        from drift.file_utils import safe_relative_to
-
-        # Normal relative path within same directory tree
-        child = self.root / "a" / "b" / "file.txt"
-        base = self.root / "a"
-        self.assertEqual(safe_relative_to(child, base), Path("b/file.txt"))
-
-        # Cross-drive or unrelated path simulation (where relative_to raises ValueError)
-        other_path = MagicMock(spec=Path)
-        other_path.resolve.return_value = other_path
-        other_path.relative_to.side_effect = ValueError("Different drives")
-        base_mock = MagicMock(spec=Path)
-        base_mock.resolve.return_value = base_mock
-
-        res = safe_relative_to(other_path, base_mock)
-        self.assertEqual(res, other_path)
-
     def test_has_admin_privileges_and_run_sudo_command(self) -> None:
         from drift.file_utils import has_admin_privileges, run_sudo_command
 
@@ -633,27 +625,27 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(target_file.read_text(encoding="utf-8"), "text content")
         self.assertTrue(bool(target_file.stat().st_mode & 0o111))
 
-    def test_copy_file_contents_with_sudo_crlf_translation(self) -> None:
-        from drift.file_utils import copy_file_contents_with_sudo
+    def test_atomic_copy_file_with_sudo_crlf_translation(self) -> None:
+        from drift.file_utils import atomic_copy_file_with_sudo
         from drift.constants import LineEnding
 
         # 1. Text file: LF -> CRLF
         src_text = self.root / "src_text.txt"
         src_text.write_bytes(b"hello\nworld\n")
         dst_crlf = self.root / "dst_crlf.txt"
-        copy_file_contents_with_sudo(src_text, dst_crlf, sudo=False, line_ending=LineEnding.CRLF)
+        atomic_copy_file_with_sudo(src_text, dst_crlf, sudo=False, line_ending=LineEnding.CRLF)
         self.assertEqual(dst_crlf.read_bytes(), b"hello\r\nworld\r\n")
 
         # 2. Text file: CRLF -> LF
         dst_lf = self.root / "dst_lf.txt"
-        copy_file_contents_with_sudo(dst_crlf, dst_lf, sudo=False, line_ending=LineEnding.LF)
+        atomic_copy_file_with_sudo(dst_crlf, dst_lf, sudo=False, line_ending=LineEnding.LF)
         self.assertEqual(dst_lf.read_bytes(), b"hello\nworld\n")
 
         # 3. Binary file: remains byte-identical regardless of line_ending
         src_bin = self.root / "src.bin"
         src_bin.write_bytes(b"data\x00with\nnulls\r\n")
         dst_bin = self.root / "dst.bin"
-        copy_file_contents_with_sudo(src_bin, dst_bin, sudo=False, line_ending=LineEnding.CRLF)
+        atomic_copy_file_with_sudo(src_bin, dst_bin, sudo=False, line_ending=LineEnding.CRLF)
         self.assertEqual(dst_bin.read_bytes(), b"data\x00with\nnulls\r\n")
 
     def test_file_contents_differ_convert_line_endings(self) -> None:

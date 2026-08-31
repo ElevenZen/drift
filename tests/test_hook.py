@@ -317,6 +317,97 @@ class TestPackageHook(unittest.TestCase):
         )
         self.assertEqual(res_pkg_without_render_no_hooks.status, "SKIPPED")
 
+    def test_render_package_ensures_hooks_executable(self) -> None:
+        from drift.render_package import render_package
+        if sys.platform == "win32":
+            return
+
+        post_render_file = self.scripts_dir / "post_render.sh"
+        post_render_file.write_text("#!/bin/bash\necho post_render\n", encoding="utf-8")
+        post_render_file.chmod(0o644)  # Explicitly non-executable
+
+        render_package(self.workspace_config, self.src_pkg_dir)
+
+        # Verify src copy became 0755
+        self.assertTrue(bool(post_render_file.stat().st_mode & 0o111))
+
+        # Verify render copy is 0755
+        render_hook_file = self.workspace_config.render_path / "pkg_hook" / "scripts" / "post_render.sh"
+        self.assertTrue(render_hook_file.exists())
+        self.assertTrue(bool(render_hook_file.stat().st_mode & 0o111))
+
+    def test_build_hook_execution_command_fallback_and_no_disk_mutation(self) -> None:
+        from drift.lifecycle_hooks import build_hook_execution_command, execute_hook_script
+        from drift.package_config import load_package_config_from_source_dir
+        if sys.platform == "win32":
+            return
+
+        test_script = self.drift_root / "test_non_exec.sh"
+        test_script.write_text("#!/bin/bash\necho non_exec\n", encoding="utf-8")
+        test_script.chmod(0o644)
+
+        # 1. build_hook_execution_command returns interpreter fallback
+        cmd = build_hook_execution_command(test_script)
+        self.assertEqual(cmd, ["/bin/bash", str(test_script)])
+
+        # 2. execute_hook_script executes without mutating test_script mode on disk
+        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+        res = execute_hook_script(
+            hook_path=test_script,
+            pkg="pkg_hook",
+            hook_name="test",
+            metadata=pkg_config,
+            cwd=self.drift_root
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        # Ensure disk mode remained 0644 (not mutated during execution)
+        self.assertFalse(bool(test_script.stat().st_mode & 0o111))
+
+
+    def test_render_package_ensures_templated_hooks_and_executable_templates_are_executable(self) -> None:
+        from drift.render_package import render_package
+        from drift.workspace_config import RenderEngineConfig
+        if sys.platform == "win32":
+            return
+
+        input_file = self.drift_root / "config" / "env.sh"
+        input_file.parent.mkdir(parents=True, exist_ok=True)
+        input_file.write_text("export FOO=bar\n", encoding="utf-8")
+
+        self.workspace_config.render_engine_config = {
+            "envsubst": RenderEngineConfig(
+                name="envsubst",
+                suffix="envst",
+                input_file=Path("env.sh"),
+                render_command="bash -c 'source %i && envsubst < %s'"
+            )
+        }
+
+        # 1. Templated hook file (post_install configured as scripts/post_install.sh, source is scripts/post_install.envst.sh)
+        tmpl_hook = self.scripts_dir / "post_install.envst.sh"
+        tmpl_hook.write_text("#!/bin/bash\necho ${DRIFT_SAMPLE_ENV_EDITOR}\n", encoding="utf-8")
+        tmpl_hook.chmod(0o644)
+
+        # 2. General executable template (not in hooks, but had chmod +x in src)
+        tmpl_tool = self.src_pkg_dir / "tool.envst.sh"
+        tmpl_tool.write_text("#!/bin/bash\necho tool\n", encoding="utf-8")
+        tmpl_tool.chmod(0o755)
+
+        render_package(self.workspace_config, self.src_pkg_dir)
+
+        # Output rendered hook file in render/ got chmod 0755
+        rendered_hook = self.workspace_config.render_path / "pkg_hook" / "scripts" / "post_install.sh"
+        self.assertTrue(rendered_hook.exists())
+        self.assertTrue(bool(rendered_hook.stat().st_mode & 0o111))
+
+        # Source template file also got chmod 0755
+        self.assertTrue(bool(tmpl_hook.stat().st_mode & 0o111))
+
+        # Output rendered tool file in render/ preserved chmod 0755 from source template
+        rendered_tool = self.workspace_config.render_path / "pkg_hook" / "tool.sh"
+        self.assertTrue(rendered_tool.exists())
+        self.assertTrue(bool(rendered_tool.stat().st_mode & 0o111))
+
 
 if __name__ == "__main__":
     unittest.main()
