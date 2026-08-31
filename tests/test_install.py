@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
-from drift.package_config import PackageConfig
+from drift.package_config import PackageConfig, PackageHooks
 from drift.state_registry import (
         load_state_registry,
         save_state_registry,
@@ -322,7 +322,7 @@ class TestInstallRepo(unittest.TestCase):
         config = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            post_install="on-install.sh"
+            hooks=PackageHooks(post_install="on-install.sh")
         )
         
         # Write dummy hook script so hook_path.exists() is True
@@ -375,7 +375,7 @@ class TestInstallRepo(unittest.TestCase):
         config_missing = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            post_install="non_existent_script.sh"
+            hooks=PackageHooks(post_install="non_existent_script.sh")
         )
         with self.assertRaises(FileNotFoundError) as ctx:
             trigger_package_lifecycle_hook(
@@ -396,10 +396,7 @@ class TestInstallRepo(unittest.TestCase):
         pkg_install_dir = os.path.join(self.install_dir, pkg)
         os.makedirs(pkg_install_dir, exist_ok=True)
 
-        config_sudo = PackageConfig(
-            name=pkg,
-            target_directory=Path(self.system_target_dir),
-            sudo=True,
+        all_hooks = PackageHooks(
             pre_source="hook.sh",
             pre_install="hook.sh",
             post_install="hook.sh",
@@ -409,6 +406,12 @@ class TestInstallRepo(unittest.TestCase):
             post_uninstall="hook.sh",
             post_render="hook.sh",
             health="hook.sh"
+        )
+        config_sudo = PackageConfig(
+            name=pkg,
+            target_directory=Path(self.system_target_dir),
+            sudo=True,
+            hooks=all_hooks
         )
 
         hook_path = os.path.join(pkg_install_dir, "hook.sh")
@@ -457,15 +460,7 @@ class TestInstallRepo(unittest.TestCase):
             name=pkg,
             target_directory=Path(self.system_target_dir),
             sudo=False,
-            pre_source="hook.sh",
-            pre_install="hook.sh",
-            post_install="hook.sh",
-            pre_update="hook.sh",
-            post_update="hook.sh",
-            pre_uninstall="hook.sh",
-            post_uninstall="hook.sh",
-            post_render="hook.sh",
-            health="hook.sh"
+            hooks=all_hooks
         )
         for hook_name in (list(SUDO_ELIGIBLE_HOOKS) + sudo_ineligible):
             with patch("subprocess.run") as mock_run:

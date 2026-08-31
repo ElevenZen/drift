@@ -230,8 +230,7 @@ def trigger_pre_source_lifecycle_hook(
             hook_base_dir=src_pkg_dir
         )
 
-    hook_file = pkg_config.hooks.pre_source
-    hook_file_path = Path(hook_file)
+    hook_file_path = pkg_config.hooks.pre_source
     if hook_file_path.is_absolute():
         nominal_hook_path = hook_file_path
     else:

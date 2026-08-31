@@ -357,16 +357,6 @@ class PackageConfig:
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
-        pre_source: Optional[Union[str, Path]] = None,
-        pre_install: Optional[Union[str, Path]] = None,
-        post_install: Optional[Union[str, Path]] = None,
-        pre_update: Optional[Union[str, Path]] = None,
-        post_update: Optional[Union[str, Path]] = None,
-        pre_uninstall: Optional[Union[str, Path]] = None,
-        post_uninstall: Optional[Union[str, Path]] = None,
-        post_render: Optional[Union[str, Path]] = None,
-        health: Optional[Union[str, Path]] = None,
-        hook_timeout: Optional[int] = None
     ) -> None:
         self.name = name
         self.source_files = source_files if source_files is not None else []
@@ -378,43 +368,7 @@ class PackageConfig:
         self.target_directory_windows = expand_user_and_env(target_directory_windows) if target_directory_windows else None
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
-
-        effective_timeout = hook_timeout if hook_timeout is not None else DEFAULT_HOOK_TIMEOUT
-        if hooks is not None:
-            self.hooks = hooks
-            if pre_source is not None:
-                self.hooks.pre_source = pre_source
-            if pre_install is not None:
-                self.hooks.pre_install = pre_install
-            if post_install is not None:
-                self.hooks.post_install = post_install
-            if pre_update is not None:
-                self.hooks.pre_update = pre_update
-            if post_update is not None:
-                self.hooks.post_update = post_update
-            if pre_uninstall is not None:
-                self.hooks.pre_uninstall = pre_uninstall
-            if post_uninstall is not None:
-                self.hooks.post_uninstall = post_uninstall
-            if post_render is not None:
-                self.hooks.post_render = post_render
-            if health is not None:
-                self.hooks.health = health
-            if hook_timeout is not None:
-                self.hooks.timeout = effective_timeout
-        else:
-            self.hooks = PackageHooks(
-                pre_source=pre_source,
-                pre_install=pre_install,
-                post_install=post_install,
-                pre_update=pre_update,
-                post_update=post_update,
-                pre_uninstall=pre_uninstall,
-                post_uninstall=post_uninstall,
-                post_render=post_render,
-                health=health,
-                timeout=effective_timeout
-            )
+        self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
 
     def validate(self) -> None:
@@ -752,7 +706,11 @@ def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional[WorkspaceConfig] = None,
 ) -> PackageConfig:
-    """Loads package configuration from a package directory, optionally rendering it if it is a template."""
+    """
+    Loads package configuration from a package directory,
+    including its local override if present,
+    optionally rendering it if it is a template.
+    """
     pkg_name = package_dir.name
     if workspace_config is None:
         logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
@@ -769,6 +727,7 @@ def load_package_config_from_source_dir(
         except (TypeError, ValueError) as e:
             raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
 
+    # With workspace_config provided, we can render templates if needed.
     base_info, local_info = get_package_config_file_info(package_dir, workspace_config)
     logger.debug(f"Base package config info: {base_info}")
     logger.debug(f"Local package config info: {local_info}")
