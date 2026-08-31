@@ -15,6 +15,7 @@ from .constants import (
     GLOBAL_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
+    get_default_drift_ignore_content,
 )
 from .result_models import CloneResult
 
@@ -139,17 +140,7 @@ target_directory = "~"
     # 5. Generate .drift_ignore
     ignore_path = dest_pkg_dir / DRIFT_IGNORE_FILE_NAME
     if not ignore_path.exists():
-        ignore_path.write_text("""# =====================================================================
-# .drift_ignore - PCRE Regex Package Ignore Patterns
-# =====================================================================
-# Ignored non-configuration repository files during deployment
-^/README.*$
-^/LICENSE.*$
-^/install.*\\.sh$
-^/setup.*\\.sh$
-^/bootstrap.*\\.sh$
-^/\\.git.*$
-""", encoding="utf-8")
+        ignore_path.write_text(get_default_drift_ignore_content(), encoding="utf-8")
         actions.append(f"Generated default ignore patterns 'src/{pkg_name}/{DRIFT_IGNORE_FILE_NAME}'.")
 
     # 6. Enable package in config/drift.toml
