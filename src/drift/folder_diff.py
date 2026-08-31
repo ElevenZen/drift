@@ -37,6 +37,13 @@ def compare_folders(
       
     src_only: If True, only paths that exist in src_dir are checked in dst_dir. 
               Loop 2 (dst items not in src) is skipped.
+
+    Application Order & Multi-Level Type Changes:
+      - For synchronization into internal state stores (like install/ in stage_repo or reverse-sync),
+        deletions MUST be processed before additions to cleanly clear obsolete paths and resolve
+        multi-level type changes (e.g. file replacing a directory tree or vice-versa).
+      - Ensure destination directories inside internal state stores do not contain symlinks pointing
+        into source directories.
     """
     from .file_utils import (
         file_contents_differ, 
@@ -61,24 +68,50 @@ def compare_folders(
             return translate_dot_prefixes(rel)
         return rel
 
-    def add_children_as_deleted(p_dst: Path, rel: Path):
+    def visited_test_add(visited: set, rel: Path) -> Optional[Path]:
+        """Returns None if visited, else adds resolved path to visited and returns key."""
+        try:
+            real_key = rel.resolve()
+        except Exception:
+            real_key = rel
+        if real_key in visited:
+            return None
+        visited.add(real_key)
+        return real_key
+
+    def add_children_as_deleted(p_dst: Path, rel: Path, visited: set):
         """rel is relative to src_dir."""
-        if p_dst.is_symlink() or p_dst.is_file():
+        if p_dst.is_symlink():
+            if not resolve_symlinks:
+                diff.deleted.append(rel)
+            else:
+                try:
+                    real_target = p_dst.resolve()
+                    if not real_target.exists():
+                        diff.deleted.append(rel)
+                    else:
+                        add_children_as_deleted(real_target, rel, visited)
+                except Exception:
+                    diff.deleted.append(rel)
+        elif p_dst.is_file():
             diff.deleted.append(rel)
         elif p_dst.is_dir():
-            if ignore_handler is None:
-                try:
-                    if not any(p_dst.iterdir()):
-                        diff.deleted.append(rel)
-                except Exception:
-                    pass
-            for child in p_dst.iterdir():
-                # Compute dst_rel and then untranslate to get src_rel
-                dst_rel = _translate(rel) / child.name
-                new_src_rel = _untranslate(dst_rel)
-                add_children_as_deleted(child, new_src_rel)
+            real_key = visited_test_add(visited, p_dst)
+            if real_key is None:
+                return
+            try:
+                # Error may occur if p_dst is inaccessible directory
+                if not any(p_dst.iterdir()):
+                    diff.deleted.append(rel)
+                for child in p_dst.iterdir():
+                    # Compute dst_rel and then untranslate to get src_rel
+                    dst_rel = _translate(rel) / child.name
+                    new_src_rel = _untranslate(dst_rel)
+                    add_children_as_deleted(child, new_src_rel, visited)
+            finally:
+                visited.remove(real_key)
 
-    def add_children_as_added(p_src: Path, rel: Path):
+    def add_children_as_added(p_src: Path, rel: Path, visited: set):
         """rel is relative to src_dir."""
         repo_rel = rel
         if translate_mode == "reverse":
@@ -96,20 +129,23 @@ def compare_folders(
                     if not real_target.exists():
                         diff.added.append(rel)
                     else:
-                        add_children_as_added(real_target, rel)
+                        add_children_as_added(real_target, rel, visited)
                 except Exception:
                     diff.added.append(rel)
         elif p_src.is_file():
             diff.added.append(rel)
         elif p_src.is_dir():
-            if ignore_handler is None:
-                try:
-                    if not any(p_src.iterdir()):
-                        diff.added.append(rel)
-                except Exception:
-                    pass
-            for child in p_src.iterdir():
-                add_children_as_added(child, rel / child.name)
+            real_key = visited_test_add(visited, p_src)
+            if real_key is None:
+                return
+            try:
+                # Error may occur if p_src is inaccessible directory
+                if not any(p_src.iterdir()):
+                    diff.added.append(rel)
+                for child in p_src.iterdir():
+                    add_children_as_added(child, rel / child.name, visited)
+            finally:
+                visited.remove(real_key)
 
     def _resolve_target(p: Path) -> Tuple[Path, bool]:
         """Resolves symlink target safely and returns (target_path, is_broken)."""
@@ -121,7 +157,7 @@ def compare_folders(
         except Exception:
             return p, True
 
-    def _compare_symlink_entry(p_src: Path, p_dst: Path, rel: Path) -> None:
+    def _compare_symlink_entry(p_src: Path, p_dst: Path, rel: Path, visited: set) -> None:
         src_is_symlink = p_src.is_symlink()
         dst_is_symlink = p_dst.is_symlink()
 
@@ -130,21 +166,23 @@ def compare_folders(
             src_target, src_broken = _resolve_target(p_src)
             dst_target, dst_broken = _resolve_target(p_dst)
 
-            if src_broken or dst_broken:
-                if src_is_symlink and dst_is_symlink:
-                    try:
-                        if os.readlink(p_src) == os.readlink(p_dst):
-                            diff.matches.append(rel)
-                        else:
-                            diff.modified.append(rel)
-                    except Exception:
-                        diff.modified.append(rel)
-                else:
-                    diff.modified.append(rel)
+            if not src_broken and not dst_broken:
+                # Both resolved targets exist, recursively compare resolved paths
+                _compare_recursive(src_target, dst_target, rel, visited)
                 return
 
-            # Both resolved targets exist, recursively compare resolved paths
-            _compare_recursive(src_target, dst_target, rel)
+            if src_is_symlink and dst_is_symlink:
+                try:
+                    if os.readlink(p_src) == os.readlink(p_dst):
+                        diff.matches.append(rel)
+                    else:
+                        diff.modified.append(rel)
+                except Exception:
+                    diff.modified.append(rel)
+            else:
+                diff.modified.append(rel)
+            return
+
         else:
             # 1b. Raw comparison (resolve_symlinks=False)
             if src_is_symlink and dst_is_symlink:
@@ -160,7 +198,7 @@ def compare_folders(
             # Exactly one is a symlink: check for directory type mismatches
             if src_is_symlink:
                 if p_dst.is_dir():
-                    add_children_as_deleted(p_dst, rel)
+                    add_children_as_deleted(p_dst, rel, visited)
                     diff.added.append(rel)
                 else:
                     diff.modified.append(rel)
@@ -169,43 +207,57 @@ def compare_folders(
             if dst_is_symlink:
                 if p_src.is_dir():
                     diff.deleted.append(rel)
-                    add_children_as_added(p_src, rel)
+                    add_children_as_added(p_src, rel, visited)
                 else:
                     diff.modified.append(rel)
                 return
 
-    def _compare_physical_entry(p_src: Path, p_dst: Path, rel: Path) -> None:
+    def _compare_physical_entry(p_src: Path, p_dst: Path, rel: Path, visited: set) -> None:
         # Both are physical non-symlinks: compare types and contents
         if p_src.is_dir() and p_dst.is_file():
             diff.deleted.append(rel)
-            add_children_as_added(p_src, rel)
+            add_children_as_added(p_src, rel, visited)
             return
 
         if p_src.is_file() and p_dst.is_dir():
-            add_children_as_deleted(p_dst, rel)
+            add_children_as_deleted(p_dst, rel, visited)
             diff.added.append(rel)
             return
 
         if p_src.is_dir() and p_dst.is_dir():
-            src_names = {c.name for c in p_src.iterdir()}
-            dst_names = {c.name for c in p_dst.iterdir()} if not src_only else set()
-            
-            claimed_dst_names = set()
-            
-            # 1. Iterate over src children
-            for s_name in sorted(list(src_names)):
-                new_rel = rel / s_name
-                new_dst_rel = _translate(new_rel)
-                d_name = new_dst_rel.name
-                claimed_dst_names.add(d_name)
-                _compare_recursive(p_src / s_name, p_dst / d_name, new_rel)
+            try:
+                pair_key = (p_src.resolve(), p_dst.resolve())
+            except Exception:
+                pair_key = (p_src, p_dst)
+
+            if pair_key in visited:
+                return
+
+            visited.add(pair_key)
+            try:
+                src_names = {c.name for c in p_src.iterdir()}
+                dst_names = {c.name for c in p_dst.iterdir()} if not src_only else set()
                 
-            # 2. Iterate over unclaimed dst children (if not src_only)
-            if not src_only:
-                for d_name in sorted(list(dst_names - claimed_dst_names)):
-                    new_dst_rel = _translate(rel) / d_name
-                    new_src_rel = _untranslate(new_dst_rel)
-                    _compare_recursive(src_dir / new_src_rel, p_dst / d_name, new_src_rel)
+                claimed_dst_names = set()
+                
+                # 1. Iterate over src children
+                for s_name in sorted(list(src_names)):
+                    new_rel = rel / s_name
+                    new_dst_rel = _translate(new_rel)
+                    d_name = new_dst_rel.name
+                    claimed_dst_names.add(d_name)
+                    _compare_recursive(p_src / s_name, p_dst / d_name,
+                                       new_rel, visited)
+                    
+                # 2. Iterate over unclaimed dst children (if not src_only)
+                if not src_only:
+                    for d_name in sorted(list(dst_names - claimed_dst_names)):
+                        new_dst_rel = _translate(rel) / d_name
+                        new_src_rel = _untranslate(new_dst_rel)
+                        _compare_recursive(src_dir / new_src_rel, p_dst / d_name,
+                                           new_src_rel, visited)
+            finally:
+                visited.remove(pair_key)
 
         elif p_src.is_file() and p_dst.is_file():
             if file_contents_differ(p_src, p_dst):
@@ -215,8 +267,10 @@ def compare_folders(
         else:
             diff.modified.append(rel)
 
-    def _compare_recursive(p_src: Path, p_dst: Path, rel: Path):
+    def _compare_recursive(p_src: Path, p_dst: Path, rel: Path, visited: set) -> None:
         # rel is relative to src_dir
+        # visited is a set of resolved paths to avoid infinite loops with symlinks
+        # two kinds of visited keys: (src_resolved, dst_resolved) for directories, and src_resolved for files/symlinks
         repo_rel = rel
         if translate_mode == "reverse":
             repo_rel = translate_dot_prefixes_reverse(rel)
@@ -228,24 +282,26 @@ def compare_folders(
         src_exists = p_src.exists() or p_src.is_symlink()
         dst_exists = p_dst.exists() or p_dst.is_symlink()
 
+        if not src_exists and not dst_exists:
+            return
+
         if not src_exists:
-            if dst_exists:
-                add_children_as_deleted(p_dst, rel)
+            add_children_as_deleted(p_dst, rel, visited)
             return
 
         if not dst_exists:
-            add_children_as_added(p_src, rel)
+            add_children_as_added(p_src, rel, visited)
             return
 
         # 1. If at least one of them is a symlink:
         if p_src.is_symlink() or p_dst.is_symlink():
-            _compare_symlink_entry(p_src, p_dst, rel)
+            _compare_symlink_entry(p_src, p_dst, rel, visited)
             return
 
         # 2. Both are physical non-symlinks: compare types and contents
-        _compare_physical_entry(p_src, p_dst, rel)
+        _compare_physical_entry(p_src, p_dst, rel, visited)
 
-    _compare_recursive(src_dir, dst_dir, Path(""))
+    _compare_recursive(src_dir, dst_dir, Path(""), set())
 
     diff.added = sorted(list(set(diff.added)))
     diff.modified = sorted(list(set(diff.modified)))
@@ -289,18 +345,23 @@ def list_folder_paths(
         if p_src.is_dir():
             try:
                 real_key = p_src.resolve()
-                if real_key in visited:
-                    return
-                visited.add(real_key)
+            except Exception:
+                real_key = p_src
+
+            if real_key in visited:
+                return
+
+            visited.add(real_key)
+            try:
                 children = list(p_src.iterdir())
                 if not children and rel != Path(""):
                     results.append(rel)
                 else:
                     for child in children:
                         child_rel = rel / child.name if rel != Path("") else Path(child.name)
-                        _walk(child, child_rel, visited.copy())
-            except Exception:
-                results.append(rel)
+                        _walk(child, child_rel, visited)
+            finally:
+                visited.remove(real_key)
 
     _walk(src_dir, prefix, set())
     return sorted(list(set(results)))

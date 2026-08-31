@@ -616,15 +616,15 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_empty_directory_added_without_ignore_handler(self) -> None:
-        # An empty directory in src (with no ignore handler) is tracked in added
+    def test_empty_directory_added(self) -> None:
+        # An empty directory in src is tracked in added
         empty_dir = self.src / "empty_folder"
         empty_dir.mkdir()
 
         diff = compare_folders(self.src, self.dst, ignore_handler=None)
         self.assertEqual(diff.added, [Path("empty_folder")])
 
-    def test_empty_directory_deleted_without_ignore_handler(self) -> None:
+    def test_empty_directory_deleted(self) -> None:
         # An empty directory in dst (with no ignore handler) is tracked in deleted
         empty_dir = self.dst / "empty_folder"
         empty_dir.mkdir()
@@ -632,14 +632,14 @@ class TestFolderDiffSpecialEdgeCases(unittest.TestCase):
         diff = compare_folders(self.src, self.dst, ignore_handler=None)
         self.assertEqual(diff.deleted, [Path("empty_folder")])
 
-    def test_empty_directory_with_ignore_handler_is_ignored(self) -> None:
+    def test_empty_directory_with_ignore_handler(self) -> None:
         # When an ignore handler is provided, empty directory recursion does not emit empty folder path
         empty_src = self.src / "empty_folder"
         empty_src.mkdir()
         ignore = DriftIgnore([])
 
         diff = compare_folders(self.src, self.dst, ignore_handler=ignore)
-        self.assertEqual(diff.added, [])
+        self.assertEqual(diff.added, [Path("empty_folder")])
 
     def test_forward_translation_isolated_dot_dash_folder(self) -> None:
         # 'dot-' alone as a folder segment is preserved as a literal directory name 'dot-'
@@ -743,6 +743,134 @@ class TestListFolderPaths(unittest.TestCase):
         # resolve_symlinks=False treats it as a single symlink entry
         paths_unresolved = list_folder_paths(link_dir, base_rel=Path("link_dir"), resolve_symlinks=False)
         self.assertEqual(paths_unresolved, [Path("link_dir")])
+
+
+class TestFolderDiffCyclicReferences(unittest.TestCase):
+    """Tests to verify compare_folders handles cyclic symlinks and graphs gracefully without recursion loops."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp_dir.name).resolve()
+        self.src = self.base / "src"
+        self.dst = self.base / "dst"
+        self.src.mkdir()
+        self.dst.mkdir()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_compare_folders_self_referencing_cyclic_symlink(self) -> None:
+        """Verifies that self-referencing symlinks in src and dst do not cause infinite recursion."""
+        (self.src / "loop").symlink_to(self.src)
+        (self.dst / "loop").symlink_to(self.dst)
+        (self.src / "app.conf").write_text("setting=1\n", encoding="utf-8")
+        (self.dst / "app.conf").write_text("setting=1\n", encoding="utf-8")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertIn(Path("app.conf"), diff.matches)
+        self.assertEqual(diff.modified, [])
+        self.assertEqual(diff.added, [])
+        self.assertEqual(diff.deleted, [])
+
+    def test_compare_folders_mutual_referencing_cyclic_symlinks(self) -> None:
+        """Verifies that mutual circular symlinks between subdirectories do not cause infinite recursion."""
+        sub_a = self.src / "dir_a"
+        sub_b = self.src / "dir_b"
+        sub_a.mkdir()
+        sub_b.mkdir()
+        (sub_a / "to_b").symlink_to(sub_b)
+        (sub_b / "to_a").symlink_to(sub_a)
+        (sub_a / "file_a.txt").write_text("a", encoding="utf-8")
+
+        dst_sub_a = self.dst / "dir_a"
+        dst_sub_b = self.dst / "dir_b"
+        dst_sub_a.mkdir()
+        dst_sub_b.mkdir()
+        (dst_sub_a / "to_b").symlink_to(dst_sub_b)
+        (dst_sub_b / "to_a").symlink_to(dst_sub_a)
+        (dst_sub_a / "file_a.txt").write_text("a", encoding="utf-8")
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertIn(Path("dir_a/file_a.txt"), diff.matches)
+        self.assertEqual(diff.modified, [])
+
+    def test_compare_folders_cyclic_symlink_in_src_only(self) -> None:
+        """Verifies that cyclic symlinks in added src directories do not hang in add_children_as_added."""
+        (self.src / "loop").symlink_to(self.src)
+        (self.src / "valid.txt").write_text("valid", encoding="utf-8")
+        # dst is empty
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertIn(Path("valid.txt"), diff.added)
+
+    def test_compare_folders_cyclic_symlink_in_dst_only(self) -> None:
+        """Verifies that cyclic symlinks in deleted dst directories do not hang in add_children_as_deleted."""
+        (self.dst / "loop").symlink_to(self.dst)
+        (self.dst / "deleted.txt").write_text("deleted", encoding="utf-8")
+        # src is empty
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertIn(Path("deleted.txt"), diff.deleted)
+
+    def test_compare_folders_dag_multiple_links_to_shared_target(self) -> None:
+        """Verifies that DAG structures (multiple symlinks pointing to the same directory)
+        are correctly evaluated without false loop aborts.
+        """
+        shared_src = self.base / "shared_src"
+        shared_src.mkdir()
+        (shared_src / "shared.txt").write_text("shared content", encoding="utf-8")
+
+        (self.src / "link_1").symlink_to(shared_src)
+        (self.src / "link_2").symlink_to(shared_src)
+
+        shared_dst = self.base / "shared_dst"
+        shared_dst.mkdir()
+        (shared_dst / "shared.txt").write_text("shared content", encoding="utf-8")
+
+        (self.dst / "link_1").symlink_to(shared_dst)
+        (self.dst / "link_2").symlink_to(shared_dst)
+
+        diff = compare_folders(self.src, self.dst, resolve_symlinks=True)
+        self.assertIn(Path("link_1/shared.txt"), diff.matches)
+        self.assertIn(Path("link_2/shared.txt"), diff.matches)
+        self.assertEqual(diff.modified, [])
+
+    def test_compare_folders_dst_symlink_pointing_to_src(self) -> None:
+        """Verifies compare_folders behavior when dst contains a symlink pointing back to src."""
+        (self.src / "app.conf").write_text("hello", encoding="utf-8")
+        (self.dst / "app.conf").write_text("hello", encoding="utf-8")
+        (self.dst / "link_to_src").symlink_to(self.src)
+
+        # src_only=True: link_to_src is ignored since it does not exist in src
+        diff_src_only = compare_folders(self.src, self.dst, src_only=True, resolve_symlinks=True)
+        self.assertEqual(diff_src_only.matches, [Path("app.conf")])
+        self.assertEqual(diff_src_only.deleted, [])
+
+        # src_only=False: link_to_src is traversed and reported in deleted
+        diff_full = compare_folders(self.src, self.dst, src_only=False, resolve_symlinks=True)
+        self.assertEqual(diff_full.matches, [Path("app.conf")])
+        self.assertIn(Path("link_to_src/app.conf"), diff_full.deleted)
+
+    def test_compare_folders_nested_src_inside_dst(self) -> None:
+        """Verifies compare_folders behavior when src is physically nested inside dst."""
+        workspace = self.base / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        (workspace / "root.txt").write_text("root", encoding="utf-8")
+
+        nested_src = workspace / "render" / "pkg"
+        nested_src.mkdir(parents=True, exist_ok=True)
+        (nested_src / "pkg.txt").write_text("pkg", encoding="utf-8")
+
+        # src_only=True: only checks pkg.txt against workspace/pkg.txt
+        diff_src_only = compare_folders(nested_src, workspace, src_only=True)
+        self.assertEqual(diff_src_only.added, [Path("pkg.txt")])
+        self.assertEqual(diff_src_only.deleted, [])
+
+        # src_only=False: also reports unclaimed workspace files as deleted
+        diff_full = compare_folders(nested_src, workspace, src_only=False)
+        self.assertEqual(diff_full.added, [Path("pkg.txt")])
+        self.assertIn(Path("root.txt"), diff_full.deleted)
+        self.assertIn(Path("render/pkg/pkg.txt"), diff_full.deleted)
 
 
 if __name__ == "__main__":

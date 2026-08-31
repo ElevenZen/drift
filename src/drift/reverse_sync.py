@@ -95,6 +95,7 @@ def sync_tracked_files(
     )
 
     # 1. Handle diff.added (items in install/ where host counterpart differs in type or is missing)
+    # (Handling file deletions first to resolve multi-level type changes and clear obsolete paths)
     for repo_rel in diff.added:
         if repo_rel.name in MANAGED_CONFIG_FILES:
             continue
@@ -195,6 +196,19 @@ def sync_single_fcd(
         translate_mode="reverse"
     )
 
+    # 1. Process deletions first to resolve multi-level type changes and clear obsolete paths
+    for sub_rel in fcd_diff.deleted:
+        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
+        if full_repo_rel.name in MANAGED_CONFIG_FILES or ignore_handler.match_path(full_repo_rel):
+            continue
+        repo_file = install_pkg_dir / full_repo_rel
+        if repo_file.exists() or repo_file.is_symlink():
+            full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
+            logger.info(f"System Deletion (FCD): '{target_dir_path / full_target_rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
+            remove_file_or_dir(repo_file)
+            record_sync_result(str(full_target_rel), str(full_repo_rel), drifted_files, synced_files)
+
+    # 2. Process additions and modifications after deletions
     for sub_rel in fcd_diff.added + fcd_diff.modified:
         if sub_rel.name in MANAGED_CONFIG_FILES:
             continue
@@ -209,17 +223,6 @@ def sync_single_fcd(
             ignore_handler=ignore_handler
         )
         record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
-
-    for sub_rel in fcd_diff.deleted:
-        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
-        if full_repo_rel.name in MANAGED_CONFIG_FILES or ignore_handler.match_path(full_repo_rel):
-            continue
-        repo_file = install_pkg_dir / full_repo_rel
-        if repo_file.exists() or repo_file.is_symlink():
-            full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
-            logger.info(f"System Deletion (FCD): '{target_dir_path / full_target_rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
-            remove_file_or_dir(repo_file)
-            record_sync_result(str(full_target_rel), str(full_repo_rel), drifted_files, synced_files)
 
 
 def sync_fully_controlled_dirs(

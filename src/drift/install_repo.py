@@ -94,7 +94,6 @@ def handle_collision_error(
     logger.warning(f"🛡️  [COLLISION] {reason} at '{system_target}'")
     logger.debug(f"   Backing up to: {backup_path}")
     backup_file_or_dir_external(system_target, backup_path, sudo, resolve_symlinks=resolve_symlinks)
-    
     # After backup, remove the colliding item to clear the way
     remove_file_or_dir_with_sudo(system_target, sudo)
 
@@ -109,7 +108,8 @@ def handle_internal_symlink_conflicts(
     resolve_symlinks: bool,
     processed_paths: set
 ) -> None:
-    """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files.
+    """
+    Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files.
 
     Instead of recursively scanning the entire target_dir (which could be the whole HOME directory),
     we inspect only the specific target paths and ancestor directories covered by install_pkg_dir.
@@ -118,12 +118,7 @@ def handle_internal_symlink_conflicts(
         return
 
     # 1. Collect all relative paths inside the package
-    pkg_items = list_folder_paths(
-        src_dir=install_pkg_dir,
-        base_rel=Path(""),
-        ignore_handler=ignore_handler,
-        resolve_symlinks=resolve_symlinks,
-    )
+    pkg_items = ignore_handler.filter_deployable_files(install_pkg_dir)
 
     # 2. Build the set of target relative paths and all intermediate parent directories
     target_candidates = set()
@@ -139,22 +134,24 @@ def handle_internal_symlink_conflicts(
 
     abs_drift_root = workspace_config.drift_root.resolve()
     abs_install_pkg = install_pkg_dir.resolve()
+    # links_detected will store tuples of (repo_rel, system_target) for symlinks that point into drift_root
+    links_detected = []
 
     for t_rel in sorted_candidates:
         system_target = target_dir / t_rel
         if not system_target.is_symlink():
             continue
-
         try:
             target_resolved = system_target.resolve()
             if not is_relative_to(target_resolved, abs_drift_root):
                 continue
         except Exception:
             continue
-
         repo_rel = translate_dot_prefixes_reverse(t_rel)
-        repo_path = install_pkg_dir / repo_rel
+        links_detected.append((repo_rel, system_target))
 
+    for repo_rel, system_target in links_detected:
+        repo_path = install_pkg_dir / repo_rel
         # If install method is stow and link points into our pkg install dir, it's valid for this package
         if metadata.get_install_method(workspace_config) == "stow":
             try:
@@ -395,7 +392,7 @@ def deploy_single_copy_file(
     )
 
 
-def delete_single_system_file(
+def delete_single_system_file_or_dir(
     rel_file: Path,
     target_dir: Path,
     sudo: bool
@@ -468,13 +465,29 @@ def run_incremental_file_delivery(
     target_dir: Path,
     metadata: PackageConfig
 ) -> None:
-    """Handles incremental deployment applying Stage Changes additions, modifications, and deletions."""
+    """
+    Handles incremental deployment applying Stage Changes additions, modifications, and deletions.
+    """
     # A. Process Deletions on active host system
     for rel_file in package_changes.deleted_files:
-        delete_single_system_file(rel_file, target_dir, metadata.sudo)
+        delete_single_system_file_or_dir(rel_file, target_dir, metadata.sudo)
 
     # B. Process Additions and Modifications
     for rel_file in package_changes.added_files + package_changes.modified_files:
+        if not install_pkg_dir.joinpath(rel_file).exists():
+            logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' does not exist in install package directory.")
+            continue
+
+        if install_pkg_dir.joinpath(rel_file).is_symlink():
+            logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' is a symlink in install package directory, "
+            f"which is not allowed.")
+            continue
+
+        if rel_file.is_dir():
+            ensure_dir_exists_with_sudo(
+                    resolve_system_target(rel_file, target_dir), metadata.sudo)
+            continue
+
         if metadata.get_install_method(workspace_config) == "stow":
             deploy_single_stow_file(
                 rel_file=rel_file,
@@ -570,7 +583,8 @@ def execute_package_deployment(
     if metadata.get_install_method(workspace_config) == "stow":
         stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
         stow_ignore_content = ignore_handler.generate_stow_local_ignore_content()
-        if not stow_ignore_path.exists() or stow_ignore_path.read_text(encoding="utf-8") != stow_ignore_content:
+        if (not stow_ignore_path.exists()
+                or stow_ignore_path.read_text(encoding="utf-8") != stow_ignore_content):
             stow_ignore_path.write_text(stow_ignore_content, encoding="utf-8")
     
     # Remove full_redeploy parameter and rely on package_changes to determine deployment mode

@@ -10,6 +10,7 @@ from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
 from drift.ignore import DriftIgnore
+from drift.sync_ops import reverse_sync_file_or_dir
 from drift.reverse_sync import (
     run_primitive_1_reverse_sync,
     reverse_sync_package,
@@ -804,6 +805,89 @@ class TestReverseSync(unittest.TestCase):
         self.assertIn("fcd_one/extra1.txt", synced)
         self.assertIn(".fcd_two/.wild.json", drifted)
         self.assertIn("dot-fcd_two/dot-wild.json", synced)
+
+    def test_reverse_sync_package_fcd_with_symlink_to_source(self) -> None:
+        """Verifies that reverse-syncing an FCD directory with additions and a symlink back to repo
+        applies additions before deletions and safely synchronizes the package.
+        """
+        pkg = "pkg_fcd_symlink_corner"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["plugins"]
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "plugins" / "base.plugin").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "plugins" / "base.plugin").write_text("base plugin", encoding="utf-8")
+
+        # Host system has additions inside plugins and a symlink pointing back to repo
+        host_plugins = self.system_target_dir / "plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+        (host_plugins / "dynamic.plugin").write_text("dynamic plugin", encoding="utf-8")
+        (host_plugins / "link_to_repo").symlink_to(pkg_install_dir / "plugins")
+
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify additions synced
+        self.assertTrue((pkg_install_dir / "plugins" / "dynamic.plugin").exists())
+        self.assertEqual((pkg_install_dir / "plugins" / "dynamic.plugin").read_text(encoding="utf-8"), "dynamic plugin")
+
+    def test_reverse_sync_fcd_multi_level_type_changes(self) -> None:
+        """Verifies that FCD reverse sync processes deletions before additions,
+        seamlessly resolving multi-level type changes (e.g. file replacing a directory tree and vice-versa).
+        """
+        pkg = "pkg_fcd_type_changes"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["plugins"]
+        """, encoding="utf-8")
+
+        # 1. Old install state:
+        # Case A: 'plugins/tree_to_file/sub/leaf.txt' (deep directory)
+        # Case B: 'plugins/file_to_tree' (regular file)
+        (pkg_install_dir / "plugins" / "tree_to_file" / "sub").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "plugins" / "tree_to_file" / "sub" / "leaf.txt").write_text("old leaf", encoding="utf-8")
+
+        (pkg_install_dir / "plugins").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "plugins" / "file_to_tree").write_text("old flat file", encoding="utf-8")
+
+        # 2. Host system state (type transitions):
+        # Case A: 'plugins/tree_to_file' is now a flat file
+        # Case B: 'plugins/file_to_tree' is now a directory containing 'nested.txt'
+        host_plugins = self.system_target_dir / "plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+
+        (host_plugins / "tree_to_file").write_text("new flat file content", encoding="utf-8")
+
+        (host_plugins / "file_to_tree").mkdir(parents=True, exist_ok=True)
+        (host_plugins / "file_to_tree" / "nested.txt").write_text("new nested content", encoding="utf-8")
+
+        # 3. Execute reverse sync
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 4. Assert:
+        # Case A: tree_to_file is now a physical regular file in install/
+        self.assertTrue((pkg_install_dir / "plugins" / "tree_to_file").is_file())
+        self.assertEqual((pkg_install_dir / "plugins" / "tree_to_file").read_text(encoding="utf-8"), "new flat file content")
+        self.assertFalse((pkg_install_dir / "plugins" / "tree_to_file" / "sub").exists())
+
+        # Case B: file_to_tree is now a physical directory containing nested.txt in install/
+        self.assertTrue((pkg_install_dir / "plugins" / "file_to_tree").is_dir())
+        self.assertTrue((pkg_install_dir / "plugins" / "file_to_tree" / "nested.txt").is_file())
+        self.assertEqual((pkg_install_dir / "plugins" / "file_to_tree" / "nested.txt").read_text(encoding="utf-8"), "new nested content")
 
 
 if __name__ == "__main__":

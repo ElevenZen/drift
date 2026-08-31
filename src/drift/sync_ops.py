@@ -24,6 +24,8 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
     """
     Performs reverse sync for a single file, directory, or link from src (typically on the system)
     back to dst (typically in the local install state database).
+    The dst directory shall not contain any symlink pointing into src, to avoid infinite loops.
+    As long as the dst lives inside install/, this can be ensured.
     """
     diff = compare_folders(src, dst, ignore_handler=ignore_handler, resolve_symlinks=True)
     
@@ -56,16 +58,17 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
 
         if is_broken:
             sync_broken_symlink(target_src, target_dst)
-        else:
-            logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
-            remove_file_or_dir(target_dst)
-            target_dst.parent.mkdir(parents=True, exist_ok=True)
-            copy_file_contents_with_sudo(
-                target_src,
-                target_dst,
-                sudo=False,
-                line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
-            )
+            continue
+
+        logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
+        remove_file_or_dir(target_dst)
+        target_dst.parent.mkdir(parents=True, exist_ok=True)
+        copy_file_contents_with_sudo(
+            target_src,
+            target_dst,
+            sudo=False,
+            line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
+        )
 
 
 def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolve_symlinks: bool = True) -> None:

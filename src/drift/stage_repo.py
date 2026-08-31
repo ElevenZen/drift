@@ -104,34 +104,45 @@ def process_package_changes(
         src_dir=render_pkg_dir,
         dst_dir=install_pkg_dir,
         ignore_handler=ignore_handler,
-        resolve_symlinks=True
+        resolve_symlinks=False
     )
     for rel_file in deploy_diff.deleted:
-        if rel_file.name not in MANAGED_CONFIG_FILES:
-            changes.deleted_files.append(rel_file)
+        changes.deleted_files.append(rel_file)
     for rel_file in deploy_diff.added:
-        if rel_file.name not in MANAGED_CONFIG_FILES:
-            changes.added_files.append(rel_file)
+        changes.added_files.append(rel_file)
     for rel_file in deploy_diff.modified:
-        if rel_file.name not in MANAGED_CONFIG_FILES:
-            changes.modified_files.append(rel_file)
+        changes.modified_files.append(rel_file)
 
     # 2. Compute all physical file changes without ignore_handler to stage everything into install/
     all_diff = compare_folders(
         src_dir=render_pkg_dir,
         dst_dir=install_pkg_dir,
         ignore_handler=None,
-        resolve_symlinks=True
+        resolve_symlinks=False
     )
 
-    # A. Process Deletions
+    # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)
     for rel_file in all_diff.deleted:
         if rel_file.name in MANAGED_CONFIG_FILES:
             continue
         install_file = install_pkg_dir / rel_file
-        if install_file.is_dir() and not install_file.is_symlink():
+        if not install_file.exists() and not install_file.is_symlink():
+            continue
+
+        # No symlink should exist in deleted files,
+        # but if they do, remove them without backup.
+        if install_file.is_symlink():
+            logger.warning(f"⚠️  [BUG] Unexpected symlink found for deletion: {pkg}/{rel_file}. Removing without backup.")
             remove_file_or_dir(install_file)
             continue
+
+        # If directory exists in deleted list, it means it's an empty directory that should be removed. Remove it without backup.
+        if install_file.is_dir():
+            if any(install_file.iterdir()):
+                logger.warning(f"⚠️  [BUG] Non-empty directory found for deletion: {pkg}/{rel_file}. Removing without backup.")
+            remove_file_or_dir(install_file)
+            continue
+
         backup_file = backup_dir / rel_file
         logger.info(f"🗑️  Deleting: {pkg}/{rel_file}")
         logger.debug(f"   (Backup: {backup_file})")

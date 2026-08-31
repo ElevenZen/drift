@@ -157,17 +157,16 @@ All high-level workflows in drift are composed of fourteen atomic, sequential pr
 ```
 
 ### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Low-level: `drift reverse-sync`])
-Unconditionally pulls the current host configuration state into the `install/` state Git repository using the unified `compare_folders` tool in `"reverse"` translation mode (comparing the system target `target_directory` as source against the repository `install/<package>` folder as destination).
+Unconditionally pulls the current host configuration state into the `install/` state Git repository using targeted, $O(N_{\text{pkg}})$ comparisons rather than scanning the entire target host directory (`$HOME`):
 
-The comparison identifies three categories of change:
-1.  **Deleted on System (`diff.deleted`)**:
-    *   If a tracked file or directory exists in the repo but is missing from the active host system, it is symmetrically removed from the local state repository (`install/`).
-2.  **Modified on System (`diff.modified`)**:
-    *   If a file on the host system contains modifications or differs from its repository counterpart, it is reverse-copied back to the local state repository (`install/`).
-3.  **Added on System (`diff.added`)**:
-    *   New/untracked files or directories on the host system are only synced back to the local state repository (`install/`) under two conditions:
-        - **Fully-Controlled Directory (FCD) Check:** The new file lies within one of the package's configured `fully_controlled_dirs`.
-        - **Tracked Path Type Promotion/Change:** The new file resides at a path that was previously tracked but changed its type (e.g. parent path is reported in `diff.deleted` indicating a type promotion from file to directory or vice versa).
+1.  **Tracked Package Files Check (`sync_tracked_files`)**:
+    *   Runs `compare_folders(src_dir=install/<package>, dst_dir=target_directory, src_only=True, translate_mode="forward")` to probe only the package's tracked files on the host system.
+    *   **Deleted on System**: If a tracked file or directory exists in `install/` but is missing on the host system, it is symmetrically removed from the local state repository (`install/`).
+    *   **Modified on System**: If a file on the host system contains modifications, it is reverse-copied back to `install/`.
+    *   **Type Changes**: If a file changed into a directory on host (or vice-versa), its contents are synced into `install/`.
+
+2.  **Scoped Fully-Controlled Directories (`sync_fully_controlled_dirs`)**:
+    *   For directories configured under `fully_controlled_dirs` (FCD), comparisons are scoped strictly to those specific subdirectories (e.g. `~/.config/nvim`), reverse-syncing any wild/untracked files or deletions without traversing the rest of the host filesystem.
 
 ### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
 Processes files in `src/` (expanding templates via `envsubst`/`mustache` or custom configured engines) and places the results in `render/`. No live system files are altered. Triggers `pre_source` before reading source templates and `post_render` hook upon completion.
@@ -835,10 +834,10 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 #### 2. Stage 1: Alignment Safeguard (System -> Install)
 *   The system executes **Primitive 1: Reverse Sync** on all target packages to capture and reconcile any manual, local modifications made directly on the active host system.
 *   **The Reverse-Sync Reconciliation Flow**:
-    - **Folder Comparison**: The orchestrator triggers `compare_folders(translate_mode="reverse")` with the system target directory as the source and `install/<package>` as the destination.
-    - **System Deletions (`diff.deleted`)**: Any files manually deleted on the system that are currently tracked by the repository are symmetrically pruned/removed from the `install/` state database folder.
-    - **System Modifications (`diff.modified`)**: Any files manually edited on the system are reverse-copied back to their corresponding repository paths in `install/` (applying reverse dot-prefix translation so system `.bashrc` translates back to repo `dot-bashrc`).
-    - **System Additions & Type Changes (`diff.added`)**: New files on the system are processed and synced back only if they reside inside configured **Fully-Controlled Directories (FCD)**, or if they represent a **Type Change / Type Promotion** (meaning the file path or one of its parent paths changed type, which is detected by checking if it appears in `diff.deleted`).
+    - **Targeted Tracked Comparison**: Probes only package files in `install/<package>` on host (`src_only=True, translate_mode="forward"`), avoiding full `$HOME` directory traversals.
+    - **System Deletions**: Tracked files manually deleted on the system are symmetrically removed from the `install/` state database folder.
+    - **System Modifications & Type Changes**: Files edited on the system (or transformed into directories) are reverse-copied back to `install/` with dot-prefix translation (`.bashrc` $\rightarrow$ `dot-bashrc`).
+    - **Scoped FCD Sync**: Any wild/untracked files inside configured **Fully-Controlled Directories (FCD)** are discovered and synced back via scoped subtree comparisons.
 *   **Uncommitted State Check**: After performing reverse-sync on all active packages, the deployer checks if `git -C install status` is dirty. If uncommitted changes are detected (representing active host drift, i.e., Diff B), the deployer **halts immediately**. This acts as a security sentinel, forcing the developer to explicitly review the drift (via `drift diff --system`) and either **Adopt** (via `drift adopt`) or **Dismiss** (by deploying with `--force`) the system changes before template rendering can continue.
 
 #### 3. Stage 2: Sandboxing & Reconciliation (Render -> Stage)

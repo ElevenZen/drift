@@ -659,6 +659,100 @@ class TestStageRepo(unittest.TestCase):
             run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
         self.assertIn("not a regular file", str(cm.exception))
 
+    def test_stage_processes_additions_before_deletions_with_symlink_corner_case(self) -> None:
+        """Verifies that physical staging processes additions and modifications before deletions,
+        ensuring that symlinks in install/ pointing back to render/ do not cause premature data destruction.
+        """
+        pkg_name = "pkg_ordering_test"
+        self.workspace_config.packages_enable[pkg_name] = True
+
+        render_pkg_dir = self.render_dir / pkg_name
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        install_pkg_dir = self.install_dir / pkg_name
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+            """)
+
+        # 1. In render: new file added and modified file present
+        (render_pkg_dir / "new_app.conf").write_text("setting=new\n", encoding="utf-8")
+        (render_pkg_dir / "existing.conf").write_text("version=2\n", encoding="utf-8")
+
+        # 2. In install: existing.conf is version=1, stale file exists, and a symlink points to render
+        (install_pkg_dir / "existing.conf").write_text("version=1\n", encoding="utf-8")
+        (install_pkg_dir / "stale_file.txt").write_text("old data\n", encoding="utf-8")
+        (install_pkg_dir / "link_to_render").symlink_to(render_pkg_dir)
+
+        # 3. Execute staging
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
+        self.assertEqual(len(changes), 1)
+
+        # 4. Verify that additions and modifications were successfully staged into install/
+        self.assertTrue((install_pkg_dir / "new_app.conf").exists())
+        self.assertEqual((install_pkg_dir / "new_app.conf").read_text(encoding="utf-8"), "setting=new\n")
+
+        self.assertTrue((install_pkg_dir / "existing.conf").exists())
+        self.assertEqual((install_pkg_dir / "existing.conf").read_text(encoding="utf-8"), "version=2\n")
+
+        # 5. Verify stale file was deleted from install/
+        self.assertFalse((install_pkg_dir / "stale_file.txt").exists())
+
+        # 6. Verify render/ source files were untouched and remain intact
+        self.assertTrue((render_pkg_dir / "new_app.conf").exists())
+        self.assertEqual((render_pkg_dir / "new_app.conf").read_text(encoding="utf-8"), "setting=new\n")
+
+    def test_stage_multi_level_type_changes(self) -> None:
+        """Verifies that staging processes deletions before additions,
+        seamlessly resolving multi-level type transitions between render/ and install/.
+        """
+        pkg_name = "pkg_stage_type_changes"
+        self.workspace_config.packages_enable[pkg_name] = True
+
+        render_pkg_dir = self.render_dir / pkg_name
+        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        install_pkg_dir = self.install_dir / pkg_name
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "{pkg_name}"
+            enable_install = true
+            """)
+
+        # 1. Old install state:
+        # Case A: 'tree_to_file/nested/deep.txt' (deep directory)
+        # Case B: 'file_to_tree' (flat file)
+        (install_pkg_dir / "tree_to_file" / "nested").mkdir(parents=True, exist_ok=True)
+        (install_pkg_dir / "tree_to_file" / "nested" / "deep.txt").write_text("old deep", encoding="utf-8")
+        (install_pkg_dir / "file_to_tree").write_text("old flat", encoding="utf-8")
+
+        # 2. New render state:
+        # Case A: 'tree_to_file' is now a flat file
+        # Case B: 'file_to_tree' is now a directory containing 'nested.conf'
+        (render_pkg_dir / "tree_to_file").write_text("new flat rendered", encoding="utf-8")
+        (render_pkg_dir / "file_to_tree").mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / "file_to_tree" / "nested.conf").write_text("new nested rendered", encoding="utf-8")
+
+        # 3. Execute staging
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
+        self.assertEqual(len(changes), 1)
+
+        # 4. Assert:
+        # Case A: tree_to_file is now a regular file in install/
+        self.assertTrue((install_pkg_dir / "tree_to_file").is_file())
+        self.assertEqual((install_pkg_dir / "tree_to_file").read_text(encoding="utf-8"), "new flat rendered")
+        self.assertFalse((install_pkg_dir / "tree_to_file" / "nested").exists())
+
+        # Case B: file_to_tree is now a directory with nested.conf in install/
+        self.assertTrue((install_pkg_dir / "file_to_tree").is_dir())
+        self.assertTrue((install_pkg_dir / "file_to_tree" / "nested.conf").is_file())
+        self.assertEqual((install_pkg_dir / "file_to_tree" / "nested.conf").read_text(encoding="utf-8"), "new nested rendered")
+
 
 if __name__ == "__main__":
     unittest.main()
