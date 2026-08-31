@@ -99,7 +99,7 @@ def execute_hook_script(
 
     cmd = build_hook_execution_command(hook_path)
     use_sudo = bool(metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS)
-    timeout_seconds = metadata.hook_timeout
+    timeout_seconds = metadata.hooks.timeout
 
     start_time = time.perf_counter()
 
@@ -197,7 +197,7 @@ def trigger_pre_source_lifecycle_hook(
                 hook_base_dir=src_pkg_dir
             )
 
-    if not pkg_config or not pkg_config.hooks or not pkg_config.hooks.pre_source:
+    if not pkg_config or not pkg_config.hooks.pre_source:
         return HookResult.skipped(
             package=package_name,
             hook_name="pre_source",
@@ -271,6 +271,7 @@ def trigger_package_lifecycle_hook(
     """
     hook_file = getattr(metadata.hooks, hook_name, None) if metadata and metadata.hooks else None
     if not hook_file:
+        logger.debug(f"Hook '{hook_name}' is not configured for package '{pkg}', skipping.")
         return HookResult.skipped(
             package=pkg,
             hook_name=hook_name,

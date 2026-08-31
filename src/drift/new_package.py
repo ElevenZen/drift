@@ -7,39 +7,12 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
+    DEFAULT_PACKAGE_CONFIG_TEMPLATE,
+    get_default_package_config_content,
     get_default_drift_ignore_content,
 )
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
-[package]
-install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
-{target_directory_line}
-
-# Advanced Flags
-# sudo = false
-# fully_controlled_dirs = []  # Sync deletions inside these directories
-# enable_render = true
-# enable_install = true
-
-# Lifecycle Hooks (Optional)
-# [hooks]
-# pre_source     = ""
-# pre_install    = ""
-# post_install   = ""
-# pre_update     = ""
-# post_update    = ""
-# pre_uninstall  = ""
-# post_uninstall = ""
-# post_render    = ""
-# health         = ""
-# timeout        = 120
-"""
-
-def get_default_package_config_template() -> str:
-    """Gets the default drift_package.toml template string."""
-    return DEFAULT_PACKAGE_CONFIG_TEMPLATE
 
 
 def run_primitive_10_create_new_package(
@@ -62,21 +35,16 @@ def run_primitive_10_create_new_package(
 
     final_config_name = PACKAGE_CONFIG_FILE_NAME
     config_file = package_dir / final_config_name
-    
-    if target_directory is None:
-        target_directory_line = '# target_directory = "~"   # Destination for this package'
-    else:
-        target_directory_line = f'target_directory = "{target_directory}"   # Destination for this package'
 
     final_install_method: str = install_method or workspace_config.default_install_method
     if final_install_method not in ("stow", "copy"):
         raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
 
-    config_content = get_default_package_config_template().format(
+    config_content = get_default_package_config_content(
         package_name=package_name,
-        config_filename=final_config_name,
-        target_directory_line=target_directory_line,
-        install_method=final_install_method
+        install_method=final_install_method,
+        target_directory=target_directory,
+        config_filename=final_config_name
     )
     config_file.write_text(config_content, encoding="utf-8")
 

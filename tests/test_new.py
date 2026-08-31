@@ -6,6 +6,8 @@ from drift.new_package import run_primitive_10_create_new_package
 from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
+    DEFAULT_PACKAGE_CONFIG_TEMPLATE,
+    get_default_package_config_content,
     get_default_drift_ignore_content,
 )
 
@@ -34,6 +36,9 @@ class TestNewPackage(unittest.TestCase):
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
             self.assertIn('install_method = "stow"', content)
             self.assertIn('# target_directory = "~"', content)
+            self.assertIn('# target_directory_windows = "~"', content)
+            self.assertIn('# source_directory = "."', content)
+            self.assertIn('# [hooks.windows]', content)
 
             # Default .drift_ignore should be generated
             ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
@@ -99,6 +104,23 @@ class TestNewPackage(unittest.TestCase):
             
             content = config_file.read_text()
             self.assertIn(f'target_directory = "{target_dir}"', content)
+
+    def test_get_default_package_config_content_helper_direct(self) -> None:
+        """Directly verifies get_default_package_config_content with default and custom arguments."""
+        content_default = get_default_package_config_content("my_app")
+        self.assertIn("# src/my_app/drift_package.toml", content_default)
+        self.assertIn('install_method = "stow"', content_default)
+        self.assertIn('# target_directory = "~"', content_default)
+
+        content_custom = get_default_package_config_content(
+            package_name="zsh_pkg",
+            install_method="copy",
+            target_directory="/etc/zsh"
+        )
+        self.assertIn("# src/zsh_pkg/drift_package.toml", content_custom)
+        self.assertIn('install_method = "copy"', content_custom)
+        self.assertIn('target_directory = "/etc/zsh"', content_custom)
+
 
 if __name__ == "__main__":
     unittest.main()

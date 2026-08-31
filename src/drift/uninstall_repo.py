@@ -241,11 +241,11 @@ def uninstall_single_package_standard(
         sudo = False
 
     # Check uninstall hook files exist before attempting uninstallation
-    if not dry_run and not no_hooks and pkg_config and pkg_config.hooks:
+    if not dry_run and not no_hooks and pkg_config:
         pkg_config.hooks.check_hook_files(install_pkg_dir, hook_names=UNINSTALL_HOOK_NAMES)
 
     # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
-    if not dry_run and pkg_config and pkg_config.pre_uninstall:
+    if not dry_run and pkg_config and pkg_config.hooks.pre_uninstall:
         with pkg_config.package_envs(workspace_config):
             pkg_config.hooks.trigger_pre_uninstall(install_dir=install_pkg_dir, cwd=install_pkg_dir, no_hooks=no_hooks)
 
@@ -256,7 +256,7 @@ def uninstall_single_package_standard(
     restore_backups(workspace_config, pkg, target_dir, sudo, dry_run=dry_run)
 
     # 4. Trigger post_uninstall hook (only if drift_package.toml is available)
-    if not dry_run and pkg_config and pkg_config.post_uninstall:
+    if not dry_run and pkg_config and pkg_config.hooks.post_uninstall:
         with pkg_config.package_envs(workspace_config):
             pkg_config.hooks.trigger_post_uninstall(install_dir=install_pkg_dir, cwd=target_dir, no_hooks=no_hooks)
 

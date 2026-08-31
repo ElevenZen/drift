@@ -118,11 +118,14 @@ SUDO_ELIGIBLE_HOOKS = (
     "post_uninstall",
 )
 
+DEFAULT_HOOK_TIMEOUT: int = 120
+DEFAULT_HOOK_TIMEOUT_SECONDS: int = DEFAULT_HOOK_TIMEOUT
+
 import json
 import os
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
 
@@ -241,6 +244,66 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "# \\.tmp$\n"
     "# /cache/\n"
 )
+
+DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
+[package]
+install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
+{target_directory_line}
+# target_directory_windows = "~"  # Windows-specific destination override
+# source_directory = "."          # Package root relative to package directory
+
+# Advanced Flags
+# sudo = false
+# fully_controlled_dirs = []      # Sync deletions inside these directories
+# enable_render = true
+# enable_install = true
+
+# Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
+# [hooks]
+# pre_source     = ""
+# post_render    = ""
+# pre_install    = ""
+# post_install   = ""
+# pre_update     = ""
+# post_update    = ""
+# pre_uninstall  = ""
+# post_uninstall = ""
+# health         = ""
+# timeout        = 120
+
+# Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
+# [hooks.windows]
+# pre_source     = ""
+# post_render    = ""
+# pre_install    = ""
+# post_install   = ""
+# pre_update     = ""
+# post_update    = ""
+# pre_uninstall  = ""
+# post_uninstall = ""
+# health         = ""
+# timeout        = 120
+"""
+
+
+def get_default_package_config_content(
+    package_name: str,
+    install_method: str = "stow",
+    target_directory: Optional[str] = None,
+    config_filename: str = PACKAGE_CONFIG_FILE_NAME,
+) -> str:
+    """Renders the default drift_package.toml content for a package."""
+    if target_directory is None:
+        target_directory_line = '# target_directory = "~"   # Destination for this package'
+    else:
+        target_directory_line = f'target_directory = "{target_directory}"   # Destination for this package'
+
+    return DEFAULT_PACKAGE_CONFIG_TEMPLATE.format(
+        package_name=package_name,
+        config_filename=config_filename,
+        target_directory_line=target_directory_line,
+        install_method=install_method
+    )
 
 
 def get_default_drift_ignore_content() -> str:

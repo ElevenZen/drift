@@ -16,6 +16,7 @@ from .constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST,
     LIFECYCLE_HOOK_NAMES,
     WINDOWS_PLATFORM_ALIASES,
+    DEFAULT_HOOK_TIMEOUT,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 from .exceptions import ConfigError
@@ -25,6 +26,20 @@ from .result_models import HookResult
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_hook_value(val: Optional[str]) -> Optional[str]:
+    """Normalizes a lifecycle hook configuration value.
+
+    Returns None if val is None, empty string "", or "disable" / "disabled" (case-insensitive).
+    Otherwise returns the stripped path string.
+    """
+    if val is None:
+        return None
+    s = val.strip()
+    if s == "" or s.lower() in ("disable", "disabled"):
+        return None
+    return s
 
 
 @dataclass
@@ -39,8 +54,13 @@ class PackageHooks:
     post_uninstall: Optional[str] = None
     post_render: Optional[str] = None
     health: Optional[str] = None
-    timeout: int = 120
+    timeout: int = DEFAULT_HOOK_TIMEOUT
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in LIFECYCLE_HOOK_NAMES and isinstance(value, str):
+            value = normalize_hook_value(value)
+        super().__setattr__(name, value)
 
     @property
     def package_config(self) -> Optional["PackageConfig"]:
@@ -127,7 +147,7 @@ class PackageHooks:
                             effective_hooks[k] = v
                     break
 
-        raw_timeout = effective_hooks.get("timeout", 120)
+        raw_timeout = effective_hooks.get("timeout", DEFAULT_HOOK_TIMEOUT)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
             raw_timeout = int(raw_timeout)
         if not isinstance(raw_timeout, int):
@@ -138,15 +158,15 @@ class PackageHooks:
             raise ValueError(f"timeout must be a positive integer{name_str}.")
 
         hooks = cls(
-            pre_source=effective_hooks.get("pre_source"),
-            pre_install=effective_hooks.get("pre_install"),
-            post_install=effective_hooks.get("post_install"),
-            pre_update=effective_hooks.get("pre_update"),
-            post_update=effective_hooks.get("post_update"),
-            pre_uninstall=effective_hooks.get("pre_uninstall"),
-            post_uninstall=effective_hooks.get("post_uninstall"),
-            post_render=effective_hooks.get("post_render"),
-            health=effective_hooks.get("health"),
+            pre_source=normalize_hook_value(effective_hooks.get("pre_source")),
+            pre_install=normalize_hook_value(effective_hooks.get("pre_install")),
+            post_install=normalize_hook_value(effective_hooks.get("post_install")),
+            pre_update=normalize_hook_value(effective_hooks.get("pre_update")),
+            post_update=normalize_hook_value(effective_hooks.get("post_update")),
+            pre_uninstall=normalize_hook_value(effective_hooks.get("pre_uninstall")),
+            post_uninstall=normalize_hook_value(effective_hooks.get("post_uninstall")),
+            post_render=normalize_hook_value(effective_hooks.get("post_render")),
+            health=normalize_hook_value(effective_hooks.get("health")),
             timeout=raw_timeout
         )
         hooks.validate(package_name)
@@ -345,7 +365,7 @@ class PackageConfig:
         self.sudo = sudo
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
 
-        effective_timeout = hook_timeout if hook_timeout is not None else 120
+        effective_timeout = hook_timeout if hook_timeout is not None else DEFAULT_HOOK_TIMEOUT
         if hooks is not None:
             self.hooks = hooks
             if pre_source is not None:
@@ -382,86 +402,6 @@ class PackageConfig:
                 timeout=effective_timeout
             )
         self.hooks.package_config = self
-
-    @property
-    def pre_source(self) -> Optional[str]:
-        return self.hooks.pre_source
-
-    @pre_source.setter
-    def pre_source(self, val: Optional[str]) -> None:
-        self.hooks.pre_source = val
-
-    @property
-    def pre_install(self) -> Optional[str]:
-        return self.hooks.pre_install
-
-    @pre_install.setter
-    def pre_install(self, val: Optional[str]) -> None:
-        self.hooks.pre_install = val
-
-    @property
-    def post_install(self) -> Optional[str]:
-        return self.hooks.post_install
-
-    @post_install.setter
-    def post_install(self, val: Optional[str]) -> None:
-        self.hooks.post_install = val
-
-    @property
-    def pre_update(self) -> Optional[str]:
-        return self.hooks.pre_update
-
-    @pre_update.setter
-    def pre_update(self, val: Optional[str]) -> None:
-        self.hooks.pre_update = val
-
-    @property
-    def post_update(self) -> Optional[str]:
-        return self.hooks.post_update
-
-    @post_update.setter
-    def post_update(self, val: Optional[str]) -> None:
-        self.hooks.post_update = val
-
-    @property
-    def pre_uninstall(self) -> Optional[str]:
-        return self.hooks.pre_uninstall
-
-    @pre_uninstall.setter
-    def pre_uninstall(self, val: Optional[str]) -> None:
-        self.hooks.pre_uninstall = val
-
-    @property
-    def post_uninstall(self) -> Optional[str]:
-        return self.hooks.post_uninstall
-
-    @post_uninstall.setter
-    def post_uninstall(self, val: Optional[str]) -> None:
-        self.hooks.post_uninstall = val
-
-    @property
-    def post_render(self) -> Optional[str]:
-        return self.hooks.post_render
-
-    @post_render.setter
-    def post_render(self, val: Optional[str]) -> None:
-        self.hooks.post_render = val
-
-    @property
-    def health(self) -> Optional[str]:
-        return self.hooks.health
-
-    @health.setter
-    def health(self, val: Optional[str]) -> None:
-        self.hooks.health = val
-
-    @property
-    def hook_timeout(self) -> int:
-        return self.hooks.timeout
-
-    @hook_timeout.setter
-    def hook_timeout(self, val: int) -> None:
-        self.hooks.timeout = val
 
     def validate(self) -> None:
         """Validates configuration values."""

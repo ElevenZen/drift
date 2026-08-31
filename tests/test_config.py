@@ -11,6 +11,7 @@ from drift.constants import (
     GLOBAL_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
+    DEFAULT_HOOK_TIMEOUT,
     set_test_mode,
 )
 from drift.toml_utils import (
@@ -300,8 +301,8 @@ class TestConfigClasses(unittest.TestCase):
         }
         config = PackageConfig.from_dict(data, package_name="my_pkg")
         self.assertEqual(config.name, "my_pkg")
-        self.assertEqual(config.pre_source, "scripts/gen.sh")
-        self.assertEqual(config.hook_timeout, 60)
+        self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
+        self.assertEqual(config.hooks.timeout, 60)
 
         # Test string casting for timeout
         data_str_timeout = {
@@ -313,7 +314,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         config_str = PackageConfig.from_dict(data_str_timeout, package_name="my_pkg")
-        self.assertEqual(config_str.hook_timeout, 45)
+        self.assertEqual(config_str.hooks.timeout, 45)
 
         data_no_name = {
             "package": {
@@ -322,7 +323,7 @@ class TestConfigClasses(unittest.TestCase):
         }
         config = PackageConfig.from_dict(data_no_name, package_name="fallback_name")
         self.assertEqual(config.name, "fallback_name")
-        self.assertEqual(config.hook_timeout, 120)  # Default value
+        self.assertEqual(config.hooks.timeout, DEFAULT_HOOK_TIMEOUT)
 
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ValueError):
@@ -332,13 +333,13 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(TypeError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
         with self.assertRaises(TypeError):
-            PackageConfig(name="foo", hook_timeout="not_an_int").validate() # type: ignore
+            PackageConfig(name="foo", hooks=PackageHooks(timeout="not_an_int")).validate() # type: ignore
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", hook_timeout=0).validate()
+            PackageConfig(name="foo", hooks=PackageHooks(timeout=0)).validate()
         with self.assertRaises(ValueError):
-            PackageConfig(name="foo", hook_timeout=-10).validate()
+            PackageConfig(name="foo", hooks=PackageHooks(timeout=-10)).validate()
         with self.assertRaises(TypeError):
-            PackageConfig(name="foo", pre_source=123).validate() # type: ignore
+            PackageConfig(name="foo", hooks=PackageHooks(pre_source=123)).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
         hooks = PackageHooks(
@@ -349,12 +350,11 @@ class TestConfigClasses(unittest.TestCase):
         )
         config = PackageConfig(name="test_pkg", hooks=hooks)
         self.assertEqual(config.hooks.pre_source, "scripts/gen.sh")
-        self.assertEqual(config.pre_source, "scripts/gen.sh")
-        self.assertEqual(config.hook_timeout, 30)
+        self.assertEqual(config.hooks.timeout, 30)
         self.assertIs(config.hooks.package_config, config)
 
-        # Direct property modification forwards to hooks
-        config.post_render = "scripts/render.sh"
+        # Direct property modification on hooks
+        config.hooks.post_render = "scripts/render.sh"
         self.assertEqual(config.hooks.post_render, "scripts/render.sh")
 
     def test_package_hooks_from_dict_and_validation(self) -> None:
@@ -417,7 +417,6 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.post_render, "scripts/post_render.sh")
         self.assertEqual(config.hooks.health, "scripts/health_check.sh")
         self.assertEqual(config.hooks.timeout, 45)
-        self.assertEqual(config.hook_timeout, 45)
 
     def test_load_package_config_with_hooks_windows_and_aliases(self) -> None:
         """Verifies [hooks.windows] and alias sub-tables (win32, winos, win) override default hooks on Windows."""
@@ -449,6 +448,63 @@ class TestConfigClasses(unittest.TestCase):
                 self.assertEqual(config_win.hooks.pre_install, "scripts/bootstrap.ps1")
                 self.assertEqual(config_win.hooks.post_install, "scripts/setup.ps1")
                 self.assertEqual(config_win.hooks.post_update, "scripts/update.bat")
+
+    def test_package_hooks_disabled_values_in_base_and_subtables(self) -> None:
+        """Verifies that 'disable' and 'disabled' (case-insensitive) in base [hooks] or platform tables turn off hooks."""
+        # 1. Base [hooks] with "disable" and "disabled"
+        toml_dict = {
+            "package": {
+                "install_method": "copy",
+            },
+            "hooks": {
+                "pre_source": "disable",
+                "pre_install": "disabled",
+                "post_install": "Disabled",
+                "pre_update": "DISABLE",
+                "post_update": "",
+                "pre_uninstall": "   ",
+                "post_uninstall": "scripts/uninstall.sh",
+            }
+        }
+        config = PackageConfig.from_dict(toml_dict, package_name="pkg_disabled")
+        self.assertIsNone(config.hooks.pre_source)
+        self.assertIsNone(config.hooks.pre_install)
+        self.assertIsNone(config.hooks.post_install)
+        self.assertIsNone(config.hooks.pre_update)
+        self.assertIsNone(config.hooks.post_update)
+        self.assertIsNone(config.hooks.pre_uninstall)
+        self.assertEqual(config.hooks.post_uninstall, "scripts/uninstall.sh")
+
+        # 2. [hooks.windows] disabling a base hook on Windows
+        override_dict = {
+            "package": {
+                "install_method": "copy",
+            },
+            "hooks": {
+                "post_install": "scripts/posix_post.sh",
+                "windows": {
+                    "post_install": "disable",
+                }
+            }
+        }
+        with patch("sys.platform", "linux"):
+            config_linux = PackageConfig.from_dict(override_dict, package_name="pkg_override")
+            self.assertEqual(config_linux.hooks.post_install, "scripts/posix_post.sh")
+
+        with patch("sys.platform", "win32"):
+            config_win = PackageConfig.from_dict(override_dict, package_name="pkg_override")
+            self.assertIsNone(config_win.hooks.post_install)
+
+    def test_package_hooks_property_setters_with_disabled(self) -> None:
+        """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
+        hooks = PackageHooks(post_install="scripts/post.sh")
+        self.assertEqual(hooks.post_install, "scripts/post.sh")
+
+        hooks.post_install = "disabled"
+        self.assertIsNone(hooks.post_install)
+
+        hooks.pre_install = "disable"
+        self.assertIsNone(hooks.pre_install)
 
     def test_build_hook_execution_command(self) -> None:
         """Verifies cross-platform command building for lifecycle hook dispatch."""

@@ -38,7 +38,7 @@ def _trigger_pre_source_hook(
         workspace_config=workspace_config
     )
 
-    if not pkg_config.hooks or not pkg_config.hooks.pre_source:
+    if not pkg_config.hooks.pre_source:
         raise ConfigError(
             f"No 'pre_source' hook configured for package '{package_name}'."
         )
@@ -70,7 +70,7 @@ def _trigger_post_render_hook(
         )
 
     pkg_config = load_package_config_rendered(config_file)
-    if not pkg_config.hooks or not pkg_config.hooks.post_render:
+    if not pkg_config.hooks.post_render:
         raise ConfigError(
             f"No 'post_render' hook configured for package '{package_name}'."
         )
@@ -100,7 +100,7 @@ def _trigger_install_stage_hook(
         )
 
     pkg_config = load_package_config_rendered(config_file)
-    hook_file = getattr(pkg_config.hooks, hook_name, None) if pkg_config.hooks else None
+    hook_file = getattr(pkg_config.hooks, hook_name, None)
     if not hook_file:
         raise ConfigError(
             f"No '{hook_name}' hook configured for package '{package_name}'."

@@ -58,14 +58,14 @@ def check_package_health_probe(
             error_message=f"Failed to parse package configuration: {e}"
         )
 
-    if not pkg_config.health:
+    if not pkg_config.hooks.health:
         return PackageHealthResult(
             package=pkg,
             status=PackageHealthStatus.NO_HOOK,
             target_directory=str(target_dir)
         )
 
-    hook_file_path = Path(pkg_config.health)
+    hook_file_path = Path(pkg_config.hooks.health)
     hook_path = hook_file_path if hook_file_path.is_absolute() else install_pkg_dir / hook_file_path
 
     if not hook_path.exists():
@@ -105,7 +105,7 @@ def execute_package_health_probe(
     except Exception as e:
         logger.warning(f"Could not ensure execute permission on hook '{hook_path}': {e}")
 
-    timeout = custom_timeout if custom_timeout is not None else (pkg_config.hook_timeout or 120)
+    timeout = custom_timeout if custom_timeout is not None else pkg_config.hooks.timeout
     from .lifecycle_hooks import build_hook_execution_command
     from .file_utils import run_sudo_command
 
