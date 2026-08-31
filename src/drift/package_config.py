@@ -98,8 +98,9 @@ class PackageHooks:
 
         for key in hook_dict:
             if key not in known_keys:
+                name_str = f" for package '{package_name}'" if package_name else ""
                 context = "package [hooks]" if not is_subtable else "platform hooks sub-table"
-                logger.warning(f"Unknown hook option in {context}: '{key}'")
+                raise ConfigError(f"Unknown hook option in {context}: '{key}'{name_str}")
 
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = hook_dict.get(hook_name)
@@ -536,11 +537,12 @@ class PackageConfig:
     def from_dict(cls, data: dict, package_name: str,
                   source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
-        # Warning for unknown top-level sections
+        # Error for unknown top-level sections
         known_top_sections = {"package", "hooks"}
         for key in data:
             if key not in known_top_sections:
-                logger.warning(f"Unknown top-level package config section: '{key}'")
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise ConfigError(f"Unknown top-level package config section: '{key}'{name_str}")
 
         package_data = data.get("package", {})
         hooks_data = data.get("hooks", {})
@@ -549,7 +551,7 @@ class PackageConfig:
         if not name:
             raise ValueError("Package name must be provided when constructing PackageConfig.")
 
-        # Warning for unknown package options
+        # Error for unknown package options
         known_package_keys = {
             "name",
             "source_directory",
@@ -562,7 +564,8 @@ class PackageConfig:
         } | {f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES}
         for key in package_data:
             if key not in known_package_keys:
-                logger.warning(f"Unknown package option: '{key}'")
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise ConfigError(f"Unknown package option: '{key}'{name_str}")
 
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
         hooks = PackageHooks.from_dict(

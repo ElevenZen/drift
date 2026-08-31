@@ -377,17 +377,17 @@ class WorkspaceConfig:
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
-        # Warning for unknown top-level sections
+        # Error for unknown top-level sections
         known_top_sections = {"workspace", "packages", "render", "env"}
         for key in data:
             if key not in known_top_sections:
-                logger.warning(f"Unknown top-level config section: '{key}'")
+                raise ConfigError(f"Unknown top-level config section: '{key}'")
 
         if "workspace" not in data:
             raise ConfigError("Missing '[workspace]' section in workspace configuration.")
             
         workspace_data = data.get("workspace", {})
-        # Warning for unknown workspace options
+        # Error for unknown workspace options
         known_workspace_keys = {
             "source_directory",
             "render_directory",
@@ -398,7 +398,7 @@ class WorkspaceConfig:
         }
         for key in workspace_data:
             if key not in known_workspace_keys:
-                logger.warning(f"Unknown workspace option: '{key}'")
+                raise ConfigError(f"Unknown workspace option: '{key}'")
 
         if "packages" not in data or not isinstance(data.get("packages"), dict) or "enable" not in data["packages"]:
             raise ConfigError("Missing '[packages.enable]' section in workspace configuration.")
@@ -431,7 +431,7 @@ class WorkspaceConfig:
             if isinstance(config_dict, dict):
                 for key in config_dict:
                     if key not in known_render_keys:
-                        logger.warning(f"Unknown option under render.{name}: '{key}'")
+                        raise ConfigError(f"Unknown option under render.{name}: '{key}'")
                 render_engine_config[name] = RenderEngineConfig(
                     name=name,
                     input_file=Path(config_dict.get("input_file", "")),

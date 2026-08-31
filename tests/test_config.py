@@ -733,22 +733,33 @@ class TestConfigClasses(unittest.TestCase):
             WorkspaceConfig(default_target_directory=Path("relative/path")).validate()
         self.assertIn("default_target_directory must be an absolute path", str(ctx.exception))
 
-    def test_unknown_option_warnings(self) -> None:
-        """Verifies that unknown configuration options and sections trigger warnings."""
-        from unittest.mock import patch
+    def test_unknown_option_raises_config_error(self) -> None:
+        """Verifies that unknown configuration options and sections raise ConfigError."""
+        # 1. Workspace unknown top-level section
+        data_unknown_top = {
+            "workspace": {},
+            "packages": {"enable": {}},
+            "unknown_top_section": {"foo": "bar"}
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            WorkspaceConfig.from_dict(data_unknown_top)
+        self.assertIn("Unknown top-level config section: 'unknown_top_section'", str(ctx.exception))
 
-        # 1. Workspace unknown option warnings
-        workspace_data_with_warnings = {
+        # 2. Workspace unknown option in [workspace]
+        data_unknown_workspace = {
             "workspace": {
-                "render_directory": "custom_render",
                 "unknown_workspace_opt": "random_val"
             },
-            "packages": {
-                "enable": {}
-            },
-            "unknown_top_section": {
-                "foo": "bar"
-            },
+            "packages": {"enable": {}}
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            WorkspaceConfig.from_dict(data_unknown_workspace)
+        self.assertIn("Unknown workspace option: 'unknown_workspace_opt'", str(ctx.exception))
+
+        # 3. Workspace unknown option in [render.<engine>]
+        data_unknown_render = {
+            "workspace": {},
+            "packages": {"enable": {}},
             "render": {
                 "mustache": {
                     "input_file": "input.json",
@@ -758,32 +769,53 @@ class TestConfigClasses(unittest.TestCase):
                 }
             }
         }
-        
-        with patch("drift.workspace_config.logger.warning") as mock_warn:
-            WorkspaceConfig.from_dict(workspace_data_with_warnings)
-            
-            # Extract actual warning calls
-            warn_messages = [call[0][0] for call in mock_warn.call_args_list]
-            self.assertTrue(any("Unknown top-level config section: 'unknown_top_section'" in msg for msg in warn_messages))
-            self.assertTrue(any("Unknown workspace option: 'unknown_workspace_opt'" in msg for msg in warn_messages))
-            self.assertTrue(any("Unknown option under render.mustache: 'unknown_render_opt'" in msg for msg in warn_messages))
+        with self.assertRaises(ConfigError) as ctx:
+            WorkspaceConfig.from_dict(data_unknown_render)
+        self.assertIn("Unknown option under render.mustache: 'unknown_render_opt'", str(ctx.exception))
 
-        # 2. PackageConfig unknown option warnings
-        package_data_with_warnings = {
+        # 4. PackageConfig unknown top-level section
+        pkg_data_unknown_top = {
+            "package": {"name": "my_pkg"},
+            "another_unknown_top_section": {"baz": "qux"}
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_data_unknown_top, package_name="my_pkg")
+        self.assertIn("Unknown top-level package config section: 'another_unknown_top_section'", str(ctx.exception))
+
+        # 5. PackageConfig unknown package option
+        pkg_data_unknown_opt = {
             "package": {
+                "name": "my_pkg",
                 "unknown_pkg_opt": "something"
-            },
-            "another_unknown_top_section": {
-                "baz": "qux"
             }
         }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_data_unknown_opt, package_name="my_pkg")
+        self.assertIn("Unknown package option: 'unknown_pkg_opt'", str(ctx.exception))
 
-        with patch("drift.package_config.logger.warning") as mock_package_warn:
-            PackageConfig.from_dict(package_data_with_warnings, package_name="my_pkg")
-            
-            package_warn_messages = [call[0][0] for call in mock_package_warn.call_args_list]
-            self.assertTrue(any("Unknown top-level package config section: 'another_unknown_top_section'" in msg for msg in package_warn_messages))
-            self.assertTrue(any("Unknown package option: 'unknown_pkg_opt'" in msg for msg in package_warn_messages))
+        # 6. PackageHooks unknown hook option
+        pkg_data_unknown_hook = {
+            "package": {"name": "my_pkg"},
+            "hooks": {
+                "unknown_hook_opt": "script.sh"
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_data_unknown_hook, package_name="my_pkg")
+        self.assertIn("Unknown hook option in package [hooks]: 'unknown_hook_opt'", str(ctx.exception))
+
+        # 7. PackageHooks unknown platform sub-table hook option
+        pkg_data_unknown_subtable_hook = {
+            "package": {"name": "my_pkg"},
+            "hooks": {
+                "windows": {
+                    "unknown_win_hook": "script.ps1"
+                }
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_data_unknown_subtable_hook, package_name="my_pkg")
+        self.assertIn("Unknown hook option in platform hooks sub-table: 'unknown_win_hook'", str(ctx.exception))
 
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(

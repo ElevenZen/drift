@@ -259,7 +259,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # enable_install = true
 
 # Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
-# [hooks]
+[hooks]
 # pre_source     = ""
 # post_render    = ""
 # pre_install    = ""
@@ -272,7 +272,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # timeout        = 120
 
 # Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
-# [hooks.windows]
+[hooks.windows]
 # pre_source     = ""
 # post_render    = ""
 # pre_install    = ""

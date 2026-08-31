@@ -200,7 +200,7 @@ def resolve_single_internal_symlink_conflict(
         system_target=system_target,
         workspace_config=workspace_config,
         sudo=metadata.sudo,
-        reason="Internal symlink parent error",
+        reason="Internal symlink detected",
         resolve_symlinks=resolve_symlinks
     )
 

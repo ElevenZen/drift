@@ -38,7 +38,7 @@ class TestNewPackage(unittest.TestCase):
             self.assertIn('# target_directory = "~"', content)
             self.assertIn('# target_directory_windows = "~"', content)
             self.assertIn('# source_directory = "."', content)
-            self.assertIn('# [hooks.windows]', content)
+            self.assertIn('[hooks.windows]', content)
 
             # Default .drift_ignore should be generated
             ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME

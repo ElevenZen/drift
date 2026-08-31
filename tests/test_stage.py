@@ -226,7 +226,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Config files themselves are also automatically ignored
         with open(os.path.join(pkg_ignored_render, PACKAGE_CONFIG_FILE_NAME), "w") as f:
-            f.write("name = 'pkg_ignored'")
+            f.write("[package]\nname = 'pkg_ignored'\n")
 
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_ignored")
 
