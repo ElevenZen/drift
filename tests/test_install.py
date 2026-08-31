@@ -20,6 +20,9 @@ from drift.install_repo import (
         run_primitive_5_install_deployment,
         get_stow_version,
         is_stow_version_sufficient,
+        find_internal_symlink_conflicts,
+        resolve_single_internal_symlink_conflict,
+        handle_internal_symlink_conflicts,
 )
 from drift.file_utils import (
         ensure_dir_exists_with_sudo,
@@ -1684,11 +1687,122 @@ class TestInstallRepo(unittest.TestCase):
         [hooks]
         post_install = "scripts/hook_dir"
         """, encoding="utf-8")
-        (pkg_install_dir / "app.conf").write_text("hello", encoding="utf-8")
-
         with self.assertRaises(ValueError) as cm:
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("not a regular file", str(cm.exception))
+
+    def test_find_internal_symlink_conflicts_direct(self) -> None:
+        """Directly verifies find_internal_symlink_conflicts helper function."""
+        from drift.ignore import DriftIgnore
+        pkg = "pkg_find_conflicts"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / "nested").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "nested" / "app.conf").write_text("hello", encoding="utf-8")
+        (pkg_install_dir / "root.conf").write_text("root", encoding="utf-8")
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """)
+
+        # Set up conflicts on system target:
+        # 1. 'nested' is a symlink pointing into drift_root
+        fake_internal_dest = self.drift_root / "fake_internal"
+        fake_internal_dest.mkdir(parents=True, exist_ok=True)
+        (self.system_target_dir / "nested").symlink_to(fake_internal_dest)
+
+        # 2. 'root.conf' is a symlink pointing outside drift_root (e.g. /tmp) -> ignored
+        outside_target = Path(tempfile.gettempdir()) / "outside_drift.txt"
+        outside_target.write_text("outside", encoding="utf-8")
+        (self.system_target_dir / "root.conf").symlink_to(outside_target)
+
+        conflicts = find_internal_symlink_conflicts(
+            workspace_config=self.workspace_config,
+            install_pkg_dir=pkg_install_dir,
+            ignore_handler=DriftIgnore(),
+            target_dir=self.system_target_dir
+        )
+
+        # Should only find 'nested' as an internal symlink conflict
+        self.assertEqual(len(conflicts), 1)
+        self.assertEqual(conflicts[0][0], Path("nested"))
+        self.assertEqual(conflicts[0][1], self.system_target_dir / "nested")
+
+    def test_resolve_single_internal_symlink_conflict_direct(self) -> None:
+        """Directly verifies resolve_single_internal_symlink_conflict helper function."""
+        from drift.ignore import DriftIgnore
+        pkg = "pkg_resolve_conflict"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / "sub_dir").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "sub_dir" / "file.txt").write_text("file content", encoding="utf-8")
+
+        config = PackageConfig(name=pkg, install_method="copy", target_directory=str(self.system_target_dir))
+
+        fake_drift_dest = self.drift_root / "fake_drift_dest"
+        fake_drift_dest.mkdir(parents=True, exist_ok=True)
+
+        system_target = self.system_target_dir / "sub_dir"
+        system_target.symlink_to(fake_drift_dest)
+
+        processed_paths: set = set()
+
+        resolve_single_internal_symlink_conflict(
+            workspace_config=self.workspace_config,
+            pkg=pkg,
+            install_pkg_dir=pkg_install_dir,
+            metadata=config,
+            ignore_handler=DriftIgnore(),
+            repo_rel=Path("sub_dir"),
+            system_target=system_target,
+            resolve_symlinks=True,
+            processed_paths=processed_paths
+        )
+
+        # 1. system_target is now a physical directory
+        self.assertTrue(system_target.is_dir())
+        self.assertFalse(system_target.is_symlink())
+
+        # 2. Backup path structure was created
+        backup_path = self.backup_dir / pkg / "overwritten" / "sub_dir"
+        self.assertTrue(backup_path.exists())
+
+        # 3. processed_paths contains sub_dir and its child
+        self.assertIn(Path("sub_dir"), processed_paths)
+        self.assertIn(Path("sub_dir/file.txt"), processed_paths)
+
+    def test_resolve_single_internal_symlink_conflict_valid_stow_skipped(self) -> None:
+        """Verifies that a valid Stow relative symlink pointing to the current package is skipped."""
+        from drift.ignore import DriftIgnore
+        pkg = "pkg_stow_valid"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
+
+        config = PackageConfig(name=pkg, install_method="stow", target_directory=str(self.system_target_dir))
+
+        # Create valid relative symlink pointing into install_pkg_dir
+        system_target = self.system_target_dir / "valid_file.txt"
+        rel_to_install = os.path.relpath(pkg_install_dir / "valid_file.txt", self.system_target_dir)
+        os.symlink(rel_to_install, system_target)
+
+        processed_paths: set = set()
+
+        resolve_single_internal_symlink_conflict(
+            workspace_config=self.workspace_config,
+            pkg=pkg,
+            install_pkg_dir=pkg_install_dir,
+            metadata=config,
+            ignore_handler=DriftIgnore(),
+            repo_rel=Path("valid_file.txt"),
+            system_target=system_target,
+            resolve_symlinks=True,
+            processed_paths=processed_paths
+        )
+
+        # System target remains untouched as a symlink and not marked in processed_paths
+        self.assertTrue(system_target.is_symlink())
+        self.assertEqual(len(processed_paths), 0)
 
 
 class TestStowVersionDetection(unittest.TestCase):
