@@ -408,6 +408,55 @@ class TestPackageHook(unittest.TestCase):
         self.assertTrue(rendered_tool.exists())
         self.assertTrue(bool(rendered_tool.stat().st_mode & 0o111))
 
+    def test_trigger_pre_source_hook_with_rendering(self) -> None:
+        """Verifies that pre_source hook specified as a template file is rendered to render/ before execution."""
+        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+        from drift.workspace_config import RenderEngineConfig
+
+        self.workspace_config.render_engine_configs = {
+            "envst": RenderEngineConfig(
+                name="envst",
+                suffix="envst",
+                render_command="internal"
+            )
+        }
+
+        # Create package with templated pre_source hook
+        pkg_b_dir = self.drift_root / "src" / "pkg_templated_pre_source"
+        pkg_b_dir.mkdir(parents=True)
+        scripts_b = pkg_b_dir / "scripts"
+        scripts_b.mkdir(parents=True)
+
+        pre_source_tmpl = scripts_b / "gen.sh.envst"
+        pre_source_tmpl.write_text("""#!/bin/sh
+echo "VALUE=$DYNAMIC_VAL"
+""", encoding="utf-8")
+        pre_source_tmpl.chmod(0o755)
+
+        (pkg_b_dir / "drift_package.toml").write_text("""
+        [package]
+        install_method = "stow"
+
+        [env.override]
+        DYNAMIC_VAL = "rendered_at_runtime"
+
+        [hooks]
+        pre_source = "scripts/gen.sh"
+        """, encoding="utf-8")
+
+        # Trigger pre_source hook
+        res = trigger_pre_source_lifecycle_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_templated_pre_source",
+            load_envs=True
+        )
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify gen.sh was rendered into render/pkg_templated_pre_source/scripts/gen.sh
+        rendered_script = self.workspace_config.render_path / "pkg_templated_pre_source" / "scripts" / "gen.sh"
+        self.assertTrue(rendered_script.exists())
+        self.assertIn('VALUE=rendered_at_runtime', rendered_script.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

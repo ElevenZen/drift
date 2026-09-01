@@ -47,8 +47,99 @@ def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
 
 
 @dataclass
+class PackageRequirements:
+    """Declarative host platform and environment requirements for a package."""
+    os: List[str] = field(default_factory=list)
+    arch: List[str] = field(default_factory=list)
+    distro: List[str] = field(default_factory=list)
+    binaries: List[str] = field(default_factory=list)
+    env: List[str] = field(default_factory=list)
+
+    def check_requirements(self) -> Tuple[bool, Optional[str]]:
+        """Evaluates declarative requirements against host facts and environment.
+
+        Returns:
+            Tuple of (is_satisfied: bool, failure_reason: Optional[str]).
+        """
+        from .host_facts import get_host_os, get_host_arch, get_host_distro
+
+        # 1. Check OS
+        if self.os:
+            current_os = os.environ.get("drift_os") or get_host_os()
+            if current_os not in self.os:
+                return False, f"Host OS '{current_os}' not in required list: {self.os}"
+
+        # 2. Check Architecture
+        if self.arch:
+            current_arch = os.environ.get("drift_arch") or get_host_arch()
+            if current_arch not in self.arch:
+                return False, f"Host architecture '{current_arch}' not in required list: {self.arch}"
+
+        # 3. Check Linux Distro
+        if self.distro:
+            current_distro = os.environ.get("drift_distro") or get_host_distro()
+            if current_distro not in self.distro:
+                return False, f"Linux distribution '{current_distro}' not in required list: {self.distro}"
+
+        # 4. Check Binaries in PATH
+        for binary in self.binaries:
+            if not shutil.which(binary):
+                return False, f"Required binary '{binary}' not found in PATH"
+
+        # 5. Check Environment Variables
+        for env_var in self.env:
+            if not os.environ.get(env_var):
+                return False, f"Required environment variable '{env_var}' is unset or empty"
+
+        return True, None
+
+    @classmethod
+    def from_dict(cls, data: Any, package_name: str = "") -> "PackageRequirements":
+        """Parses and validates a PackageRequirements instance from a dictionary."""
+        if not data:
+            return cls()
+        if not isinstance(data, dict):
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise ConfigError(f"[package.requirements] must be a table{name_str}.")
+
+        known_keys = {"os", "arch", "distro", "binaries", "env"}
+        for k in data:
+            if k not in known_keys:
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise ConfigError(f"Unknown option under requirements: '{k}'{name_str}")
+
+        def _to_list_str(val: Any, field_name: str) -> List[str]:
+            if val is None:
+                return []
+            if isinstance(val, str):
+                s = val.strip()
+                return [s] if s else []
+            if isinstance(val, (list, tuple)):
+                res = []
+                for item in val:
+                    if not isinstance(item, str):
+                        name_str = f" for package '{package_name}'" if package_name else ""
+                        raise TypeError(f"Items in '{field_name}' must be strings{name_str}.")
+                    s = item.strip()
+                    if s:
+                        res.append(s)
+                return res
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise TypeError(f"'{field_name}' under requirements must be a string or list of strings{name_str}.")
+
+        return cls(
+            os=_to_list_str(data.get("os"), "os"),
+            arch=_to_list_str(data.get("arch"), "arch"),
+            distro=_to_list_str(data.get("distro"), "distro"),
+            binaries=_to_list_str(data.get("binaries"), "binaries"),
+            env=_to_list_str(data.get("env"), "env"),
+        )
+
+
+@dataclass
 class PackageHooks:
     """Encapsulates lifecycle hook configurations and execution methods for a package."""
+    probe: Optional[Path] = None
     pre_source: Optional[Path] = None
     pre_install: Optional[Path] = None
     post_install: Optional[Path] = None
@@ -163,6 +254,7 @@ class PackageHooks:
             raise ValueError(f"timeout must be a positive integer{name_str}.")
 
         hooks = cls(
+            probe=normalize_hook_value(effective_hooks.get("probe")),
             pre_source=normalize_hook_value(effective_hooks.get("pre_source")),
             pre_install=normalize_hook_value(effective_hooks.get("pre_install")),
             post_install=normalize_hook_value(effective_hooks.get("post_install")),
@@ -206,6 +298,27 @@ class PackageHooks:
             cwd=cwd
         )
 
+    def trigger_probe(
+        self,
+        package_dir: Path,
+        workspace_config: "WorkspaceConfig",
+        no_hooks: bool = False
+    ) -> HookResult:
+        """Executes the probe hook with template rendering into render sandbox directory."""
+        pkg_name = self._package_config.name if self._package_config else ""
+        if no_hooks or not self.probe:
+            return HookResult.skipped(package=pkg_name, hook_name="probe", cwd=package_dir, hook_base_dir=package_dir)
+        if self._package_config is None:
+            raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
+        from .lifecycle_hooks import trigger_probe_lifecycle_hook
+        return trigger_probe_lifecycle_hook(
+            workspace_config=workspace_config,
+            package_name=self._package_config.name,
+            pkg_config=self._package_config,
+            load_envs=False,
+            no_hooks=no_hooks
+        )
+
     def trigger_pre_source(
         self,
         source_dir: Path,
@@ -226,9 +339,6 @@ class PackageHooks:
         no_hooks: bool = False
     ) -> HookResult:
         """Triggers the pre_source hook with workspace template rendering into the render sandbox directory."""
-        pkg_name = self._package_config.name if self._package_config else ""
-        if no_hooks or not self.pre_source:
-            return HookResult.skipped(package=pkg_name, hook_name="pre_source", cwd=source_dir, hook_base_dir=source_dir)
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
         from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
@@ -361,6 +471,7 @@ class PackageConfig:
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
+    requirements: PackageRequirements = field(default_factory=PackageRequirements)
 
     def check_hook_files(
         self,
@@ -383,6 +494,7 @@ class PackageConfig:
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
+        requirements: Optional[PackageRequirements] = None,
         env_override: Optional[Dict[str, str]] = None,
         env_fallback: Optional[Dict[str, str]] = None,
     ) -> None:
@@ -398,6 +510,7 @@ class PackageConfig:
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
         self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
+        self.requirements = requirements if requirements is not None else PackageRequirements()
         self.env_override: Dict[str, str] = {str(k): str(v) for k, v in env_override.items()} if env_override else {}
         self.env_fallback: Dict[str, str] = {str(k): str(v) for k, v in env_fallback.items()} if env_fallback else {}
 
@@ -433,10 +546,42 @@ class PackageConfig:
         if not isinstance(self.hooks, PackageHooks):
             raise TypeError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
         self.hooks.validate(self.name)
+        if not isinstance(self.requirements, PackageRequirements):
+            raise TypeError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
         if not isinstance(self.env_override, dict):
             raise TypeError(f"env_override must be a dictionary for package '{self.name}'.")
         if not isinstance(self.env_fallback, dict):
             raise TypeError(f"env_fallback must be a dictionary for package '{self.name}'.")
+
+    def evaluate_requirements(
+        self,
+        workspace_config: WorkspaceConfig,
+        no_hooks: bool = False
+    ) -> Tuple[bool, Optional[str]]:
+        """Evaluates declarative requirements and dynamic probe hooks for this package.
+
+        Returns:
+            Tuple of (is_satisfied: bool, failure_reason: Optional[str]).
+        """
+        # 1. Declarative requirements check
+        is_satisfied, reason = self.requirements.check_requirements()
+        if not is_satisfied:
+            return False, reason
+
+        # 2. Dynamic probe hook check (if configured and hooks enabled)
+        if self.hooks.probe is not None and not no_hooks:
+            src_pkg_dir = workspace_config.source_path / self.name
+            with self.package_envs(workspace_config):
+                res = self.hooks.trigger_probe(
+                    package_dir=src_pkg_dir,
+                    workspace_config=workspace_config,
+                    no_hooks=no_hooks
+                )
+            if res.status != "SUCCESS" or res.exit_code != 0:
+                err_detail = (res.stderr or "").strip() or (res.stdout or "").strip() or f"exit code {res.exit_code}"
+                return False, f"Probe hook failed ({err_detail})"
+
+        return True, None
 
     def is_package_config_file(self, file_path: Path) -> bool:
         """Checks if the given file path is a package config file, its local override, or their template versions."""
@@ -565,7 +710,7 @@ class PackageConfig:
                   source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         # Error for unknown top-level sections
-        known_top_sections = {"package", "hooks", "env"}
+        known_top_sections = {"package", "hooks", "env", "requirements"}
         for key in data:
             if key not in known_top_sections:
                 name_str = f" for package '{package_name}'" if package_name else ""
@@ -588,7 +733,8 @@ class PackageConfig:
             "install_method",
             "target_directory",
             "sudo",
-            "fully_controlled_dirs"
+            "fully_controlled_dirs",
+            "requirements"
         } | {f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES}
         for key in package_data:
             if key not in known_package_keys:
@@ -600,6 +746,10 @@ class PackageConfig:
             data.get("hooks", {}),
             package_name=str(name)
         )
+
+        # Parse declarative requirements ([package.requirements] or top-level [requirements])
+        req_data = package_data.get("requirements") or data.get("requirements") or {}
+        requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
 
         # Parse package environment variables ([env.override], [env.overwrite], [env.fallback])
         override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
@@ -642,6 +792,7 @@ class PackageConfig:
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
             hooks=hooks,
+            requirements=requirements,
             env_override=override_map,
             env_fallback=fallback_map
         )

@@ -268,6 +268,16 @@ def render_package(
 
     pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
 
+    # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
+    is_satisfied, failure_reason = pkg_config.evaluate_requirements(workspace_config, no_hooks=no_hooks)
+    if not is_satisfied:
+        logger.info(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
+        return PackageRenderResult(
+            package=package_name,
+            status="SKIPPED",
+            skip_reason=failure_reason
+        )
+
     with pkg_config.package_envs(workspace_config):
         return render_package_files(
             workspace_config=workspace_config,

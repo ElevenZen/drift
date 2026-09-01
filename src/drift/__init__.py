@@ -35,6 +35,8 @@ from .constants import (
 )
 from .package_config import (
     PackageConfig,
+    PackageHooks,
+    PackageRequirements,
     load_package_config_rendered,
     load_package_config_from_source_dir,
 )

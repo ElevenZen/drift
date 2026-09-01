@@ -93,6 +93,7 @@ class PackageRenderResult(SerializableModel):
     status: str = "SUCCESS"  # "SUCCESS", "SKIPPED", "FAILED"
     rendered_files: List[str] = field(default_factory=list)
     copied_static_files: List[str] = field(default_factory=list)
+    skip_reason: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -529,6 +530,8 @@ class HookResult(SerializableModel):
     hook_base_dir: Optional[str] = None
     sudo: bool = False
     duration_ms: float = 0.0
+    stdout: Optional[str] = None
+    stderr: Optional[str] = None
     error_message: Optional[str] = None
 
     def __bool__(self) -> bool:

@@ -4,7 +4,7 @@ import logging
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Optional, List, TYPE_CHECKING
+from typing import cast, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
@@ -95,21 +95,18 @@ def execute_hook_script(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
-    cwd: Path
+    cwd: Path,
+    raise_on_error: bool = True
 ) -> HookResult:
     """Executes a hook script with sudo handling, cwd validation, and timeout/error handling.
 
-    This function always returns a successful HookResult (status="SUCCESS") upon completion,
-    or raises an Exception (FileNotFoundError, RuntimeError) if the hook script file is missing,
-    times out, or exits with a non-zero status code.
-
     Returns:
-        HookResult: Structured result with status="SUCCESS", execution duration_ms, exit code,
-            hook path, CWD, and sudo elevation flag.
+        HookResult: Structured result with status ("SUCCESS" or "FAILED"), duration_ms, exit code,
+            hook path, CWD, stdout, stderr, and sudo elevation flag.
 
     Raises:
         FileNotFoundError: If the hook script file does not exist on disk.
-        RuntimeError: If the hook script command times out or exits with a non-zero return code.
+        RuntimeError: If raise_on_error is True and the hook script command times out or exits with a non-zero return code.
     """
     if not hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
@@ -145,12 +142,14 @@ def execute_hook_script(
             hook_path=str(hook_path),
             cwd=str(cwd),
             sudo=use_sudo,
-            duration_ms=duration_ms
+            duration_ms=duration_ms,
+            stdout=proc.stdout if proc else None,
+            stderr=proc.stderr if proc else None
         )
     except subprocess.TimeoutExpired as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
-        stdout_str = e.stdout or ""
-        stderr_str = e.stderr or ""
+        stdout_str = cast(str, e.stdout) or ""
+        stderr_str = cast(str, e.stderr) or ""
         display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
@@ -161,7 +160,22 @@ def execute_hook_script(
         if stderr_str.strip():
             err_msg += f"Stderr:\n{stderr_str.strip()}\n"
         logger.error(err_msg)
-        raise RuntimeError(err_msg) from e
+        if raise_on_error:
+            raise RuntimeError(err_msg) from e
+        return HookResult(
+            command="hook",
+            package=pkg,
+            hook_name=hook_name,
+            status="FAILED",
+            exit_code=124,
+            hook_path=str(hook_path),
+            cwd=str(cwd),
+            sudo=use_sudo,
+            duration_ms=duration_ms,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            error_message=err_msg
+        )
     except subprocess.CalledProcessError as e:
         duration_ms = (time.perf_counter() - start_time) * 1000
         stdout_str = e.stdout or ""
@@ -176,28 +190,40 @@ def execute_hook_script(
         if stderr_str.strip():
             err_msg += f"Stderr:\n{stderr_str.strip()}\n"
         logger.error(err_msg)
-        raise RuntimeError(err_msg) from e
+        if raise_on_error:
+            raise RuntimeError(err_msg) from e
+        return HookResult(
+            command="hook",
+            package=pkg,
+            hook_name=hook_name,
+            status="FAILED",
+            exit_code=e.returncode,
+            hook_path=str(hook_path),
+            cwd=str(cwd),
+            sudo=use_sudo,
+            duration_ms=duration_ms,
+            stdout=stdout_str,
+            stderr=stderr_str,
+            error_message=err_msg
+        )
 
 
-def trigger_pre_source_lifecycle_hook(
+def trigger_package_hook_with_render(
     workspace_config: "WorkspaceConfig",
     package_name: str,
+    hook_name: str,
     pkg_config: Optional[PackageConfig] = None,
     load_envs: bool = False,
     no_hooks: bool = False,
+    raise_on_error: bool = True
 ) -> HookResult:
-    """
-    Executes the pre_source lifecycle hook for a package in the source directory.
+    """Executes a package lifecycle hook in the source directory with automatic template rendering.
 
-    Returns:
-        HookResult detailing execution status ("SUCCESS", "SKIPPED", or "FAILED"), duration, and paths.
-
-    Raises:
-        FileNotFoundError: If a declared hook script file does not exist.
-        RuntimeError: If hook execution fails or times out.
+    If the hook file is located inside the source package directory and matched by a template engine,
+    it is rendered into the render sandbox directory first before execution.
     """
     if no_hooks:
-        return HookResult.skipped(package=package_name, hook_name="pre_source")
+        return HookResult.skipped(package=package_name, hook_name=hook_name)
 
     src_pkg_dir = workspace_config.source_path / package_name
     if not src_pkg_dir.exists() or not src_pkg_dir.is_dir():
@@ -214,30 +240,39 @@ def trigger_pre_source_lifecycle_hook(
             )
         except FileNotFoundError:
             # Package has no drift_package.toml -> no lifecycle hooks configured
-            # It's used for incomplete packages, static packages.
             return HookResult.skipped(
                 package=package_name,
-                hook_name="pre_source",
+                hook_name=hook_name,
                 cwd=src_pkg_dir,
                 hook_base_dir=src_pkg_dir
             )
 
-    if not pkg_config or not pkg_config.hooks.pre_source:
+    hook_file_val = getattr(pkg_config.hooks, hook_name, None) if pkg_config and pkg_config.hooks else None
+    if not hook_file_val:
         return HookResult.skipped(
             package=package_name,
-            hook_name="pre_source",
+            hook_name=hook_name,
             cwd=src_pkg_dir,
             hook_base_dir=src_pkg_dir
         )
 
-    hook_file_path = pkg_config.hooks.pre_source
+    hook_file_path = Path(hook_file_val)
     if hook_file_path.is_absolute():
         nominal_hook_path = hook_file_path
     else:
-        nominal_hook_path = src_pkg_dir / hook_file_path
+        # Locate static file or template matching hook_file_path.name in src_pkg_dir / hook_file_path.parent
+        hook_parent_dir = src_pkg_dir / hook_file_path.parent
+        match_info = workspace_config.find_source_file_for_rendered_names(
+            hook_parent_dir,
+            [hook_file_path.name]
+        )
+        if match_info:
+            nominal_hook_path = match_info.path
+        else:
+            nominal_hook_path = hook_parent_dir / hook_file_path.name
 
     if not nominal_hook_path.exists():
-        err_msg = f"Lifecycle hook file specified for 'pre_source' in package '{package_name}' not found: {nominal_hook_path}"
+        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {nominal_hook_path}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
 
@@ -260,9 +295,10 @@ def trigger_pre_source_lifecycle_hook(
         res = execute_hook_script(
             hook_path=hook_exec_path,
             pkg=package_name,
-            hook_name="pre_source",
+            hook_name=hook_name,
             metadata=pkg_config,
-            cwd=src_pkg_dir
+            cwd=src_pkg_dir,
+            raise_on_error=raise_on_error
         )
         res.hook_base_dir = str(src_pkg_dir)
         return res
@@ -274,12 +310,51 @@ def trigger_pre_source_lifecycle_hook(
         return _execute()
 
 
+def trigger_pre_source_lifecycle_hook(
+    workspace_config: "WorkspaceConfig",
+    package_name: str,
+    pkg_config: Optional[PackageConfig] = None,
+    load_envs: bool = False,
+    no_hooks: bool = False,
+) -> HookResult:
+    """Executes the pre_source lifecycle hook for a package in the source directory."""
+    return trigger_package_hook_with_render(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        hook_name="pre_source",
+        pkg_config=pkg_config,
+        load_envs=load_envs,
+        no_hooks=no_hooks,
+        raise_on_error=True
+    )
+
+
+def trigger_probe_lifecycle_hook(
+    workspace_config: "WorkspaceConfig",
+    package_name: str,
+    pkg_config: Optional[PackageConfig] = None,
+    load_envs: bool = False,
+    no_hooks: bool = False,
+) -> HookResult:
+    """Executes the probe lifecycle hook for a package in the source directory."""
+    return trigger_package_hook_with_render(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        hook_name="probe",
+        pkg_config=pkg_config,
+        load_envs=load_envs,
+        no_hooks=no_hooks,
+        raise_on_error=False
+    )
+
+
 def trigger_package_lifecycle_hook(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
     hook_base_dir: Path,
     cwd: Path,
+    raise_on_error: bool = True,
 ) -> HookResult:
     """Executes a package lifecycle hook script if specified and found.
 
@@ -288,11 +363,11 @@ def trigger_package_lifecycle_hook(
     The `no_hooks` flag is handled upstream in PackageHooks.trigger().
 
     Returns:
-        HookResult detailing execution status ("SUCCESS" or "SKIPPED"), duration, CWD, and script path.
+        HookResult detailing execution status ("SUCCESS", "FAILED", or "SKIPPED"), duration, CWD, and script path.
 
     Raises:
         FileNotFoundError: If the configured hook script file does not exist on disk.
-        RuntimeError: If the hook script execution fails or times out.
+        RuntimeError: If raise_on_error is True and the hook script execution fails or times out.
     """
     hook_file = getattr(metadata.hooks, hook_name, None) if metadata and metadata.hooks else None
     if not hook_file:
@@ -312,7 +387,8 @@ def trigger_package_lifecycle_hook(
         pkg=pkg,
         hook_name=hook_name,
         metadata=metadata,
-        cwd=cwd
+        cwd=cwd,
+        raise_on_error=raise_on_error
     )
     res.hook_base_dir = str(hook_base_dir)
     return res

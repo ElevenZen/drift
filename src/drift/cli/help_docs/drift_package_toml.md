@@ -43,6 +43,14 @@ fully_controlled_dirs = [
     "plugins"
 ]
 
+# Host Requirements & Prerequisites (Declarative pre-flight checks; package is skipped if unmet)
+[package.requirements]
+# os = ["linux"]                     # Allowed OS: "linux", "darwin", "windows", "freebsd"
+# arch = ["x86_64", "aarch64"]        # Allowed Arch: "x86_64", "arm64", "aarch64", "x86"
+# distro = ["arch", "ubuntu"]         # Allowed Linux Distro IDs from /etc/os-release
+# binaries = ["sway", "waybar"]       # Executables required in host $PATH
+# env = ["WAYLAND_DISPLAY"]           # Required environment variables when starting drift
+
 # Package Environment Variables
 
 # Package-level overrides: takes precedence over workspace [env], secrets.env, and system facts (CLI environment still wins).
@@ -59,6 +67,10 @@ fully_controlled_dirs = [
 # Lifecycle Hooks (Optional shell command execution)
 # Timeout in seconds before hook processes are aborted (defaults to 120)
 timeout = 120
+
+# Run pre-flight dynamic requirement probe (Exit 0 = Met, Exit != 0 = Unmet -> package gracefully skipped)
+# Executed from src/ package root in user space (never runs with sudo)
+# probe = "scripts/check_wayland.sh"
 
 # Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
 # Executed from src/ package root (runs in user space, never with sudo)

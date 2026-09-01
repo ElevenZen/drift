@@ -87,6 +87,7 @@ DEFAULT_STOW_IGNORE_CONTENT = (
 )
 
 LIFECYCLE_HOOK_NAMES = (
+    "probe",
     "pre_source",
     "pre_install",
     "post_install",
@@ -285,6 +286,14 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # enable_render = true
 # enable_install = true
 
+# Host Requirements & Prerequisites (Declarative checks; skip package if unmet)
+[package.requirements]
+# os = ["linux"]                # Allowed OS: "linux", "darwin", "windows", "freebsd"
+# arch = ["x86_64", "aarch64"]  # Allowed Arch: "x86_64", "arm64", "aarch64"
+# distro = ["arch", "ubuntu"]   # Allowed Linux Distro IDs
+# binaries = ["git"]            # Required binaries in host $PATH
+# env = ["WAYLAND_DISPLAY"]     # Required environment variables when starting drift
+
 # Package Environment Variables
 [env.override]
 # Highest-priority package variables (overrides workspace configs, secrets, and system facts; CLI environment takes precedence)
@@ -296,6 +305,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 
 # Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
 [hooks]
+# probe          = ""           # Pre-flight requirement check (Exit 0 = Met, Exit != 0 = Unmet)
 # pre_source     = ""
 # post_render    = ""
 # pre_install    = ""
@@ -309,6 +319,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 
 # Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
 [hooks.windows]
+# probe          = ""
 # pre_source     = ""
 # post_render    = ""
 # pre_install    = ""
