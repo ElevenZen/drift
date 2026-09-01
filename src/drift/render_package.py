@@ -42,16 +42,18 @@ def render_or_copy_file(
     package_dir: Path,
     render_pkg_dir: Path,
     workspace_config: WorkspaceConfig,
-    pkg_config: Optional[PackageConfig] = None
+    pkg_config: PackageConfig
 ) -> Tuple[str, bool]:
-    """Renders a single file using a matched engine, or copies it if no engine matches.
+    """Renders a single file using a matched engine, or copies it if no engine matches or rendering is disabled.
 
     Rendered files will have the engine suffix stripped in the output path.
     Returns (relative_dest_path, is_rendered).
     """
     relative_path = file_path.relative_to(package_dir)
     engines = list(workspace_config.render_engine_configs.values())
-    engine: Optional[RenderEngineConfig] = find_engine_for_file(relative_path.as_posix(), engines)
+    engine: Optional[RenderEngineConfig] = None
+    if pkg_config.enable_render:
+        engine = find_engine_for_file(relative_path.as_posix(), engines)
 
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
@@ -105,14 +107,14 @@ def ensure_rendered_file_hook_permissions(
     dest_path: Path,
     dest_rel: str,
     relative_path: Path,
-    pkg_config: Optional[PackageConfig]
+    pkg_config: PackageConfig
 ) -> None:
     """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
 
     Since template rendering and atomic copying already preserve source file mode,
     we only need to check if the file matches a configured lifecycle hook.
     """
-    if sys.platform == "win32" or not pkg_config:
+    if sys.platform == "win32":
         return
 
     configured_hooks = pkg_config.hooks.get_configured_hook_paths()
@@ -134,22 +136,16 @@ def ensure_rendered_file_hook_permissions(
 
 
 def prepare_package_config(package_dir: Path, package_name: str,
-                           workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> Optional[PackageConfig]:
-    """Loads package config and checks if rendering is enabled.
+                           workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> PackageConfig:
+    """Loads package config for rendering/processing.
 
     Since load_package_config_from_source_dir always renders/writes the config file to render_pkg_dir,
     we no longer need to check is_static() or copy it manually here.
     """
-    pkg_config = load_package_config_from_source_dir(
+    return load_package_config_from_source_dir(
         package_dir=package_dir,
         workspace_config=workspace_config
     )
-
-    if not pkg_config.enable_render:
-        logger.info(f"Rendering is disabled for package '{package_name}'. Skipping.")
-        return None
-
-    return pkg_config
 
 
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
@@ -271,11 +267,6 @@ def render_package(
     render_pkg_dir = workspace_config.render_path / package_name
 
     pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
-    if not pkg_config:
-        return PackageRenderResult(
-            package=package_name,
-            status="SKIPPED"
-        )
 
     with pkg_config.package_envs(workspace_config):
         return render_package_files(

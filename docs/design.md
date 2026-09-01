@@ -729,9 +729,9 @@ To enable granular control over modular configurations, the deployment pipeline 
 #### 2. Sandbox Compilation Switch: `drift_package.toml -> enable_render`
 *   **Location**: Package configuration file (`src/<pkg>/drift_package.toml`).
 *   **Affected Phase**: **Primitive 2: Render Packages** (Sandbox Rendering).
-*   **How it works**: Controls whether templates inside `src/` are compiled and output into the `render/` sandbox directory.
-    *   Defaults to `true`. If explicitly set to `false`, the rendering engine skips compiling the package directory entirely.
-    *   This is useful for local static packages where no template processing is required and the developer wants to bypass rendering and installing completely.
+*   **How it works**: Controls whether templates inside `src/` are compiled via template engines when copying into `render/`.
+    *   Defaults to `true`. If explicitly set to `false`, the rendering engine bypasses template compilation and copies all files directly into the `render/` sandbox as static assets.
+    *   This allows static packages to proceed through staging (`install/`) and host deployment without executing template engines.
 
 #### 3. State Promotion Switch: `drift_package.toml -> enable_install`
 *   **Location**: Package configuration file (`src/<pkg>/drift_package.toml`).

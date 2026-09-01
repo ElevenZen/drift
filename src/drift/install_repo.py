@@ -796,6 +796,10 @@ def deploy_package_impl(
     
     # stage-repo will set state to 'staged'.
     pkg_state = state_registry.packages.get(pkg)
+
+    # last_deployed is None if the package has never been deployed successfully before.
+    # thus failed first-time deployment will not count as a successful deployment,
+    # and is_first_time will remain True.
     is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
     
     install_pkg_dir = install_base / pkg

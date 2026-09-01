@@ -641,14 +641,18 @@ class TestRenderPackage(unittest.TestCase):
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), True)
 
     def test_render_package_disabled(self) -> None:
+        """Verifies that enable_render=False copies all files as static assets without template engine compilation."""
         from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
             source_directory=Path("src"),
             render_directory=Path("render"),
+            render_engine_config={
+                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
+            }
         )
 
         pkg_dir = drift_root / "src" / "my_pkg"
@@ -664,14 +668,27 @@ class TestRenderPackage(unittest.TestCase):
         with open(pkg_dir / "static.txt", "w", encoding="utf-8") as f:
             f.write("Static content")
 
-        # Run render_package
-        render_package(workspace_config, pkg_dir)
+        with open(pkg_dir / "config.txt.envst", "w", encoding="utf-8") as f:
+            f.write("Unrendered $VARIABLE")
 
-        # Verify render dir contains only the 'drift_drift_package.toml' (loaded from drift_package.toml) and no other files
-        render_pkg_dir = drift_root / "render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
-        self.assertTrue(render_pkg_dir.exists())
-        rendered_config = parse_toml(render_pkg_dir.read_text(encoding="utf-8"))
+        # Run render_package
+        res = render_package(workspace_config, pkg_dir)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify render dir contains config file, static.txt, and unrendered config.txt.envst
+        render_pkg_dir = drift_root / "render" / "my_pkg"
+        self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).exists())
+        rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), False)
+
+        # Static file copied
+        self.assertTrue((render_pkg_dir / "static.txt").exists())
+        self.assertEqual((render_pkg_dir / "static.txt").read_text(encoding="utf-8"), "Static content")
+
+        # Template was NOT compiled (remains config.txt.envst as static copy)
+        self.assertTrue((render_pkg_dir / "config.txt.envst").exists())
+        self.assertFalse((render_pkg_dir / "config.txt").exists())
+        self.assertEqual((render_pkg_dir / "config.txt.envst").read_text(encoding="utf-8"), "Unrendered $VARIABLE")
 
     def test_render_package_templated_config_package_toml(self) -> None:
         from drift.render_package import render_package
