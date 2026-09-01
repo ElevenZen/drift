@@ -48,7 +48,7 @@ timeout = 15
 
 1. **Script Source**: The probe script is read from the installed package directory in `install/<pkg>/`.
 2. **Working Directory (CWD)**: Executed with the **package's host target directory** as the working directory (`cwd = target_directory`).
-3. **Environment Injection**: Standard package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_install_method`, etc.) are automatically injected.
+3. **Environment Injection**: Standard package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_package_install_method`, etc.) are automatically injected.
 4. **Sudo Privileges**: Health probes always execute in user space without `sudo` elevation for safety and predictability.
 5. **Exit Code Evaluation**:
    - `Exit 0`: Evaluated as **`HEALTHY`**.

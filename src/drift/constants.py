@@ -131,6 +131,14 @@ IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
 
 INITIAL_ENV: List[str] = list(os.environ.keys())
 
+SYSTEM_FACT_KEYS: List[str] = [
+    "drift_os",
+    "drift_arch",
+    "drift_distro",
+    "drift_hostname",
+    "drift_user",
+]
+
 DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 """# =====================================================================
 # drift.local.toml - Machine-Specific Configuration Overrides
@@ -410,5 +418,14 @@ def set_test_mode(enabled: bool, enable_logging: bool = False) -> None:
 
 def in_test_mode() -> bool:
     return IN_TEST_MODE
+
+
+def inject_system_facts() -> None:
+    """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
+    from .host_facts import get_system_facts
+    facts = get_system_facts()
+    for k, v in facts.items():
+        if k not in INITIAL_ENV:
+            os.environ[k] = v
 
 

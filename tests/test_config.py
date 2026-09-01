@@ -1465,7 +1465,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(os.environ.get("drift_package_source_dir"), str(config.source_path / "my_pkg"))
         self.assertEqual(os.environ.get("drift_package_render_dir"), str(config.render_path / "my_pkg"))
         self.assertEqual(os.environ.get("drift_package_install_dir"), str(config.install_path / "my_pkg"))
-        self.assertEqual(os.environ.get("drift_install_method"), "copy")
+        self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
 
         # 2. Unload
         pkg.unload_package_envs(saved)
@@ -1474,7 +1474,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertNotIn("drift_package_source_dir", os.environ)
         self.assertNotIn("drift_package_render_dir", os.environ)
         self.assertNotIn("drift_package_install_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
         # 4. Context manager usage with 'with'
         with pkg.package_envs(config):
@@ -1483,14 +1483,14 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(os.environ.get("drift_package_source_dir"), str(config.source_path / "my_pkg"))
             self.assertEqual(os.environ.get("drift_package_render_dir"), str(config.render_path / "my_pkg"))
             self.assertEqual(os.environ.get("drift_package_install_dir"), str(config.install_path / "my_pkg"))
-            self.assertEqual(os.environ.get("drift_install_method"), "copy")
+            self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
         self.assertNotIn("drift_package_source_dir", os.environ)
         self.assertNotIn("drift_package_render_dir", os.environ)
         self.assertNotIn("drift_package_install_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
     def test_package_envs_resolution_with_custom_workspace_target_and_install_method(self) -> None:
         """Verifies environment variable resolution when workspace target != '~' and package has/has not explicit target."""
@@ -1513,11 +1513,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_inherited")
             self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_inherited")
             self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_inherited")
-            self.assertEqual(os.environ.get("drift_install_method"), "copy")
+            self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
         # 2. Package WITH explicit target_directory and explicit install_method
         pkg_overridden = PackageConfig(
@@ -1531,11 +1531,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_overridden")
             self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_overridden")
             self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_overridden")
-            self.assertEqual(os.environ.get("drift_install_method"), "stow")
+            self.assertEqual(os.environ.get("drift_package_install_method"), "stow")
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
         # 3. Package WITH explicit target_directory using home expansion (~)
         pkg_home = PackageConfig(
@@ -1548,10 +1548,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_home")
             self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_home")
             self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_home")
-            self.assertEqual(os.environ.get("drift_install_method"), "copy")  # Inherited copy
+            self.assertEqual(os.environ.get("drift_package_install_method"), "copy")  # Inherited copy
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
     def test_package_source_directory_config(self) -> None:
         """Verifies parsing, defaults, validation, and resolution of source_directory."""
@@ -1589,6 +1590,113 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pkg_escape = PackageConfig(name="escape_pkg", source_directory="../other_pkg")
         with self.assertRaises(ConfigError):
             pkg_escape.get_source_directory_to_render(base_dir)
+
+    def test_package_env_override_and_fallback_parsing(self) -> None:
+        """Verifies parsing of [env.override], [env.overwrite], [env.fallback] and flat [env] tables."""
+        # 1. Parsing [env.override] and [env.fallback]
+        data = {
+            "package": {"name": "test_pkg"},
+            "env": {
+                "override": {"THEME": "catppuccin", "DEBUG": "1"},
+                "fallback": {"FALLBACK_KEY": "default_val"}
+            }
+        }
+        pkg = PackageConfig.from_dict(data, package_name="test_pkg")
+        self.assertEqual(pkg.env_override, {"THEME": "catppuccin", "DEBUG": "1"})
+        self.assertEqual(pkg.env_fallback, {"FALLBACK_KEY": "default_val"})
+
+        # 2. Parsing alias [env.overwrite]
+        data_alias = {
+            "package": {"name": "test_pkg"},
+            "env": {
+                "overwrite": {"THEME": "nord"}
+            }
+        }
+        pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg")
+        self.assertEqual(pkg_alias.env_override, {"THEME": "nord"})
+
+        # 3. Flat [env] keys treated as override
+        data_flat = {
+            "package": {"name": "test_pkg"},
+            "env": {
+                "CUSTOM_KEY": "custom_val"
+            }
+        }
+        pkg_flat = PackageConfig.from_dict(data_flat, package_name="test_pkg")
+        self.assertEqual(pkg_flat.env_override, {"CUSTOM_KEY": "custom_val"})
+
+        # 4. Error on non-dict sub-tables
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict({"package": {}, "env": {"override": "not_a_dict"}}, package_name="err_pkg")
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict({"package": {}, "env": {"fallback": "not_a_dict"}}, package_name="err_pkg")
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict({"package": {}, "env": {"unknown_subtable": {"k": "v"}}}, package_name="err_pkg")
+
+    def test_seven_tier_variable_preemption_order(self) -> None:
+        """Verifies the complete 7-tier environment variable preemption hierarchy."""
+        from drift.constants import set_initial_env, update_initial_env
+        from drift.workspace_config import WorkspaceConfig
+
+        # Setup workspace config
+        workspace_config = WorkspaceConfig(
+            drift_root_path=Path("/test/workspace"),
+        )
+
+        # Base system fact is present
+        os.environ["drift_os"] = "linux"
+        os.environ["GLOBAL_VAR"] = "from_workspace"
+        os.environ["CLI_VAR"] = "from_cli"
+        os.environ["OVERRIDDEN_BY_PACKAGE"] = "from_workspace"
+        os.environ["FALLBACK_TEST"] = "from_workspace"
+
+        # Mark CLI_VAR as coming from CLI invocation
+        set_initial_env(["CLI_VAR"])
+
+        pkg = PackageConfig(
+            name="demo_pkg",
+            env_override={
+                "OVERRIDDEN_BY_PACKAGE": "package_override_value",
+                "CLI_VAR": "attempted_pkg_override",
+            },
+            env_fallback={
+                "FALLBACK_TEST": "fallback_should_not_overwrite",
+                "NEW_FALLBACK_VAR": "fallback_activated",
+            }
+        )
+
+        with pkg.package_envs(workspace_config):
+            # Tier 1: CLI variable wins over package [env.override]
+            self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
+
+            # Tier 2: Package [env.override] wins over workspace
+            self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "package_override_value")
+
+            # Tier 3: Package facts are loaded
+            self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
+            self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "stow")
+
+            # Tier 4: System facts are preserved
+            self.assertEqual(os.environ.get("drift_os"), "linux")
+
+            # Tier 6: Workspace env remains if not overridden
+            self.assertEqual(os.environ.get("GLOBAL_VAR"), "from_workspace")
+
+            # Tier 7: Package fallback does NOT overwrite existing workspace env, but fills new var
+            self.assertEqual(os.environ.get("FALLBACK_TEST"), "from_workspace")
+            self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
+
+        # After context exit: package variables are cleanly restored
+        self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace")
+        self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
+        self.assertNotIn("drift_package_name", os.environ)
+
+        # Cleanup
+        os.environ.pop("GLOBAL_VAR", None)
+        os.environ.pop("CLI_VAR", None)
+        os.environ.pop("OVERRIDDEN_BY_PACKAGE", None)
+        os.environ.pop("FALLBACK_TEST", None)
+        update_initial_env()
 
 
 if __name__ == "__main__":

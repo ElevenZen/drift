@@ -19,17 +19,19 @@ from drift.constants import (
     update_initial_env,
     set_initial_env,
 )
-from drift.workspace_config import (
-    WorkspaceConfig,
-    load_workspace_config,
+from drift.env_utils import (
     load_env_settings,
     unload_env_settings,
     parse_secrets_env,
+    parse_env_file,
+    parse_env_text,
+    env_scope,
+    secrets_env_scope,
 )
-from drift.render_package import (
-    render_package,
-    run_primitive_2_render_packages,
+from drift.workspace_config import (
+    load_workspace_config
 )
+from drift.render_package import run_primitive_2_render_packages
 
 
 class TestLoadEnvSettingsUnit(unittest.TestCase):
@@ -44,72 +46,70 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         os.environ.update(self.original_environ)
 
     def test_load_env_settings_empty(self) -> None:
-        """Verifies that loading empty envs returns None and modifies nothing."""
+        """Verifies that loading empty envs returns empty dict and modifies nothing."""
         result = load_env_settings([])
-        self.assertIsNone(result)
+        self.assertEqual(result, {})
+        result_dict = load_env_settings({})
+        self.assertEqual(result_dict, {})
 
     def test_load_env_settings_overwrite_true(self) -> None:
         """Verifies that overwrite=True (default) updates existing variables and tracks original values."""
         os.environ["TEST_EXISTING"] = "old_value"
         os.environ.pop("TEST_NEW", None)
 
-        envs = [("TEST_EXISTING", "new_value"), ("TEST_NEW", "created_value")]
+        # Test with Dict input
+        envs = {"TEST_EXISTING": "new_value", "TEST_NEW": "created_value"}
         saved_envs = load_env_settings(envs, overwrite=True)
 
-        self.assertIsNotNone(saved_envs)
+        self.assertIsInstance(saved_envs, dict)
         self.assertEqual(os.environ["TEST_EXISTING"], "new_value")
         self.assertEqual(os.environ["TEST_NEW"], "created_value")
 
         # Check saved values
-        saved_dict = dict(saved_envs)
-        self.assertEqual(saved_dict["TEST_EXISTING"], "old_value")
-        self.assertIsNone(saved_dict["TEST_NEW"])
+        self.assertEqual(saved_envs["TEST_EXISTING"], "old_value")
+        self.assertIsNone(saved_envs["TEST_NEW"])
 
     def test_load_env_settings_overwrite_false(self) -> None:
         """Verifies that overwrite=False skips existing environment variables."""
         os.environ["TEST_EXISTING"] = "original_value"
         os.environ.pop("TEST_NEW", None)
 
-        envs = [("TEST_EXISTING", "attempted_overwrite"), ("TEST_NEW", "new_val")]
+        envs = {"TEST_EXISTING": "attempted_overwrite", "TEST_NEW": "new_val"}
         saved_envs = load_env_settings(envs, overwrite=False)
 
-        self.assertIsNotNone(saved_envs)
+        self.assertIsInstance(saved_envs, dict)
         # Existing should NOT be modified
         self.assertEqual(os.environ["TEST_EXISTING"], "original_value")
         # New should be added
         self.assertEqual(os.environ["TEST_NEW"], "new_val")
 
         # saved_envs should only contain TEST_NEW
-        saved_dict = dict(saved_envs)
-        self.assertNotIn("TEST_EXISTING", saved_dict)
-        self.assertIn("TEST_NEW", saved_dict)
+        self.assertNotIn("TEST_EXISTING", saved_envs)
+        self.assertIn("TEST_NEW", saved_envs)
 
     def test_load_env_settings_with_env_keep(self) -> None:
         """Verifies that variables in env_keep are protected from being overwritten."""
         os.environ["TEST_KEPT"] = "keep_me"
         os.environ["TEST_OVERWRITABLE"] = "old_val"
 
-        envs = [("TEST_KEPT", "new_val_1"), ("TEST_OVERWRITABLE", "new_val_2")]
+        envs = {"TEST_KEPT": "new_val_1", "TEST_OVERWRITABLE": "new_val_2"}
         saved_envs = load_env_settings(envs, overwrite=True, env_keep=["TEST_KEPT"])
 
-        self.assertIsNotNone(saved_envs)
         self.assertEqual(os.environ["TEST_KEPT"], "keep_me")
         self.assertEqual(os.environ["TEST_OVERWRITABLE"], "new_val_2")
 
-        saved_dict = dict(saved_envs)
-        self.assertNotIn("TEST_KEPT", saved_dict)
-        self.assertEqual(saved_dict["TEST_OVERWRITABLE"], "old_val")
+        self.assertNotIn("TEST_KEPT", saved_envs)
+        self.assertEqual(saved_envs["TEST_OVERWRITABLE"], "old_val")
 
-    def test_load_env_settings_duplicate_keys_in_input(self) -> None:
-        """Verifies that duplicate keys in env list preserve the true original value."""
+    def test_load_env_settings_duplicate_keys_in_sequence_input(self) -> None:
+        """Verifies that duplicate keys in sequence input preserve the true original value."""
         os.environ["TEST_DUP"] = "initial"
         envs = [("TEST_DUP", "first_change"), ("TEST_DUP", "second_change")]
         saved_envs = load_env_settings(envs, overwrite=True)
 
-        self.assertIsNotNone(saved_envs)
         self.assertEqual(os.environ["TEST_DUP"], "second_change")
         self.assertEqual(len(saved_envs), 1)
-        self.assertEqual(saved_envs[0], ("TEST_DUP", "initial"))
+        self.assertEqual(saved_envs["TEST_DUP"], "initial")
 
         unload_env_settings(saved_envs)
         self.assertEqual(os.environ["TEST_DUP"], "initial")
@@ -119,7 +119,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         os.environ["TEST_RESTORE"] = "before_load"
         os.environ.pop("TEST_POP", None)
 
-        saved = load_env_settings([("TEST_RESTORE", "during_load"), ("TEST_POP", "during_load")])
+        saved = load_env_settings({"TEST_RESTORE": "during_load", "TEST_POP": "during_load"})
         self.assertEqual(os.environ["TEST_RESTORE"], "during_load")
         self.assertEqual(os.environ["TEST_POP"], "during_load")
 
@@ -127,8 +127,24 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         self.assertEqual(os.environ["TEST_RESTORE"], "before_load")
         self.assertNotIn("TEST_POP", os.environ)
 
-        # Unloading None is a no-op
+        # Unloading None or empty dict is a no-op
         unload_env_settings(None)
+        unload_env_settings({})
+
+    def test_parse_env_text_and_file(self) -> None:
+        """Verifies parsing .env format text and files."""
+        text = """
+        # Comment line
+        KEY1=val1
+        KEY2="quoted_val"
+        KEY3='single_quoted'
+        KEY4 = spaced_val
+        """
+        parsed = parse_env_text(text)
+        self.assertEqual(parsed["KEY1"], "val1")
+        self.assertEqual(parsed["KEY2"], "quoted_val")
+        self.assertEqual(parsed["KEY3"], "single_quoted")
+        self.assertEqual(parsed["KEY4"], "spaced_val")
 
 
 class TestStrictVariablePrecedence(unittest.TestCase):

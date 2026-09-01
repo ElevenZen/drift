@@ -117,22 +117,32 @@ health = "scripts/health_check.ps1"
 > ```
 > This executes the hook with its standard working directory, stage directory context, environment variable injections, and sudo privileges.
 
-## 🌐 Default Package Environment Variables & Precedence
+## 🌐 Package Environment Variables & Preemption Order
+ 
+When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects authoritative host facts and package-specific environment variables:
+ 
+### 🖥️ Auto-Populated System Facts:
+*   **`$drift_os`**: Target OS family (`linux`, `darwin`, `windows`, `freebsd`).
+*   **`$drift_arch`**: Target CPU architecture (`x86_64`, `arm64`, `aarch64`, `x86`).
+*   **`$drift_distro`**: Linux distribution ID or OS identifier (`ubuntu`, `arch`, `debian`, `fedora`, `macos`, `windows`).
+*   **`$drift_hostname`**: Host network hostname.
+*   **`$drift_user`**: Current user login name.
 
-When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_install`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`) and when rendering package template files (e.g. `.envst` templates via `envsubst`), Drift automatically injects the following package-specific environment variables:
-
+### 📦 Package-Specific Facts:
 *   **`$drift_package_name`**: Name / directory name of the package.
 *   **`$drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
 *   **`$drift_package_source_dir`**: Absolute path to the package's source directory (`<drift_root>/src/<pkg>`).
 *   **`$drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`$drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
-*   **`$drift_install_method`**: Resolved deployment method (`stow` or `copy`).
-
-### ⚡ Environment Variable Precedence:
-Package environment variables take the **highest precedence** in Drift and strictly **override all other environment variables**, including:
-1. Host system / CLI environment variables (`os.environ`).
-2. Global workspace environment variables in `drift.toml` (`[env]` table).
-3. Secret variables loaded from `config/secrets.env`.
-
-*(Note: These variables are loaded into the environment after the package configuration is parsed, so they are available inside templates and hook scripts, but cannot be used inside `drift_package.toml` itself.)*
+*   **`$drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
+ 
+### ⚡ Seven-Tier Variable Preemption Order:
+When rendering package templates and running hook scripts, variables resolve in the following strict order (highest priority wins):
+1. **Host Shell / CLI Variables**: Explicit user environment variables from invocation.
+2. **`[env.override]` in Package Config**: Package-enforced overrides (`src/<pkg>/drift_package.toml`).
+3. **`drift_package_*` Package Facts**: Authoritative package paths, target directory, install method.
+4. **`drift_*` System Facts**: Authoritative host OS, architecture, distro, hostname, user.
+5. **`secrets` in Workspace**: Loaded from `config/secrets.env` / Secret Provider.
+6. **`[env]` in Workspace Config**: Shared defaults from `config/drift.toml` / `drift.local.toml`.
+7. **`[env.fallback]` in Package Config**: Package defaults used only when unset by upper tiers.
 

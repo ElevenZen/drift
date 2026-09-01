@@ -14,6 +14,7 @@ from drift.constants import (
     GLOBAL_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
+    INTERNAL_RENDER_COMMAND,
 )
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
 from drift.render_core import render_template, render_template_to_file, RenderError
@@ -1178,11 +1179,11 @@ class TestRenderPackage(unittest.TestCase):
         # 1. Parse secrets file
         secrets = parse_secrets_env(self.drift_root)
         self.assertEqual(len(secrets), 2)
-        self.assertEqual(secrets[0], ("MY_SECRET_VAR", "secret_value"))
-        self.assertEqual(secrets[1], ("PRE_EXISTING_SECRET", "new_secret_value"))
+        self.assertEqual(secrets["MY_SECRET_VAR"], "secret_value")
+        self.assertEqual(secrets["PRE_EXISTING_SECRET"], "new_secret_value")
 
         # 2. Load env settings
-        saved_envs = cast(List[Tuple[str, Union[str, None]]], load_env_settings(secrets))
+        saved_envs = load_env_settings(secrets)
         self.assertIsNotNone(saved_envs)
         self.assertEqual(len(saved_envs), 2)
 
@@ -1344,7 +1345,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertIn("failed with exit code 1", cast(str, res.error_message))
 
     def test_default_package_envs_available_in_templates(self) -> None:
-        """Verifies drift_package_name, drift_package_target_dir, and drift_install_method are available in templates."""
+        """Verifies drift_package_name, drift_package_target_dir, and drift_package_install_method are available in templates."""
         if not shutil.which("envsubst"):
             self.skipTest("envsubst is not available")
 
@@ -1379,7 +1380,7 @@ class TestRenderPackage(unittest.TestCase):
 
         template_file = pkg_dir / "config.envst.json"
         template_file.write_text(
-            '{"name": "$drift_package_name", "target": "$drift_package_target_dir", "method": "$drift_install_method"}',
+            '{"name": "$drift_package_name", "target": "$drift_package_target_dir", "method": "$drift_package_install_method"}',
             encoding="utf-8"
         )
 
@@ -1396,7 +1397,7 @@ class TestRenderPackage(unittest.TestCase):
         # Ensure envs are cleaned up after rendering
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
     def test_render_input_template_command_failure_disables_engine(self) -> None:
         """Tests that when an input template render command fails (e.g. command not found), the engine is disabled."""
@@ -1860,6 +1861,50 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             render_package(workspace_config, pkg_src_dir)
         self.assertIn("cannot render template", str(ctx.exception))
         self.assertIn(".drift_ignore", str(ctx.exception))
+
+    def test_package_config_template_renders_with_drift_package_name_and_host_facts(self) -> None:
+        """Verifies drift_package_name and host facts ($drift_os) are available when rendering drift_package.envst.toml."""
+        from drift.package_config import load_package_config_from_source_dir
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            render_engine_config={
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command=INTERNAL_RENDER_COMMAND
+                )
+            }
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "my_templated_pkg"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write drift_package.envst.toml using $drift_package_name and $drift_os
+        (pkg_src_dir / "drift_package.envst.toml").write_text("""
+        [package]
+        name = "$drift_package_name"
+        target_directory = "/custom/$drift_package_name"
+
+        [env.override]
+        RESOLVED_OS = "$drift_os"
+        """, encoding="utf-8")
+
+        pkg_config = load_package_config_from_source_dir(pkg_src_dir, workspace_config)
+        self.assertEqual(pkg_config.name, "my_templated_pkg")
+        self.assertEqual(str(pkg_config.target_directory), "/custom/my_templated_pkg")
+        self.assertIn("RESOLVED_OS", pkg_config.env_override)
+        self.assertEqual(pkg_config.env_override["RESOLVED_OS"], os.environ.get("drift_os"))
+
+        # Verify drift_package_name is cleanly unloaded after config loading
+        self.assertNotIn("drift_package_name", os.environ)
 
 
 if __name__ == "__main__":

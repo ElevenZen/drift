@@ -7,7 +7,7 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union, Set
+from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union, Set, Mapping
 from .toml_utils import parse_toml, merge_toml, dump_toml
 
 from .constants import (
@@ -321,6 +321,32 @@ class PackageHooks:
                     )
 
 
+def parse_package_env_tables(env_data: Any, package_name: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Parses package environment configuration tables into (override_map, fallback_map)."""
+    override_map: Dict[str, str] = {}
+    fallback_map: Dict[str, str] = {}
+    if isinstance(env_data, dict):
+        for k, v in env_data.items():
+            if k in ("override", "overwrite"):
+                if not isinstance(v, dict):
+                    raise ConfigError(f"[env.{k}] must be a table of key-value pairs for package '{package_name}'.")
+                for sub_k, sub_v in v.items():
+                    override_map[str(sub_k)] = str(sub_v)
+            elif k == "fallback":
+                if not isinstance(v, dict):
+                    raise ConfigError(f"[env.fallback] must be a table of key-value pairs for package '{package_name}'.")
+                for sub_k, sub_v in v.items():
+                    fallback_map[str(sub_k)] = str(sub_v)
+            else:
+                if isinstance(v, dict):
+                    raise ConfigError(f"Unknown sub-table [env.{k}] for package '{package_name}'.")
+                override_map[str(k)] = str(v)
+    elif env_data:
+        raise ConfigError(f"[env] section must be a table for package '{package_name}'.")
+
+    return override_map, fallback_map
+
+
 @dataclass
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
@@ -357,6 +383,8 @@ class PackageConfig:
         sudo: bool = False,
         fully_controlled_dirs: Optional[List[Path]] = None,
         hooks: Optional[PackageHooks] = None,
+        env_override: Optional[Dict[str, str]] = None,
+        env_fallback: Optional[Dict[str, str]] = None,
     ) -> None:
         self.name = name
         self.source_files = source_files if source_files is not None else []
@@ -370,6 +398,8 @@ class PackageConfig:
         self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
         self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
+        self.env_override: Dict[str, str] = {str(k): str(v) for k, v in env_override.items()} if env_override else {}
+        self.env_fallback: Dict[str, str] = {str(k): str(v) for k, v in env_fallback.items()} if env_fallback else {}
 
     def validate(self) -> None:
         """Validates configuration values."""
@@ -403,6 +433,10 @@ class PackageConfig:
         if not isinstance(self.hooks, PackageHooks):
             raise TypeError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
         self.hooks.validate(self.name)
+        if not isinstance(self.env_override, dict):
+            raise TypeError(f"env_override must be a dictionary for package '{self.name}'.")
+        if not isinstance(self.env_fallback, dict):
+            raise TypeError(f"env_fallback must be a dictionary for package '{self.name}'.")
 
     def is_package_config_file(self, file_path: Path) -> bool:
         """Checks if the given file path is a package config file, its local override, or their template versions."""
@@ -448,8 +482,14 @@ class PackageConfig:
         self,
         workspace_config: WorkspaceConfig,
         overwrite: bool = True
-    ) -> Optional[List[Tuple[str, Optional[str]]]]:
-        """Loads default package-specific environment variables into os.environ.
+    ) -> Dict[str, Optional[str]]:
+        """Loads package-specific environment variables into os.environ across tiers.
+
+        Preemption order within package scope:
+        - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
+        - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
+        - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
+        - Tier 7: Package [env.fallback] (fills unset blanks only)
 
         Variables loaded:
             drift_package_name: Name of the package (directory name).
@@ -457,11 +497,14 @@ class PackageConfig:
             drift_package_source_dir: Absolute path to the package's source directory in workspace.
             drift_package_render_dir: Absolute path to the package's compiled sandbox directory.
             drift_package_install_dir: Absolute path to the package's state database directory.
-            drift_install_method: Resolved install method ('stow' or 'copy').
+            drift_package_install_method: Resolved install method ('stow' or 'copy').
 
         Returns:
-            A list of (key, original_value) tuples for modified variables.
+            A snapshot dictionary mapping modified keys to their original values.
         """
+        from .constants import INITIAL_ENV
+        from .env_utils import load_env_settings
+
         target_dir = self.get_target_directory(workspace_config)
         target_dir_str = str(target_dir)
         install_method_str = self.get_install_method(workspace_config)
@@ -469,22 +512,39 @@ class PackageConfig:
         render_dir_str = str(workspace_config.render_path / self.name)
         install_dir_str = str(workspace_config.install_path / self.name)
 
-        envs = [
-            ("drift_package_name", self.name),
-            ("drift_package_target_dir", target_dir_str),
-            ("drift_package_source_dir", source_dir_str),
-            ("drift_package_render_dir", render_dir_str),
-            ("drift_package_install_dir", install_dir_str),
-            ("drift_install_method", install_method_str),
-        ]
-        return load_env_settings(envs, overwrite=overwrite)
+        pkg_facts = {
+            "drift_package_name": self.name,
+            "drift_package_target_dir": target_dir_str,
+            "drift_package_source_dir": source_dir_str,
+            "drift_package_render_dir": render_dir_str,
+            "drift_package_install_dir": install_dir_str,
+            "drift_package_install_method": install_method_str,
+        }
+
+        saved_envs: Dict[str, Optional[str]] = {}
+
+        # 1. Tier 7: Load env_fallback without overwrite (only filling unset blanks)
+        if self.env_fallback:
+            for k, v in load_env_settings(self.env_fallback, overwrite=False).items():
+                saved_envs.setdefault(k, v)
+
+        # 2. Tier 3: Load package facts with overwrite enabled (preserving INITIAL_ENV)
+        for k, v in load_env_settings(pkg_facts, overwrite=True, env_keep=INITIAL_ENV).items():
+            saved_envs.setdefault(k, v)
+
+        # 3. Tier 2: Load env_override with overwrite enabled (preserving INITIAL_ENV)
+        if self.env_override:
+            for k, v in load_env_settings(self.env_override, overwrite=True, env_keep=INITIAL_ENV).items():
+                saved_envs.setdefault(k, v)
+
+        return saved_envs
 
     def unload_package_envs(
         self,
-        original_envs: Optional[List[Tuple[str, Optional[str]]]]
+        original_envs: Optional[Mapping[str, Optional[str]]]
     ) -> None:
-        """Restores original environment variables using the list returned by load_package_envs."""
-        from .workspace_config import unload_env_settings
+        """Restores original environment variables using the snapshot returned by load_package_envs."""
+        from .env_utils import unload_env_settings
         unload_env_settings(original_envs)
 
     @contextmanager
@@ -505,7 +565,7 @@ class PackageConfig:
                   source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         # Error for unknown top-level sections
-        known_top_sections = {"package", "hooks"}
+        known_top_sections = {"package", "hooks", "env"}
         for key in data:
             if key not in known_top_sections:
                 name_str = f" for package '{package_name}'" if package_name else ""
@@ -513,7 +573,8 @@ class PackageConfig:
 
         package_data = data.get("package", {})
         hooks_data = data.get("hooks", {})
-        
+        env_data = data.get("env", {})
+
         name = package_name
         if not name:
             raise ValueError("Package name must be provided when constructing PackageConfig.")
@@ -539,6 +600,9 @@ class PackageConfig:
             data.get("hooks", {}),
             package_name=str(name)
         )
+
+        # Parse package environment variables ([env.override], [env.overwrite], [env.fallback])
+        override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
 
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
@@ -577,7 +641,9 @@ class PackageConfig:
             target_directory_windows=target_dir_windows,
             sudo=bool(package_data.get("sudo", False)),
             fully_controlled_dirs=[Path(d) for d in fcd],
-            hooks=hooks
+            hooks=hooks,
+            env_override=override_map,
+            env_fallback=fallback_map
         )
         if source_files:
             config.source_files = [x for x in source_files if isinstance(x, Path)]
@@ -671,19 +737,23 @@ def render_or_load_toml(
         temp_path_obj = Path(temp_path)
         os.close(fd) # Close immediately so render_template_to_file can write to it safely
 
-        try:
-            from .render_core import render_template_to_file
-            render_template_to_file(
-                engine_config=engine,
-                drift_root=workspace_config.drift_root,
-                template_file_path=info.path,
-                output_file_path=temp_path_obj
-            )
-            content = temp_path_obj.read_text(encoding="utf-8")
-            data = parse_toml(content)
-        finally:
-            if temp_path_obj.exists():
-                temp_path_obj.unlink()
+        from .constants import INITIAL_ENV
+        from .env_utils import env_scope
+
+        with env_scope({"drift_package_name": package_name}, overwrite=True, env_keep=INITIAL_ENV):
+            try:
+                from .render_core import render_template_to_file
+                render_template_to_file(
+                    engine_config=engine,
+                    drift_root=workspace_config.drift_root,
+                    template_file_path=info.path,
+                    output_file_path=temp_path_obj
+                )
+                content = temp_path_obj.read_text(encoding="utf-8")
+                data = parse_toml(content)
+            finally:
+                if temp_path_obj.exists():
+                    temp_path_obj.unlink()
 
         return data
 

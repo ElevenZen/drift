@@ -509,7 +509,7 @@ class TestInstallRepo(unittest.TestCase):
                 self.assertFalse(bool(hook_script.stat().st_mode & 0o111))
 
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
-        """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_install_method in env."""
+        """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_package_install_method in env."""
         from drift.install_repo import deploy_package_impl
         from drift.state_registry import StateRegistry
 
@@ -540,7 +540,7 @@ class TestInstallRepo(unittest.TestCase):
         def mock_run_cmd(cmd, **kwargs):
             captured_envs["drift_package_name"] = os.environ.get("drift_package_name")
             captured_envs["drift_package_target_dir"] = os.environ.get("drift_package_target_dir")
-            captured_envs["drift_install_method"] = os.environ.get("drift_install_method")
+            captured_envs["drift_package_install_method"] = os.environ.get("drift_package_install_method")
             from unittest.mock import MagicMock
             res = MagicMock()
             res.returncode = 0
@@ -560,12 +560,12 @@ class TestInstallRepo(unittest.TestCase):
         # Verifies workspace_config default target directory was properly passed and not clobbered
         self.assertEqual(captured_envs.get("drift_package_name"), pkg)
         self.assertEqual(captured_envs.get("drift_package_target_dir"), str(Path(self.system_target_dir).expanduser()))
-        self.assertEqual(captured_envs.get("drift_install_method"), "copy")
+        self.assertEqual(captured_envs.get("drift_package_install_method"), "copy")
 
         # Confirm envs were unloaded cleanly
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
-        self.assertNotIn("drift_install_method", os.environ)
+        self.assertNotIn("drift_package_install_method", os.environ)
 
     def test_install_copy_respects_ignore(self) -> None:
         """Verifies that 'copy' installation method respects .drift_ignore patterns."""

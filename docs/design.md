@@ -375,12 +375,15 @@ When Drift loads the workspace configuration, `render_envst_load_toml` automatic
 #### Private Dotenv Vault: `config/secrets.env`
 To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.
 
-1. **Strict Variable Precedence**:
-   During template parsing and compiling, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
-   - **Package Environment (`drift_package_name`, `drift_package_target_dir`, `drift_install_method`, etc.)**: Dynamic package attributes loaded via `PackageConfig.package_envs()`. **Package environment variables have the absolute highest precedence and override all other layers.**
-   - **Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
-   - **Global Workspace Environment (`[env]` table in `drift.toml`)**: Shared, non-sensitive environment defaults.
-   - **System Host / CLI Environment**: Base host-level environment variables (e.g. active shell exports in `os.environ`).
+1. **Strict 7-Tier Variable Precedence**:
+   During template parsing and hook execution, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
+   - **Tier 1 - Host Shell / CLI Environment**: Active environment variables provided at invocation context (`os.environ`).
+   - **Tier 2 - Package `[env.override]`**: Package-enforced configuration overrides defined in `src/<pkg>/drift_package.toml`.
+   - **Tier 3 - Package Facts (`drift_package_*`)**: Dynamic attributes (`drift_package_name`, `drift_package_target_dir`, `drift_package_install_method`, etc.).
+   - **Tier 4 - System Facts (`drift_*`)**: Auto-populated host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+   - **Tier 5 - Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
+   - **Tier 6 - Global Workspace Environment (`[env]` table in `drift.toml`)**: Shared, non-sensitive environment defaults.
+   - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
 
 2. **Transient, Clean-Room Isolation**:
    To prevent credentials from leaking to other processes, secrets are loaded with transient isolation:
@@ -587,14 +590,18 @@ After parsing a package's configuration, the drift engine dynamically loads pack
 *   **`drift_package_source_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
 *   **`drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
-*   **`drift_install_method`**: Resolved deployment method (`stow` or `copy`).
+*   **`drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
 
 > [!IMPORTANT]
 > **Environment Variable Precedence & Overrides**:
-> Package environment variables have the **highest precedence** in Drift. When loaded, they strictly **override all other environment variables**, including:
+> Variables within package operations follow the strict 7-tier precedence hierarchy:
 > 1. Host shell / CLI environment variables (`os.environ`).
-> 2. Global workspace environment variables defined in `config/drift.toml` (`[env]` table).
-> 3. Secret variables loaded from `config/secrets.env`.
+> 2. Package `[env.override]` overrides.
+> 3. Package facts (`drift_package_*`).
+> 4. Host facts (`drift_*`).
+> 5. Secret variables loaded from `config/secrets.env`.
+> 6. Global workspace environment variables in `config/drift.toml` (`[env]` table).
+> 7. Package `[env.fallback]` defaults.
 >
 > This guarantees that templates and hook scripts always receive the exact, authoritative package attributes regardless of any external or global environment definitions.
 

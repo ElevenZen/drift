@@ -3,8 +3,15 @@ from .toml_utils import parse_toml
 from .workspace_config import (
     WorkspaceConfig,
     load_workspace_config,
+)
+from .env_utils import (
     load_env_settings,
     unload_env_settings,
+    env_scope,
+    secrets_env_scope,
+    parse_secrets_env,
+    parse_env_file,
+    parse_env_text,
 )
 from .constants import (
     CONFIG_DIR_NAME,
@@ -21,6 +28,8 @@ from .constants import (
     get_default_mustache_content,
     get_default_jinja2_content,
     INITIAL_ENV,
+    SYSTEM_FACT_KEYS,
+    inject_system_facts,
     update_initial_env,
     set_initial_env,
 )

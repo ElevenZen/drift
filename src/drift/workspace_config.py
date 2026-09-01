@@ -15,11 +15,22 @@ from .constants import (
         PACKAGE_CONFIG_FILE_NAME,
         SECRETS_ENV_FILE_NAME,
         INITIAL_ENV,
+        SYSTEM_FACT_KEYS,
+        inject_system_facts,
         INTERNAL_RENDER_COMMAND,
 )
 from .toml_utils import parse_toml, merge_toml
 from .exceptions import ConfigError
 from .file_utils import expand_user_and_env
+from .env_utils import (
+    parse_env_text,
+    parse_env_file,
+    parse_secrets_env,
+    load_env_settings,
+    unload_env_settings,
+    env_scope,
+    secrets_env_scope,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -507,6 +518,9 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     drift_root_path = Path(drift_root_path).resolve()
     file_path = drift_root_path / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
 
+    # Ensure system facts are present before rendering workspace config
+    inject_system_facts()
+
     main_dict = render_envst_load_toml(file_path)
     if main_dict is None:
         raise ConfigError(
@@ -523,10 +537,11 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
         logger.debug(f"Loaded workspace config override from '{local_path}'")
         combined_dict = merge_toml(main_dict, local_dict)
 
-    # Load and apply [env] variables to os.environ immediately
+    # Load and apply [env] variables to os.environ immediately (preserving CLI envs and system facts)
     env_dict = combined_dict.get("env", {})
     if isinstance(env_dict, dict):
-        load_env_settings(list(env_dict.items()), overwrite=False, env_keep=INITIAL_ENV)
+        protected_keys = set(INITIAL_ENV) | set(SYSTEM_FACT_KEYS)
+        load_env_settings(env_dict, overwrite=False, env_keep=protected_keys)
 
     try:
         return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
@@ -534,114 +549,5 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
         raise
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid workspace configuration in '{file_path}': {e}") from e
-
-
-def parse_secrets_env(drift_root: Path) -> List[Tuple[str, str]]:
-    """Reads and parses the config/secrets.env file.
-
-    Returns a list of (key, value) tuples representing the parsed secrets.
-    """
-    secrets_file = drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME
-    if not secrets_file.exists():
-        return []
-
-    try:
-        content = secrets_file.read_text(encoding="utf-8")
-    except Exception as e:
-        logger.warning(f"Failed to read secrets file at '{secrets_file}': {e}")
-        return []
-
-    parsed_secrets = []
-    for line in content.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            k, v = line.split("=", 1)
-            k = k.strip()
-            v = v.strip()
-            # Strip quotes
-            if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
-                v = v[1:-1]
-            if (k.startswith('"') and k.endswith('"')) or (k.startswith("'") and k.endswith("'")):
-                k = k[1:-1]
-            parsed_secrets.append((k, v))
-    return parsed_secrets
-
-
-def load_env_settings(
-    envs: List[Tuple[str, str]],
-    overwrite: bool = True,
-    env_keep: Optional[List[str]] = None,
-) -> Optional[List[Tuple[str, Optional[str]]]]:
-    """Loads a list of environment settings (key, value) into os.environ.
-
-    Args:
-        envs: List of (key, value) tuples to load.
-        overwrite: If True, overwrite existing keys in os.environ (unless in env_keep).
-                   If False, do not overwrite any keys already in os.environ.
-        env_keep: Optional list of keys that must NOT be overwritten.
-
-    Returns:
-        A list of (key, original_value) for modified variables, or None if no envs were modified.
-    """
-    if not envs:
-        return None
-
-    keep_set = set(env_keep) if env_keep is not None else set()
-    original_envs: List[Tuple[str, Optional[str]]] = []
-    modified_keys = set()
-
-    for k, v in envs:
-        if k in keep_set:
-            logger.debug(f"Environment variable skipped (in env_keep): {k}")
-            continue
-        if not overwrite and k in os.environ:
-            logger.debug(f"Environment variable skipped (already set and overwrite=False): {k}")
-            continue
-
-        if k not in modified_keys:
-            original_envs.append((k, os.environ.get(k)))
-            modified_keys.add(k)
-        os.environ[k] = v
-        logger.debug(f"Environment variable loaded: {k}={v}")
-
-    return original_envs if original_envs else None
-
-
-def unload_env_settings(original_envs: Optional[List[Tuple[str, Optional[str]]]]) -> None:
-    """Restores the original environment values using the list returned by load_env_settings."""
-    if original_envs is None:
-        return
-
-    for k, original_val in original_envs:
-        if original_val is None:
-            os.environ.pop(k, None)
-            logger.debug(f"Environment variable unloaded: popped {k}")
-        else:
-            os.environ[k] = original_val
-            logger.debug(f"Environment variable unloaded: restored {k}={original_val}")
-
-
-@contextmanager
-def env_scope(
-    envs: List[Tuple[str, str]],
-    overwrite: bool = True,
-    env_keep: Optional[List[str]] = None,
-) -> Iterator[None]:
-    """Context manager for loading and unloading environment settings."""
-    saved_envs = load_env_settings(envs, overwrite=overwrite, env_keep=env_keep)
-    try:
-        yield
-    finally:
-        unload_env_settings(saved_envs)
-
-
-@contextmanager
-def secrets_env_scope(drift_root: Path) -> Iterator[None]:
-    """Context manager for loading secrets from secrets.env into os.environ."""
-    secrets = parse_secrets_env(drift_root)
-    with env_scope(secrets, overwrite=True, env_keep=INITIAL_ENV):
-        yield
 
 
