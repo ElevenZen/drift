@@ -7,7 +7,7 @@ import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Iterator
+from typing import Dict, List, Optional, Tuple, Iterator, Union
 
 from .constants import (
         CONFIG_DIR_NAME,
@@ -108,17 +108,40 @@ class WorkspaceConfig:
     default_install_method: str = "stow"
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
-    render_engine_config: Dict[str, RenderEngineConfig] = field(default_factory=dict)
+    render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
 
-    def __post_init__(self) -> None:
-        """Coerces any string path fields to pathlib.Path objects for absolute safety."""
-        self.drift_root_path = Path(self.drift_root_path)
-        self.source_directory = Path(self.source_directory)
-        self.render_directory = Path(self.render_directory)
-        self.install_directory = Path(self.install_directory)
-        self.backup_directory = Path(self.backup_directory)
-        self.default_target_directory = expand_user_and_env(self.default_target_directory)
+    def __init__(
+        self,
+        drift_root_path: Union[Path, str] = Path("."),
+        source_directory: Union[Path, str] = Path("src"),
+        render_directory: Union[Path, str] = Path("render"),
+        install_directory: Union[Path, str] = Path("install"),
+        backup_directory: Union[Path, str] = Path("backup"),
+        default_target_directory: Union[Path, str] = Path("~"),
+        default_install_method: str = "stow",
+        packages_enable: Optional[Dict[str, bool]] = None,
+        packages_enable_default: bool = False,
+        render_engine_configs: Optional[Dict[str, RenderEngineConfig]] = None,
+        env: Optional[Dict[str, str]] = None,
+        render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
+    ) -> None:
+        self.drift_root_path = Path(drift_root_path)
+        self.source_directory = Path(source_directory)
+        self.render_directory = Path(render_directory)
+        self.install_directory = Path(install_directory)
+        self.backup_directory = Path(backup_directory)
+        self.default_target_directory = expand_user_and_env(Path(default_target_directory))
+        self.default_install_method = default_install_method
+        self.packages_enable = packages_enable if packages_enable is not None else {}
+        self.packages_enable_default = packages_enable_default
+        if render_engine_configs is not None:
+            self.render_engine_configs = render_engine_configs
+        elif render_engine_config is not None:
+            self.render_engine_configs = render_engine_config
+        else:
+            self.render_engine_configs = {}
+        self.env = env if env is not None else {}
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -142,11 +165,11 @@ class WorkspaceConfig:
             raise TypeError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
             raise TypeError("packages_enable_default must be a boolean.")
-        if not isinstance(self.render_engine_config, dict):
-            raise TypeError("render_engine_config must be a dictionary.")
-        for _, v in self.render_engine_config.items():
+        if not isinstance(self.render_engine_configs, dict):
+            raise TypeError("render_engine_configs must be a dictionary.")
+        for _, v in self.render_engine_configs.items():
             if not isinstance(v, RenderEngineConfig):
-                raise TypeError("render_engine_config values must be RenderEngineConfig instances.")
+                raise TypeError("render_engine_configs values must be RenderEngineConfig instances.")
             v.validate()
         if not isinstance(self.env, dict):
             raise TypeError("env must be a dictionary.")
@@ -187,9 +210,13 @@ class WorkspaceConfig:
         return self.packages_enable
 
     @property
-    def render_engine_configs(self) -> Dict[str, RenderEngineConfig]:
-        """Alias property for render_engine_config to support backward compatibility."""
-        return self.render_engine_config
+    def render_engine_config(self) -> Dict[str, RenderEngineConfig]:
+        """Alias property for render_engine_configs to support backward compatibility."""
+        return self.render_engine_configs
+
+    @render_engine_config.setter
+    def render_engine_config(self, value: Dict[str, RenderEngineConfig]) -> None:
+        self.render_engine_configs = value
 
     @classmethod
     def get_package_names_from_dir(cls, custom_dir: Path) -> List[str]:
@@ -436,14 +463,14 @@ class WorkspaceConfig:
 
         # Parse render engines configurations under [render.*]
         render_data = data.get("render", {})
-        render_engine_config = {}
+        render_engine_configs = {}
         known_render_keys = {"input_file", "suffix", "render_command"}
         for name, config_dict in render_data.items():
             if isinstance(config_dict, dict):
                 for key in config_dict:
                     if key not in known_render_keys:
                         raise ConfigError(f"Unknown option under render.{name}: '{key}'")
-                render_engine_config[name] = RenderEngineConfig(
+                render_engine_configs[name] = RenderEngineConfig(
                     name=name,
                     input_file=Path(config_dict.get("input_file", "")),
                     suffix=str(config_dict.get("suffix", "")),
@@ -470,7 +497,7 @@ class WorkspaceConfig:
             default_install_method=str(workspace_data.get("default_install_method", "stow")),
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
-            render_engine_config=render_engine_config,
+            render_engine_configs=render_engine_configs,
             env=env,
         )
         config.validate()
