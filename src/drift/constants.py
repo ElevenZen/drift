@@ -285,6 +285,15 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # enable_render = true
 # enable_install = true
 
+# Package Environment Variables
+[env.override]
+# Highest-priority package variables (overrides workspace configs, secrets, and system facts; CLI environment takes precedence)
+# SAMPLE_OVERRIDE_VAR = "custom_value"
+
+[env.fallback]
+# Baseline default values (applied only when a variable is unset across all other scopes)
+# SAMPLE_FALLBACK_VAR = "default_value"
+
 # Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
 [hooks]
 # pre_source     = ""

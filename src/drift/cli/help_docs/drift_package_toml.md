@@ -43,6 +43,18 @@ fully_controlled_dirs = [
     "plugins"
 ]
 
+# Package Environment Variables
+
+# Package-level overrides: takes precedence over workspace [env], secrets.env, and system facts (CLI environment still wins).
+[env.override]
+# APP_THEME = "dark"
+# LOG_LEVEL = "debug"
+
+# Package-level defaults: safely populates variables if they haven't been defined by the host, workspace, or secrets.
+[env.fallback]
+# APP_PORT = "8080"
+# APP_HOST = "localhost"
+
 [hooks]
 # Lifecycle Hooks (Optional shell command execution)
 # Timeout in seconds before hook processes are aborted (defaults to 120)
