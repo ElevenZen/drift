@@ -50,6 +50,7 @@ fully_controlled_dirs = [
 # distro = ["arch", "ubuntu"]         # Allowed Linux Distro IDs from /etc/os-release
 # binaries = ["sway", "waybar"]       # Executables required in host $PATH
 # env = ["WAYLAND_DISPLAY"]           # Required environment variables when starting drift
+# ip = ["192.168.1.0/24"]             # Allowed LAN IPs (exact IP, CIDR subnet e.g. 10.0.0.0/8, or wildcard e.g. 192.168.1.*)
 
 # Package Environment Variables
 

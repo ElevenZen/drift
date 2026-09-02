@@ -1699,5 +1699,71 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         update_initial_env()
 
 
+class TestDriftSettings(unittest.TestCase):
+    """Tests for DriftSettings and [settings] in drift.toml."""
+
+    def test_drift_settings_defaults(self) -> None:
+        from drift.workspace_config import DriftSettings
+        settings = DriftSettings()
+        self.assertFalse(settings.probe_wan_ip)
+
+    def test_drift_settings_from_dict(self) -> None:
+        from drift.workspace_config import DriftSettings
+        s1 = DriftSettings.from_dict({"probe_wan_ip": True})
+        self.assertTrue(s1.probe_wan_ip)
+
+        s2 = DriftSettings.from_dict({"probe_network_ip": True})
+        self.assertTrue(s2.probe_wan_ip)
+
+        s3 = DriftSettings.from_dict({})
+        self.assertFalse(s3.probe_wan_ip)
+
+    def test_drift_settings_validation(self) -> None:
+        from drift.workspace_config import DriftSettings
+        from drift.exceptions import ConfigError
+
+        with self.assertRaises(ConfigError):
+            DriftSettings.from_dict({"unknown_setting": True})
+
+        with self.assertRaises(TypeError):
+            DriftSettings.from_dict({"probe_wan_ip": "not_a_bool"})
+
+    def test_workspace_config_with_settings(self) -> None:
+        toml_content = """
+        [workspace]
+        source_directory = "src"
+        render_directory = "render"
+        install_directory = "install"
+        backup_directory = "backup"
+        default_target_directory = "~"
+        default_install_method = "stow"
+
+        [packages.enable]
+        DEFAULT = true
+
+        [settings]
+        probe_wan_ip = true
+        """
+        data = parse_toml(toml_content)
+        ws_cfg = WorkspaceConfig.from_dict(data)
+        self.assertTrue(ws_cfg.settings.probe_wan_ip)
+
+    def test_get_host_ip_addresses_no_wan_activity_by_default(self) -> None:
+        from drift.host_facts import get_host_ip_addresses
+        from unittest.mock import MagicMock
+
+        with patch("socket.socket") as mock_sock_cls:
+            mock_sock = MagicMock()
+            mock_sock_cls.return_value = mock_sock
+
+            # 1. By default, probe_wan_ip is False -> socket.connect is NEVER called
+            get_host_ip_addresses(probe_wan_ip=False)
+            mock_sock.connect.assert_not_called()
+
+            # 2. When probe_wan_ip is True -> socket.connect is called to discover route
+            get_host_ip_addresses(probe_wan_ip=True)
+            mock_sock.connect.assert_called_once_with(("8.8.8.8", 80))
+
+
 if __name__ == "__main__":
     unittest.main()

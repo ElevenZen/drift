@@ -5,8 +5,9 @@ import sys
 import platform
 import socket
 import getpass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 
 def get_host_os() -> str:
@@ -91,12 +92,89 @@ def get_host_user() -> str:
         return os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
 
 
-def get_system_facts(os_release_path: Optional[Path] = None) -> Dict[str, str]:
+def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
+    """Returns a list of local non-loopback IP addresses (LAN IPs) for the host.
+
+    By default, only local system tables and interfaces are inspected without outbound network traffic.
+    Outbound internet route probing is only performed if probe_wan_ip is explicitly True.
+    """
+    ips: List[str] = []
+
+    # 1. Primary outbound interface IP (only if explicitly enabled via settings)
+    if probe_wan_ip:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+        except Exception:
+            pass
+
+    # 2. Hostname resolution IPs
+    try:
+        hostname = socket.gethostname()
+        _, _, host_ips = socket.gethostbyname_ex(hostname)
+        for ip in host_ips:
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+
+    # 3. getaddrinfo IP enumeration
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127.") and ip not in ips:
+                ips.append(ip)
+    except Exception:
+        pass
+
+    return ips
+
+
+@dataclass
+class SystemFacts:
+    """Encapsulates auto-populated host system facts with type safety."""
+    os: str = ""
+    arch: str = ""
+    distro: str = ""
+    hostname: str = ""
+    user: str = ""
+    ip_addresses: List[str] = field(default_factory=list)
+
+    @classmethod
+    def probe(
+        cls,
+        os_release_path: Optional[Path] = None,
+        probe_wan_ip: bool = False
+    ) -> "SystemFacts":
+        """Probes the current host system facts."""
+        return cls(
+            os=get_host_os(),
+            arch=get_host_arch(),
+            distro=get_host_distro(os_release_path=os_release_path),
+            hostname=get_host_hostname(),
+            user=get_host_user(),
+            ip_addresses=get_host_ip_addresses(probe_wan_ip=probe_wan_ip),
+        )
+
+    def to_envs(self, ip_separator: str = ";") -> Dict[str, str]:
+        """Converts system facts into a dictionary of drift_* environment variables."""
+        return {
+            "drift_os": self.os,
+            "drift_arch": self.arch,
+            "drift_distro": self.distro,
+            "drift_hostname": self.hostname,
+            "drift_user": self.user,
+            "drift_ip_addresses": ip_separator.join(self.ip_addresses),
+        }
+
+
+def get_system_facts(
+    os_release_path: Optional[Path] = None,
+    probe_wan_ip: bool = False
+) -> Dict[str, str]:
     """Returns the dictionary of auto-populated lowercase drift host facts."""
-    return {
-        "drift_os": get_host_os(),
-        "drift_arch": get_host_arch(),
-        "drift_distro": get_host_distro(os_release_path=os_release_path),
-        "drift_hostname": get_host_hostname(),
-        "drift_user": get_host_user(),
-    }
+    return SystemFacts.probe(os_release_path=os_release_path, probe_wan_ip=probe_wan_ip).to_envs()

@@ -138,6 +138,7 @@ SYSTEM_FACT_KEYS: List[str] = [
     "drift_distro",
     "drift_hostname",
     "drift_user",
+    "drift_ip_addresses",
 ]
 
 DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
@@ -192,6 +193,9 @@ render_command = "mustache {input} {src} > {dest}"
 input_file = "jinja2.mustache.json"
 suffix = "j2"
 render_command = "j2 {src} {input} -o {dest}"
+
+[settings]
+# probe_wan_ip = false  # Outbound WAN internet route probing (disabled by default)
 """
 )
 
@@ -293,6 +297,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # distro = ["arch", "ubuntu"]   # Allowed Linux Distro IDs
 # binaries = ["git"]            # Required binaries in host $PATH
 # env = ["WAYLAND_DISPLAY"]     # Required environment variables when starting drift
+# ip = ["192.168.1.0/24"]       # Matches host LAN IP address (exact, CIDR, or wildcard)
 
 # Package Environment Variables
 [env.override]
@@ -440,10 +445,10 @@ def in_test_mode() -> bool:
     return IN_TEST_MODE
 
 
-def inject_system_facts() -> None:
+def inject_system_facts(probe_wan_ip: bool = False) -> None:
     """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
     from .host_facts import get_system_facts
-    facts = get_system_facts()
+    facts = get_system_facts(probe_wan_ip=probe_wan_ip)
     for k, v in facts.items():
         if k not in INITIAL_ENV:
             os.environ[k] = v

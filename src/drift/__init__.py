@@ -2,6 +2,7 @@
 from .toml_utils import parse_toml
 from .workspace_config import (
     WorkspaceConfig,
+    DriftSettings,
     load_workspace_config,
 )
 from .env_utils import (
@@ -32,6 +33,16 @@ from .constants import (
     inject_system_facts,
     update_initial_env,
     set_initial_env,
+)
+from .host_facts import (
+    SystemFacts,
+    get_system_facts,
+    get_host_ip_addresses,
+    get_host_os,
+    get_host_arch,
+    get_host_distro,
+    get_host_hostname,
+    get_host_user,
 )
 from .package_config import (
     PackageConfig,

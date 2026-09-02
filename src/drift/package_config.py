@@ -46,6 +46,38 @@ def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
     raise TypeError(f"Hook value must be a string or Path, got {type(val).__name__}")
 
 
+def match_ip_address(pattern: str, ip: str) -> bool:
+    """Matches a single IP address against an exact IP, CIDR subnet, or wildcard pattern."""
+    import ipaddress
+    # Exact match
+    if pattern == ip:
+        return True
+    # Wildcard match (e.g. 192.168.1.* or 10.0.*)
+    if "*" in pattern:
+        prefix = pattern.split("*")[0]
+        if ip.startswith(prefix):
+            return True
+    # CIDR subnet match (e.g. 192.168.1.0/24 or 10.0.0.0/8)
+    if "/" in pattern:
+        try:
+            net = ipaddress.ip_network(pattern, strict=False)
+            addr = ipaddress.ip_address(ip)
+            if addr in net:
+                return True
+        except ValueError:
+            pass
+    return False
+
+
+def match_ip_addresses(patterns: Sequence[str], host_ips: Sequence[str]) -> bool:
+    """Returns True if any host IP matches any of the given IP patterns."""
+    for pattern in patterns:
+        for host_ip in host_ips:
+            if match_ip_address(pattern, host_ip):
+                return True
+    return False
+
+
 @dataclass
 class PackageRequirements:
     """Declarative host platform and environment requirements for a package."""
@@ -54,6 +86,7 @@ class PackageRequirements:
     distro: List[str] = field(default_factory=list)
     binaries: List[str] = field(default_factory=list)
     env: List[str] = field(default_factory=list)
+    ip: List[str] = field(default_factory=list)
 
     def check_requirements(self) -> Tuple[bool, Optional[str]]:
         """Evaluates declarative requirements against host facts and environment.
@@ -91,6 +124,18 @@ class PackageRequirements:
             if not os.environ.get(env_var):
                 return False, f"Required environment variable '{env_var}' is unset or empty"
 
+        # 6. Check Host LAN IP addresses
+        if self.ip:
+            raw_ips = os.environ.get("drift_ip_addresses")
+            if raw_ips is not None:
+                host_ips = [ip.strip() for ip in raw_ips.split(";") if ip.strip()]
+            else:
+                from .host_facts import get_host_ip_addresses
+                host_ips = get_host_ip_addresses()
+
+            if not match_ip_addresses(self.ip, host_ips):
+                return False, f"Host IP addresses {host_ips} do not match any required IP pattern: {self.ip}"
+
         return True, None
 
     @classmethod
@@ -102,7 +147,7 @@ class PackageRequirements:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"[package.requirements] must be a table{name_str}.")
 
-        known_keys = {"os", "arch", "distro", "binaries", "env"}
+        known_keys = {"os", "arch", "distro", "binaries", "env", "ip", "ips", "ip_addresses"}
         for k in data:
             if k not in known_keys:
                 name_str = f" for package '{package_name}'" if package_name else ""
@@ -127,12 +172,15 @@ class PackageRequirements:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise TypeError(f"'{field_name}' under requirements must be a string or list of strings{name_str}.")
 
+        raw_ip = data.get("ip") or data.get("ips") or data.get("ip_addresses")
+
         return cls(
             os=_to_list_str(data.get("os"), "os"),
             arch=_to_list_str(data.get("arch"), "arch"),
             distro=_to_list_str(data.get("distro"), "distro"),
             binaries=_to_list_str(data.get("binaries"), "binaries"),
             env=_to_list_str(data.get("env"), "env"),
+            ip=_to_list_str(raw_ip, "ip"),
         )
 
 

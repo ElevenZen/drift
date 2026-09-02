@@ -7,7 +7,7 @@ import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Iterator, Union
+from typing import Dict, List, Optional, Tuple, Iterator, Union, Any
 
 from .constants import (
         CONFIG_DIR_NAME,
@@ -97,6 +97,42 @@ class RenderSourceMatch:
 
 
 @dataclass
+class DriftSettings:
+    """Workspace-level settings defined in [settings] in drift.toml."""
+    probe_wan_ip: bool = False
+
+    def validate(self) -> None:
+        """Validates settings types."""
+        if not isinstance(self.probe_wan_ip, bool):
+            raise TypeError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "DriftSettings":
+        """Builds a DriftSettings instance from a parsed TOML dictionary."""
+        if not data:
+            return cls()
+        if not isinstance(data, dict):
+            raise ConfigError("[settings] must be a TOML table.")
+        known_keys = {"probe_wan_ip", "probe_network_ip", "probe_internet_ip"}
+        for k in data:
+            if k not in known_keys:
+                raise ConfigError(f"Unknown option under [settings]: '{k}'")
+
+        raw_val = data.get("probe_wan_ip")
+        if raw_val is None:
+            raw_val = data.get("probe_network_ip")
+        if raw_val is None:
+            raw_val = data.get("probe_internet_ip", False)
+
+        if not isinstance(raw_val, bool):
+            raise TypeError("probe_wan_ip under [settings] must be a boolean.")
+
+        settings = cls(probe_wan_ip=bool(raw_val))
+        settings.validate()
+        return settings
+
+
+@dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift.toml."""
     drift_root_path: Path = Path(".")
@@ -110,6 +146,7 @@ class WorkspaceConfig:
     packages_enable_default: bool = False
     render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
+    settings: DriftSettings = field(default_factory=DriftSettings)
 
     def __init__(
         self,
@@ -124,6 +161,7 @@ class WorkspaceConfig:
         packages_enable_default: bool = False,
         render_engine_configs: Optional[Dict[str, RenderEngineConfig]] = None,
         env: Optional[Dict[str, str]] = None,
+        settings: Optional[DriftSettings] = None,
         render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
     ) -> None:
         self.drift_root_path = Path(drift_root_path)
@@ -142,6 +180,7 @@ class WorkspaceConfig:
         else:
             self.render_engine_configs = {}
         self.env = env if env is not None else {}
+        self.settings = settings if settings is not None else DriftSettings()
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -173,6 +212,9 @@ class WorkspaceConfig:
             v.validate()
         if not isinstance(self.env, dict):
             raise TypeError("env must be a dictionary.")
+        if not isinstance(self.settings, DriftSettings):
+            raise TypeError("settings must be a DriftSettings instance.")
+        self.settings.validate()
 
     @property
     def drift_root(self) -> Path:
@@ -416,7 +458,7 @@ class WorkspaceConfig:
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         # Error for unknown top-level sections
-        known_top_sections = {"workspace", "packages", "render", "env"}
+        known_top_sections = {"workspace", "packages", "render", "env", "settings"}
         for key in data:
             if key not in known_top_sections:
                 raise ConfigError(f"Unknown top-level config section: '{key}'")
@@ -484,6 +526,10 @@ class WorkspaceConfig:
             for k, v in env_data.items():
                 env[str(k)] = str(v)
 
+        # Parse [settings]
+        settings_data = data.get("settings", {})
+        settings = DriftSettings.from_dict(settings_data)
+
         # Expand home directory and env vars for default_target_directory on load
         default_target_dir = expand_user_and_env(workspace_data.get("default_target_directory", "~"))
 
@@ -499,6 +545,7 @@ class WorkspaceConfig:
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
             env=env,
+            settings=settings,
         )
         config.validate()
         return config
@@ -545,8 +592,8 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     drift_root_path = Path(drift_root_path).resolve()
     file_path = drift_root_path / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
 
-    # Ensure system facts are present before rendering workspace config
-    inject_system_facts()
+    # Ensure system facts are present before rendering workspace config (default: no WAN probe)
+    inject_system_facts(probe_wan_ip=False)
 
     main_dict = render_envst_load_toml(file_path)
     if main_dict is None:
@@ -563,6 +610,12 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     else:
         logger.debug(f"Loaded workspace config override from '{local_path}'")
         combined_dict = merge_toml(main_dict, local_dict)
+
+    # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
+    settings_dict = combined_dict.get("settings", {})
+    if isinstance(settings_dict, dict) and (
+            settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
+        inject_system_facts(probe_wan_ip=True)
 
     # Load and apply [env] variables to os.environ immediately (preserving CLI envs and system facts)
     env_dict = combined_dict.get("env", {})
