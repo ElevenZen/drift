@@ -7,11 +7,14 @@ The `drift health` command runs runtime health check probes on installed package
 ## 🚀 Usage
 
 ```bash
-# Check health of all installed packages
+# Check health of all installed packages (default: from install/ directory)
 drift health
 
 # Check health of specific packages
 drift health nvim tmux myservice
+
+# Check health directly from source directory (compiling templates on-the-fly)
+drift health --from source
 
 # Output in machine-readable JSON format
 drift health --json
@@ -46,9 +49,9 @@ timeout = 15
 
 ## ⚡ Execution Invariants
 
-1. **Script Source**: The probe script is read from the installed package directory in `install/<pkg>/`.
+1. **Script Source Base**: The probe script is read from either `install/<pkg>/` (`--from install`, default) or `src/<pkg>/` (`--from source`). Templates are rendered dynamically into `render/<pkg>/`.
 2. **Working Directory (CWD)**: Executed with the **package's host target directory** as the working directory (`cwd = target_directory`).
-3. **Environment Injection**: Standard package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_package_install_method`, etc.) are automatically injected.
+3. **Environment Injection**: Complete 7-tier package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_package_install_method`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets) are automatically injected.
 4. **Sudo Privileges**: Health probes always execute in user space without `sudo` elevation for safety and predictability.
 5. **Exit Code Evaluation**:
    - `Exit 0`: Evaluated as **`HEALTHY`**.

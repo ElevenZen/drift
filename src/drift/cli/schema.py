@@ -105,6 +105,11 @@ INSTALL_METHODS: List[Choice] = [
     Choice("copy", "Direct physical copy deployment (ideal for system configs)"),
 ]
 
+PACKAGE_STAGES: List[Choice] = [
+    Choice("install", "Read health hook from install/ directory (default)"),
+    Choice("source", "Read and render health hook from src/ directory"),
+]
+
 SHELLS: List[Choice] = [
     Choice("bash", "GNU Bourne-Again Shell completion script"),
     Choice("zsh", "Z Shell completion script with rich descriptions"),
@@ -344,6 +349,15 @@ def build_completion_schema() -> CompletionSchema:
                         takes_value=True,
                         type=int,
                         default=None
+                    ),
+                    OptionSpec(
+                        flags=["--from-stage", "--from"],
+                        dest="from_stage",
+                        description="Directory base to load health probe from ('install' or 'source')",
+                        takes_value=True,
+                        type=str,
+                        choices=PACKAGE_STAGES,
+                        default="install"
                     ),
                     OptionSpec(
                         flags=["-v", "--verbose"],

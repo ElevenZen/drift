@@ -93,7 +93,8 @@ def execute_hook_script(
     hook_name: str,
     metadata: PackageConfig,
     cwd: Path,
-    raise_on_error: bool = True
+    raise_on_error: bool = True,
+    custom_timeout: Optional[int] = None
 ) -> HookResult:
     """Executes a hook script in user space with cwd validation, full environment inheritance, and timeout/error handling.
 
@@ -117,7 +118,7 @@ def execute_hook_script(
     logger.debug(f"   CWD:    {cwd}")
 
     cmd = build_hook_execution_command(hook_path)
-    timeout_seconds = metadata.hooks.timeout
+    timeout_seconds = custom_timeout if custom_timeout is not None else metadata.hooks.timeout
 
     start_time = time.perf_counter()
 
@@ -210,12 +211,16 @@ def trigger_package_hook_with_render(
     pkg_config: Optional[PackageConfig] = None,
     load_envs: bool = False,
     no_hooks: bool = False,
-    raise_on_error: bool = True
+    raise_on_error: bool = True,
+    custom_cwd: Optional[Path] = None,  
+    custom_timeout: Optional[int] = None
 ) -> HookResult:
     """Executes a package lifecycle hook in the source directory with automatic template rendering.
 
     If the hook file is located inside the source package directory and matched by a template engine,
     it is rendered into the render sandbox directory first before execution.
+
+    custom_cwd: Optional working directory for hook execution. If not provided, defaults to the package source directory.
     """
     if no_hooks:
         return HookResult.skipped(package=package_name, hook_name=hook_name)
@@ -242,7 +247,7 @@ def trigger_package_hook_with_render(
                 hook_base_dir=src_pkg_dir
             )
 
-    hook_file_val = getattr(pkg_config.hooks, hook_name, None) if pkg_config and pkg_config.hooks else None
+    hook_file_val = getattr(pkg_config.hooks, hook_name, None)
     if not hook_file_val:
         return HookResult.skipped(
             package=package_name,
@@ -271,6 +276,13 @@ def trigger_package_hook_with_render(
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
 
+    if not nominal_hook_path.is_file():
+        err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {nominal_hook_path}"
+        logger.error(err_msg)
+        raise FileNotFoundError(err_msg)
+
+    effective_cwd = custom_cwd or src_pkg_dir
+
     def _execute() -> HookResult:
         # Check if nominal hook path is inside src_pkg_dir
         if is_relative_to(nominal_hook_path, src_pkg_dir):
@@ -292,8 +304,9 @@ def trigger_package_hook_with_render(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,
-            cwd=src_pkg_dir,
-            raise_on_error=raise_on_error
+            cwd=effective_cwd,
+            raise_on_error=raise_on_error,
+            custom_timeout=custom_timeout
         )
         res.hook_base_dir = str(src_pkg_dir)
         return res
@@ -350,6 +363,7 @@ def trigger_package_lifecycle_hook(
     hook_base_dir: Path,
     cwd: Path,
     raise_on_error: bool = True,
+    custom_timeout: Optional[int] = None,
 ) -> HookResult:
     """Executes a package lifecycle hook script if specified and found.
 
@@ -383,7 +397,8 @@ def trigger_package_lifecycle_hook(
         hook_name=hook_name,
         metadata=metadata,
         cwd=cwd,
-        raise_on_error=raise_on_error
+        raise_on_error=raise_on_error,
+        custom_timeout=custom_timeout
     )
     res.hook_base_dir = str(hook_base_dir)
     return res

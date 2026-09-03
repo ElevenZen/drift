@@ -1038,3 +1038,14 @@ def load_package_config_from_source_dir(
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
     return config
 
+
+def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
+    """Loads package configuration strictly from the install/ base directory."""
+    install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME
+    if not install_config_file.exists():
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
+    try:
+        return load_package_config_rendered(install_config_file)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
+

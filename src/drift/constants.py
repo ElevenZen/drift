@@ -23,6 +23,25 @@ WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 
 from enum import Enum, IntEnum
+from typing import Union
+
+
+class PackageStage(str, Enum):
+    """Enumeration of package stages and workspace directory bases."""
+    SOURCE = "source"
+    INSTALL = "install"
+
+    @classmethod
+    def from_str(cls, val: Union[str, "PackageStage"]) -> "PackageStage":
+        """Parses a stage string (e.g. 'source', 'src', 'install') into a PackageStage member."""
+        if isinstance(val, cls):
+            return val
+        s = str(val).strip().lower()
+        if s in ("source", "src"):
+            return cls.SOURCE
+        if s in ("install", "installed"):
+            return cls.INSTALL
+        raise ValueError(f"Unknown package stage '{val}'. Valid choices: 'source', 'install'.")
 
 
 class LineEnding(str, Enum):

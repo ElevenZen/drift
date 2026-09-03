@@ -61,7 +61,7 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
         logger.warning(f"Config load failed for '{pkg}' in render sandbox, but proceeding due to --force: {e}")
         metadata = PackageConfig(pkg)
         metadata.enable_render = True
-        metadata.enable_install = True
+        metadata.enable_install = False
         return metadata
 
 

@@ -49,6 +49,7 @@ default_target_directory = "{self.system_target_dir}"
 DEFAULT = true
 """, encoding="utf-8")
 
+        from drift.workspace_config import RenderEngineConfig
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
             source_directory=Path("src"),
@@ -56,7 +57,14 @@ DEFAULT = true
             install_directory=Path("install"),
             backup_directory=Path("backup"),
             default_target_directory=self.system_target_dir,
-            packages_enable={"pkg_a": True}
+            packages_enable={"pkg_a": True},
+            render_engine_configs={
+                "envst": RenderEngineConfig(
+                    name="envst",
+                    suffix="envst",
+                    render_command="internal"
+                )
+            }
         )
         self.workspace_config.default_target_directory = self.system_target_dir
 
@@ -318,6 +326,136 @@ exit 0
             self.assertEqual(data["healthy_count"], 1)
             self.assertEqual(data["packages"][0]["package"], pkg)
             self.assertEqual(data["packages"][0]["status"], "HEALTHY")
+
+    def test_health_with_templated_hook(self):
+        """Verifies that a templated health hook (e.g. health.sh.envst) is automatically rendered before execution."""
+        pkg = "pkg_templated_health"
+        pkg_src_dir = self.source_dir / pkg
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Templated health script
+        hook_template = scripts_dir / "health_check.sh.envst"
+        hook_template.write_text(
+            '#!/bin/sh\necho "HEALTH_${drift_package_name}_${APP_PORT}"\nexit 0\n',
+            encoding="utf-8"
+        )
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+
+        [env.override]
+        APP_PORT = "9090"
+
+        [hooks]
+        health = "scripts/health_check.sh"
+        """, encoding="utf-8")
+
+        res = run_single_package_health_probe(self.workspace_config, pkg, from_stage="source")
+        self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
+        self.assertEqual(res.exit_code, 0)
+        self.assertIn("HEALTH_pkg_templated_health_9090", res.stdout)
+
+    def test_health_from_stage_cli(self):
+        """Verifies CLI execution with --from source and --from install."""
+        pkg = "pkg_cli_from_stage"
+        pkg_src_dir = self.source_dir / pkg
+        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        hook_script = scripts_dir / "health_check.sh"
+        hook_script.write_text("#!/bin/sh\necho 'Source Health OK'\nexit 0\n", encoding="utf-8")
+        hook_script.chmod(0o755)
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+
+        [hooks]
+        health = "scripts/health_check.sh"
+        """, encoding="utf-8")
+
+        # 1. From source succeeds when package exists only in src/
+        with patch("sys.stdout.write") as mock_stdout:
+            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--from", "source", "--json"])
+            output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+            data = json.loads(output)
+            self.assertEqual(data["status"], "SUCCESS")
+            self.assertEqual(data["packages"][0]["status"], "HEALTHY")
+
+        # 2. From install returns NOT_INSTALLED when package is not yet in install/
+        with patch("sys.stdout.write") as mock_stdout:
+            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--from", "install", "--json"])
+            output = "".join(call.args[0] for call in mock_stdout.call_args_list)
+            data = json.loads(output)
+            self.assertEqual(data["packages"][0]["status"], "NOT_INSTALLED")
+
+    def test_health_install_vs_source_behavior(self):
+        """Verifies that from-install runs static file directly without render, and from-source compiles template."""
+        pkg = "pkg_dual_stage"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_install_dir = self.install_dir / pkg
+        
+        # Source has template
+        (pkg_src_dir / "scripts").mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "scripts" / "health.sh.envst").write_text(
+            '#!/bin/sh\necho "SRC_OUTPUT_${drift_package_name}"\nexit 0\n',
+            encoding="utf-8"
+        )
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        [hooks]
+        health = "scripts/health.sh"
+        """, encoding="utf-8")
+
+        # Install has static script with different text
+        (pkg_install_dir / "scripts").mkdir(parents=True, exist_ok=True)
+        install_hook = pkg_install_dir / "scripts" / "health.sh"
+        install_hook.write_text(
+            '#!/bin/sh\necho "INSTALL_STATIC_OUTPUT"\nexit 0\n',
+            encoding="utf-8"
+        )
+        install_hook.chmod(0o755)
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        [hooks]
+        health = "scripts/health.sh"
+        """, encoding="utf-8")
+
+        # 1. from_stage="install" -> executes static file directly
+        res_install = run_single_package_health_probe(self.workspace_config, pkg, from_stage="install")
+        self.assertEqual(res_install.status, PackageHealthStatus.HEALTHY)
+        self.assertIn("INSTALL_STATIC_OUTPUT", res_install.stdout)
+        self.assertNotIn("SRC_OUTPUT", res_install.stdout)
+        self.assertEqual(res_install.hook_path, str(install_hook))
+
+        # 2. from_stage="source" -> renders template and executes from render/
+        res_src = run_single_package_health_probe(self.workspace_config, pkg, from_stage="source")
+        self.assertEqual(res_src.status, PackageHealthStatus.HEALTHY)
+        self.assertIn("SRC_OUTPUT_pkg_dual_stage", res_src.stdout)
+        self.assertNotIn("INSTALL_STATIC_OUTPUT", res_src.stdout)
+        self.assertIn("/render/", res_src.hook_path)
+
+    def test_package_stage_enum(self):
+        """Verifies PackageStage parsing from various string aliases."""
+        from drift.constants import PackageStage
+        self.assertEqual(PackageStage.from_str("source"), PackageStage.SOURCE)
+        self.assertEqual(PackageStage.from_str("src"), PackageStage.SOURCE)
+        self.assertEqual(PackageStage.from_str(PackageStage.SOURCE), PackageStage.SOURCE)
+
+        self.assertEqual(PackageStage.from_str("install"), PackageStage.INSTALL)
+        self.assertEqual(PackageStage.from_str("installed"), PackageStage.INSTALL)
+        self.assertEqual(PackageStage.from_str(PackageStage.INSTALL), PackageStage.INSTALL)
+
+        with self.assertRaises(ValueError):
+            PackageStage.from_str("unknown_stage")
 
 
 if __name__ == "__main__":

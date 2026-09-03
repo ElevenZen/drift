@@ -3,9 +3,9 @@
 import sys
 import logging
 from pathlib import Path
-from typing import Optional, List, Union
+from typing import Optional, List, Union, Any
 
-from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME, ExitCode
+from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME, ExitCode, PackageStage
 from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, CollisionError
 from ..workspace_config import WorkspaceConfig, load_workspace_config
 from ..workspace_init import init_drift_workspace
@@ -435,7 +435,8 @@ def execute_health(
     package_names: Optional[List[str]] = None,
     json_mode: bool = False,
     verbose: bool = False,
-    timeout: Optional[int] = None
+    timeout: Optional[int] = None,
+    from_stage: Union[str, Any] = "install"
 ) -> None:
     """Core function to run package health check probes, shared by both CLI backends."""
     from ..package_health import run_primitive_health_checks
@@ -444,7 +445,8 @@ def execute_health(
     health_result = run_primitive_health_checks(
         workspace_config=workspace_config,
         package_names=package_names,
-        custom_timeout=timeout
+        custom_timeout=timeout,
+        from_stage=from_stage
     )
 
     if json_mode:

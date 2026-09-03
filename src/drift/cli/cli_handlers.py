@@ -196,13 +196,14 @@ def handle_health(
     ctx: Any,
     packages: Optional[List[str]] = None,
     timeout: Optional[int] = None,
-    verbose: bool = False
+    verbose: bool = False,
+    from_stage: str = "install"
 ) -> None:
-    """Run runtime health check probes on installed packages."""
+    """Run runtime health check probes on packages."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_health(drift_root, packages, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout)
+        execute_health(drift_root, packages, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout, from_stage=from_stage)
 
 
 def handle_uninstall(

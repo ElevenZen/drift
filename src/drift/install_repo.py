@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Union, Tuple, Set
 
 from .workspace_config import WorkspaceConfig
-from .package_config import PackageConfig, load_package_config_rendered
+from .package_config import PackageConfig, load_config_for_install
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME, LineEnding
 from .exceptions import CollisionError
 from .ignore import DriftIgnore
@@ -65,17 +65,6 @@ def is_stow_version_sufficient(version: str) -> bool:
         return parts >= [2, 4, 1]
     except Exception:
         return False
-
-
-def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
-    """Loads package configuration strictly from the install/ base directory."""
-    install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME
-    if not install_config_file.exists():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
-    try:
-        return load_package_config_rendered(install_config_file)
-    except Exception as e:
-        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
 
 
 def handle_collision_error(
