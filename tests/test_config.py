@@ -589,23 +589,22 @@ class TestConfigClasses(unittest.TestCase):
                 mock_posix.return_value = ["/bin/bash", "/path/hook.sh"]
                 self.assertEqual(build_hook_execution_command(Path("/path/hook.sh")), ["/bin/bash", "/path/hook.sh"])
 
-    def test_execute_hook_command_with_sudo(self) -> None:
-        """Verifies execute_hook_command applies sudo correctly across platforms."""
+    def test_execute_hook_command(self) -> None:
+        """Verifies execute_hook_command runs in user space across platforms."""
         from drift.lifecycle_hooks import execute_hook_command
 
-        with patch("drift.file_utils.run_command") as mock_run:
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value = MagicMock()
 
-            # POSIX with sudo
+            # POSIX execution in user space
             with patch("sys.platform", "linux"):
                 execute_hook_command(
                     cmd=["/scripts/setup.sh"],
                     cwd=Path("/opt/app"),
-                    timeout_seconds=60,
-                    use_sudo=True
+                    timeout_seconds=60
                 )
                 mock_run.assert_called_with(
-                    ["sudo", "/scripts/setup.sh"],
+                    ["/scripts/setup.sh"],
                     cwd="/opt/app",
                     text=True,
                     timeout=60
@@ -613,13 +612,12 @@ class TestConfigClasses(unittest.TestCase):
 
             mock_run.reset_mock()
 
-            # Windows ignores 'sudo' binary prefix
-            with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=True):
+            # Windows execution in user space
+            with patch("sys.platform", "win32"):
                 execute_hook_command(
                     cmd=["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=Path(r"C:\app"),
-                    timeout_seconds=60,
-                    use_sudo=True
+                    timeout_seconds=60
                 )
                 mock_run.assert_called_with(
                     ["powershell.exe", "-File", r"C:\scripts\setup.ps1"],

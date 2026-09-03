@@ -10,7 +10,7 @@ from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
 from .install_repo import load_config_for_install
 from .state_registry import load_state_registry
-from .constants import PACKAGE_CONFIG_FILE_NAME, SUDO_ELIGIBLE_HOOKS
+from .constants import PACKAGE_CONFIG_FILE_NAME
 from .result_models import (
     PackageHealthStatus,
     PackageHealthResult,
@@ -100,17 +100,15 @@ def execute_package_health_probe(
     pkg = pkg_config.name
     timeout = custom_timeout if custom_timeout is not None else pkg_config.hooks.timeout
     from .lifecycle_hooks import build_hook_execution_command
-    from .file_utils import run_sudo_command
+    from .file_utils import run_command
 
     cmd = build_hook_execution_command(hook_path)
-    use_sudo = bool(pkg_config.sudo and "health" in SUDO_ELIGIBLE_HOOKS)
 
     start_time = time.perf_counter()
     with pkg_config.package_envs(workspace_config):
         try:
-            res = run_sudo_command(
+            res = run_command(
                 cmd,
-                sudo=use_sudo,
                 cwd=str(target_dir),
                 capture_output=True,
                 text=True,

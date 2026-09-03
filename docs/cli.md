@@ -195,7 +195,7 @@ Clones a remote or local Git repository and immediately reconstructs and heals t
 ### M. Package Runtime Health Probing: `drift health [packages...] [--timeout] [--json]`
 Executes runtime health check probes on installed packages to verify if deployed services, daemons, terminal environments, and host tools are operating properly.
 *   **Command Signature**: `drift health [packages...] [--timeout <seconds>] [--json]`
-*   **Execution Invariants**: Runs from `install/<pkg>/` with package `target_directory` as active CWD, injecting package environment variables and honoring `sudo = true`.
+*   **Execution Invariants**: Runs from `install/<pkg>/` with package `target_directory` as active CWD in user space, injecting all package environment variables.
 
 ---
 

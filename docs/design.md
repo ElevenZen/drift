@@ -483,9 +483,8 @@ target_directory = "~/.config/example"
 # source_directory = "dotfiles"
 
 # If true, all physical file creation, copying, deletion, and symlinking operations
-# for this package, as well as installation/update lifecycle hooks (pre/post_install, pre/post_update),
-# will be executed utilizing "sudo" elevation.
-# Note: Source/compilation hooks (pre_source, post_render) always run in user space without sudo.
+# for this package will be executed utilizing "sudo" elevation.
+# Note: All lifecycle hooks always execute in user space without sudo to preserve injected environment variables.
 sudo = false
 
 # ---------------------------------------------------------------------
@@ -517,31 +516,34 @@ fully_controlled_dirs = [
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
 # Executable scripts located inside the package directory.
-# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg). Always runs in user space without sudo.
+# All lifecycle hooks always run in user space without sudo, preserving all 7 tiers of environment variables.
+# If a hook requires elevated privileges for a specific operation, use 'sudo' explicitly inside the hook script.
+
+# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg).
 pre_source = "pre-source.bash"
 
-# Run after templates are rendered into sandbox (CWD: render/pkg). Always runs in user space without sudo.
+# Run after templates are rendered into sandbox (CWD: render/pkg).
 post_render = "post-render.bash"
 
-# Run before first-time installation (CWD: install/pkg). Runs with sudo if sudo = true.
+# Run before first-time installation (CWD: install/pkg).
 pre_install = "pre-install.bash"
 
-# Run after successful first-time installation (CWD: target_directory). Runs with sudo if sudo = true.
+# Run after successful first-time installation (CWD: target_directory).
 post_install = "post-install.bash"
 
-# Run before any update/deployment (CWD: install/pkg). Runs with sudo if sudo = true.
+# Run before any update/deployment (CWD: install/pkg).
 pre_update = "pre-update.bash"
 
-# Run after any successful update/deployment (CWD: target_directory). Runs with sudo if sudo = true.
+# Run after any successful update/deployment (CWD: target_directory).
 post_update = "post-update.bash"
 
-# Run before package uninstallation (CWD: install/pkg). Runs with sudo if sudo = true.
+# Run before package uninstallation (CWD: install/pkg).
 pre_uninstall = "pre-uninstall.bash"
 
-# Run after package uninstallation (CWD: target_directory). Runs with sudo if sudo = true.
+# Run after package uninstallation (CWD: target_directory).
 post_uninstall = "post-uninstall.bash"
 
-# Run runtime health check probe on installed package (CWD: target_directory). Always runs in user space without sudo.
+# Run runtime health check probe on installed package (CWD: target_directory).
 health = "health.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
@@ -556,17 +558,18 @@ timeout = 120
 ```
 
 #### Lifecycle Hooks Execution Matrix
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Sudo Elevation Model |
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Privilege Model |
 | :--- | :--- | :--- | :--- |
-| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` | Always user space (No sudo) |
-| `post_render` | After sandbox compilation | `render/<pkg>` | Always user space (No sudo) |
-| `pre_install` | Before first-time deployment | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_install` | After first-time deployment | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `pre_update` | Before incremental/full update deploy | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_update` | After incremental/full update deploy | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `pre_uninstall` | Before unlinking/deleting files | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_uninstall`| After unlinking/deleting files | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `health` | During `drift health` probe execution | `target_directory` | Always user space (No sudo) |
+| `probe` | Requirement validation (deploy, render, status) | `src/<pkg>` | Always user space (Preserves envs) |
+| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` | Always user space (Preserves envs) |
+| `post_render` | After sandbox compilation | `render/<pkg>` | Always user space (Preserves envs) |
+| `pre_install` | Before first-time deployment | `install/<pkg>` | Always user space (Preserves envs) |
+| `post_install` | After first-time deployment | `target_directory` | Always user space (Preserves envs) |
+| `pre_update` | Before incremental/full update deploy | `install/<pkg>` | Always user space (Preserves envs) |
+| `post_update` | After incremental/full update deploy | `target_directory` | Always user space (Preserves envs) |
+| `pre_uninstall` | Before unlinking/deleting files | `install/<pkg>` | Always user space (Preserves envs) |
+| `post_uninstall`| After unlinking/deleting files | `target_directory` | Always user space (Preserves envs) |
+| `health` | During `drift health` probe execution | `target_directory` | Always user space (Preserves envs) |
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
 Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:
@@ -891,7 +894,7 @@ For each redeployable package:
 *   **Collision Guard (Incremental/Full)**:
     - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
     - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` and removed from the active system to clear the path.
-*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>` (with `sudo` elevation if `sudo = true`).
+*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>`.
 *   **File Delivery Phase**:
     - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
         1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
@@ -899,7 +902,7 @@ For each redeployable package:
     - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
         1.  Deletes files listed in `package_changes.deleted_files`.
         2.  Deploys individual files manually using precise symlink creation or copy operations.
-*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory (with `sudo` elevation if `sudo = true`).
+*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
 
 #### 5. Stage 2: Final State Commit (Primitive 6)

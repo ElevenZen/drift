@@ -14,7 +14,6 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     LIFECYCLE_HOOK_NAMES,
     INSTALL_CWD_HOOK_NAMES,
-    SUDO_ELIGIBLE_HOOKS,
 )
 from .exceptions import ConfigError
 from .result_models import HookResult
@@ -111,10 +110,8 @@ def _trigger_install_stage_hook(
     else:
         cwd = pkg_config.get_target_directory(workspace_config)
 
-    use_sudo = bool(pkg_config.sudo and hook_name in SUDO_ELIGIBLE_HOOKS)
-
     # Ensure cwd directory exists (especially target_dir for post_* and health hooks)
-    ensure_dir_exists_with_sudo(cwd, sudo=use_sudo)
+    ensure_dir_exists_with_sudo(cwd, sudo=pkg_config.sudo)
 
     with pkg_config.package_envs(workspace_config):
         return pkg_config.hooks.trigger(hook_name, hook_base_dir=install_pkg_dir, cwd=cwd)

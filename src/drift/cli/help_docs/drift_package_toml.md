@@ -26,8 +26,8 @@ target_directory = "~/.config/my_app"
 
 # Advanced Flags
 
-# Execute physical file deployments and installation/update lifecycle hooks with root privileges (sudo).
-# Note: Source/compilation hooks (pre_source, post_render) always run in user space without sudo.
+# Execute physical file deployments (copy, stow, deletions, permissions) with root privileges (sudo).
+# Note: All lifecycle hooks always execute in user space without sudo to preserve all injected environment variables.
 sudo = false
 
 # Enable or disable template rendering for this package
@@ -67,38 +67,40 @@ fully_controlled_dirs = [
 [hooks]
 # Lifecycle Hooks (Optional shell command execution)
 # Timeout in seconds before hook processes are aborted (defaults to 120)
+# Note: All hooks run in user space with full environment variable inheritance (all 7 tiers).
+# If a hook command requires root privileges, use 'sudo' explicitly inside the hook script.
 timeout = 120
 
 # Run pre-flight dynamic requirement probe (Exit 0 = Met, Exit != 0 = Unmet -> package gracefully skipped)
-# Executed from src/ package root in user space (never runs with sudo)
+# Executed from src/ package root in user space
 # probe = "scripts/check_wayland.sh"
 
 # Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
-# Executed from src/ package root (runs in user space, never with sudo)
+# Executed from src/ package root
 pre_source = "scripts/generate_dynamic_templates.sh"
 
-# Run before a first-time installation (executed from install/ package root; runs with sudo if sudo = true)
+# Run before a first-time installation (executed from install/ package root)
 pre_install = "scripts/bootstrap.sh"
 
-# Run after a first-time installation (executed from host target directory; runs with sudo if sudo = true)
+# Run after a first-time installation (executed from host target directory)
 post_install = "echo 'Completed installation!'"
 
-# Run before updating an already installed package (executed from install/ package root; runs with sudo if sudo = true)
+# Run before updating an already installed package (executed from install/ package root)
 pre_update = "scripts/backup_settings.sh"
 
-# Run after updating an already installed package (executed from host target directory; runs with sudo if sudo = true)
+# Run after updating an already installed package (executed from host target directory)
 post_update = "scripts/reload_service.sh"
 
-# Run before uninstalling a package (executed from install/ package root; runs with sudo if sudo = true)
+# Run before uninstalling a package (executed from install/ package root)
 pre_uninstall = "scripts/cleanup_pre.sh"
 
-# Run after uninstalling a package (executed from host target directory; runs with sudo if sudo = true)
+# Run after uninstalling a package (executed from host target directory)
 post_uninstall = "scripts/cleanup_post.sh"
 
-# Run immediately after sandbox rendering is complete (executed from render/ package root; runs in user space, never with sudo)
+# Run immediately after sandbox rendering is complete (executed from render/ package root)
 post_render = "scripts/generate_checksums.sh"
 
-# Run runtime health check probes on installed package (executed from host target directory; always runs without sudo)
+# Run runtime health check probes on installed package (executed from host target directory)
 health = "scripts/health_check.sh"
 
 # Optional Windows-specific hook overrides.
@@ -120,17 +122,20 @@ health = "scripts/health_check.ps1"
 
 ## 🪝 Lifecycle Hooks Execution Matrix
 
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Sudo Elevation Model |
+All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
+
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Privilege Model |
 | :--- | :--- | :--- | :--- |
-| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` | Always user space (No sudo) |
-| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` | Always user space (No sudo) |
-| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | Runs with `sudo` if `sudo = true` |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | Runs with `sudo` if `sudo = true` |
-| `health` | During `drift health` probe execution | `target_directory` | Always user space (No sudo) |
+| `probe` | Requirement validation (`deploy`, `render`, `status`) | `src/<pkg>` | User space (Preserves all envs) |
+| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` | User space (Preserves all envs) |
+| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` | User space (Preserves all envs) |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` | User space (Preserves all envs) |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` | User space (Preserves all envs) |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | User space (Preserves all envs) |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | User space (Preserves all envs) |
+| `health` | During `drift health` probe execution | `target_directory` | User space (Preserves all envs) |
 
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.
@@ -140,7 +145,7 @@ health = "scripts/health_check.ps1"
 > ```bash
 > drift hook <package> <hook-name> [--json]
 > ```
-> This executes the hook with its standard working directory, stage directory context, environment variable injections, and sudo privileges.
+> This executes the hook with its standard working directory, stage directory context, and complete environment variable injections.
 
 ## 🌐 Package Environment Variables & Preemption Order
  

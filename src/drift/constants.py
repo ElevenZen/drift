@@ -110,15 +110,6 @@ INSTALL_CWD_HOOK_NAMES = (
     "pre_uninstall",
 )
 
-SUDO_ELIGIBLE_HOOKS = (
-    "pre_install",
-    "post_install",
-    "pre_update",
-    "post_update",
-    "pre_uninstall",
-    "post_uninstall",
-)
-
 DEFAULT_HOOK_TIMEOUT: int = 120
 DEFAULT_HOOK_TIMEOUT_SECONDS: int = DEFAULT_HOOK_TIMEOUT
 

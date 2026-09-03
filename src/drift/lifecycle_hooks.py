@@ -10,8 +10,7 @@ if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
 
 from .package_config import PackageConfig
-from .file_utils import run_command, run_sudo_command, is_relative_to
-from .constants import SUDO_ELIGIBLE_HOOKS
+from .file_utils import run_command, is_relative_to
 from .result_models import HookResult
 
 logger = logging.getLogger(__name__)
@@ -78,12 +77,10 @@ def execute_hook_command(
     cmd: List[str],
     cwd: Path,
     timeout_seconds: int,
-    use_sudo: bool = False
 ) -> subprocess.CompletedProcess:
-    """Executes a lifecycle hook command with sudo handling and timeout."""
-    return run_sudo_command(
+    """Executes a lifecycle hook command in user space with timeout."""
+    return run_command(
         cmd,
-        sudo=use_sudo,
         cwd=str(cwd),
         text=True,
         timeout=timeout_seconds
@@ -98,11 +95,11 @@ def execute_hook_script(
     cwd: Path,
     raise_on_error: bool = True
 ) -> HookResult:
-    """Executes a hook script with sudo handling, cwd validation, and timeout/error handling.
+    """Executes a hook script in user space with cwd validation, full environment inheritance, and timeout/error handling.
 
     Returns:
         HookResult: Structured result with status ("SUCCESS" or "FAILED"), duration_ms, exit code,
-            hook path, CWD, stdout, stderr, and sudo elevation flag.
+            hook path, CWD, stdout, stderr, and sudo elevation flag (always False).
 
     Raises:
         FileNotFoundError: If the hook script file does not exist on disk.
@@ -120,7 +117,6 @@ def execute_hook_script(
     logger.debug(f"   CWD:    {cwd}")
 
     cmd = build_hook_execution_command(hook_path)
-    use_sudo = bool(metadata.sudo and hook_name in SUDO_ELIGIBLE_HOOKS)
     timeout_seconds = metadata.hooks.timeout
 
     start_time = time.perf_counter()
@@ -129,8 +125,7 @@ def execute_hook_script(
         proc = execute_hook_command(
             cmd=cmd,
             cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            use_sudo=use_sudo
+            timeout_seconds=timeout_seconds
         )
         duration_ms = (time.perf_counter() - start_time) * 1000
         return HookResult(
@@ -141,7 +136,7 @@ def execute_hook_script(
             exit_code=proc.returncode if proc else 0,
             hook_path=str(hook_path),
             cwd=str(cwd),
-            sudo=use_sudo,
+            sudo=False,
             duration_ms=duration_ms,
             stdout=proc.stdout if proc else None,
             stderr=proc.stderr if proc else None
@@ -150,7 +145,7 @@ def execute_hook_script(
         duration_ms = (time.perf_counter() - start_time) * 1000
         stdout_str = cast(str, e.stdout) or ""
         stderr_str = cast(str, e.stderr) or ""
-        display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
+        display_cmd = cmd
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
             f"Command: {shlex.join(display_cmd)}\n"
@@ -170,7 +165,7 @@ def execute_hook_script(
             exit_code=124,
             hook_path=str(hook_path),
             cwd=str(cwd),
-            sudo=use_sudo,
+            sudo=False,
             duration_ms=duration_ms,
             stdout=stdout_str,
             stderr=stderr_str,
@@ -180,7 +175,7 @@ def execute_hook_script(
         duration_ms = (time.perf_counter() - start_time) * 1000
         stdout_str = e.stdout or ""
         stderr_str = e.stderr or ""
-        display_cmd = ["sudo"] + cmd if use_sudo and sys.platform != "win32" else cmd
+        display_cmd = cmd
         err_msg = (
             f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
             f"Command: {shlex.join(display_cmd)}\n"
@@ -200,7 +195,7 @@ def execute_hook_script(
             exit_code=e.returncode,
             hook_path=str(hook_path),
             cwd=str(cwd),
-            sudo=use_sudo,
+            sudo=False,
             duration_ms=duration_ms,
             stdout=stdout_str,
             stderr=stderr_str,
