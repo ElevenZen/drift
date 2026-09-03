@@ -8,12 +8,7 @@ from typing import List, Optional
 from .workspace_config import WorkspaceConfig
 from .state_registry import load_state_registry, save_state_registry
 from .install_repo import run_primitive_5_install_deployment
-from .uninstall_repo import (
-    get_uninstall_metadata,
-    remove_deployed_files,
-    restore_backups,
-    clean_up_package_directories,
-)
+from .uninstall_repo import run_primitive_7_uninstall_packages
 
 logger = logging.getLogger(__name__)
 
@@ -38,20 +33,20 @@ def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
 def rollback_uninstalled_first_time_package(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    deployed_files: List[Path]
+    deployed_files: Optional[List[Path]] = None,
+    no_hooks: bool = False
 ) -> None:
     """Cleans up host system files, restores overwritten backups, and removes directory for a first-time package that failed."""
-    target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
+    uninst_res = run_primitive_7_uninstall_packages(
+        workspace_config=workspace_config,
+        package_names=[pkg],
+        force=True,
+        no_hooks=no_hooks
+    )
+    if uninst_res.status != "SUCCESS":
+        raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")
 
-    # 1. Remove deployed files from target host
-    if deployed_files:
-        remove_deployed_files(pkg, deployed_files, target_dir, sudo)
-
-    # 2. Restore any original host files that were backed up during collision guard
-    restore_backups(workspace_config, pkg, target_dir, sudo)
-
-    # 3. Clean up install/ and backup/ package directories
-    clean_up_package_directories(workspace_config, pkg)
+    # Clean untracked leftover directories in install/ if any remain
     subprocess.run(["git", "-C", str(workspace_config.install_path), "clean", "-fd", "--", pkg], capture_output=True)
 
 
@@ -66,27 +61,30 @@ def run_primitive_8_rollback_recovery(
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = workspace_config.get_source_packages(
-        target_pkgs=package_names
-    )
-
+    discovered = set(workspace_config.get_installed_packages(target_pkgs=package_names))
     if not discovered:
         logger.info("✨ No active packages found to rollback.")
         return []
 
     # 2. Check conflict states if force is False
-    if not force:
-        packages_state_wrong = [ pkg for pkg in discovered
-                                if state_registry.get_package_state(pkg) not in ["staging", "deploying"]]
-        if packages_state_wrong:
+    if force:
+        packages_to_rollback = discovered
+    else:
+        packages_to_rollback = { pkg for pkg in discovered
+                                if state_registry.get_package_state(pkg)
+                                    in ["staging", "deploying"]}
+        packages_state_wrong = discovered - packages_to_rollback
+        if len(packages_state_wrong) > 0:
             raise RuntimeError(
                     "The following packages are not in a failed midway/conflict state ('staging' or 'deploying'): "
-                    f"[{','.join(packages_state_wrong)}]. "
+                    f"[{','.join(sorted(packages_state_wrong))}]. "
                     "Running 'rollback' now will bypass reverse synchronization and hard-reset "
                     "all configuration files on your system, destroying any local drift. "
                     "Use --force to override and rollback anyway.")
+        if not packages_to_rollback:
+            logger.info("✨ No packages in a failed midway/conflict state to rollback.")
+            return []
 
-    packages_to_rollback = discovered
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
 
     install_base = workspace_config.install_path
@@ -100,9 +98,7 @@ def run_primitive_8_rollback_recovery(
             reset_install_package_to_head(install_base, pkg)
         else:
             packages_to_uninstall.append(pkg)
-            # Retrieve deployed files recorded in state.toml before physical delivery
-            deployed_files = state_registry.get_package_deployed_files(pkg)
-            rollback_uninstalled_first_time_package(workspace_config, pkg, deployed_files)
+            rollback_uninstalled_first_time_package(workspace_config, pkg, no_hooks=no_hooks)
 
     # Revert state.toml file to HEAD commit
     subprocess.run(["git", "-C", str(install_base), "checkout", "HEAD", "--", "state.toml"], capture_output=True)
@@ -135,4 +131,4 @@ def run_primitive_8_rollback_recovery(
         logger.info(f"✨ Restored previously committed clean state for: {packages_to_redeploy}")
 
     logger.info("✨ Rollback recovery complete.")
-    return packages_to_rollback
+    return list(packages_to_rollback)
