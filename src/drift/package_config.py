@@ -939,7 +939,14 @@ def render_or_load_toml(
         from .constants import INITIAL_ENV
         from .env_utils import env_scope
 
-        with env_scope({"drift_package_name": package_name}, overwrite=True, env_keep=INITIAL_ENV):
+        pkg_envs = {
+            "drift_package_name": package_name,
+            "drift_package_source_dir": str(workspace_config.source_path / package_name),
+            "drift_package_render_dir": str(workspace_config.render_path / package_name),
+            "drift_package_install_dir": str(workspace_config.install_path / package_name),
+        }
+
+        with env_scope(pkg_envs, overwrite=True, env_keep=INITIAL_ENV):
             try:
                 from .render_core import render_template_to_file
                 render_template_to_file(

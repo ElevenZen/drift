@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from drift.constants import set_test_mode
 from drift.file_utils import (
     is_relative_to,
     resolve_system_target,
@@ -763,6 +764,23 @@ class TestFileUtils(unittest.TestCase):
         f2.chmod(0o644)
         atomic_copy_file(f1, f2)
         self.assertTrue(bool(f2.stat().st_mode & 0o111))
+
+    def test_run_command_debug_logging(self) -> None:
+        """Verifies run_command logs external command and stdout/stderr in debug mode."""
+        import sys
+        from drift.file_utils import run_command
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.file_utils", level="DEBUG") as cm: 
+                run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
+
+            logs = "\n".join(cm.output)
+            self.assertIn("External:", logs)
+            self.assertIn("stdout:\nhello out", logs)
+            self.assertIn("stderr:\nhello err", logs)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
 
 if __name__ == "__main__":

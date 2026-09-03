@@ -1956,7 +1956,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         pkg_src_dir = self.drift_root / "src" / "my_templated_pkg"
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
 
-        # Write drift_package.envst.toml using $drift_package_name and $drift_os
+        # Write drift_package.envst.toml using $drift_package_name, $drift_package_source_dir, etc. and $drift_os
         (pkg_src_dir / "drift_package.envst.toml").write_text("""
         [package]
         name = "$drift_package_name"
@@ -1964,6 +1964,9 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         [env.override]
         RESOLVED_OS = "$drift_os"
+        PKG_SRC_DIR = "$drift_package_source_dir"
+        PKG_RENDER_DIR = "$drift_package_render_dir"
+        PKG_INSTALL_DIR = "$drift_package_install_dir"
         """, encoding="utf-8")
 
         pkg_config = load_package_config_from_source_dir(pkg_src_dir, workspace_config)
@@ -1971,9 +1974,15 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertEqual(str(pkg_config.target_directory), "/custom/my_templated_pkg")
         self.assertIn("RESOLVED_OS", pkg_config.env_override)
         self.assertEqual(pkg_config.env_override["RESOLVED_OS"], os.environ.get("drift_os"))
+        self.assertEqual(pkg_config.env_override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))
+        self.assertEqual(pkg_config.env_override["PKG_RENDER_DIR"], str(self.drift_root / "render" / "my_templated_pkg"))
+        self.assertEqual(pkg_config.env_override["PKG_INSTALL_DIR"], str(self.drift_root / "install" / "my_templated_pkg"))
 
-        # Verify drift_package_name is cleanly unloaded after config loading
+        # Verify drift_package_* variables are cleanly unloaded after config loading
         self.assertNotIn("drift_package_name", os.environ)
+        self.assertNotIn("drift_package_source_dir", os.environ)
+        self.assertNotIn("drift_package_render_dir", os.environ)
+        self.assertNotIn("drift_package_install_dir", os.environ)
 
 
 if __name__ == "__main__":

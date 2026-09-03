@@ -143,20 +143,6 @@ def ensure_rendered_file_hook_permissions(
         logger.debug(f"Could not ensure executable permission for hook file '{dest_path}': {e}")
 
 
-
-def prepare_package_config(package_dir: Path, package_name: str,
-                           workspace_config: WorkspaceConfig, render_pkg_dir: Path) -> PackageConfig:
-    """Loads package config for rendering/processing.
-
-    Since load_package_config_from_source_dir always renders/writes the config file to render_pkg_dir,
-    we no longer need to check is_static() or copy it manually here.
-    """
-    return load_package_config_from_source_dir(
-        package_dir=package_dir,
-        workspace_config=workspace_config
-    )
-
-
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
     """Handles warning and copying of drift ignore files."""
     package_name = package_dir.name
@@ -275,7 +261,10 @@ def render_package(
 
     render_pkg_dir = workspace_config.render_path / package_name
 
-    pkg_config = prepare_package_config(package_dir, package_name, workspace_config, render_pkg_dir)
+    pkg_config = load_package_config_from_source_dir(
+        package_dir=package_dir,
+        workspace_config=workspace_config
+    )
 
     # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
     is_satisfied, failure_reason = pkg_config.evaluate_requirements(workspace_config, no_hooks=no_hooks)

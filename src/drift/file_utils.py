@@ -81,12 +81,39 @@ def is_relative_to(path: Path, other: Path) -> bool:
         return False
 
 
+def _format_stream_output(stream_val: Any) -> Optional[str]:
+    if stream_val is None:
+        return None
+    if isinstance(stream_val, bytes):
+        text = stream_val.decode("utf-8", errors="replace")
+    else:
+        text = str(stream_val)
+    text = text.rstrip()
+    return text if text.strip() else None
+
+
 def run_command(cmd: Union[str, List[str]], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
-    """Logs the command before executing it with subprocess.run."""
+    """Logs the command before executing it with subprocess.run, and logs stdout/stderr in debug mode."""
     logger.debug(f"External: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
     params: Any = {"check": True, "capture_output": True}
     params.update(kwargs)
-    return subprocess.run(cmd, **params)
+    try:
+        res = subprocess.run(cmd, **params)
+        stdout_msg = _format_stream_output(res.stdout)
+        if stdout_msg:
+            logger.debug(f"stdout:\n{stdout_msg}")
+        stderr_msg = _format_stream_output(res.stderr)
+        if stderr_msg:
+            logger.debug(f"stderr:\n{stderr_msg}")
+        return res
+    except subprocess.CalledProcessError as e:
+        stdout_msg = _format_stream_output(e.stdout)
+        if stdout_msg:
+            logger.debug(f"stdout:\n{stdout_msg}")
+        stderr_msg = _format_stream_output(e.stderr)
+        if stderr_msg:
+            logger.debug(f"stderr:\n{stderr_msg}")
+        raise
 
 
 def has_admin_privileges() -> bool:
