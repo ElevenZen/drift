@@ -753,6 +753,35 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue((install_pkg_dir / "file_to_tree" / "nested.conf").is_file())
         self.assertEqual((install_pkg_dir / "file_to_tree" / "nested.conf").read_text(encoding="utf-8"), "new nested rendered")
 
+    def test_stage_checks_mid_fail_state_before_uncommitted_drift(self) -> None:
+        """Verifies that mid-fail states ('staging'/'deploying') take precedence over uncommitted changes checks."""
+        from drift.state_registry import load_state_registry, save_state_registry
+        import subprocess
+
+        # Initialize install git repo
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+
+        # Stage pkg_a cleanly first
+        run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Initial staging"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Simulate midway failure: set state in state.toml to 'staging' and make uncommitted edit in install/pkg_a
+        state_file = self.install_dir / "state.toml"
+        reg = load_state_registry(state_file)
+        reg.set_package_state("pkg_a", "staging")
+        save_state_registry(state_file, reg)
+
+        (self.install_dir / "pkg_a" / "uncommitted_midfail.txt").write_text("midfail file", encoding="utf-8")
+
+        # Staging should raise the mid-fail Safety Abort RuntimeError, NOT DriftDetectedError
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
+        self.assertIn("Safety Abort: Package 'pkg_a' is currently in 'staging' state", str(ctx.exception))
+        self.assertIn("drift rollback pkg_a", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

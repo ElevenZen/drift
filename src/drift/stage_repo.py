@@ -255,28 +255,30 @@ def run_primitive_4_stage_render_to_install(
         from .file_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
-    # Check every package folder in install/ if it has uncommitted local modifications.
-    # If so and the force flag is not present, raise an Error.
+    # 1. First verify package states from state registry before checking uncommitted changes.
+    # If a package is in 'staging' or 'deploying' state, a previous operation failed midway
+    # (which naturally causes uncommitted changes in install/), so we must report the mid-fail state first.
+    state_file = install_base / "state.toml"
+    state_registry = load_state_registry(state_file)
     if not force:
+        for pkg in pkg_metadata.keys():
+            current_state = state_registry.get_package_state(pkg)
+            if current_state in ("staging", "deploying"):
+                raise RuntimeError(
+                    f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
+                    f"indicating a previous operation failed midway. "
+                    f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
+                )
+
+        # Check every package folder in install/ if it has uncommitted local modifications.
+        # If so and the force flag is not present, raise a DriftDetectedError.
         for pkg in pkg_metadata.keys():
             ensure_install_pkg_dir_clean(install_base, pkg)
 
     logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
 
     # Set state of packages to "staging" before staging to prevent partial staging issues
-    state_file = install_base / "state.toml"
-    state_registry = load_state_registry(state_file)
-    for pkg in pkg_metadata.keys():
-        metadata = pkg_metadata[pkg]
-        
-        current_state = state_registry.get_package_state(pkg)
-        if not force and current_state in ("staging", "deploying"):
-            raise RuntimeError(
-                f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
-                f"indicating a previous operation failed midway. "
-                f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
-            )
-            
+    for pkg, metadata in pkg_metadata.items():
         state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
     save_state_registry(state_file, state_registry)
 
