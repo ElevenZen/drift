@@ -124,18 +124,18 @@ health = "scripts/health_check.ps1"
 
 All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
 
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Privilege Model |
-| :--- | :--- | :--- | :--- |
-| `probe` | Requirement validation (`deploy`, `render`, `status`) | `src/<pkg>` | User space (Preserves all envs) |
-| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` | User space (Preserves all envs) |
-| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` | User space (Preserves all envs) |
-| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` | User space (Preserves all envs) |
-| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
-| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` | User space (Preserves all envs) |
-| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | User space (Preserves all envs) |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | User space (Preserves all envs) |
-| `health` | During `drift health` probe execution | `target_directory` | User space (Preserves all envs) |
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
+| :--- | :--- | :--- |
+| `probe` | Requirement validation (`deploy`, `render`, `status`) | `src/<pkg>` |
+| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` |
+| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` |
+| `health` | During `drift health` probe execution | `target_directory` |
 
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.

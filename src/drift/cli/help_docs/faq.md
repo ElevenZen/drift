@@ -85,5 +85,19 @@ drift uninstall <pkg> --force --no-hooks
 
 ---
 
+### Q9: What if a broken hook script hurdles me from writing or deploying a package correctly?
+**Situation**: You are writing a new package or updating existing lifecycle hooks, but hook script errors (syntax errors, missing runtime variables, or broken exit codes) prevent successful `drift deploy` or `drift apply`.  
+**Solution**: Deploy with **`--no-hooks`** first, then test and debug your hook directly from source via **`drift hook --from src <pkg> <hook> -v`**:
+```bash
+# 1. Deploy files safely while bypassing failing hook executions:
+drift deploy <pkg> --no-hooks
+
+# 2. Iteratively edit hook scripts in src/<pkg>/ and execute directly in isolation:
+drift hook <pkg> <hook> --from src -v
+```
+*   Running `drift hook --from src <pkg> <hook> -v` executes the debug version of the script in your `src/` directory with full 7-tier environment variables and host facts injected, showing real-time stdout, stderr, and return codes.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.

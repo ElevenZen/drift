@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-509%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-553%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -304,7 +304,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
 | `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
-| `drift health [pkgs]` | Probes live runtime health check hooks on installed packages. |
+| `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
 | `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
 | `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |
@@ -324,7 +324,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
 | `drift apply` | Installs files from `install/` to package target directories. |
 | `drift install-commit` | Manually commits deployment state database changes inside `install/`. |
-| `drift hook <pkg> <hook>` | Directly triggers a specific lifecycle hook script for a single package. |
+| `drift hook <pkg> <hook>` | Directly triggers a specific lifecycle hook script (`--from source` or `--from install`). |
 
 ---
 
@@ -361,13 +361,36 @@ Packages can declare automated hook scripts inside `drift_package.toml` to integ
 install_method = "stow"
 
 [hooks]
+probe = "scripts/check_deps.sh"
 pre_source = "scripts/generate_dynamic_templates.sh"
 pre_install = "scripts/bootstrap.sh"
 post_update = "scripts/reload_plugins.sh"
+pre_uninstall = "scripts/stop_daemon.sh"
+health = "scripts/health_check.sh"
 timeout = 60
 ```
-*   **Mandatory Directories**: Drift executes hooks with strict, mandatory `hook_base_dir` and working directory (`cwd`) arguments, ensuring your hook runs with predictable paths (e.g. `src/<pkg>` for `pre_source`, `install/<pkg>` for `pre_install`, and `render/<pkg>` for `post_render`).
-*   **Privilege Model**: When `sudo = true`, installation and update hooks (`pre/post_install`, `pre/post_update`) run with `sudo` elevation, while source and render hooks (`pre_source`, `post_render`) always execute in user space without `sudo`.
+
+### Hook Reference & Working Directories (`cwd`)
+Drift executes all lifecycle hooks with predictable working directories and automatic environment variable injection (including host facts and package configs):
+
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
+| :--- | :--- | :--- |
+| `probe` | Pre-flight requirement checks (`deploy`, `render`, `status`) | `src/<pkg>` |
+| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` |
+| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` |
+| `health` | During `drift health` probe execution | `target_directory` |
+
+> [!NOTE]
+> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script.
+
+*   **Bypassing Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks on any deployment command (`deploy`, `apply`, `render`, `adopt`, `add`, `uninstall`, `rollback`, `gc`).
+*   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from <stage>]` (where stage is `source` or `install`).
 
 ---
 
@@ -397,6 +420,18 @@ timeout = 60
 ### 5. Recovering from Midway Deployment Failures
 * **Q**: A deployment script or hook crashed midway and left files in a half-written state.
 * **A**: Run **`drift rollback <pkg>`** to revert `install/` to the last committed clean HEAD and redeploy the last stable state.
+
+### 6. Debugging & Iterating on Broken Hook Scripts
+* **Q**: What if a broken lifecycle hook script blocks me from deploying or authoring a package correctly?
+* **A**: Deploy with **`--no-hooks`** first, then debug your hook script in isolation using **`drift hook --from src <pkg> <hook> -v`**:
+  ```bash
+  # 1. Deploy the package safely while bypassing failing hook scripts
+  drift deploy <pkg> --no-hooks
+
+  # 2. Iterate and debug the hook script live from the source directory with all injected variables & verbose output
+  drift hook <pkg> <hook> --from src -v
+  ```
+  This allows you to edit hook scripts in `src/<pkg>/` and test them immediately with full environment variable and host fact injection without triggering repeated deployment passes.
 
 👉 Run `drift help faq` for more tips and topic manuals.
 

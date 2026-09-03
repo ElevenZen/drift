@@ -558,18 +558,21 @@ timeout = 120
 ```
 
 #### Lifecycle Hooks Execution Matrix
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) | Privilege Model |
-| :--- | :--- | :--- | :--- |
-| `probe` | Requirement validation (deploy, render, status) | `src/<pkg>` | Always user space (Preserves envs) |
-| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` | Always user space (Preserves envs) |
-| `post_render` | After sandbox compilation | `render/<pkg>` | Always user space (Preserves envs) |
-| `pre_install` | Before first-time deployment | `install/<pkg>` | Always user space (Preserves envs) |
-| `post_install` | After first-time deployment | `target_directory` | Always user space (Preserves envs) |
-| `pre_update` | Before incremental/full update deploy | `install/<pkg>` | Always user space (Preserves envs) |
-| `post_update` | After incremental/full update deploy | `target_directory` | Always user space (Preserves envs) |
-| `pre_uninstall` | Before unlinking/deleting files | `target_directory` | Always user space (Preserves envs) |
-| `post_uninstall`| After unlinking/deleting files | `install/<pkg>` | Always user space (Preserves envs) |
-| `health` | During `drift health` probe execution | `target_directory` | Always user space (Preserves envs) |
+| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
+| :--- | :--- | :--- |
+| `probe` | Requirement validation (deploy, render, status) | `src/<pkg>` |
+| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` |
+| `post_render` | After sandbox compilation | `render/<pkg>` |
+| `pre_install` | Before first-time deployment | `install/<pkg>` |
+| `post_install` | After first-time deployment | `target_directory` |
+| `pre_update` | Before incremental/full update deploy | `install/<pkg>` |
+| `post_update` | After incremental/full update deploy | `target_directory` |
+| `pre_uninstall` | Before unlinking/deleting files | `target_directory` |
+| `post_uninstall`| After unlinking/deleting files | `install/<pkg>` |
+| `health` | During `drift health` probe execution | `target_directory` |
+
+> [!NOTE]
+> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
 Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:
