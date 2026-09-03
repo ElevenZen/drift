@@ -63,6 +63,8 @@ def run_primitive_9_purge_workspace_garbage(
         dry_run=dry_run,
         no_hooks=no_hooks
     )
+    if uninstalled_orphans.status != "SUCCESS":
+        raise RuntimeError(uninstalled_orphans.error_message or "Garbage collection orphan uninstallation failed.")
 
     # --- Part 2: Database Folder Purge (Zombie folders without config) ---
     # Purge render/

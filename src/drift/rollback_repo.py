@@ -110,13 +110,15 @@ def run_primitive_8_rollback_recovery(
     # 4. Trigger full redeploy fallback for packages that were committed in HEAD
     if packages_to_redeploy:
         logger.info(f"Executing Full Package Redeploy to restore system files for: {packages_to_redeploy}")
-        run_primitive_5_install_deployment(
+        install_res = run_primitive_5_install_deployment(
             workspace_config=workspace_config,
             packages_to_redeploy=packages_to_redeploy,
             resolve_symlinks=True,
             force=True,
             no_hooks=no_hooks
         )
+        if install_res.status != "SUCCESS":
+            raise RuntimeError(install_res.error_message or "Rollback installation failed.")
 
     # 5. Restore the state registry entries
     # Reload registry after checkout to prevent dirty override

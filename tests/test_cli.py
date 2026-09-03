@@ -125,6 +125,38 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("packages not found", stderr.getvalue())
         self.assertIn("nonexistent_pkg", stderr.getvalue())
 
+    def test_cli_render_failure_does_not_print_success_message(self) -> None:
+        """Verifies that when rendering fails, CLI exits with error code and does not print success."""
+        from pathlib import Path
+        # Enable var render engine in drift.local.toml
+        (Path(self.drift_root) / "config" / "drift.local.toml").write_text("""
+        [render.var]
+        suffix = "var"
+        render_command = "internal"
+        """)
+
+        # Create a package with broken template (var engine with undefined variable)
+        broken_pkg = Path(self.drift_root) / "src" / "broken_pkg"
+        broken_pkg.mkdir(parents=True, exist_ok=True)
+        (broken_pkg / "drift_package.toml").write_text("[package]\ninstall_method='stow'\n")
+        (broken_pkg / "bad.var").write_text("Hello $UNDEFINED_TEST_VARIABLE_XYZ_999\n")
+
+        stdout = StringIO()
+        stderr = StringIO()
+        original_stdout, original_stderr = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = stdout, stderr
+
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                main(["-C", self.drift_root, "render", "broken_pkg"])
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            sys.stdout, sys.stderr = original_stdout, original_stderr
+
+        self.assertNotIn("Successfully rendered", stdout.getvalue())
+        self.assertIn("❌ [ERROR]", stderr.getvalue())
+        self.assertIn("broken_pkg", stderr.getvalue())
+
     def test_argparse_backend_explicitly(self) -> None:
         """Explicitly tests the argparse CLI backend fallback."""
         from drift.cli import run_argparse_cli

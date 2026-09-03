@@ -64,6 +64,8 @@ def execute_render(drift_root: Path, package_names: Optional[List[str]] = None, 
     res = run_primitive_2_render_packages(workspace_config, target_pkgs=package_names, no_hooks=no_hooks)
     if json_mode:
         print(res.to_json())
+    if res.status != "SUCCESS":
+        raise RuntimeError(res.error_message or "Template rendering failed.")
 
 
 def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False, json_mode: bool = False) -> None:
@@ -106,6 +108,8 @@ def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, f
     )
     if json_mode:
         print(res.to_json())
+    if res.status != "SUCCESS":
+        raise RuntimeError(res.error_message or "Deployment installation failed.")
 
 
 def execute_render_commit(drift_root: Path, message: str, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
@@ -132,6 +136,8 @@ def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = 
     res = run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
     if json_mode:
         print(res.to_json())
+    if res.status != "SUCCESS":
+        raise RuntimeError(res.error_message or "Reverse sync failed.")
 
 
 def execute_new_package(
@@ -188,6 +194,8 @@ def execute_uninstall(
     )
     if json_mode:
         print(res.to_json())
+    if res.status != "SUCCESS":
+        raise RuntimeError(res.error_message or "Package uninstallation failed.")
 
 
 def execute_status(drift_root: Path, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
@@ -216,6 +224,8 @@ def execute_gc(drift_root: Path, dry_run: bool = False, json_mode: bool = False,
     res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run, no_hooks=no_hooks)
     if json_mode:
         print(res.to_json())
+    if res.status != "SUCCESS":
+        raise RuntimeError(res.error_message or "Garbage collection failed.")
 
 
 def execute_adopt(

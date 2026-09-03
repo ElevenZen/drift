@@ -690,6 +690,58 @@ class TestRenderPackage(unittest.TestCase):
         self.assertFalse((render_pkg_dir / "config.txt").exists())
         self.assertEqual((render_pkg_dir / "config.txt.envst").read_text(encoding="utf-8"), "Unrendered $VARIABLE")
 
+    def test_render_package_with_empty_directories(self) -> None:
+        """Verifies that empty directories in source packages are created in render/ without raising IsADirectoryError."""
+        from drift.render_package import render_package
+        from drift.workspace_config import WorkspaceConfig
+
+        drift_root = self.drift_root
+        workspace_config = WorkspaceConfig(
+            drift_root_path=drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+        )
+
+        pkg_dir = drift_root / "src" / "pkg_with_empty_dirs"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create empty directory and nested empty directory
+        empty_dir = pkg_dir / "empty_folder"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+
+        nested_empty_dir = pkg_dir / "nested" / "sub_empty"
+        nested_empty_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create symlink to an empty directory outside the package
+        external_empty_dir = drift_root / "external_empty"
+        external_empty_dir.mkdir(parents=True, exist_ok=True)
+        symlink_to_empty = pkg_dir / "link_to_empty"
+        try:
+            symlink_to_empty.symlink_to(external_empty_dir, target_is_directory=True)
+        except OSError:
+            pass
+
+        with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
+            f.write("""
+            [package]
+            install_method = "stow"
+            """)
+
+        with open(pkg_dir / "regular_file.txt", "w", encoding="utf-8") as f:
+            f.write("Regular file content")
+
+        # Run render_package - must succeed without IsADirectoryError
+        res = render_package(workspace_config, pkg_dir)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify directories are created in render/
+        render_pkg_dir = drift_root / "render" / "pkg_with_empty_dirs"
+        self.assertTrue((render_pkg_dir / "empty_folder").is_dir())
+        self.assertTrue((render_pkg_dir / "nested" / "sub_empty").is_dir())
+        if symlink_to_empty.exists() or symlink_to_empty.is_symlink():
+            self.assertTrue((render_pkg_dir / "link_to_empty").is_dir())
+        self.assertTrue((render_pkg_dir / "regular_file.txt").is_file())
+
     def test_render_package_templated_config_package_toml(self) -> None:
         from drift.render_package import render_package
         from drift.workspace_config import WorkspaceConfig, RenderEngineConfig

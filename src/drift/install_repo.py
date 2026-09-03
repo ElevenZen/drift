@@ -358,7 +358,7 @@ def run_full_copy_deployment(
 ) -> None:
     """Executes copy deployment of deployable_files to target_dir.
 
-    On Windows, uses Python built-in file copy loop (shutil.copy2).
+    On Windows, uses Python built-in file copy loop (shutil.copy2 in file_utils.py).
     On POSIX, uses rsync --files-from if available, falling back to Python file copy loop.
     """
     ensure_dir_exists_with_sudo(target_dir, sudo)

@@ -50,6 +50,15 @@ def render_or_copy_file(
     Returns (relative_dest_path, is_rendered).
     """
     relative_path = file_path.relative_to(package_dir)
+
+    # If the item is a directory (e.g. empty directory or symlink to directory in source), create it in render/ without copying or rendering
+    if file_path.is_dir():
+        dest_path = render_pkg_dir / relative_path
+        logger.info(f"📁 Directory: {relative_path}")
+        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
+        dest_path.mkdir(parents=True, exist_ok=True)
+        return (relative_path.as_posix(), False)
+
     engines = list(workspace_config.render_engine_configs.values())
     engine: Optional[RenderEngineConfig] = None
     if pkg_config.enable_render:
@@ -312,6 +321,7 @@ def run_primitive_2_render_packages(
                 pkg_res = render_package(workspace_config, package_dir, no_hooks=no_hooks)
                 results.append(pkg_res)
             except Exception as e:
+                logger.debug(f"Render exception for package '{package_name}':", exc_info=True)
                 if isinstance(e, FileNotFoundError):
                     err_msg = f"File not found: {e}"
                 elif isinstance(e, RenderError):
