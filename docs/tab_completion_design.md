@@ -136,8 +136,8 @@ LIFECYCLE_HOOKS: List[Choice] = [
     Choice("post_install", "Run after successful first-time installation (CWD: target_dir)"),
     Choice("pre_update", "Run before update deployment (CWD: install/<pkg>)"),
     Choice("post_update", "Run after successful update deployment (CWD: target_dir)"),
-    Choice("pre_uninstall", "Run before uninstallation (CWD: install/<pkg>)"),
-    Choice("post_uninstall", "Run after uninstallation (CWD: target_dir)"),
+    Choice("pre_uninstall", "Run before uninstallation (CWD: target_dir)"),
+    Choice("post_uninstall", "Run after uninstallation (CWD: install/<pkg>)"),
     Choice("health", "Run runtime health check probe (CWD: target_dir)"),
 ]
 

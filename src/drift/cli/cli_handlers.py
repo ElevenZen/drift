@@ -396,13 +396,14 @@ def handle_install_commit(
 def handle_hook(
     ctx: Any,
     package: str,
-    hook_name: str
+    hook_name: str,
+    from_stage: Optional[str] = None
 ) -> None:
     """(Low-Level) Trigger a specific lifecycle hook script for a single package."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode)
+        execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode, from_stage=from_stage)
 
 
 CLI_HANDLERS: Dict[str, Callable[..., Any]] = {

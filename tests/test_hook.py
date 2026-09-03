@@ -138,15 +138,15 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((self.target_dir / "post_update_out.txt").is_file())
 
-        # pre_uninstall: CWD is install_pkg_dir
+        # pre_uninstall: CWD is target_dir
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "pre_uninstall_out.txt").is_file())
+        self.assertTrue((self.target_dir / "pre_uninstall_out.txt").is_file())
 
-        # post_uninstall: CWD is target_dir
+        # post_uninstall: CWD is install_pkg_dir
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((self.target_dir / "post_uninstall_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "post_uninstall_out.txt").is_file())
 
         # health: CWD is target_dir
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "health")
@@ -456,6 +456,55 @@ echo "VALUE=$DYNAMIC_VAL"
         rendered_script = self.workspace_config.render_path / "pkg_templated_pre_source" / "scripts" / "gen.sh"
         self.assertTrue(rendered_script.exists())
         self.assertIn('VALUE=rendered_at_runtime', rendered_script.read_text(encoding="utf-8"))
+
+    def test_trigger_hook_with_from_stage(self) -> None:
+        """Verifies choosing from 'source' vs 'install' stage explicitly."""
+        from drift.constants import PackageStage
+
+        # 1. from_stage=SOURCE triggers directly from src even without install/ directory for pre_source
+        res_source = run_primitive_trigger_hook(
+            self.workspace_config,
+            "pkg_hook",
+            "pre_source",
+            from_stage=PackageStage.SOURCE
+        )
+        self.assertEqual(res_source.status, "SUCCESS")
+        self.assertTrue((self.src_pkg_dir / "pre_source_out.txt").is_file())
+
+        # 2. from_stage=INSTALL raises FileNotFoundError when install directory does not exist
+        with self.assertRaises(FileNotFoundError):
+            run_primitive_trigger_hook(
+                self.workspace_config,
+                "pkg_hook",
+                "pre_install",
+                from_stage=PackageStage.INSTALL
+            )
+
+        # 3. Create install dir and run from_stage=INSTALL
+        install_pkg_dir = self.drift_root / "install" / "pkg_hook"
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
+
+        res_install = run_primitive_trigger_hook(
+            self.workspace_config,
+            "pkg_hook",
+            "pre_install",
+            from_stage=PackageStage.INSTALL
+        )
+        self.assertEqual(res_install.status, "SUCCESS")
+        self.assertTrue((install_pkg_dir / "pre_install_out.txt").is_file())
+
+    def test_cli_hook_with_from_stage_flag(self) -> None:
+        """Verifies drift hook CLI with --from source and --from install."""
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "drift.toml").write_text('[workspace]\nsource_directory = "src"\n[packages.enable]\npkg_hook = true\n', encoding="utf-8")
+
+        # 1. CLI with --from source for pre_source hook
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source", "--from", "source"])
+        self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
 
 
 if __name__ == "__main__":

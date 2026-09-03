@@ -105,28 +105,39 @@ DEFAULT_STOW_IGNORE_CONTENT = (
     r"^/COPYING.*" "\n"
 )
 
-LIFECYCLE_HOOK_NAMES = (
+# Lifecycle hooks categorized by their execution working directory (CWD)
+SOURCE_CWD_HOOK_NAMES = (
     "probe",
     "pre_source",
-    "pre_install",
-    "post_install",
-    "pre_update",
-    "post_update",
-    "pre_uninstall",
-    "post_uninstall",
-    "post_render",
-    "health",
 )
 
-UNINSTALL_HOOK_NAMES = (
-    "pre_uninstall",
-    "post_uninstall",
+RENDER_CWD_HOOK_NAMES = (
+    "post_render",
 )
 
 INSTALL_CWD_HOOK_NAMES = (
     "pre_install",
     "pre_update",
+    "post_uninstall",
+)
+
+TARGET_CWD_HOOK_NAMES = (
+    "post_install",
+    "post_update",
     "pre_uninstall",
+    "health",
+)
+
+LIFECYCLE_HOOK_NAMES = (
+    *SOURCE_CWD_HOOK_NAMES,
+    *RENDER_CWD_HOOK_NAMES,
+    *INSTALL_CWD_HOOK_NAMES,
+    *TARGET_CWD_HOOK_NAMES,
+)
+
+UNINSTALL_HOOK_NAMES = (
+    "pre_uninstall",
+    "post_uninstall",
 )
 
 DEFAULT_HOOK_TIMEOUT: int = 120

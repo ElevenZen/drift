@@ -567,8 +567,8 @@ timeout = 120
 | `post_install` | After first-time deployment | `target_directory` | Always user space (Preserves envs) |
 | `pre_update` | Before incremental/full update deploy | `install/<pkg>` | Always user space (Preserves envs) |
 | `post_update` | After incremental/full update deploy | `target_directory` | Always user space (Preserves envs) |
-| `pre_uninstall` | Before unlinking/deleting files | `install/<pkg>` | Always user space (Preserves envs) |
-| `post_uninstall`| After unlinking/deleting files | `target_directory` | Always user space (Preserves envs) |
+| `pre_uninstall` | Before unlinking/deleting files | `target_directory` | Always user space (Preserves envs) |
+| `post_uninstall`| After unlinking/deleting files | `install/<pkg>` | Always user space (Preserves envs) |
 | `health` | During `drift health` probe execution | `target_directory` | Always user space (Preserves envs) |
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)

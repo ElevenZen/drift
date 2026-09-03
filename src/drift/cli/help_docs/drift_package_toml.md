@@ -133,8 +133,8 @@ All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 t
 | `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
 | `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` | User space (Preserves all envs) |
 | `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` | User space (Preserves all envs) |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | User space (Preserves all envs) |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | User space (Preserves all envs) |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` | User space (Preserves all envs) |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` | User space (Preserves all envs) |
 | `health` | During `drift health` probe execution | `target_directory` | User space (Preserves all envs) |
 
 > [!NOTE]

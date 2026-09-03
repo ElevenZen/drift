@@ -79,8 +79,8 @@ LIFECYCLE_HOOKS: List[Choice] = [
     Choice("post_install", "Run after successful first-time installation (CWD: target_dir)"),
     Choice("pre_update", "Run before update deployment (CWD: install/<pkg>)"),
     Choice("post_update", "Run after successful update deployment (CWD: target_dir)"),
-    Choice("pre_uninstall", "Run before uninstallation (CWD: install/<pkg>)"),
-    Choice("post_uninstall", "Run after uninstallation (CWD: target_dir)"),
+    Choice("pre_uninstall", "Run before uninstallation (CWD: target_dir)"),
+    Choice("post_uninstall", "Run after uninstallation (CWD: install/<pkg>)"),
     Choice("health", "Run runtime health check probe (CWD: target_dir)"),
 ]
 
@@ -674,7 +674,17 @@ def build_completion_schema() -> CompletionSchema:
                         required=True
                     )
                 ],
-                options=[]
+                options=[
+                    OptionSpec(
+                        flags=["--from-stage", "--from"],
+                        dest="from_stage",
+                        description="Directory base to load hook from ('install' or 'source')",
+                        takes_value=True,
+                        type=str,
+                        choices=PACKAGE_STAGES,
+                        default=None
+                    ),
+                ]
             ),
         }
     )

@@ -500,7 +500,8 @@ def execute_hook(
     drift_root: Path,
     package_name: str,
     hook_name: str,
-    json_mode: bool = False
+    json_mode: bool = False,
+    from_stage: Optional[Union[str, Any]] = None
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
     from ..package_hook import run_primitive_trigger_hook
@@ -509,7 +510,8 @@ def execute_hook(
     res = run_primitive_trigger_hook(
         workspace_config=workspace_config,
         package_name=package_name,
-        hook_name=hook_name
+        hook_name=hook_name,
+        from_stage=from_stage
     )
 
     if json_mode:

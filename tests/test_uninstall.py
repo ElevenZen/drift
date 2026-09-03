@@ -257,13 +257,13 @@ class TestUninstall(unittest.TestCase):
         system_target = self.system_target_dir / "app.conf"
         system_target.write_text("deployed config", encoding="utf-8")
 
-        pre_hook_out = self.system_target_dir / "pre_uninstall_out.txt"
-        post_hook_out = self.system_target_dir / "post_uninstall_out.txt"
+        pre_hook_out = self.drift_root / "pre_uninstall_out.txt"
+        post_hook_out = self.drift_root / "post_uninstall_out.txt"
 
         pre_hook = scripts_dir / "pre_uninstall.sh"
         pre_hook.write_text(f"""#!/bin/sh
 if [ -f "{system_target}" ]; then
-    echo "PRE_UNINSTALL_${{drift_package_name}}_FILE_EXISTS" > "{pre_hook_out}"
+    echo "PRE_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{pre_hook_out}"
 fi
 """, encoding="utf-8")
         pre_hook.chmod(0o755)
@@ -271,7 +271,7 @@ fi
         post_hook = scripts_dir / "post_uninstall.sh"
         post_hook.write_text(f"""#!/bin/sh
 if [ ! -f "{system_target}" ]; then
-    echo "POST_UNINSTALL_${{drift_package_name}}_FILE_REMOVED_IN_$(pwd)" > "{post_hook_out}"
+    echo "POST_UNINSTALL_${{drift_package_name}}_IN_$(pwd)" > "{post_hook_out}"
 fi
 """, encoding="utf-8")
         post_hook.chmod(0o755)
@@ -301,15 +301,18 @@ fi
         # 1. Target file was removed
         self.assertFalse(system_target.exists())
 
-        # 2. pre_uninstall executed before file removal
+        # 2. pre_uninstall executed before file removal with cwd=target_dir
         self.assertTrue(pre_hook_out.is_file())
-        self.assertEqual(pre_hook_out.read_text(encoding="utf-8").strip(), f"PRE_UNINSTALL_{pkg}_FILE_EXISTS")
+        self.assertEqual(
+            pre_hook_out.read_text(encoding="utf-8").strip(),
+            f"PRE_UNINSTALL_{pkg}_IN_{self.system_target_dir}"
+        )
 
-        # 3. post_uninstall executed after file removal with cwd=target_dir
+        # 3. post_uninstall executed after file removal with cwd=install_dir
         self.assertTrue(post_hook_out.is_file())
         self.assertEqual(
             post_hook_out.read_text(encoding="utf-8").strip(),
-            f"POST_UNINSTALL_{pkg}_FILE_REMOVED_IN_{self.system_target_dir}"
+            f"POST_UNINSTALL_{pkg}_IN_{pkg_install_dir}"
         )
 
     def test_uninstall_fails_if_hook_file_missing_in_install(self):
