@@ -645,6 +645,417 @@ pkg_cli = true
         self.assertEqual(os.environ[var_name], "cli_host_override")
 
 
+class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
+    """Tests for topological sort variable stitching in [env] and recursive config dictionary interpolation."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.temp_dir = tempfile.mkdtemp()
+        self.drift_root = Path(self.temp_dir)
+        self.config_dir = self.drift_root / CONFIG_DIR_NAME
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+    def test_update_env_dict(self) -> None:
+        """Verifies update_env_dict with overwrite, non-overwrite, env_keep, and snapshot tracking."""
+        from drift.env_utils import update_env_dict, restore_env_dict
+
+        # 1. Basic update with overwrite and snapshot
+        target = {"A": "1", "B": "2"}
+        res_target, saved = update_env_dict(target, {"B": "20", "C": "30"}, overwrite=True)
+        self.assertIs(res_target, target)
+        self.assertEqual(target, {"A": "1", "B": "20", "C": "30"})
+        self.assertEqual(saved, {"B": "2", "C": None})
+
+        # Restore from snapshot
+        restore_env_dict(target, saved)
+        self.assertEqual(target, {"A": "1", "B": "2"})
+
+        # 2. Non-overwrite (fill unset blanks only)
+        target2 = {"A": "1", "B": "2"}
+        _, saved2 = update_env_dict(target2, {"B": "20", "C": "30"}, overwrite=False)
+        self.assertEqual(target2, {"A": "1", "B": "2", "C": "30"})
+        self.assertEqual(saved2, {"C": None})
+
+        # 3. Protection with env_keep
+        target3 = {"CLI_VAR": "cli_value", "OTHER": "old"}
+        _, saved3 = update_env_dict(target3, {"CLI_VAR": "new_attempt", "OTHER": "new", "ADDED": "val"}, overwrite=True, env_keep={"CLI_VAR"})
+        self.assertEqual(target3["CLI_VAR"], "cli_value")
+        self.assertEqual(target3["OTHER"], "new")
+        self.assertEqual(target3["ADDED"], "val")
+        self.assertEqual(saved3, {"OTHER": "old", "ADDED": None})
+
+        # 4. None / empty source returns target unchanged
+        _, saved4 = update_env_dict(target3, None)
+        self.assertEqual(target3["CLI_VAR"], "cli_value")
+        self.assertEqual(saved4, {})
+
+    def test_topological_sort_env(self) -> None:
+        """Verifies topological_sort_env computes correct evaluation order and catches cycles."""
+        from drift.env_utils import topological_sort_env
+        from drift.exceptions import ConfigError
+
+        # Independent variables
+        order = topological_sort_env({"A": "1", "B": "2"})
+        self.assertEqual(set(order), {"A", "B"})
+
+        # Linear chain C depends on B, B depends on A
+        raw_env = {
+            "C": "${B}_end",
+            "B": "${A}_mid",
+            "A": "start",
+        }
+        order = topological_sort_env(raw_env)
+        self.assertEqual(order, ["A", "B", "C"])
+
+        # Diamond / multi-dependency: D depends on B and C; B and C depend on A
+        diamond_env = {
+            "D": "${B}_${C}",
+            "B": "${A}_b",
+            "C": "${A}_c",
+            "A": "base",
+        }
+        order = topological_sort_env(diamond_env)
+        self.assertEqual(order[0], "A")
+        self.assertEqual(set(order[1:3]), {"B", "C"})
+        self.assertEqual(order[3], "D")
+
+        # Escaped reference should not create dependency
+        escaped_env = {
+            "A": r"\${B}",
+            "B": "val",
+        }
+        order = topological_sort_env(escaped_env)
+        self.assertEqual(set(order), {"A", "B"})
+
+        # Cycle detection
+        with self.assertRaises(ConfigError):
+            topological_sort_env({"A": "${B}", "B": "${A}"})
+
+    def test_resolve_env_references_linear(self) -> None:
+        """Verifies that linear dependencies A -> B -> C resolve in correct topological order."""
+        from drift.env_utils import resolve_env_references
+
+        raw_env = {
+            "A": "root_val",
+            "B": "${A}_layer2",
+            "C": "${B}_layer3",
+        }
+        resolved = resolve_env_references(raw_env, base_env={})
+        self.assertEqual(resolved["A"], "root_val")
+        self.assertEqual(resolved["B"], "root_val_layer2")
+        self.assertEqual(resolved["C"], "root_val_layer2_layer3")
+
+    def test_resolve_env_references_multi_dep(self) -> None:
+        """Verifies that multiple variable references in a single string interpolate correctly."""
+        from drift.env_utils import resolve_env_references
+
+        raw_env = {
+            "HOST": "127.0.0.1",
+            "PORT": "1080",
+            "SOCKS_PROXY": "socks5h://${HOST}:${PORT}",
+            "ALL_PROXY": "${SOCKS_PROXY}",
+        }
+        resolved = resolve_env_references(raw_env, base_env={})
+        self.assertEqual(resolved["HOST"], "127.0.0.1")
+        self.assertEqual(resolved["PORT"], "1080")
+        self.assertEqual(resolved["SOCKS_PROXY"], "socks5h://127.0.0.1:1080")
+        self.assertEqual(resolved["ALL_PROXY"], "socks5h://127.0.0.1:1080")
+
+    def test_resolve_env_references_with_base_env(self) -> None:
+        """Verifies that external variables from base_env (e.g. os.environ or host facts) are resolved."""
+        from drift.env_utils import resolve_env_references
+
+        base_env = {"HOME": "/home/tester", "drift_host_os": "linux"}
+        raw_env = {
+            "APP_DIR": "${HOME}/.local/share/app",
+            "OS_NAME": "os_${drift_host_os}",
+            "FULL_PATH": "${APP_DIR}/${OS_NAME}/bin",
+        }
+        resolved = resolve_env_references(raw_env, base_env=base_env)
+        self.assertEqual(resolved["APP_DIR"], "/home/tester/.local/share/app")
+        self.assertEqual(resolved["OS_NAME"], "os_linux")
+        self.assertEqual(resolved["FULL_PATH"], "/home/tester/.local/share/app/os_linux/bin")
+
+    def test_resolve_env_references_self_cycle(self) -> None:
+        """Verifies that immediate self-references raise ConfigError."""
+        from drift.env_utils import resolve_env_references
+        from drift.exceptions import ConfigError
+
+        raw_env = {"LOOP": "${LOOP}"}
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_references(raw_env, base_env={})
+        self.assertIn("Cyclic dependency", str(ctx.exception))
+
+    def test_resolve_env_references_mutual_cycle(self) -> None:
+        """Verifies that cyclic dependencies (A -> B -> A) raise ConfigError."""
+        from drift.env_utils import resolve_env_references
+        from drift.exceptions import ConfigError
+
+        raw_env = {
+            "A": "start_${B}",
+            "B": "mid_${C}",
+            "C": "end_${A}",
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_references(raw_env, base_env={})
+        self.assertIn("Cyclic dependency", str(ctx.exception))
+
+    def test_resolve_env_references_missing_var(self) -> None:
+        """Verifies that referencing a non-existent variable raises ConfigError."""
+        from drift.env_utils import resolve_env_references
+        from drift.exceptions import ConfigError
+
+        raw_env = {"A": "${UNKNOWN_VAR}"}
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_references(raw_env, base_env={})
+        self.assertIn("UNKNOWN_VAR", str(ctx.exception))
+
+    def test_interpolate_config_dict(self) -> None:
+        """Verifies recursive interpolation of strings across nested dicts, lists, and tuples."""
+        from drift.env_utils import interpolate_config_dict
+
+        env = {"BASE": "/opt/app", "PORT": "8080"}
+        data = {
+            "target": "${BASE}/dest",
+            "port_num": 8080,
+            "is_enabled": True,
+            "hooks": {
+                "pre": "${BASE}/scripts/pre.sh",
+                "timeout": 30,
+            },
+            "files": ["${BASE}/f1.txt", "${BASE}/f2.txt"],
+            "env": {
+                "raw_text": "${DONT_TOUCH_ME}",
+            }
+        }
+        result = interpolate_config_dict(data, env=env, exclude_keys={"env"})
+        self.assertEqual(result["target"], "/opt/app/dest")
+        self.assertEqual(result["port_num"], 8080)
+        self.assertEqual(result["is_enabled"], True)
+        self.assertEqual(result["hooks"]["pre"], "/opt/app/scripts/pre.sh")
+        self.assertEqual(result["hooks"]["timeout"], 30)
+        self.assertEqual(result["files"], ["/opt/app/f1.txt", "/opt/app/f2.txt"])
+        # Excluded key 'env' was not interpolated
+        self.assertEqual(result["env"]["raw_text"], "${DONT_TOUCH_ME}")
+
+    def test_workspace_config_with_stitched_env_and_field_interpolation(self) -> None:
+        """Verifies that workspace drift.toml resolves [env] stitching and interpolates fields."""
+        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml.write_text(
+            """
+[workspace]
+source_directory = "${SRC_SUBDIR}"
+default_target_directory = "${TARGET_ROOT}/user_home"
+
+[packages.enable]
+default = true
+
+[env]
+ROOT_DIR = "/custom/base"
+SRC_SUBDIR = "src_custom"
+TARGET_ROOT = "${ROOT_DIR}/dest"
+SocksProxyHost = "127.0.0.1"
+SocksProxyPort = "9050"
+SOCKS_PROXY = "socks5h://${SocksProxyHost}:${SocksProxyPort}"
+ALL_PROXY = "${SOCKS_PROXY}"
+""",
+            encoding="utf-8"
+        )
+        ws = load_workspace_config(self.drift_root)
+        self.assertEqual(ws.env["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.env["ALL_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.source_directory, Path("src_custom"))
+        self.assertEqual(str(ws.default_target_directory), "/custom/base/dest/user_home")
+
+    def test_package_config_with_env_override_and_field_interpolation(self) -> None:
+        """Verifies that package drift_package.toml resolves [env.override] and interpolates package fields."""
+        from drift.package_config import PackageConfig
+
+        pkg_dict = {
+            "package": {
+                "name": "my_daemon",
+                "target_directory": "${APP_ROOT}/${drift_package_name}",
+            },
+            "env": {
+                "override": {
+                    "APP_ROOT": "/var/lib",
+                    "PORT": "8000",
+                    "SERVICE_URL": "http://127.0.0.1:${PORT}",
+                }
+            },
+            "hooks": {
+                "post_install": "scripts/start_${drift_package_name}.sh",
+                "timeout": 45,
+            }
+        }
+        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="my_daemon")
+        self.assertEqual(pkg_cfg.name, "my_daemon")
+        self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
+        self.assertEqual(pkg_cfg.env_override["SERVICE_URL"], "http://127.0.0.1:8000")
+        self.assertEqual(str(pkg_cfg.hooks.post_install), "scripts/start_my_daemon.sh")
+        self.assertEqual(pkg_cfg.hooks.timeout, 45)
+
+    def test_escaped_variable_stitching(self) -> None:
+        """Verifies that \\$VAR and \\${VAR} escape variable stitching in [env] and config fields."""
+        from drift.env_utils import resolve_env_references, interpolate_config_dict
+
+        raw_env = {
+            "REAL_VAR": "actual_val",
+            "ESCAPED_ONE": r"\${REAL_VAR}",
+            "ESCAPED_TWO": r"\$REAL_VAR",
+            "ESCAPED_UNDEFINED": r"\${NOT_A_REAL_VAR}",
+        }
+        # Escaped variables must not be treated as graph dependencies
+        resolved = resolve_env_references(raw_env, base_env={})
+        self.assertEqual(resolved["REAL_VAR"], "actual_val")
+        self.assertEqual(resolved["ESCAPED_ONE"], "${REAL_VAR}")
+        self.assertEqual(resolved["ESCAPED_TWO"], "$REAL_VAR")
+        self.assertEqual(resolved["ESCAPED_UNDEFINED"], "${NOT_A_REAL_VAR}")
+
+        data = {
+            "target": r"\${ESCAPED_PATH}/app",
+            "expanded": "${REAL_VAR}/app",
+        }
+        interpolated = interpolate_config_dict(data, env=resolved)
+        self.assertEqual(interpolated["target"], "${ESCAPED_PATH}/app")
+        self.assertEqual(interpolated["expanded"], "actual_val/app")
+
+    def test_package_config_facts_and_precedence(self) -> None:
+        """Verifies that all four package facts are available and 7-tier precedence is respected in package config."""
+        from drift.package_config import PackageConfig
+        from drift.workspace_config import WorkspaceConfig
+
+        # Test CLI environment precedence (Tier 1 INITIAL_ENV)
+        os.environ["CLI_OVERRIDE_VAR"] = "cli_val"
+        set_initial_env(["CLI_OVERRIDE_VAR"])
+
+        ws = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("src"),
+            render_directory=Path("render"),
+            install_directory=Path("install"),
+            backup_directory=Path("backup"),
+            default_target_directory=Path("/target"),
+            default_install_method="stow",
+            packages_enable={},
+            packages_enable_default=True,
+            render_engine_configs={},
+            env={},
+        )
+
+        pkg_toml_path = self.drift_root / "src" / "my_pkg" / "drift_package.toml"
+        pkg_dict = {
+            "package": {
+                "name": "my_pkg",
+                "target_directory": "${APP_INSTALL_DIR}/target",
+            },
+            "env": {
+                "fallback": {
+                    "FALLBACK_VAR": "fallback_val",
+                    "OVERRIDDEN_BY_WORKSPACE": "should_be_overridden",
+                },
+                "override": {
+                    "SRC_DIR_REF": "${drift_package_source_dir}",
+                    "RENDER_DIR_REF": "${drift_package_render_dir}",
+                    "INSTALL_DIR_REF": "${drift_package_install_dir}",
+                    "APP_INSTALL_DIR": "${drift_package_install_dir}",
+                    "CLI_OVERRIDE_VAR": "attempted_pkg_override",
+                }
+            },
+            "hooks": {
+                "post_install": "${SRC_DIR_REF}/scripts/post.sh",
+            }
+        }
+        # Simulate workspace environment variable in os.environ (Tier 6)
+        os.environ["OVERRIDDEN_BY_WORKSPACE"] = "workspace_val"
+
+        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
+        self.assertEqual(pkg_cfg.name, "my_pkg")
+        self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
+        self.assertEqual(pkg_cfg.env_override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_override["RENDER_DIR_REF"], str(self.drift_root / "render" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
+        # Fallback filled unset blanks
+        self.assertEqual(pkg_cfg.env_fallback["FALLBACK_VAR"], "fallback_val")
+        # Hook path was interpolated
+        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "src" / "my_pkg" / "scripts" / "post.sh"))
+
+    def test_package_config_facts_with_custom_workspace_config(self) -> None:
+        """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
+        from drift.workspace_config import WorkspaceConfig
+        from drift.package_config import PackageConfig
+
+        ws = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            source_directory=Path("custom_src"),
+            render_directory=Path("custom_render"),
+            install_directory=Path("custom_install"),
+            backup_directory=Path("custom_backup"),
+            default_target_directory=Path("/target"),
+            default_install_method="stow",
+            packages_enable={},
+            packages_enable_default=True,
+            render_engine_configs={},
+            env={},
+        )
+        pkg_dict = {
+            "package": {
+                "name": "custom_pkg",
+            },
+            "env": {
+                "override": {
+                    "SRC": "${drift_package_source_dir}",
+                    "RENDER": "${drift_package_render_dir}",
+                    "INSTALL": "${drift_package_install_dir}",
+                }
+            }
+        }
+        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="custom_pkg", workspace_config=ws)
+        self.assertEqual(pkg_cfg.env_override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
+        self.assertEqual(pkg_cfg.env_override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
+        self.assertEqual(pkg_cfg.env_override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
+
+    def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
+        """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
+        from drift.package_config import PackageConfig
+        from drift.exceptions import ConfigError
+
+        # drift_package_name is always set
+        pkg_dict_name_only = {
+            "package": {
+                "name": "my_pkg",
+            },
+            "env": {
+                "override": {
+                    "NAME_REF": "${drift_package_name}",
+                }
+            }
+        }
+        pkg_cfg = PackageConfig.from_dict(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
+        self.assertEqual(pkg_cfg.env_override["NAME_REF"], "my_pkg")
+
+        # Referencing dir facts without workspace_config raises ConfigError
+        pkg_dict_dir_ref = {
+            "package": {
+                "name": "my_pkg",
+            },
+            "env": {
+                "override": {
+                    "SRC_REF": "${drift_package_source_dir}",
+                }
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_dict_dir_ref, package_name="my_pkg", workspace_config=None)
+        self.assertIn("drift_package_source_dir", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
 

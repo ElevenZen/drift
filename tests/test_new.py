@@ -6,7 +6,6 @@ from drift.new_package import run_primitive_10_create_new_package
 from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
-    DEFAULT_PACKAGE_CONFIG_TEMPLATE,
     get_default_package_config_content,
     get_default_drift_ignore_content,
 )

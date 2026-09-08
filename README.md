@@ -17,6 +17,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 > **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
+* 🧩 **Native TOML Variable Stitching**: Compose variables topologically (`$VAR`, `${VAR}`) across all TOML configuration files with Kahn's algorithm DAG cycle detection—no external template wrappers or subprocesses required.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.local.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
@@ -190,13 +191,20 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     ```
     When Drift runs, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
-### 🔗 4. Directed Acyclic Graph (DAG) Template Pipelines
+### 🧩 4. Native TOML Variable Stitching & Topological Resolution
+Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all TOML configuration files (`drift.toml`, `drift_package.toml`, and their `.local.toml` counterparts) using Kahn's algorithm DAG topological sorting without invoking external subprocesses:
+*   **Self-Referencing in `[env]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic cycle detection.
+*   **Unidirectional Evaluation**: `[env]` resolves first; non-env sections (`target_directory`, `hooks`, etc.) dynamically reference `[env]` variables without circular dependencies.
+*   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
+*   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
+
+### 🔗 5. Directed Acyclic Graph (DAG) Template Pipelines
 Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
 *   **Template Input Dependencies**: A render engine's input variables can itself be a template compiled by another engine (e.g., `mustache` needing a static JSON config generated from environment variables).
 *   **Cycle Detection**: Drift constructs a compiler dependency graph and executes cycle-detection validation, throwing `CyclicDependencyError` to prevent compilation loops.
 *   **Deferred Render Compilation**: If variables or templates are missing during boot, Drift gracefully logs a warning. Compilation is only blocked if a file in the active workspace *actually* relies on the disabled engine, preventing unrelated package bottlenecks.
 
-### 🛑 5. Proactive Collision Guard & Safeguards
+### 🛑 6. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
 *   **Zero Overwrite of Manual Files**: Any conflicting manual file on the host system is safely backed up to `backup/<package>/overwritten/` before deployment.
 *   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted_files/`.

@@ -176,50 +176,6 @@ DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 """
 )
 
-DEFAULT_FALLBACK_DRIFT_TOML_CONTENT = (
-"""# =====================================================================
-# drift.toml Minimal Configuration
-# =====================================================================
-
-[env]
-DRIFT_SAMPLE_ENV_THEME = "nord-dark"
-DRIFT_SAMPLE_ENV_EDITOR = "vim"
-
-[packages.enable]
-DEFAULT = false
-
-[workspace]
-source_directory = "src"
-render_directory = "render"
-install_directory = "install"
-backup_directory = "backup"
-default_target_directory = "~"
-default_install_method = "stow"
-
-[render.var]
-suffix = "var"
-render_command = "internal"
-
-[render.envsubst]
-input_file = "envsubst.bash"
-suffix = "envst"
-render_command = "envsubst < {src} > {dest}"
-
-[render.mustache]
-input_file = "mustache.envst.json"
-suffix = "mustache"
-render_command = "mustache {input} {src} > {dest}"
-
-[render.jinja2]
-input_file = "jinja2.mustache.json"
-suffix = "j2"
-render_command = "j2 {src} {input} -o {dest}"
-
-[settings]
-# probe_wan_ip = false  # Outbound WAN internet route probing (disabled by default)
-"""
-)
-
 DEFAULT_SECRETS_ENV_CONTENT = (
     "# =====================================================================\n"
     "# config/secrets.env - Environment Secret Vault (Gitignored)\n"
@@ -298,66 +254,6 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^/COPYING.*\n"
 )
 
-DEFAULT_PACKAGE_CONFIG_TEMPLATE = """# src/{package_name}/{config_filename}
-[package]
-install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
-{target_directory_line}
-# target_directory_windows = "~"  # Windows-specific destination override
-# source_directory = "."          # Package root relative to package directory
-
-# Advanced Flags
-# sudo = false
-# fully_controlled_dirs = []      # Sync deletions inside these directories
-# enable_render = true
-# enable_install = true
-
-# Host Requirements & Prerequisites (Declarative checks; skip package if unmet)
-[package.requirements]
-# os = ["linux"]                # Allowed OS: "linux", "darwin", "windows", "freebsd"
-# arch = ["x86_64", "aarch64"]  # Allowed Arch: "x86_64", "arm64", "aarch64"
-# distro = ["arch", "ubuntu"]   # Allowed Linux Distro IDs
-# binaries = ["git"]            # Required binaries in host $PATH
-# env = ["WAYLAND_DISPLAY"]     # Required environment variables when starting drift
-# ip = ["192.168.1.0/24"]       # Matches host LAN IP address (exact, CIDR, or wildcard)
-
-# Package Environment Variables
-[env.override]
-# Highest-priority package variables (overrides workspace configs, secrets, and system facts; CLI environment takes precedence)
-# SAMPLE_OVERRIDE_VAR = "custom_value"
-
-[env.fallback]
-# Baseline default values (applied only when a variable is unset across all other scopes)
-# SAMPLE_FALLBACK_VAR = "default_value"
-
-# Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
-[hooks]
-# probe          = ""           # Pre-flight requirement check (Exit 0 = Met, Exit != 0 = Unmet)
-# pre_source     = ""
-# post_render    = ""
-# pre_install    = ""
-# post_install   = ""
-# pre_update     = ""
-# post_update    = ""
-# pre_uninstall  = ""
-# post_uninstall = ""
-# health         = ""
-# timeout        = 120
-
-# Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
-[hooks.windows]
-# probe          = ""
-# pre_source     = ""
-# post_render    = ""
-# pre_install    = ""
-# post_install   = ""
-# pre_update     = ""
-# post_update    = ""
-# pre_uninstall  = ""
-# post_uninstall = ""
-# health         = ""
-# timeout        = 120
-"""
-
 
 def get_default_package_config_content(
     package_name: str,
@@ -366,16 +262,33 @@ def get_default_package_config_content(
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:
     """Renders the default drift_package.toml content for a package."""
+    template_str: Optional[str] = None
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift", "templates/drift_package_default.toml")
+        if data:
+            template_str = data.decode("utf-8")
+    except Exception:
+        pass
+
+    if template_str is None:
+        template_path = Path(__file__).resolve().parent / "templates" / "drift_package_default.toml"
+        if template_path.exists():
+            template_str = template_path.read_text(encoding="utf-8")
+        else:
+            raise FileNotFoundError(f"Default drift_package.toml template file not found at {template_path}")
+
     if target_directory is None:
         target_directory_line = '# target_directory = "~"   # Destination for this package'
     else:
         target_directory_line = f'target_directory = "{target_directory}"   # Destination for this package'
 
-    return DEFAULT_PACKAGE_CONFIG_TEMPLATE.format(
-        package_name=package_name,
-        config_filename=config_filename,
-        target_directory_line=target_directory_line,
-        install_method=install_method
+    return (
+        template_str
+        .replace("{package_name}", package_name)
+        .replace("{config_filename}", config_filename)
+        .replace("{install_method}", install_method)
+        .replace("{target_directory_line}", target_directory_line)
     )
 
 
@@ -410,8 +323,7 @@ def get_default_jinja2_content() -> str:
 
 
 def get_default_drift_toml_content() -> str:
-    """Gets the default drift.toml template content, with an embedded fallback."""
-    # Try pkgutil first (supports zipapp and installed packages)
+    """Gets the default drift.toml template content."""
     try:
         import pkgutil
         data = pkgutil.get_data("drift", "templates/drift_default.toml")
@@ -422,15 +334,9 @@ def get_default_drift_toml_content() -> str:
 
     template_path = Path(__file__).resolve().parent / "templates" / "drift_default.toml"
     if template_path.exists():
-        try:
-            return template_path.read_text(encoding="utf-8")
-        except Exception as e:
-            print(f"⚠️ Warning: Default drift.toml template file is unreadable: {e}. Using minimal fallback configuration.", file=sys.stderr)
-    else:
-        print("⚠️ Warning: Default drift.toml template file is missing. Using minimal fallback configuration.", file=sys.stderr)
+        return template_path.read_text(encoding="utf-8")
 
-    # Fallback to hardcoded minimal content to ensure self-containment
-    return DEFAULT_FALLBACK_DRIFT_TOML_CONTENT
+    raise FileNotFoundError(f"Default drift.toml template file not found at {template_path}")
 
 
 def update_initial_env() -> None:

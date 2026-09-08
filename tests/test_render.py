@@ -1668,17 +1668,21 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         # Valid substitutions with custom env dict
         env = {"USER": "alice", "APP_PORT": "8080"}
-        res = python_envsubst("Hello $USER on ${APP_PORT}!", env=env)
+        res = python_envsubst("Hello $USER on ${APP_PORT}!", error_cls=RenderError, env=env)
         self.assertEqual(res, "Hello alice on 8080!")
 
-        # Missing variable raises RenderError by default
+        # Escaped variables with backslash are preserved as literals without substitution
+        res_escaped = python_envsubst("Literal \\$USER and \\${APP_PORT} and \\${UNDEFINED_VAR}!", error_cls=RenderError, env=env)
+        self.assertEqual(res_escaped, "Literal $USER and ${APP_PORT} and ${UNDEFINED_VAR}!")
+
+        # Missing variable raises RenderError when error_cls=RenderError
         with self.assertRaises(RenderError) as ctx:
-            python_envsubst("Missing: $NOT_SET_VAR", env=env)
+            python_envsubst("Missing: $NOT_SET_VAR", error_cls=RenderError, env=env)
         self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
 
         # Missing variable raises ConfigError when error_cls=ConfigError
         with self.assertRaises(ConfigError) as ctx:
-            python_envsubst("Missing: ${NOT_SET_VAR}", env=env, error_cls=ConfigError)
+            python_envsubst("Missing: ${NOT_SET_VAR}", error_cls=ConfigError, env=env)
         self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
 
     def test_render_template_envsubst_internal_fallback(self) -> None:

@@ -17,8 +17,10 @@ from .constants import (
     LIFECYCLE_HOOK_NAMES,
     WINDOWS_PLATFORM_ALIASES,
     DEFAULT_HOOK_TIMEOUT,
+    INITIAL_ENV,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
+from .env_utils import resolve_env_references, interpolate_config_dict, update_env_dict
 from .exceptions import ConfigError
 from .file_utils import expand_user_and_env
 from .result_models import HookResult
@@ -505,6 +507,77 @@ def parse_package_env_tables(env_data: Any, package_name: str) -> Tuple[Dict[str
     return override_map, fallback_map
 
 
+def resolve_and_interpolate_package_config(
+    data: dict,
+    package_name: str,
+    workspace_config: Optional[WorkspaceConfig] = None,
+) -> Tuple[dict, Dict[str, str], Dict[str, str]]:
+    """Resolves environment variables and interpolates references across a package config dictionary.
+
+    Follows the 7-Tier Precedence Model:
+    - Tier 1: CLI / Host Shell (INITIAL_ENV preserved above all)
+    - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
+    - Tier 3: Package facts (drift_package_*)
+    - Tier 4: Host system facts
+    - Tier 6: Workspace environment
+    - Tier 7: Package [env.fallback] (fills unset blanks only)
+
+    Args:
+        data: Parsed TOML dictionary of the package configuration.
+        package_name: Name of the package.
+        workspace_config: Optional workspace configuration for deriving directory facts.
+
+    Returns:
+        A tuple of:
+        1. interpolated_data: Fully interpolated configuration dictionary (excluding [env]).
+        2. override_map: Resolved dictionary of [env.override] / [env.overwrite] variables.
+        3. fallback_map: Resolved dictionary of [env.fallback] variables.
+    """
+    env_data = data.get("env", {})
+
+    # 1. Parse and topologically resolve package environment variables ([env.override], [env.overwrite], [env.fallback])
+    override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(package_name))
+
+    # 2. Derive package facts available during package config parsing
+    # (drift_package_name is always set; drift_package_source_dir, drift_package_render_dir,
+    # drift_package_install_dir are set only when workspace_config is provided)
+    pkg_facts: Dict[str, str] = {
+        "drift_package_name": str(package_name),
+    }
+    if workspace_config is not None:
+        pkg_facts["drift_package_source_dir"] = str(workspace_config.source_path / str(package_name))
+        pkg_facts["drift_package_render_dir"] = str(workspace_config.render_path / str(package_name))
+        pkg_facts["drift_package_install_dir"] = str(workspace_config.install_path / str(package_name))
+
+    # 3. Resolve fallback_map and override_map respecting 7-tier precedence:
+    # - Fallback base: os.environ (Tiers 1, 4, 6) + pkg_facts (Tier 3, preserving INITIAL_ENV)
+    fallback_base, _ = update_env_dict(dict(os.environ), pkg_facts, overwrite=True, env_keep=INITIAL_ENV)
+    if fallback_map:
+        fallback_map = resolve_env_references(fallback_map, base_env=fallback_base, error_cls=ConfigError)
+
+    # - Override base: fallback_base + resolved fallback (where unset)
+    override_base, _ = update_env_dict(dict(fallback_base), fallback_map, overwrite=False)
+    if override_map:
+        override_map = resolve_env_references(override_map, base_env=override_base, error_cls=ConfigError)
+
+    # 4. Build active_pkg_env for interpolating the rest of drift_package.toml across 7 tiers:
+    active_pkg_env: Dict[str, str] = {}
+    update_env_dict(active_pkg_env, fallback_map, overwrite=True)
+    update_env_dict(active_pkg_env, os.environ, overwrite=True)
+    update_env_dict(active_pkg_env, pkg_facts, overwrite=True, env_keep=INITIAL_ENV)
+    update_env_dict(active_pkg_env, override_map, overwrite=True, env_keep=INITIAL_ENV)
+
+    # 5. Interpolate ${VAR} across all other sections of package config using combined env
+    interpolated_data = interpolate_config_dict(
+        data,
+        env=active_pkg_env,
+        exclude_keys={"env"},
+        error_cls=ConfigError
+    )
+
+    return interpolated_data, override_map, fallback_map
+
+
 @dataclass
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
@@ -754,8 +827,13 @@ class PackageConfig:
             self.unload_package_envs(saved_envs)
 
     @classmethod
-    def from_dict(cls, data: dict, package_name: str,
-                  source_files: Optional[Sequence[Optional[Path]]] = None) -> "PackageConfig":
+    def from_dict(
+        cls,
+        data: dict,
+        package_name: str,
+        source_files: Optional[Sequence[Optional[Path]]] = None,
+        workspace_config: Optional[WorkspaceConfig] = None,
+    ) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         # Error for unknown top-level sections
         known_top_sections = {"package", "hooks", "env", "requirements"}
@@ -789,18 +867,24 @@ class PackageConfig:
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise ConfigError(f"Unknown package option: '{key}'{name_str}")
 
+        # Resolve environment variables and interpolate configuration sections
+        interpolated_data, override_map, fallback_map = resolve_and_interpolate_package_config(
+            data,
+            package_name=str(name),
+            workspace_config=workspace_config
+        )
+        package_data = interpolated_data.get("package", {})
+        hooks_data = interpolated_data.get("hooks", {})
+
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
         hooks = PackageHooks.from_dict(
-            data.get("hooks", {}),
+            hooks_data,
             package_name=str(name)
         )
 
         # Parse declarative requirements ([package.requirements] or top-level [requirements])
-        req_data = package_data.get("requirements") or data.get("requirements") or {}
+        req_data = package_data.get("requirements") or interpolated_data.get("requirements") or {}
         requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
-
-        # Parse package environment variables ([env.override], [env.overwrite], [env.fallback])
-        override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
 
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
@@ -1033,7 +1117,8 @@ def load_package_config_from_source_dir(
     try:
         config = PackageConfig.from_dict(combined_dict,
                                          package_name=pkg_name,
-                                         source_files=source_files)
+                                         source_files=source_files,
+                                         workspace_config=workspace_config)
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
     return config

@@ -30,6 +30,8 @@ from .env_utils import (
     unload_env_settings,
     env_scope,
     secrets_env_scope,
+    resolve_env_references,
+    interpolate_config_dict,
 )
 
 logger = logging.getLogger(__name__)
@@ -617,11 +619,24 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
             settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
         inject_system_facts(probe_wan_ip=True)
 
-    # Load and apply [env] variables to os.environ immediately (preserving CLI envs and system facts)
+    # 1. Resolve inter-variable dependencies within [env] using topological sorting
     env_dict = combined_dict.get("env", {})
-    if isinstance(env_dict, dict):
+    if isinstance(env_dict, dict) and env_dict:
+        resolved_env = resolve_env_references(env_dict, base_env=os.environ, error_cls=ConfigError)
+        combined_dict["env"] = resolved_env
         protected_keys = set(INITIAL_ENV) | set(SYSTEM_FACT_KEYS)
-        load_env_settings(env_dict, overwrite=False, env_keep=protected_keys)
+        load_env_settings(resolved_env, overwrite=False, env_keep=protected_keys)
+
+    # 2. Interpolate ${VAR} across all other sections of combined_dict using resolved env + os.environ
+    active_env = dict(os.environ)
+    if isinstance(combined_dict.get("env"), dict):
+        active_env.update(combined_dict["env"])
+    combined_dict = interpolate_config_dict(
+        combined_dict,
+        env=active_env,
+        exclude_keys={"env"},
+        error_cls=ConfigError
+    )
 
     try:
         return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)

@@ -7,7 +7,6 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
-    DEFAULT_PACKAGE_CONFIG_TEMPLATE,
     get_default_package_config_content,
     get_default_drift_ignore_content,
 )

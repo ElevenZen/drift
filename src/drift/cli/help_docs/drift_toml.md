@@ -17,7 +17,7 @@ install_directory = "install"
 backup_directory = "backup"
 
 # Global default target directory for packages if unspecified in drift_package.toml
-# Supports home expansion (~).
+# Supports home expansion (~) and ${VAR} interpolation from [env].
 default_target_directory = "~"
 
 # Global default installation method if unspecified in drift_package.toml
@@ -26,13 +26,25 @@ default_install_method = "stow"
 
 
 # ---------------------------------------------------------------------
-# Workspace Environment Variables Propagation
+# Workspace Environment Variables & Native Self-Referencing
 # ---------------------------------------------------------------------
-# Variables defined under the [env] table are automatically populated into
-# os.environ. They provide global defaults for template rendering engines.
-# (Note: Package-specific envs like $drift_package_target_dir and secrets in
-# config/secrets.env take precedence over workspace [env] definitions.)
+# Drift configurations natively support topological variable self-referencing ($VAR, ${VAR})
+# directly within .toml files. External render engines (e.g. drift.local.envst.toml) can also
+# be used if desired, but native self-referencing is the built-in, zero-dependency default.
+#
+# Referencing Rules:
+# 1. Topological Stitching in [env]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
+#    Drift automatically evaluates dependencies using Kahn's topological sort algorithm with cycle detection.
+# 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
+#    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
+# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env] (and inherited process environment/facts)
+#    can be referenced across other drift.toml sections. Variables outside [env] cannot be referenced inside [env].
+# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
 [env]
+SOCKS_PROXY_HOST = "127.0.0.1"
+SOCKS_PROXY_PORT = "1080"
+DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"
+DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"
 DRIFT_SAMPLE_ENV_THEME = "nord-dark"
 DRIFT_SAMPLE_ENV_EDITOR = "vim"
 

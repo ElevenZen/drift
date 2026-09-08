@@ -18,3 +18,8 @@ Drift constructs a template dependency graph using engine configurations in `dri
     to stop build loops.
 *   **Deferred Compilation**: Missing dependencies trigger warnings rather than failures 
     unless a compiled file actually relies on them.
+
+## ⚡ Native TOML Variable Self-Referencing & External Render Engines
+*   **Built-in TOML Variable Self-Referencing**: Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all standard `.toml` fields using Kahn's topological sort algorithm with cycle detection, requiring zero subprocesses or external dependencies.
+*   **External Render Engines**: Registered template engines (`[render.envsubst]`, `[render.mustache]`, `[render.jinja2]`) compile templated dotfiles (e.g., `.bashrc.envst`, `config.j2`) and can also compile dynamic TOML templates (e.g., `drift.local.envst.toml`, `drift_package.envst.toml`) when complex templating logic is desired.
+

@@ -10,41 +10,9 @@ from .workspace_config import RenderEngineConfig
 from .constants import CONFIG_DIR_NAME, INTERNAL_RENDER_COMMAND
 from .file_utils import run_command
 from .exceptions import DriftError, RenderError
+from .env_utils import python_envsubst
 
 logger = logging.getLogger(__name__)
-
-
-def python_envsubst(
-    template_content: str,
-    env: Optional[Dict[str, str]] = None,
-    error_cls: Type[DriftError] = RenderError
-) -> str:
-    """Pure-Python envsubst equivalent for platforms without GNU gettext or as fallback.
-
-    Args:
-        template_content: Raw template string containing $VAR or ${VAR}.
-        env: Optional dictionary of environment variables (defaults to os.environ).
-        error_cls: Exception class to raise on missing variable (RenderError or ConfigError).
-
-    Returns:
-        The rendered template content as a string.
-
-    Raises:
-        error_cls: If any referenced variable is not defined in the environment.
-    """
-    environ = env if env is not None else os.environ
-    pattern = re.compile(r"\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))")
-
-    def replace_var(match: re.Match) -> str:
-        var_name = match.group(1) or match.group(2)
-        if var_name not in environ:
-            raise error_cls(
-                f"Environment variable '${var_name}' referenced in template "
-                f"was not found in [env], secrets.env, or process environment."
-            )
-        return str(environ[var_name])
-
-    return pattern.sub(replace_var, template_content)
 
 
 def python_envsubst_template(

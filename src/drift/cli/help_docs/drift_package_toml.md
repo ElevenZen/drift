@@ -52,17 +52,35 @@ fully_controlled_dirs = [
 # env = ["WAYLAND_DISPLAY"]           # Required environment variables when starting drift
 # ip = ["192.168.1.0/24"]             # Allowed LAN IPs (exact IP, CIDR subnet e.g. 10.0.0.0/8, or wildcard e.g. 192.168.1.*)
 
-# Package Environment Variables
+# ---------------------------------------------------------------------
+# Package Environment Variables & Native Self-Referencing
+# ---------------------------------------------------------------------
+# Drift TOML configurations natively support topological variable self-referencing ($VAR, ${VAR}).
+# External render engines (e.g. drift_package.envst.toml) can also be used if dynamic generation
+# is needed, but native self-referencing is the built-in, zero-dependency default for .toml files.
+#
+# Referencing Rules:
+# 1. [env.fallback] (Tier 7): Baseline defaults applied ONLY when unset across upper tiers.
+#    Evaluated first against base environment. CANNOT reference [env.override].
+# 2. [env.override] (Tier 2): High-priority overrides (overwrites facts/workspace env; CLI wins).
+#    Evaluated second. CAN reference [env.fallback], package facts (${drift_package_name},
+#    ${drift_package_source_dir}), system facts (${drift_os}, ${drift_arch}), and workspace [env].
+# 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved [env]
+#    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
+#    Variables defined outside [env] cannot be referenced inside [env].
+# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings without interpolation.
 
-# Package-level overrides: takes precedence over workspace [env], secrets.env, and system facts (CLI environment still wins).
-[env.override]
-# APP_THEME = "dark"
-# LOG_LEVEL = "debug"
-
-# Package-level defaults: safely populates variables if they haven't been defined by the host, workspace, or secrets.
 [env.fallback]
+# Baseline default values (applied only when unset across all other scopes)
 # APP_PORT = "8080"
 # APP_HOST = "localhost"
+# APP_DATA_DIR = "${HOME}/.local/share/${drift_package_name}"
+
+[env.override]
+# Highest-priority package variables (overrides workspace configs, secrets, and system facts)
+# APP_URL = "http://${APP_HOST}:${APP_PORT}"
+# APP_SRC = "${drift_package_source_dir}"
+
 
 [hooks]
 # Lifecycle Hooks (Optional shell command execution)
