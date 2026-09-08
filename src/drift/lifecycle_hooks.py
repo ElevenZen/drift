@@ -3,6 +3,7 @@ import time
 import logging
 import shlex
 import subprocess
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast, Optional, List, TYPE_CHECKING
 
@@ -10,10 +11,42 @@ if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
 
 from .package_config import PackageConfig
-from .file_utils import run_command, is_relative_to
+from .file_utils import is_relative_to
+from .process_utils import run_command
 from .result_models import HookResult
+from .constants import DEFAULT_HOOK_NON_INTERACTIVE_ENVS, INITIAL_ENV
+from .env_utils import env_scope
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class HookExecFlags:
+    """Execution control flags for lifecycle hooks.
+
+    Attributes:
+        no_hooks: When True, skips hook execution and returns a SKIPPED HookResult.
+        streaming: When True, streams stdout and stderr in real time.
+        inject_non_interactive_envs: When True, injects non-interactive environment
+            variables (e.g. PAGER=cat, CI=true) into the hook environment.
+        raise_on_error: When True, raises RuntimeError if hook fails or times out.
+        load_envs: When True, loads package-defined environments and secrets.
+    """
+    no_hooks: bool = False
+    streaming: bool = True
+    inject_non_interactive_envs: bool = True
+    raise_on_error: bool = True
+    load_envs: bool = True
+
+    @classmethod
+    def resolve(
+        cls,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> "HookExecFlags":
+        """Resolves execution flags, falling back to defaults if not provided."""
+        if flags is not None:
+            return flags
+        return cls()
 
 
 def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
@@ -77,13 +110,15 @@ def execute_hook_command(
     cmd: List[str],
     cwd: Path,
     timeout_seconds: int,
+    streaming: bool = True,
 ) -> subprocess.CompletedProcess:
     """Executes a lifecycle hook command in user space with timeout."""
     return run_command(
         cmd,
         cwd=str(cwd),
         text=True,
-        timeout=timeout_seconds
+        timeout=timeout_seconds,
+        streaming=streaming
     )
 
 
@@ -93,8 +128,8 @@ def execute_hook_script(
     hook_name: str,
     metadata: PackageConfig,
     cwd: Path,
-    raise_on_error: bool = True,
-    custom_timeout: Optional[int] = None
+    custom_timeout: Optional[int] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a hook script in user space with cwd validation, full environment inheritance, and timeout/error handling.
 
@@ -104,7 +139,7 @@ def execute_hook_script(
 
     Raises:
         FileNotFoundError: If the hook script file does not exist on disk.
-        RuntimeError: If raise_on_error is True and the hook script command times out or exits with a non-zero return code.
+        RuntimeError: If flags.raise_on_error is True and the hook script command times out or exits with a non-zero return code.
     """
     if not hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
@@ -121,87 +156,91 @@ def execute_hook_script(
     timeout_seconds = custom_timeout if custom_timeout is not None else metadata.hooks.timeout
 
     start_time = time.perf_counter()
+    exec_flags = HookExecFlags.resolve(flags)
 
-    try:
-        proc = execute_hook_command(
-            cmd=cmd,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds
-        )
-        duration_ms = (time.perf_counter() - start_time) * 1000
-        return HookResult(
-            command="hook",
-            package=pkg,
-            hook_name=hook_name,
-            status="SUCCESS",
-            exit_code=proc.returncode if proc else 0,
-            hook_path=str(hook_path),
-            cwd=str(cwd),
-            sudo=False,
-            duration_ms=duration_ms,
-            stdout=proc.stdout if proc else None,
-            stderr=proc.stderr if proc else None
-        )
-    except subprocess.TimeoutExpired as e:
-        duration_ms = (time.perf_counter() - start_time) * 1000
-        stdout_str = cast(str, e.stdout) or ""
-        stderr_str = cast(str, e.stderr) or ""
-        display_cmd = cmd
-        err_msg = (
-            f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
-            f"Command: {shlex.join(display_cmd)}\n"
-        )
-        if stdout_str.strip():
-            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-        if stderr_str.strip():
-            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-        logger.error(err_msg)
-        if raise_on_error:
-            raise RuntimeError(err_msg) from e
-        return HookResult(
-            command="hook",
-            package=pkg,
-            hook_name=hook_name,
-            status="FAILED",
-            exit_code=124,
-            hook_path=str(hook_path),
-            cwd=str(cwd),
-            sudo=False,
-            duration_ms=duration_ms,
-            stdout=stdout_str,
-            stderr=stderr_str,
-            error_message=err_msg
-        )
-    except subprocess.CalledProcessError as e:
-        duration_ms = (time.perf_counter() - start_time) * 1000
-        stdout_str = e.stdout or ""
-        stderr_str = e.stderr or ""
-        display_cmd = cmd
-        err_msg = (
-            f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
-            f"Command: {shlex.join(display_cmd)}\n"
-        )
-        if stdout_str.strip():
-            err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-        if stderr_str.strip():
-            err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-        logger.error(err_msg)
-        if raise_on_error:
-            raise RuntimeError(err_msg) from e
-        return HookResult(
-            command="hook",
-            package=pkg,
-            hook_name=hook_name,
-            status="FAILED",
-            exit_code=e.returncode,
-            hook_path=str(hook_path),
-            cwd=str(cwd),
-            sudo=False,
-            duration_ms=duration_ms,
-            stdout=stdout_str,
-            stderr=stderr_str,
-            error_message=err_msg
-        )
+    env_injections = DEFAULT_HOOK_NON_INTERACTIVE_ENVS if exec_flags.inject_non_interactive_envs else {}
+    with env_scope(env_injections, overwrite=True):
+        try:
+            proc = execute_hook_command(
+                cmd=cmd,
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                streaming=exec_flags.streaming,
+            )
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return HookResult(
+                command="hook",
+                package=pkg,
+                hook_name=hook_name,
+                status="SUCCESS",
+                exit_code=proc.returncode if proc else 0,
+                hook_path=str(hook_path),
+                cwd=str(cwd),
+                sudo=False,
+                duration_ms=duration_ms,
+                stdout=proc.stdout if proc else None,
+                stderr=proc.stderr if proc else None
+            )
+        except subprocess.TimeoutExpired as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            stdout_str = cast(str, e.stdout) or ""
+            stderr_str = cast(str, e.stderr) or ""
+            display_cmd = cmd
+            err_msg = (
+                f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
+                f"Command: {shlex.join(display_cmd)}\n"
+            )
+            if stdout_str.strip():
+                err_msg += f"Stdout:\n{stdout_str.strip()}\n"
+            if stderr_str.strip():
+                err_msg += f"Stderr:\n{stderr_str.strip()}\n"
+            logger.error(err_msg)
+            if exec_flags.raise_on_error:
+                raise RuntimeError(err_msg) from e
+            return HookResult(
+                command="hook",
+                package=pkg,
+                hook_name=hook_name,
+                status="FAILED",
+                exit_code=124,
+                hook_path=str(hook_path),
+                cwd=str(cwd),
+                sudo=False,
+                duration_ms=duration_ms,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                error_message=err_msg
+            )
+        except subprocess.CalledProcessError as e:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            stdout_str = e.stdout or ""
+            stderr_str = e.stderr or ""
+            display_cmd = cmd
+            err_msg = (
+                f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
+                f"Command: {shlex.join(display_cmd)}\n"
+            )
+            if stdout_str.strip():
+                err_msg += f"Stdout:\n{stdout_str.strip()}\n"
+            if stderr_str.strip():
+                err_msg += f"Stderr:\n{stderr_str.strip()}\n"
+            logger.error(err_msg)
+            if exec_flags.raise_on_error:
+                raise RuntimeError(err_msg) from e
+            return HookResult(
+                command="hook",
+                package=pkg,
+                hook_name=hook_name,
+                status="FAILED",
+                exit_code=e.returncode,
+                hook_path=str(hook_path),
+                cwd=str(cwd),
+                sudo=False,
+                duration_ms=duration_ms,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                error_message=err_msg
+            )
 
 
 def trigger_package_hook_with_render(
@@ -209,11 +248,9 @@ def trigger_package_hook_with_render(
     package_name: str,
     hook_name: str,
     pkg_config: Optional[PackageConfig] = None,
-    load_envs: bool = False,
-    no_hooks: bool = False,
-    raise_on_error: bool = True,
     custom_cwd: Optional[Path] = None,  
-    custom_timeout: Optional[int] = None
+    custom_timeout: Optional[int] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a package lifecycle hook in the source directory with automatic template rendering.
 
@@ -222,7 +259,8 @@ def trigger_package_hook_with_render(
 
     custom_cwd: Optional working directory for hook execution. If not provided, defaults to the package source directory.
     """
-    if no_hooks:
+    exec_flags = HookExecFlags.resolve(flags)
+    if exec_flags.no_hooks:
         return HookResult.skipped(package=package_name, hook_name=hook_name)
 
     src_pkg_dir = workspace_config.source_path / package_name
@@ -305,25 +343,23 @@ def trigger_package_hook_with_render(
             hook_name=hook_name,
             metadata=pkg_config,
             cwd=effective_cwd,
-            raise_on_error=raise_on_error,
-            custom_timeout=custom_timeout
+            custom_timeout=custom_timeout,
+            flags=exec_flags,
         )
         res.hook_base_dir = str(src_pkg_dir)
         return res
 
-    if load_envs:
+    if exec_flags.load_envs and pkg_config is not None:
         with pkg_config.package_envs(workspace_config):
             return _execute()
-    else:
-        return _execute()
+    return _execute()
 
 
 def trigger_pre_source_lifecycle_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     pkg_config: Optional[PackageConfig] = None,
-    load_envs: bool = False,
-    no_hooks: bool = False,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes the pre_source lifecycle hook for a package in the source directory."""
     return trigger_package_hook_with_render(
@@ -331,9 +367,7 @@ def trigger_pre_source_lifecycle_hook(
         package_name=package_name,
         hook_name="pre_source",
         pkg_config=pkg_config,
-        load_envs=load_envs,
-        no_hooks=no_hooks,
-        raise_on_error=True
+        flags=flags,
     )
 
 
@@ -341,18 +375,16 @@ def trigger_probe_lifecycle_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     pkg_config: Optional[PackageConfig] = None,
-    load_envs: bool = False,
-    no_hooks: bool = False,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes the probe lifecycle hook for a package in the source directory."""
+    exec_flags = replace(flags, raise_on_error=False) if flags is not None else HookExecFlags(raise_on_error=False)
     return trigger_package_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name="probe",
         pkg_config=pkg_config,
-        load_envs=load_envs,
-        no_hooks=no_hooks,
-        raise_on_error=False
+        flags=exec_flags,
     )
 
 
@@ -362,8 +394,8 @@ def trigger_package_lifecycle_hook(
     metadata: PackageConfig,
     hook_base_dir: Path,
     cwd: Path,
-    raise_on_error: bool = True,
     custom_timeout: Optional[int] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a package lifecycle hook script if specified and found.
 
@@ -376,8 +408,17 @@ def trigger_package_lifecycle_hook(
 
     Raises:
         FileNotFoundError: If the configured hook script file does not exist on disk.
-        RuntimeError: If raise_on_error is True and the hook script execution fails or times out.
+        RuntimeError: If flags.raise_on_error is True and the hook script execution fails or times out.
     """
+    exec_flags = HookExecFlags.resolve(flags)
+    if exec_flags.no_hooks:
+        return HookResult.skipped(
+            package=pkg,
+            hook_name=hook_name,
+            cwd=cwd,
+            hook_base_dir=hook_base_dir
+        )
+
     hook_file = getattr(metadata.hooks, hook_name, None) if metadata and metadata.hooks else None
     if not hook_file:
         logger.debug(f"Hook '{hook_name}' is not configured for package '{pkg}', skipping.")
@@ -397,8 +438,8 @@ def trigger_package_lifecycle_hook(
         hook_name=hook_name,
         metadata=metadata,
         cwd=cwd,
-        raise_on_error=raise_on_error,
-        custom_timeout=custom_timeout
+        custom_timeout=custom_timeout,
+        flags=exec_flags,
     )
     res.hook_base_dir = str(hook_base_dir)
     return res

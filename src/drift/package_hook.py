@@ -11,6 +11,7 @@ from .package_config import (
     load_config_for_install,
 )
 from .lifecycle_hooks import (
+    HookExecFlags,
     trigger_package_hook_with_render,
     trigger_package_lifecycle_hook,
 )
@@ -70,6 +71,7 @@ def trigger_hook_from_source(
     workspace_config: WorkspaceConfig,
     package_name: str,
     hook_name: str,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Loads configuration and executes a lifecycle hook from the package source directory (rendering templates if needed)."""
     src_pkg_dir = workspace_config.source_path / package_name
@@ -100,8 +102,7 @@ def trigger_hook_from_source(
         hook_name=hook_name,
         pkg_config=pkg_config,
         custom_cwd=cwd,
-        load_envs=True,
-        raise_on_error=True
+        flags=flags,
     )
     if res.status == "SKIPPED":
         raise ConfigError(
@@ -114,6 +115,7 @@ def trigger_hook_from_install(
     workspace_config: WorkspaceConfig,
     package_name: str,
     hook_name: str,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Loads configuration and executes a lifecycle hook directly from the install state database directory."""
     install_pkg_dir = workspace_config.install_path / package_name
@@ -136,7 +138,7 @@ def trigger_hook_from_install(
             metadata=pkg_config,
             hook_base_dir=install_pkg_dir,
             cwd=cwd,
-            raise_on_error=True
+            flags=flags,
         )
     if res.status == "SKIPPED":
         raise ConfigError(
@@ -149,7 +151,8 @@ def run_primitive_trigger_hook(
     workspace_config: WorkspaceConfig,
     package_name: str,
     hook_name: str,
-    from_stage: Optional[Union[str, PackageStage]] = None
+    from_stage: Optional[Union[str, PackageStage]] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a single lifecycle hook for a specific package directly.
 
@@ -161,6 +164,7 @@ def run_primitive_trigger_hook(
         from_stage: Optional stage selector ('source' or 'install'). If omitted:
             - Hooks 'pre_source', 'probe', 'post_render' default to 'source'.
             - All other lifecycle hooks default to 'install'.
+        flags: Optional HookExecFlags controlling execution options (e.g. streaming, no_hooks).
 
     Returns:
         HookResult detailing execution status, duration, CWD, hook script path, and exit status.
@@ -180,5 +184,5 @@ def run_primitive_trigger_hook(
             stage = PackageStage.INSTALL
 
     if stage == PackageStage.SOURCE:
-        return trigger_hook_from_source(workspace_config, package_name, hook_name)
-    return trigger_hook_from_install(workspace_config, package_name, hook_name)
+        return trigger_hook_from_source(workspace_config, package_name, hook_name, flags=flags)
+    return trigger_hook_from_install(workspace_config, package_name, hook_name, flags=flags)

@@ -7,8 +7,23 @@ import sys
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Sequence, Optional, Tuple, Dict, Iterator, Any, Union, Set, Mapping
+from typing import (
+    List,
+    Sequence,
+    Optional,
+    Tuple,
+    Dict,
+    Iterator,
+    Any,
+    Union,
+    Set,
+    Mapping,
+    TYPE_CHECKING,
+)
 from .toml_utils import parse_toml, merge_toml, dump_toml
+
+if TYPE_CHECKING:
+    from .lifecycle_hooks import HookExecFlags
 
 from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -328,16 +343,24 @@ class PackageHooks:
                 paths.add(val.as_posix())
         return paths
 
-    def trigger(self, hook_name: str, hook_base_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
+    def trigger(
+        self,
+        hook_name: str,
+        hook_base_dir: Path,
+        cwd: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Executes a package lifecycle hook script if specified and found."""
-        if no_hooks:
+        from .lifecycle_hooks import HookExecFlags, trigger_package_lifecycle_hook
+
+        exec_flags = HookExecFlags.resolve(flags=flags)
+        if exec_flags.no_hooks:
             return HookResult.skipped(
                 package=self._package_config.name if self._package_config else "",
                 hook_name=hook_name,
                 cwd=cwd,
-                hook_base_dir=hook_base_dir
+                hook_base_dir=hook_base_dir,
             )
-        from .lifecycle_hooks import trigger_package_lifecycle_hook
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
         return trigger_package_lifecycle_hook(
@@ -345,19 +368,16 @@ class PackageHooks:
             hook_name=hook_name,
             metadata=self._package_config,
             hook_base_dir=hook_base_dir,
-            cwd=cwd
+            cwd=cwd,
+            flags=exec_flags,
         )
 
     def trigger_probe(
         self,
-        package_dir: Path,
         workspace_config: "WorkspaceConfig",
-        no_hooks: bool = False
+        flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Executes the probe hook with template rendering into render sandbox directory."""
-        pkg_name = self._package_config.name if self._package_config else ""
-        if no_hooks or not self.probe:
-            return HookResult.skipped(package=pkg_name, hook_name="probe", cwd=package_dir, hook_base_dir=package_dir)
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
         from .lifecycle_hooks import trigger_probe_lifecycle_hook
@@ -365,28 +385,24 @@ class PackageHooks:
             workspace_config=workspace_config,
             package_name=self._package_config.name,
             pkg_config=self._package_config,
-            load_envs=False,
-            no_hooks=no_hooks
+            flags=flags,
         )
 
     def trigger_pre_source(
         self,
-        source_dir: Path,
         workspace_config: "WorkspaceConfig",
-        no_hooks: bool = False
+        flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Triggers the pre_source hook with workspace template rendering into the render sandbox directory."""
         return self.trigger_pre_source_with_render(
-            source_dir=source_dir,
             workspace_config=workspace_config,
-            no_hooks=no_hooks
+            flags=flags,
         )
 
     def trigger_pre_source_with_render(
         self,
-        source_dir: Path,
         workspace_config: "WorkspaceConfig",
-        no_hooks: bool = False
+        flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Triggers the pre_source hook with workspace template rendering into the render sandbox directory."""
         if self._package_config is None:
@@ -396,59 +412,139 @@ class PackageHooks:
             workspace_config=workspace_config,
             package_name=self._package_config.name,
             pkg_config=self._package_config,
-            load_envs=False,
-            no_hooks=no_hooks
+            flags=flags,
         )
 
     def trigger_pre_source_without_render(
         self,
         source_dir: Path,
-        no_hooks: bool = False
+        flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Triggers the pre_source hook directly inside source_dir without workspace template rendering."""
-        return self.trigger("pre_source", hook_base_dir=source_dir, cwd=source_dir, no_hooks=no_hooks)
+        return self.trigger(
+            "pre_source",
+            hook_base_dir=source_dir,
+            cwd=source_dir,
+            flags=flags,
+        )
 
-    def trigger_post_render(self, render_dir: Path, no_hooks: bool = False) -> HookResult:
+    def trigger_post_render(
+        self,
+        render_dir: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Triggers the post_render hook inside render_dir."""
-        return self.trigger("post_render", hook_base_dir=render_dir, cwd=render_dir, no_hooks=no_hooks)
+        return self.trigger(
+            "post_render",
+            hook_base_dir=render_dir,
+            cwd=render_dir,
+            flags=flags,
+        )
 
-    def trigger_pre_install(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
-        """Triggers the pre_install hook."""
-        return self.trigger("pre_install", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+    def trigger_pre_install(
+        self,
+        install_dir: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
+        """Triggers the pre_install hook in install_dir."""
+        return self.trigger(
+            "pre_install",
+            hook_base_dir=install_dir,
+            cwd=install_dir,
+            flags=flags,
+        )
 
-    def trigger_post_install(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
+    def trigger_post_install(
+        self,
+        install_dir: Path,
+        cwd: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Triggers the post_install hook."""
-        return self.trigger("post_install", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+        return self.trigger(
+            "post_install",
+            hook_base_dir=install_dir,
+            cwd=cwd,
+            flags=flags,
+        )
 
-    def trigger_pre_update(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
-        """Triggers the pre_update hook."""
-        return self.trigger("pre_update", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+    def trigger_pre_update(
+        self,
+        install_dir: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
+        """Triggers the pre_update hook in install_dir."""
+        return self.trigger(
+            "pre_update",
+            hook_base_dir=install_dir,
+            cwd=install_dir,
+            flags=flags,
+        )
 
-    def trigger_post_update(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
+    def trigger_post_update(
+        self,
+        install_dir: Path,
+        cwd: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Triggers the post_update hook."""
-        return self.trigger("post_update", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+        return self.trigger(
+            "post_update",
+            hook_base_dir=install_dir,
+            cwd=cwd,
+            flags=flags,
+        )
 
-    def trigger_pre_uninstall(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
+    def trigger_pre_uninstall(
+        self,
+        install_dir: Path,
+        cwd: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Triggers the pre_uninstall hook.
 
         Note:
             Uninstall hooks are only triggered if the package-level configuration
             file ('drift_package.toml') is available in the install/ directory.
         """
-        return self.trigger("pre_uninstall", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+        return self.trigger(
+            "pre_uninstall",
+            hook_base_dir=install_dir,
+            cwd=cwd,
+            flags=flags,
+        )
 
-    def trigger_post_uninstall(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
-        """Triggers the post_uninstall hook.
+    def trigger_post_uninstall(
+        self,
+        install_dir: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
+        """Triggers the post_uninstall hook in install_dir.
 
         Note:
             Uninstall hooks are only triggered if the package-level configuration
             file ('drift_package.toml') is available in the install/ directory.
         """
-        return self.trigger("post_uninstall", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+        return self.trigger(
+            "post_uninstall",
+            hook_base_dir=install_dir,
+            cwd=install_dir,
+            flags=flags,
+        )
 
-    def trigger_health(self, install_dir: Path, cwd: Path, no_hooks: bool = False) -> HookResult:
+    def trigger_health(
+        self,
+        install_dir: Path,
+        cwd: Path,
+        flags: Optional["HookExecFlags"] = None,
+    ) -> HookResult:
         """Triggers the health probe hook."""
-        return self.trigger("health", hook_base_dir=install_dir, cwd=cwd, no_hooks=no_hooks)
+        return self.trigger(
+            "health",
+            hook_base_dir=install_dir,
+            cwd=cwd,
+            flags=flags,
+        )
 
     def check_hook_files(
         self,
@@ -467,42 +563,43 @@ class PackageHooks:
         """
         pkg_name = self._package_config.name if self._package_config else "unknown"
         target_hooks = hook_names if hook_names is not None else LIFECYCLE_HOOK_NAMES
-        for hook_name in target_hooks:
-            hook_rel = getattr(self, hook_name, None)
-            if hook_rel:
-                hook_path = base_dir / hook_rel
-                if not hook_path.exists():
-                    raise FileNotFoundError(
-                        f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'"
-                    )
-                if not hook_path.is_file():
-                    raise ValueError(
-                        f"Lifecycle hook path specified for '{hook_name}' in package '{pkg_name}' is not a regular file: '{hook_path}'"
-                    )
+        hook_rel_map = { hook_name: getattr(self, hook_name, None) for hook_name in target_hooks }
+        hook_rel_map = { k: v for k, v in hook_rel_map.items() if v }
+        for hook_name, hook_rel in hook_rel_map.items():
+            hook_path = base_dir / hook_rel
+            if not hook_path.exists():
+                raise FileNotFoundError(
+                    f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'"
+                )
+            if not hook_path.is_file():
+                raise ValueError(
+                    f"Lifecycle hook path specified for '{hook_name}' in package '{pkg_name}' is not a regular file: '{hook_path}'"
+                )
 
 
 def parse_package_env_tables(env_data: Any, package_name: str) -> Tuple[Dict[str, str], Dict[str, str]]:
     """Parses package environment configuration tables into (override_map, fallback_map)."""
+    if not isinstance(env_data, dict):
+        raise ConfigError(f"[env] section must be a table for package '{package_name}'.")
+
     override_map: Dict[str, str] = {}
     fallback_map: Dict[str, str] = {}
-    if isinstance(env_data, dict):
-        for k, v in env_data.items():
-            if k in ("override", "overwrite"):
-                if not isinstance(v, dict):
-                    raise ConfigError(f"[env.{k}] must be a table of key-value pairs for package '{package_name}'.")
-                for sub_k, sub_v in v.items():
-                    override_map[str(sub_k)] = str(sub_v)
-            elif k == "fallback":
-                if not isinstance(v, dict):
-                    raise ConfigError(f"[env.fallback] must be a table of key-value pairs for package '{package_name}'.")
-                for sub_k, sub_v in v.items():
-                    fallback_map[str(sub_k)] = str(sub_v)
-            else:
-                if isinstance(v, dict):
-                    raise ConfigError(f"Unknown sub-table [env.{k}] for package '{package_name}'.")
-                override_map[str(k)] = str(v)
-    elif env_data:
-        raise ConfigError(f"[env] section must be a table for package '{package_name}'.")
+    for k, v in env_data.items():
+        if k in ("override", "overwrite"):
+            if not isinstance(v, dict):
+                raise ConfigError(f"[env.{k}] must be a table of key-value pairs for package '{package_name}'.")
+            for sub_k, sub_v in v.items():
+                override_map[str(sub_k)] = str(sub_v)
+        elif k == "fallback":
+            if not isinstance(v, dict):
+                raise ConfigError(f"[env.fallback] must be a table of key-value pairs for package '{package_name}'.")
+            for sub_k, sub_v in v.items():
+                fallback_map[str(sub_k)] = str(sub_v)
+        else:
+            if isinstance(v, dict):
+                raise ConfigError(f"Unknown sub-table [env.{k}] for package '{package_name}'.")
+            # TODO: please add a warning here.
+            override_map[str(k)] = str(v)
 
     return override_map, fallback_map
 
@@ -536,18 +633,18 @@ def resolve_and_interpolate_package_config(
     env_data = data.get("env", {})
 
     # 1. Parse and topologically resolve package environment variables ([env.override], [env.overwrite], [env.fallback])
-    override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(package_name))
+    override_map, fallback_map = parse_package_env_tables(env_data, package_name=package_name)
 
     # 2. Derive package facts available during package config parsing
     # (drift_package_name is always set; drift_package_source_dir, drift_package_render_dir,
     # drift_package_install_dir are set only when workspace_config is provided)
     pkg_facts: Dict[str, str] = {
-        "drift_package_name": str(package_name),
+        "drift_package_name": package_name,
     }
     if workspace_config is not None:
-        pkg_facts["drift_package_source_dir"] = str(workspace_config.source_path / str(package_name))
-        pkg_facts["drift_package_render_dir"] = str(workspace_config.render_path / str(package_name))
-        pkg_facts["drift_package_install_dir"] = str(workspace_config.install_path / str(package_name))
+        pkg_facts["drift_package_source_dir"] = str(workspace_config.source_path / package_name)
+        pkg_facts["drift_package_render_dir"] = str(workspace_config.render_path / package_name)
+        pkg_facts["drift_package_install_dir"] = str(workspace_config.install_path / package_name)
 
     # 3. Resolve fallback_map and override_map respecting 7-tier precedence:
     # - Fallback base: os.environ (Tiers 1, 4, 6) + pkg_facts (Tier 3, preserving INITIAL_ENV)
@@ -561,11 +658,7 @@ def resolve_and_interpolate_package_config(
         override_map = resolve_env_references(override_map, base_env=override_base, error_cls=ConfigError)
 
     # 4. Build active_pkg_env for interpolating the rest of drift_package.toml across 7 tiers:
-    active_pkg_env: Dict[str, str] = {}
-    update_env_dict(active_pkg_env, fallback_map, overwrite=True)
-    update_env_dict(active_pkg_env, os.environ, overwrite=True)
-    update_env_dict(active_pkg_env, pkg_facts, overwrite=True, env_keep=INITIAL_ENV)
-    update_env_dict(active_pkg_env, override_map, overwrite=True, env_keep=INITIAL_ENV)
+    active_pkg_env, _ = update_env_dict(dict(override_base), override_map, overwrite=True, env_keep=INITIAL_ENV)
 
     # 5. Interpolate ${VAR} across all other sections of package config using combined env
     interpolated_data = interpolate_config_dict(
@@ -677,7 +770,7 @@ class PackageConfig:
     def evaluate_requirements(
         self,
         workspace_config: WorkspaceConfig,
-        no_hooks: bool = False
+        flags: Optional["HookExecFlags"] = None,
     ) -> Tuple[bool, Optional[str]]:
         """Evaluates declarative requirements and dynamic probe hooks for this package.
 
@@ -689,15 +782,15 @@ class PackageConfig:
         if not is_satisfied:
             return False, reason
 
+        from .lifecycle_hooks import HookExecFlags
+        exec_flags = HookExecFlags.resolve(flags)
+
         # 2. Dynamic probe hook check (if configured and hooks enabled)
-        if self.hooks.probe is not None and not no_hooks:
-            src_pkg_dir = workspace_config.source_path / self.name
-            with self.package_envs(workspace_config):
-                res = self.hooks.trigger_probe(
-                    package_dir=src_pkg_dir,
-                    workspace_config=workspace_config,
-                    no_hooks=no_hooks
-                )
+        if self.hooks.probe is not None and not exec_flags.no_hooks:
+            res = self.hooks.trigger_probe(
+                workspace_config=workspace_config,
+                flags=exec_flags,
+            )
             if res.status != "SUCCESS" or res.exit_code != 0:
                 err_detail = (res.stderr or "").strip() or (res.stdout or "").strip() or f"exit code {res.exit_code}"
                 return False, f"Probe hook failed ({err_detail})"

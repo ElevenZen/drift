@@ -18,6 +18,7 @@ from .result_models import (
 )
 
 from .lifecycle_hooks import (
+    HookExecFlags,
     trigger_package_hook_with_render,
     trigger_package_lifecycle_hook,
 )
@@ -93,10 +94,17 @@ def _execute_health_hook_no_throw(
 def run_health_probe_from_source(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    custom_timeout: Optional[int] = None
+    custom_timeout: Optional[int] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
     """Executes the health probe hook by reading and compiling templates from the src/ directory."""
     src_pkg_dir = workspace_config.source_path / pkg
+    hook_flags = HookExecFlags(
+        no_hooks=flags.no_hooks if flags else False,
+        streaming=flags.streaming if flags else False,
+        inject_non_interactive_envs=flags.inject_non_interactive_envs if flags else True,
+        raise_on_error=False,
+    )
 
     try:
         pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
@@ -122,10 +130,8 @@ def run_health_probe_from_source(
             hook_name="health",
             pkg_config=pkg_config,
             custom_cwd=target_dir,
-            load_envs=True,
-            no_hooks=False,
-            raise_on_error=False,
-            custom_timeout=custom_timeout
+            custom_timeout=custom_timeout,
+            flags=hook_flags,
         ),
         pkg=pkg,
         target_dir=target_dir
@@ -135,10 +141,17 @@ def run_health_probe_from_source(
 def run_health_probe_from_install(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    custom_timeout: Optional[int] = None
+    custom_timeout: Optional[int] = None,
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
     """Executes the health probe hook directly from static files in the install/ directory without render."""
     install_pkg_dir = workspace_config.install_path / pkg
+    hook_flags = HookExecFlags(
+        no_hooks=flags.no_hooks if flags else False,
+        streaming=flags.streaming if flags else False,
+        inject_non_interactive_envs=flags.inject_non_interactive_envs if flags else True,
+        raise_on_error=False,
+    )
 
     try:
         pkg_config = load_config_for_install(workspace_config.install_path, pkg)
@@ -165,8 +178,8 @@ def run_health_probe_from_install(
                 metadata=pkg_config,
                 hook_base_dir=install_pkg_dir,
                 cwd=target_dir,
-                raise_on_error=False,
-                custom_timeout=custom_timeout
+                custom_timeout=custom_timeout,
+                flags=hook_flags,
             )
 
     return _execute_health_hook_no_throw(_trigger, pkg=pkg, target_dir=target_dir)
@@ -176,7 +189,8 @@ def run_single_package_health_probe(
     workspace_config: WorkspaceConfig,
     pkg: str,
     custom_timeout: Optional[int] = None,
-    from_stage: Union[str, PackageStage] = PackageStage.INSTALL
+    from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
     """Executes the health probe hook for a single package from either source or install base.
 
@@ -191,12 +205,14 @@ def run_single_package_health_probe(
         return run_health_probe_from_source(
             workspace_config=workspace_config,
             pkg=pkg,
-            custom_timeout=custom_timeout
+            custom_timeout=custom_timeout,
+            flags=flags,
         )
     return run_health_probe_from_install(
         workspace_config=workspace_config,
         pkg=pkg,
-        custom_timeout=custom_timeout
+        custom_timeout=custom_timeout,
+        flags=flags,
     )
 
 
@@ -204,7 +220,8 @@ def run_primitive_health_checks(
     workspace_config: WorkspaceConfig,
     package_names: Optional[List[str]] = None,
     custom_timeout: Optional[int] = None,
-    from_stage: Union[str, PackageStage] = PackageStage.INSTALL
+    from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
+    flags: Optional[HookExecFlags] = None,
 ) -> HealthResult:
     """Runs health check probes across specified or all packages from install or source directory."""
     stage = PackageStage.from_str(from_stage)
@@ -243,7 +260,8 @@ def run_primitive_health_checks(
             workspace_config=workspace_config,
             pkg=pkg,
             custom_timeout=custom_timeout,
-            from_stage=from_stage
+            from_stage=from_stage,
+            flags=flags,
         )
         results.append(probe_res)
         total_duration += probe_res.duration_ms

@@ -1,0 +1,78 @@
+# src/{package_name}/{config_filename}
+[package]
+install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
+{target_directory_line}
+# target_directory_windows = "~"  # Windows-specific destination override
+# source_directory = "."          # Package root relative to package directory
+
+# Advanced Flags
+# sudo = false
+# fully_controlled_dirs = []      # Sync deletions inside these directories
+# enable_render = true
+# enable_install = true
+
+# Host Requirements & Prerequisites (Declarative checks; skip package if unmet)
+[package.requirements]
+# os = ["linux"]                # Allowed OS: "linux", "darwin", "windows", "freebsd"
+# arch = ["x86_64", "aarch64"]  # Allowed Arch: "x86_64", "arm64", "aarch64"
+# distro = ["arch", "ubuntu"]   # Allowed Linux Distro IDs
+# binaries = ["git"]            # Required binaries in host $PATH
+# env = ["WAYLAND_DISPLAY"]     # Required environment variables when starting drift
+# ip = ["192.168.1.0/24"]       # Matches host LAN IP address (exact, CIDR, or wildcard)
+
+# ---------------------------------------------------------------------
+# Package Environment Variables & Native Self-Referencing
+# ---------------------------------------------------------------------
+# Drift TOML configurations natively support topological variable self-referencing ($VAR, ${VAR}).
+# External render engines (e.g. drift_package.envst.toml) can also be used if dynamic generation
+# is needed, but native self-referencing is the built-in, zero-dependency default for .toml files.
+#
+# Referencing Rules:
+# 1. [env.fallback] (Tier 7): Baseline defaults applied ONLY when unset across upper tiers.
+#    Evaluated first. CANNOT reference [env.override].
+# 2. [env.override] (Tier 2): High-priority overrides (overwrites facts/workspace env; CLI wins).
+#    Evaluated second. CAN reference [env.fallback], package facts (${drift_package_name},
+#    ${drift_package_source_dir}), system facts (${drift_os}, ${drift_arch}), and workspace [env].
+# 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved [env]
+#    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
+#    Variables defined outside [env] cannot be referenced inside [env].
+# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings.
+
+[env.fallback]
+# Baseline default values (applied only when unset across all other scopes)
+# APP_PORT = "8080"
+# APP_HOST = "localhost"
+# APP_DATA_DIR = "${HOME}/.local/share/${drift_package_name}"
+
+[env.override]
+# Highest-priority package variables (overrides workspace configs, secrets, and system facts)
+# APP_URL = "http://${APP_HOST}:${APP_PORT}"
+# APP_SRC = "${drift_package_source_dir}"
+
+# Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
+[hooks]
+# probe          = ""           # Pre-flight requirement check (Exit 0 = Met, Exit != 0 = Unmet)
+# pre_source     = ""
+# post_render    = ""
+# pre_install    = ""
+# post_install   = ""
+# pre_update     = ""
+# post_update    = ""
+# pre_uninstall  = ""
+# post_uninstall = ""
+# health         = ""
+# timeout        = 120
+
+# Windows-Specific Lifecycle Hooks (Optional overrides, e.g. post_install = "disable")
+[hooks.windows]
+# probe          = ""
+# pre_source     = ""
+# post_render    = ""
+# pre_install    = ""
+# post_install   = ""
+# pre_update     = ""
+# post_update    = ""
+# pre_uninstall  = ""
+# post_uninstall = ""
+# health         = ""
+# timeout        = 120

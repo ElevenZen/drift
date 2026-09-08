@@ -1409,7 +1409,10 @@ class TestRenderPackage(unittest.TestCase):
         )
 
         from drift.render_package import run_primitive_2_render_packages
-        res = run_primitive_2_render_packages(workspace_config, ["pkg_failing_hook"])
+        from drift.lifecycle_hooks import HookExecFlags
+        res = run_primitive_2_render_packages(
+            workspace_config, ["pkg_failing_hook"], flags=HookExecFlags(streaming=False)
+        )
         self.assertEqual(res.status, "FAILED")
         self.assertIn("failed with exit code 1", cast(str, res.error_message))
 
@@ -1582,7 +1585,6 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         trigger_pre_source_lifecycle_hook(
             workspace_config=workspace_config,
             package_name="pkg_static_hook",
-            load_envs=True
         )
 
         # 1. Copied script should exist in render/pkg_static_hook/scripts/generate_static.sh
@@ -1649,7 +1651,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         trigger_pre_source_lifecycle_hook(
             workspace_config=workspace_config,
             package_name="pkg_hook",
-            load_envs=True
         )
 
         # 1. Rendered script should exist in render/pkg_hook/scripts/generate.sh
@@ -1812,14 +1813,15 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         (scripts_dir / "fail_post.sh").chmod(0o755)
 
         # 1. Direct hook functions with no_hooks=True should return without error
+        from drift.lifecycle_hooks import HookExecFlags
         trigger_pre_source_lifecycle_hook(
             workspace_config=workspace_config,
             package_name="pkg_hooks_bypass",
-            no_hooks=True
+            flags=HookExecFlags(no_hooks=True)
         )
 
         # 2. Rendering package with no_hooks=True should succeed without executing failing hooks
-        result = render_package(workspace_config, pkg_src_dir, no_hooks=True)
+        result = render_package(workspace_config, pkg_src_dir, flags=HookExecFlags(no_hooks=True))
         self.assertEqual(result.status, "SUCCESS")
 
     def test_render_package_with_subfolder_source_directory(self) -> None:

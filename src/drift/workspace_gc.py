@@ -10,6 +10,7 @@ from .state_registry import load_state_registry
 from .uninstall_repo import run_primitive_7_uninstall_packages
 from .constants import PACKAGE_CONFIG_FILE_NAME_LIST, CONFIG_DIR_NAME
 from .git_utils import commit_repo_changes
+from .lifecycle_hooks import HookExecFlags
 from .result_models import GcResult
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,7 @@ def purge_zombie_folders(
 def run_primitive_9_purge_workspace_garbage(
     workspace_config: WorkspaceConfig,
     dry_run: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> GcResult:
     """
     Identifies and removes garbage from the drift workspace databases.
@@ -61,7 +62,7 @@ def run_primitive_9_purge_workspace_garbage(
         package_names=None, 
         force=True, 
         dry_run=dry_run,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if uninstalled_orphans.status != "SUCCESS":
         raise RuntimeError(uninstalled_orphans.error_message or "Garbage collection orphan uninstallation failed.")

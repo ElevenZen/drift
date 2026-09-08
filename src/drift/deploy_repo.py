@@ -12,6 +12,7 @@ from .render_package import run_primitive_2_render_packages, run_primitive_3_com
 from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
 from .install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
+from .lifecycle_hooks import HookExecFlags
 from .result_models import (
     NextActionType,
     CompletedStep,
@@ -102,17 +103,20 @@ def execute_sequential_compile_and_apply(
     workspace_config: WorkspaceConfig,
     target_pkgs: List[str],
     force: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
     completed_steps: List[CompletedStep] = []
+    hook_flags = HookExecFlags.resolve(flags)
     
     # 1. Render raw templates to sandbox
     failed_step = "Step 1 (Template Rendering)"
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
-        render_res = run_primitive_2_render_packages(workspace_config, target_pkgs=target_pkgs, no_hooks=no_hooks)
+        render_res = run_primitive_2_render_packages(
+            workspace_config, target_pkgs=target_pkgs, flags=hook_flags
+        )
         if render_res.status == "FAILED":
             raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
         completed_steps.append(CompletedStep(1, "template_rendering"))
@@ -161,7 +165,7 @@ def execute_sequential_compile_and_apply(
             resolve_symlinks=True,
             force=force,
             package_changes=package_changes,
-            no_hooks=no_hooks
+            flags=hook_flags,
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except Exception as e:
@@ -195,7 +199,7 @@ def run_primitive_deploy_pipeline(
     workspace_config: WorkspaceConfig,
     packages_to_deploy: Optional[List[str]] = None,
     force: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply."""
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
@@ -220,14 +224,16 @@ def run_primitive_deploy_pipeline(
 
     # Stage 2: Deploy Pipeline Execution
     deployed_packages, completed_steps = execute_sequential_compile_and_apply(
-        workspace_config, target_pkgs, force=force, no_hooks=no_hooks
+        workspace_config, target_pkgs, force=force, flags=flags
     )
 
     # Stage 3: Call garbage collection on global deploy
     gc_res: Optional[GcResult] = None
     if not packages_to_deploy:
         logger.info("🧹 Performing global deployment garbage collection...")
-        gc_res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=False, no_hooks=no_hooks)
+        gc_res = run_primitive_9_purge_workspace_garbage(
+            workspace_config, dry_run=False, flags=flags
+        )
 
     logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(target_pkgs)}")
 

@@ -5,11 +5,12 @@ import tempfile
 import unittest
 from io import StringIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PACKAGE_CONFIG_FILE_NAME
 from drift.package_hook import run_primitive_trigger_hook
+from drift.lifecycle_hooks import HookExecFlags
 from drift.exceptions import ConfigError
 from drift.cli import main, run_argparse_cli
 
@@ -223,7 +224,11 @@ class TestPackageHook(unittest.TestCase):
 
     def test_trigger_pre_source_lifecycle_hook_return_types(self) -> None:
         """Verifies that trigger_pre_source_lifecycle_hook returns HookResult."""
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook, execute_hook_script
+        from drift.lifecycle_hooks import (
+            trigger_pre_source_lifecycle_hook,
+            execute_hook_script,
+            HookExecFlags,
+        )
         from drift.package_config import load_package_config_from_source_dir
 
         # 1. Successful execution -> status == "SUCCESS", duration_ms >= 0
@@ -234,7 +239,9 @@ class TestPackageHook(unittest.TestCase):
         self.assertIn("pre_source", res.hook_name)
 
         # 2. no_hooks=True -> status == "SKIPPED", bool(res) == False
-        res_no_hooks = trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_hook", no_hooks=True)
+        res_no_hooks = trigger_pre_source_lifecycle_hook(
+            self.workspace_config, "pkg_hook", flags=HookExecFlags(no_hooks=True)
+        )
         self.assertEqual(res_no_hooks.status, "SKIPPED")
         self.assertFalse(bool(res_no_hooks))
         self.assertEqual(res_no_hooks.duration_ms, 0.0)
@@ -294,26 +301,26 @@ class TestPackageHook(unittest.TestCase):
         self.assertTrue(bool(exec_res))
 
         # 5. PackageHooks.trigger_pre_source (with render by default) and trigger_pre_source_without_render
-        res_rendered = pkg_config.hooks.trigger_pre_source(source_dir=self.src_pkg_dir, workspace_config=self.workspace_config)
+        res_rendered = pkg_config.hooks.trigger_pre_source(workspace_config=self.workspace_config)
         self.assertEqual(res_rendered.status, "SUCCESS")
 
-        res_rendered_alias = pkg_config.hooks.trigger_pre_source_with_render(source_dir=self.src_pkg_dir, workspace_config=self.workspace_config)
+        res_rendered_alias = pkg_config.hooks.trigger_pre_source_with_render(workspace_config=self.workspace_config)
         self.assertEqual(res_rendered_alias.status, "SUCCESS")
 
         res_direct = pkg_config.hooks.trigger_pre_source_without_render(source_dir=self.src_pkg_dir)
         self.assertEqual(res_direct.status, "SUCCESS")
 
         # 6. PackageHooks no_hooks=True -> status == "SKIPPED"
+        from drift.lifecycle_hooks import HookExecFlags
         res_pkg_no_hooks = pkg_config.hooks.trigger_pre_source(
-            source_dir=self.src_pkg_dir,
             workspace_config=self.workspace_config,
-            no_hooks=True
+            flags=HookExecFlags(no_hooks=True)
         )
         self.assertEqual(res_pkg_no_hooks.status, "SKIPPED")
 
         res_pkg_without_render_no_hooks = pkg_config.hooks.trigger_pre_source_without_render(
             source_dir=self.src_pkg_dir,
-            no_hooks=True
+            flags=HookExecFlags(no_hooks=True)
         )
         self.assertEqual(res_pkg_without_render_no_hooks.status, "SKIPPED")
 
@@ -326,7 +333,9 @@ class TestPackageHook(unittest.TestCase):
         post_render_file.write_text("#!/bin/bash\necho post_render\n", encoding="utf-8")
         post_render_file.chmod(0o644)  # Explicitly non-executable
 
-        render_package(self.workspace_config, self.src_pkg_dir)
+        render_package(
+            self.workspace_config, self.src_pkg_dir, flags=HookExecFlags(streaming=False)
+        )
 
         # Verify src copy became 0755
         self.assertTrue(bool(post_render_file.stat().st_mode & 0o111))
@@ -357,7 +366,8 @@ class TestPackageHook(unittest.TestCase):
             pkg="pkg_hook",
             hook_name="test",
             metadata=pkg_config,
-            cwd=self.drift_root
+            cwd=self.drift_root,
+            flags=HookExecFlags(streaming=False),
         )
         self.assertEqual(res.status, "SUCCESS")
         # Ensure disk mode remained 0644 (not mutated during execution)
@@ -448,7 +458,7 @@ echo "VALUE=$DYNAMIC_VAL"
         res = trigger_pre_source_lifecycle_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_templated_pre_source",
-            load_envs=True
+            flags=HookExecFlags(streaming=False),
         )
         self.assertEqual(res.status, "SUCCESS")
 
@@ -505,6 +515,314 @@ echo "VALUE=$DYNAMIC_VAL"
         with patch("sys.stdout", stdout):
             run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "hook", "pkg_hook", "pre_source", "--from", "source"])
         self.assertIn("Successfully executed hook 'pre_source' for package 'pkg_hook'", stdout.getvalue())
+
+    def test_hook_execution_streaming(self) -> None:
+        """Verifies hook streaming outputs to stdout in real time."""
+        from drift.lifecycle_hooks import HookExecFlags
+        (self.scripts_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'LIVE_HOOK_STREAM'\n", encoding="utf-8")
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            res = run_primitive_trigger_hook(
+                self.workspace_config,
+                "pkg_hook",
+                "pre_source",
+                flags=HookExecFlags(streaming=True)
+            )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIn("LIVE_HOOK_STREAM", stdout.getvalue())
+
+    def test_package_hooks_streaming_forwarding(self) -> None:
+        """Verifies that PackageHooks trigger methods accept and forward the streaming parameter and flags."""
+        from drift.package_config import PackageConfig, PackageHooks
+        from drift.lifecycle_hooks import HookExecFlags
+        hooks = PackageHooks(
+            probe="scripts/probe.sh",
+            pre_source="scripts/pre_source.sh",
+            post_render="scripts/post_render.sh",
+            pre_install="scripts/pre_install.sh",
+            post_install="scripts/post_install.sh",
+            pre_update="scripts/pre_update.sh",
+            post_update="scripts/post_update.sh",
+            pre_uninstall="scripts/pre_uninstall.sh",
+            post_uninstall="scripts/post_uninstall.sh",
+            health="scripts/health.sh"
+        )
+        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
+
+        with patch("drift.lifecycle_hooks.trigger_package_lifecycle_hook") as mock_trigger:
+            mock_trigger.return_value = MagicMock()
+            hooks.trigger("pre_install", hook_base_dir=self.drift_root, cwd=self.drift_root, flags=HookExecFlags(streaming=False))
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="pre_install",
+                metadata=pkg_config,
+                hook_base_dir=self.drift_root,
+                cwd=self.drift_root,
+                flags=HookExecFlags(no_hooks=False, streaming=False, inject_non_interactive_envs=True)
+            )
+
+        with patch("drift.lifecycle_hooks.trigger_probe_lifecycle_hook") as mock_probe:
+            mock_probe.return_value = MagicMock()
+            hooks.trigger_probe(workspace_config=self.workspace_config, flags=HookExecFlags(streaming=False))
+            mock_probe.assert_called_with(
+                workspace_config=self.workspace_config,
+                package_name="pkg_hook",
+                pkg_config=pkg_config,
+                flags=HookExecFlags(streaming=False)
+            )
+
+    def test_hook_non_interactive_envs_injected(self) -> None:
+        """Verifies hook execution injects anti-pager and non-interactive envs, then cleans up."""
+        (self.scripts_dir / "pre_source.sh").write_text(
+            "#!/bin/sh\n"
+            "echo \"PAGER=$PAGER\"\n"
+            "echo \"GIT_PAGER=$GIT_PAGER\"\n"
+            "echo \"CI=$CI\"\n"
+            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n"
+            "echo \"DRIFT_NON_INTERACTIVE=$DRIFT_NON_INTERACTIVE\"\n",
+            encoding="utf-8"
+        )
+        res = run_primitive_trigger_hook(
+            self.workspace_config,
+            "pkg_hook",
+            "pre_source",
+            flags=HookExecFlags(streaming=False),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        stdout = res.stdout or ""
+        self.assertIn("PAGER=cat", stdout)
+        self.assertIn("GIT_PAGER=cat", stdout)
+        self.assertIn("CI=true", stdout)
+        self.assertIn("DRIFT_HOOK=1", stdout)
+        self.assertIn("DRIFT_NON_INTERACTIVE=1", stdout)
+
+        # Ensure parent environment is not contaminated
+        self.assertNotIn("DRIFT_HOOK", os.environ)
+        self.assertNotIn("DRIFT_NON_INTERACTIVE", os.environ)
+
+    def test_hook_exec_flags_dataclass_and_resolve(self) -> None:
+        """Verifies HookExecFlags dataclass creation, defaults, and resolve classmethod."""
+        from drift.lifecycle_hooks import HookExecFlags
+
+        # 1. Defaults
+        flags = HookExecFlags()
+        self.assertFalse(flags.no_hooks)
+        self.assertTrue(flags.streaming)
+        self.assertTrue(flags.inject_non_interactive_envs)
+        self.assertTrue(flags.raise_on_error)
+        self.assertTrue(flags.load_envs)
+
+        # 2. Resolve without flags
+        resolved_default = HookExecFlags.resolve()
+        self.assertEqual(
+            resolved_default,
+            HookExecFlags(
+                no_hooks=False,
+                streaming=True,
+                inject_non_interactive_envs=True,
+                raise_on_error=True,
+                load_envs=True
+            )
+        )
+
+        # 3. Resolve with flags instance
+        base_flags = HookExecFlags(
+            no_hooks=True,
+            streaming=False,
+            inject_non_interactive_envs=False,
+            raise_on_error=False,
+            load_envs=False
+        )
+        resolved_from_instance = HookExecFlags.resolve(flags=base_flags)
+        self.assertEqual(resolved_from_instance, base_flags)
+
+    def test_hook_load_envs_flag(self) -> None:
+        """Verifies load_envs flag in HookExecFlags controls loading package_envs context."""
+        from drift.lifecycle_hooks import (
+            HookExecFlags,
+            trigger_pre_source_lifecycle_hook,
+        )
+
+        # Package with custom env override
+        pkg_env_dir = self.drift_root / "src" / "pkg_env_test"
+        pkg_env_dir.mkdir(parents=True, exist_ok=True)
+        scripts_dir = pkg_env_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_env_dir / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_env_test"
+
+        [env.override]
+        CUSTOM_PKG_VAR = "loaded_by_drift"
+
+        [hooks]
+        pre_source = "scripts/check_env.sh"
+        """, encoding="utf-8")
+
+        (scripts_dir / "check_env.sh").write_text("""#!/bin/sh
+echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
+""", encoding="utf-8")
+        (scripts_dir / "check_env.sh").chmod(0o755)
+
+        # 1. load_envs=True (default) -> CUSTOM_PKG_VAR is loaded
+        res_loaded = trigger_pre_source_lifecycle_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_env_test",
+            flags=HookExecFlags(load_envs=True, streaming=False)
+        )
+        self.assertEqual(res_loaded.status, "SUCCESS")
+        self.assertIn("CUSTOM_PKG_VAR=loaded_by_drift", res_loaded.stdout or "")
+
+        # 2. load_envs=False -> CUSTOM_PKG_VAR is not loaded
+        res_unloaded = trigger_pre_source_lifecycle_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_env_test",
+            flags=HookExecFlags(load_envs=False, streaming=False)
+        )
+        self.assertEqual(res_unloaded.status, "SUCCESS")
+        self.assertNotIn("CUSTOM_PKG_VAR=loaded_by_drift", res_unloaded.stdout or "")
+
+    def test_hook_non_interactive_envs_flag_disabled(self) -> None:
+        """Verifies that setting inject_non_interactive_envs=False disables injecting DEFAULT_HOOK_NON_INTERACTIVE_ENVS."""
+        from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
+        from drift.package_config import load_package_config_from_source_dir
+
+        (self.scripts_dir / "pre_source.sh").write_text(
+            "#!/bin/sh\n"
+            "echo \"PAGER=$PAGER\"\n"
+            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
+            encoding="utf-8"
+        )
+        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+
+        with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
+            # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat
+            res_default = execute_hook_script(
+                hook_path=self.scripts_dir / "pre_source.sh",
+                pkg="pkg_hook",
+                hook_name="pre_source",
+                metadata=pkg_config,
+                cwd=self.src_pkg_dir,
+                flags=HookExecFlags(inject_non_interactive_envs=True, streaming=False)
+            )
+            self.assertIn("PAGER=cat", res_default.stdout or "")
+            self.assertIn("DRIFT_HOOK=1", res_default.stdout or "")
+
+            # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, DRIFT_HOOK not injected
+            res_disabled = execute_hook_script(
+                hook_path=self.scripts_dir / "pre_source.sh",
+                pkg="pkg_hook",
+                hook_name="pre_source",
+                metadata=pkg_config,
+                cwd=self.src_pkg_dir,
+                flags=HookExecFlags(inject_non_interactive_envs=False, streaming=False)
+            )
+            self.assertIn("PAGER=custom_more_pager", res_disabled.stdout or "")
+            self.assertNotIn("DRIFT_HOOK=1", res_disabled.stdout or "")
+
+    def test_package_hooks_methods_signatures_and_cwd(self) -> None:
+        """Verifies trigger_pre_install, trigger_pre_update, trigger_post_uninstall use install_dir as CWD."""
+        from drift.package_config import PackageConfig, PackageHooks
+        from drift.lifecycle_hooks import HookExecFlags
+
+        hooks = PackageHooks(
+            pre_install="scripts/pre_install.sh",
+            pre_update="scripts/pre_update.sh",
+            post_uninstall="scripts/post_uninstall.sh",
+        )
+        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
+        install_dir = self.drift_root / "install" / "pkg_hook"
+        install_dir.mkdir(parents=True, exist_ok=True)
+
+        with patch("drift.lifecycle_hooks.trigger_package_lifecycle_hook") as mock_trigger:
+            mock_trigger.return_value = MagicMock()
+
+            # 1. trigger_pre_install without redundant cwd
+            hooks.trigger_pre_install(install_dir=install_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="pre_install",
+                metadata=pkg_config,
+                hook_base_dir=install_dir,
+                cwd=install_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+            )
+
+            # 2. trigger_pre_update without redundant cwd
+            hooks.trigger_pre_update(install_dir=install_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="pre_update",
+                metadata=pkg_config,
+                hook_base_dir=install_dir,
+                cwd=install_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+            )
+
+            # 3. trigger_post_uninstall without redundant cwd
+            hooks.trigger_post_uninstall(install_dir=install_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="post_uninstall",
+                metadata=pkg_config,
+                hook_base_dir=install_dir,
+                cwd=install_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+            )
+
+    def test_hook_raise_on_error_flag(self) -> None:
+        """Verifies raise_on_error in HookExecFlags controls exception raising vs returning FAILED HookResult."""
+        from drift.lifecycle_hooks import (
+            HookExecFlags,
+            execute_hook_script,
+            trigger_probe_lifecycle_hook,
+        )
+        from drift.package_config import load_package_config_from_source_dir
+
+        failing_script = self.scripts_dir / "fail.sh"
+        failing_script.write_text("#!/bin/sh\necho 'error details' >&2\nexit 42\n", encoding="utf-8")
+        failing_script.chmod(0o755)
+
+        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+
+        # 1. Default (raise_on_error=True) raises RuntimeError
+        with self.assertRaises(RuntimeError) as ctx:
+            execute_hook_script(
+                hook_path=failing_script,
+                pkg="pkg_hook",
+                hook_name="fail_test",
+                metadata=pkg_config,
+                cwd=self.src_pkg_dir,
+                flags=HookExecFlags(streaming=False),
+            )
+        self.assertIn("failed with exit code 42", str(ctx.exception))
+
+        # 2. raise_on_error=False returns HookResult(status='FAILED')
+        res_no_raise = execute_hook_script(
+            hook_path=failing_script,
+            pkg="pkg_hook",
+            hook_name="fail_test",
+            metadata=pkg_config,
+            cwd=self.src_pkg_dir,
+            flags=HookExecFlags(raise_on_error=False, streaming=False),
+        )
+        self.assertEqual(res_no_raise.status, "FAILED")
+        self.assertEqual(res_no_raise.exit_code, 42)
+        self.assertIn("error details", res_no_raise.stderr or "")
+
+        # 3. trigger_probe_lifecycle_hook defaults to raise_on_error=False
+        (self.src_pkg_dir / "drift_package.toml").write_text(
+            '[package]\nname = "pkg_hook"\n[hooks]\nprobe = "scripts/fail.sh"\n',
+            encoding="utf-8"
+        )
+        probe_res = trigger_probe_lifecycle_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+            flags=HookExecFlags(streaming=False),
+        )
+        self.assertEqual(probe_res.status, "FAILED")
+        self.assertEqual(probe_res.exit_code, 42)
 
 
 if __name__ == "__main__":

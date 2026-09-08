@@ -100,10 +100,16 @@ def update_env_dict(
             logger.debug(f"Environment variable skipped (already set and overwrite=False): {k_str}")
             continue
 
+        existing_val = target.get(k_str)
+        is_new = k_str not in target
+        is_overwritten = not is_new and existing_val != v_str
+
         if k_str not in saved:
-            saved[k_str] = target.get(k_str)
+            saved[k_str] = existing_val
         target[k_str] = v_str
-        logger.debug(f"Environment variable loaded: {k_str}={v_str}")
+
+        if is_new or is_overwritten:
+            logger.debug(f"Environment variable loaded: {k_str}={v_str}")
 
     return target, saved
 
@@ -123,11 +129,14 @@ def restore_env_dict(
 
     for k, original_val in original_envs.items():
         if original_val is None:
-            target.pop(k, None)
-            logger.debug(f"Environment variable unloaded: popped {k}")
+            if k in target:
+                target.pop(k, None)
+                logger.debug(f"Environment variable unloaded: popped {k}")
         else:
+            current_val = target.get(k)
             target[k] = original_val
-            logger.debug(f"Environment variable unloaded: restored {k}={original_val}")
+            if current_val != original_val:
+                logger.debug(f"Environment variable unloaded: restored {k}={original_val}")
 
 
 def load_env_settings(

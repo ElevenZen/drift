@@ -4,6 +4,7 @@ import shutil
 import tempfile
 from pathlib import Path
 from drift.workspace_config import WorkspaceConfig
+from drift.lifecycle_hooks import HookExecFlags
 from drift.add_resource import run_primitive_11_add_resources
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 
@@ -302,7 +303,9 @@ class TestAddResource(unittest.TestCase):
         target_file.write_text("imported content")
 
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+            run_primitive_11_add_resources(
+                self.workspace_config, pkg, [target_file], flags=HookExecFlags(streaming=False)
+            )
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
     def test_add_with_subfolder_source_directory(self):

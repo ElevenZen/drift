@@ -9,6 +9,7 @@ from .workspace_config import WorkspaceConfig
 from .state_registry import load_state_registry, save_state_registry
 from .install_repo import run_primitive_5_install_deployment
 from .uninstall_repo import run_primitive_7_uninstall_packages
+from .lifecycle_hooks import HookExecFlags
 
 logger = logging.getLogger(__name__)
 
@@ -34,14 +35,14 @@ def rollback_uninstalled_first_time_package(
     workspace_config: WorkspaceConfig,
     pkg: str,
     deployed_files: Optional[List[Path]] = None,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> None:
     """Cleans up host system files, restores overwritten backups, and removes directory for a first-time package that failed."""
     uninst_res = run_primitive_7_uninstall_packages(
         workspace_config=workspace_config,
         package_names=[pkg],
         force=True,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if uninst_res.status != "SUCCESS":
         raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")
@@ -54,7 +55,7 @@ def run_primitive_8_rollback_recovery(
     workspace_config: WorkspaceConfig,
     package_names: Optional[List[str]] = None,
     force: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> List[str]:
     """Reverts failed midway deployments and restores system files to the last committed clean state."""
     state_file = workspace_config.install_path / "state.toml"
@@ -98,7 +99,7 @@ def run_primitive_8_rollback_recovery(
             reset_install_package_to_head(install_base, pkg)
         else:
             packages_to_uninstall.append(pkg)
-            rollback_uninstalled_first_time_package(workspace_config, pkg, no_hooks=no_hooks)
+            rollback_uninstalled_first_time_package(workspace_config, pkg, flags=flags)
 
     # Revert state.toml file to HEAD commit
     subprocess.run(["git", "-C", str(install_base), "checkout", "HEAD", "--", "state.toml"], capture_output=True)
@@ -111,7 +112,7 @@ def run_primitive_8_rollback_recovery(
             packages_to_redeploy=packages_to_redeploy,
             resolve_symlinks=True,
             force=True,
-            no_hooks=no_hooks
+            flags=flags,
         )
         if install_res.status != "SUCCESS":
             raise RuntimeError(install_res.error_message or "Rollback installation failed.")

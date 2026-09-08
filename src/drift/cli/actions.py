@@ -59,9 +59,13 @@ def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = Fals
 def execute_render(drift_root: Path, package_names: Optional[List[str]] = None, json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
     from ..render_package import run_primitive_2_render_packages
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
-    res = run_primitive_2_render_packages(workspace_config, target_pkgs=package_names, no_hooks=no_hooks)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
+    res = run_primitive_2_render_packages(
+        workspace_config, target_pkgs=package_names, flags=flags
+    )
     if json_mode:
         print(res.to_json())
     if res.status != "SUCCESS":
@@ -96,15 +100,17 @@ def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, f
 def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..install_repo import run_primitive_5_install_deployment
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=package_names,
         resolve_symlinks=True,
         force=force,
         package_changes=None,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if json_mode:
         print(res.to_json())
@@ -182,15 +188,17 @@ def execute_uninstall(
 ) -> None:
     """Core function to uninstall or detach packages, shared by both CLI backends."""
     from ..uninstall_repo import run_primitive_7_uninstall_packages
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     res = run_primitive_7_uninstall_packages(
         workspace_config,
         package_names=package_names,
         force=force,
         dry_run=dry_run,
         detach=detach,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if json_mode:
         print(res.to_json())
@@ -219,9 +227,13 @@ def execute_status(drift_root: Path, package_names: Optional[List[str]] = None, 
 def execute_gc(drift_root: Path, dry_run: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to garbage collect orphans and purge databases, shared by both CLI backends."""
     from ..workspace_gc import run_primitive_9_purge_workspace_garbage
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
-    res = run_primitive_9_purge_workspace_garbage(workspace_config, dry_run=dry_run, no_hooks=no_hooks)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
+    res = run_primitive_9_purge_workspace_garbage(
+        workspace_config, dry_run=dry_run, flags=flags
+    )
     if json_mode:
         print(res.to_json())
     if res.status != "SUCCESS":
@@ -240,8 +252,10 @@ def execute_adopt(
 ) -> None:
     """Core function to adopt system drifts back to source templates, shared by both CLI backends."""
     from ..adopt_repo import run_primitive_adopt_drifts
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     adopted_names = run_primitive_adopt_drifts(
         workspace_config=workspace_config,
         package_names=package_names,
@@ -249,7 +263,7 @@ def execute_adopt(
         accept_conflicts=accept_conflicts,
         force=force,
         dry_run=dry_run,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if json_mode:
         res = AdoptResult(
@@ -292,10 +306,14 @@ def execute_add(
 ) -> None:
     """Core function to import resources into a package, shared by both CLI backends."""
     from ..add_resource import run_primitive_11_add_resources
+    from ..lifecycle_hooks import HookExecFlags
     
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     paths = [Path(p) for p in import_paths]
-    run_primitive_11_add_resources(workspace_config, package_name, paths, dry_run=dry_run, no_hooks=no_hooks)
+    run_primitive_11_add_resources(
+        workspace_config, package_name, paths, dry_run=dry_run, flags=flags
+    )
     if json_mode:
         res = AddResourceResult(
             package=package_name,
@@ -314,13 +332,15 @@ def execute_rollback(
 ) -> None:
     """Core function to rollback failed deployments, shared by both CLI backends."""
     from ..rollback_repo import run_primitive_8_rollback_recovery
+    from ..lifecycle_hooks import HookExecFlags
     
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     restored = run_primitive_8_rollback_recovery(
         workspace_config=workspace_config,
         package_names=package_names,
         force=force,
-        no_hooks=no_hooks
+        flags=flags,
     )
     if json_mode:
         res = RollbackResult(
@@ -339,14 +359,16 @@ def execute_deploy(
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..deploy_repo import run_primitive_deploy_pipeline
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     try:
         res = run_primitive_deploy_pipeline(
             workspace_config=workspace_config,
             packages_to_deploy=package_names,
             force=force,
-            no_hooks=no_hooks
+            flags=flags,
         )
         if json_mode:
             print(res.to_json())
@@ -505,13 +527,16 @@ def execute_hook(
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
     from ..package_hook import run_primitive_trigger_hook
+    from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
+    flags = HookExecFlags(no_hooks=False, streaming=not json_mode)
     res = run_primitive_trigger_hook(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name=hook_name,
-        from_stage=from_stage
+        from_stage=from_stage,
+        flags=flags,
     )
 
     if json_mode:

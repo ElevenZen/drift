@@ -16,6 +16,7 @@ from drift.package_health import (
     run_single_package_health_probe,
     run_primitive_health_checks,
 )
+from drift.lifecycle_hooks import HookExecFlags
 from drift.result_models import PackageHealthStatus, HealthResult
 from drift.cli.argparse_backend import run_argparse_cli
 
@@ -125,7 +126,9 @@ exit 2
         health = "scripts/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg)
+        res = run_single_package_health_probe(
+            self.workspace_config, pkg, flags=HookExecFlags(streaming=False)
+        )
         self.assertEqual(res.status, PackageHealthStatus.UNHEALTHY)
         self.assertEqual(res.exit_code, 2)
         self.assertIn("ERROR: Daemon unreachable on port 8080", res.stderr)
@@ -216,7 +219,7 @@ exit 0
         health = "scripts/health_check.sh"
         """, encoding="utf-8")
 
-        with patch("subprocess.run") as mock_run:
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "OK"
             mock_run.return_value.stderr = ""

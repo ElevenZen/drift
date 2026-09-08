@@ -16,6 +16,7 @@ from .package_config import PackageConfig, load_config_for_install
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME, LineEnding
 from .exceptions import CollisionError
 from .ignore import DriftIgnore
+from .lifecycle_hooks import HookExecFlags
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .folder_diff import compare_folders, list_folder_paths
 from .stage_repo import PackageStageChanges
@@ -606,7 +607,7 @@ def execute_package_deployment(
     resolve_symlinks: bool,
     is_first_time: bool,
     package_changes: Optional[PackageStageChanges],
-    no_hooks: bool = False,
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
     install_base = workspace_config.install_path
@@ -651,10 +652,11 @@ def execute_package_deployment(
         )
 
     # 2. Lifecycle Hooks & State registry update
+    hook_flags = HookExecFlags.resolve(flags)
     if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
+        metadata.hooks.trigger_pre_install(install_pkg_dir, flags=hook_flags)
     else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, install_pkg_dir, no_hooks=no_hooks)
+        metadata.hooks.trigger_pre_update(install_pkg_dir, flags=hook_flags)
 
     # Persist the full target file manifest to state.toml before hooks & physical delivery
     # so that midway crashes have an authoritative list of files to uninstall
@@ -696,9 +698,9 @@ def execute_package_deployment(
     
     # Post Hooks
     if is_first_time:
-        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, no_hooks=no_hooks)
+        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, flags=hook_flags)
     else:
-        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, no_hooks=no_hooks)
+        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, flags=hook_flags)
         
     update_state_registry_post_deployment(
         state_registry=state_registry,
@@ -738,10 +740,11 @@ def deploy_package_impl(
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration."""
     install_base = workspace_config.install_path
+    hook_flags = HookExecFlags.resolve(flags)
     
     metadata = load_config_for_install(install_base, pkg)
     if not (force or metadata.enable_install):
@@ -803,7 +806,7 @@ def deploy_package_impl(
         )
 
     # Verify hook files exist and are regular files in install/
-    if not no_hooks:
+    if not hook_flags.no_hooks:
         metadata.hooks.check_hook_files(install_pkg_dir)
     
     # Set package state to "deploying" before actual deployment
@@ -823,8 +826,8 @@ def deploy_package_impl(
             state_file=state_file,
             resolve_symlinks=resolve_symlinks,
             is_first_time=is_first_time,
-            no_hooks=no_hooks,
             package_changes=package_changes,
+            flags=hook_flags,
         )
 
 
@@ -836,7 +839,7 @@ def deploy_package(
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     try:
@@ -848,7 +851,7 @@ def deploy_package(
             resolve_symlinks=resolve_symlinks,
             force=force,
             package_changes=package_changes,
-            no_hooks=no_hooks
+            flags=flags,
         )
     except subprocess.CalledProcessError as e:
         stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
@@ -872,11 +875,12 @@ def run_primitive_5_install_deployment(
     resolve_symlinks: bool = True,
     force: bool = False,
     package_changes: Optional[List[PackageStageChanges]] = None,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5)."""
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
+    hook_flags = HookExecFlags.resolve(flags)
     
     state_registry = load_state_registry(state_file)
     
@@ -895,7 +899,7 @@ def run_primitive_5_install_deployment(
         from .file_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
-    if not no_hooks:
+    if not hook_flags.no_hooks:
         for pkg, metadata in pkg_metadata_map.items():
             if force or metadata.enable_install:
                 metadata.hooks.check_hook_files(install_base / pkg)
@@ -915,7 +919,7 @@ def run_primitive_5_install_deployment(
             resolve_symlinks=resolve_symlinks,
             force=force,
             package_changes=pkg_change,
-            no_hooks=no_hooks
+            flags=hook_flags,
         )
         results.append(pkg_res)
 

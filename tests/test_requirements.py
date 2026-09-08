@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.package_config import PackageConfig, PackageRequirements, PackageHooks
+from drift.lifecycle_hooks import HookExecFlags
 from drift.workspace_config import WorkspaceConfig
 from drift.render_package import render_package
 from drift.exceptions import ConfigError
@@ -280,7 +281,9 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
 
-        res = render_package(self.workspace_config, pkg_dir)
+        res = render_package(
+            self.workspace_config, pkg_dir, flags=HookExecFlags(streaming=False)
+        )
         self.assertEqual(res.status, "SKIPPED")
         self.assertIn("Probe hook failed", res.skip_reason)
         self.assertIn("Wayland session not found", res.skip_reason)
@@ -307,7 +310,8 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
 
         # Running with no_hooks=True should ignore failing probe hook
-        res = render_package(self.workspace_config, pkg_dir, no_hooks=True)
+        from drift.lifecycle_hooks import HookExecFlags
+        res = render_package(self.workspace_config, pkg_dir, flags=HookExecFlags(no_hooks=True))
         self.assertEqual(res.status, "SUCCESS")
 
     def test_render_package_templated_probe_hook(self) -> None:

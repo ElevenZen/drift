@@ -131,6 +131,35 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         unload_env_settings(None)
         unload_env_settings({})
 
+    def test_load_env_settings_logs_only_new_or_overwritten(self) -> None:
+        """Verifies that 'Environment variable loaded' is only logged for new or overwritten variables."""
+        import logging
+        logging.disable(logging.NOTSET)
+        try:
+            os.environ["TEST_UNCHANGED"] = "same_val"
+            os.environ["TEST_OVERWRITTEN"] = "old_val"
+            os.environ.pop("TEST_NEW", None)
+
+            with self.assertLogs("drift.env_utils", level="DEBUG") as cm:
+                saved = load_env_settings({
+                    "TEST_UNCHANGED": "same_val",
+                    "TEST_OVERWRITTEN": "new_val",
+                    "TEST_NEW": "brand_new"
+                })
+                log_output = "\n".join(cm.output)
+                self.assertIn("Environment variable loaded: TEST_NEW=brand_new", log_output)
+                self.assertIn("Environment variable loaded: TEST_OVERWRITTEN=new_val", log_output)
+                self.assertNotIn("TEST_UNCHANGED", log_output)
+
+                # Unload settings
+                unload_env_settings(saved)
+                log_output_after = "\n".join(cm.output)
+                self.assertIn("Environment variable unloaded: popped TEST_NEW", log_output_after)
+                self.assertIn("Environment variable unloaded: restored TEST_OVERWRITTEN=old_val", log_output_after)
+                self.assertNotIn("restored TEST_UNCHANGED", log_output_after)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
     def test_parse_env_text_and_file(self) -> None:
         """Verifies parsing .env format text and files."""
         text = """

@@ -15,6 +15,7 @@ from .file_utils import (
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore, IgnoreHandler
 from .folder_diff import list_folder_paths
+from .lifecycle_hooks import HookExecFlags, trigger_pre_source_lifecycle_hook
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ def run_primitive_11_add_resources(
     package_name: str,
     import_paths: List[Path],
     dry_run: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> None:
     """
     Orchestrates importing multiple resources into a package.
@@ -108,8 +109,9 @@ def run_primitive_11_add_resources(
         raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
 
     # Trigger pre_source hook before reading/writing source directory
-    from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
-    trigger_pre_source_lifecycle_hook(workspace_config, package_name, load_envs=True, no_hooks=no_hooks)
+    trigger_pre_source_lifecycle_hook(
+        workspace_config, package_name, flags=flags
+    )
 
     # 2. Resolve source render directory, target directory and ignores
     src_dir_to_render, target_base = get_package_source_and_target_directory_from_source(

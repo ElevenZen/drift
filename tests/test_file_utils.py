@@ -589,12 +589,12 @@ class TestFileUtils(unittest.TestCase):
                     check_sudo_privilege(sudo_required=True)
 
         # Windows non-admin failure
-        with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=False):
+        with patch("sys.platform", "win32"), patch("drift.process_utils.has_admin_privileges", return_value=False):
             with self.assertRaises(PermissionError):
                 check_sudo_privilege(sudo_required=True)
 
         # Windows admin success
-        with patch("sys.platform", "win32"), patch("drift.file_utils.has_admin_privileges", return_value=True):
+        with patch("sys.platform", "win32"), patch("drift.process_utils.has_admin_privileges", return_value=True):
             check_sudo_privilege(sudo_required=True)
 
     def test_is_binary_file(self) -> None:
@@ -772,7 +772,7 @@ class TestFileUtils(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.file_utils", level="DEBUG") as cm: 
+            with self.assertLogs("drift.process_utils", level="DEBUG") as cm: 
                 run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
 
             logs = "\n".join(cm.output)

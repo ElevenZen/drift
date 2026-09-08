@@ -21,6 +21,7 @@ from .file_utils import (
     resolve_system_target,
 )
 from .constants import PACKAGE_CONFIG_FILE_NAME, UNINSTALL_HOOK_NAMES
+from .lifecycle_hooks import HookExecFlags
 from .result_models import PackageUninstallResult, RestoredBackup, UninstallResult
 
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ def uninstall_single_package_standard(
     pkg: str,
     pkg_state: PackageState,
     dry_run: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> bool:
     """Orchestrates standard uninstallation of a single package.
 
@@ -228,6 +229,7 @@ def uninstall_single_package_standard(
         logger.info(f"🔍 [DRY RUN] Would uninstall package: {pkg}")
 
     install_pkg_dir = workspace_config.install_path / pkg
+    hook_flags = HookExecFlags.resolve(flags)
 
     from .install_repo import load_config_for_install
     try:
@@ -241,13 +243,15 @@ def uninstall_single_package_standard(
         sudo = False
 
     # Check uninstall hook files exist before attempting uninstallation
-    if not dry_run and not no_hooks and pkg_config:
+    if not dry_run and not hook_flags.no_hooks and pkg_config:
         pkg_config.hooks.check_hook_files(install_pkg_dir, hook_names=UNINSTALL_HOOK_NAMES)
 
     # 1. Trigger pre_uninstall hook (only if drift_package.toml is available, CWD is target_dir)
     if not dry_run and pkg_config and pkg_config.hooks.pre_uninstall:
         with pkg_config.package_envs(workspace_config):
-            pkg_config.hooks.trigger_pre_uninstall(install_dir=install_pkg_dir, cwd=target_dir, no_hooks=no_hooks)
+            pkg_config.hooks.trigger_pre_uninstall(
+                install_dir=install_pkg_dir, cwd=target_dir, flags=hook_flags
+            )
 
     # 2. Remove deployed files
     remove_deployed_files(pkg, pkg_state.deployed_files, target_dir, sudo, dry_run=dry_run)
@@ -258,7 +262,9 @@ def uninstall_single_package_standard(
     # 4. Trigger post_uninstall hook (only if drift_package.toml is available, CWD is install_pkg_dir)
     if not dry_run and pkg_config and pkg_config.hooks.post_uninstall:
         with pkg_config.package_envs(workspace_config):
-            pkg_config.hooks.trigger_post_uninstall(install_dir=install_pkg_dir, cwd=install_pkg_dir, no_hooks=no_hooks)
+            pkg_config.hooks.trigger_post_uninstall(
+                install_dir=install_pkg_dir, flags=hook_flags
+            )
 
     if dry_run:
         return True
@@ -273,13 +279,15 @@ def uninstall_single_package(
     pkg_state: PackageState,
     dry_run: bool = False,
     detach: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> bool:
     """Orchestrates the uninstallation or detachment of a single package."""
     if detach:
         return detach_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run)
     else:
-        return uninstall_single_package_standard(workspace_config, pkg, pkg_state, dry_run=dry_run, no_hooks=no_hooks)
+        return uninstall_single_package_standard(
+            workspace_config, pkg, pkg_state, dry_run=dry_run, flags=flags
+        )
 
 
 def run_primitive_7_uninstall_packages(
@@ -288,7 +296,7 @@ def run_primitive_7_uninstall_packages(
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> UninstallResult:
     """
     Uninstalls or detaches one or more packages from the system.
@@ -301,6 +309,7 @@ def run_primitive_7_uninstall_packages(
         triggered if the package configuration file ('drift_package.toml') is available
         in the install/<pkg>/ directory.
     """
+    hook_flags = HookExecFlags.resolve(flags)
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
     if state_file.exists():
@@ -334,7 +343,7 @@ def run_primitive_7_uninstall_packages(
             from .file_utils import check_sudo_privilege
             check_sudo_privilege(True)
 
-        if not no_hooks:
+        if not hook_flags.no_hooks:
             for pkg, pkg_config in pkg_config_map.items():
                 if pkg_config and pkg_config.hooks:
                     pkg_config.hooks.check_hook_files(
@@ -345,7 +354,9 @@ def run_primitive_7_uninstall_packages(
 
     for pkg, pkg_state in safe_map.items():
         target_dir, sudo = get_uninstall_metadata(workspace_config, pkg)
-        if uninstall_single_package(workspace_config, pkg, pkg_state, dry_run=dry_run, detach=detach, no_hooks=no_hooks):
+        if uninstall_single_package(
+            workspace_config, pkg, pkg_state, dry_run=dry_run, detach=detach, flags=hook_flags
+        ):
             if not dry_run:
                 registry.remove_package(pkg)
                 successfully_uninstalled.append(pkg)

@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import shutil
 import logging
+from dataclasses import replace
 from pathlib import Path
 from typing import List, Tuple, Optional, TYPE_CHECKING
 
@@ -23,7 +24,7 @@ from .package_config import load_package_config_from_source_dir
 from .render_input import find_engine_for_file, render_input_templates
 from .render_core import render_template_to_file, RenderError
 from .exceptions import ConfigError
-from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
+from .lifecycle_hooks import trigger_pre_source_lifecycle_hook, HookExecFlags
 from .result_models import PackageRenderResult, RenderResult
 from .file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes
 
@@ -175,9 +176,12 @@ def render_package_files(
     package_dir: Path,
     pkg_config: PackageConfig,
     render_pkg_dir: Path,
-    no_hooks: bool = False
+    hook_flags: HookExecFlags
 ) -> PackageRenderResult:
-    """Renders package source files, copies static assets, and triggers lifecycle hooks."""
+    """
+    Renders package source files, copies static assets, and triggers lifecycle hooks.
+    Package-Level Env should be loaded by the caller of this function.
+    """
     from .ignore import DriftIgnore
     from .folder_diff import list_folder_paths
     package_name = package_dir.name
@@ -187,8 +191,7 @@ def render_package_files(
         workspace_config=workspace_config,
         package_name=package_name,
         pkg_config=pkg_config,
-        load_envs=False,
-        no_hooks=no_hooks
+        flags=hook_flags,
     )
 
     handle_driftignore_file(package_dir, render_pkg_dir)
@@ -237,7 +240,10 @@ def render_package_files(
             copied_files.append(dest_rel)
 
     # Trigger post_render hook
-    pkg_config.hooks.trigger_post_render(render_dir=render_pkg_dir, no_hooks=no_hooks)
+    pkg_config.hooks.trigger_post_render(
+        render_dir=render_pkg_dir,
+        flags=hook_flags,
+    )
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
     return PackageRenderResult(
@@ -251,10 +257,11 @@ def render_package_files(
 def render_package(
     workspace_config: WorkspaceConfig,
     package_dir: Path,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> PackageRenderResult:
     """Renders all templates and copies static files in a package folder into the render directory."""
     package_name = package_dir.name
+    hook_flags = HookExecFlags.resolve(flags)
 
     # Clear the target package render directory first to avoid sequence issues with template-rendered config files
     clear_render_package_dir(workspace_config, package_name)
@@ -266,32 +273,37 @@ def render_package(
         workspace_config=workspace_config
     )
 
-    # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
-    is_satisfied, failure_reason = pkg_config.evaluate_requirements(workspace_config, no_hooks=no_hooks)
-    if not is_satisfied:
-        logger.info(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
-        return PackageRenderResult(
-            package=package_name,
-            status="SKIPPED",
-            skip_reason=failure_reason
-        )
+    scoped_flags = replace(hook_flags, load_envs=False)
 
     with pkg_config.package_envs(workspace_config):
+        # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
+        is_satisfied, failure_reason = pkg_config.evaluate_requirements(
+            workspace_config, flags=scoped_flags
+        )
+        if not is_satisfied:
+            logger.info(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
+            return PackageRenderResult(
+                package=package_name,
+                status="SKIPPED",
+                skip_reason=failure_reason
+            )
+
         return render_package_files(
             workspace_config=workspace_config,
-            package_dir=package_dir,
             pkg_config=pkg_config,
+            package_dir=package_dir,
             render_pkg_dir=render_pkg_dir,
-            no_hooks=no_hooks
+            hook_flags=scoped_flags,
         )
 
 
 def run_primitive_2_render_packages(
     workspace_config: WorkspaceConfig,
     target_pkgs: Optional[List[str]] = None,
-    no_hooks: bool = False
+    flags: Optional[HookExecFlags] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
+    hook_flags = HookExecFlags.resolve(flags)
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []
     with secrets_env_scope(workspace_config.drift_root):
@@ -307,7 +319,9 @@ def run_primitive_2_render_packages(
         for package_name in active_packages:
             package_dir = workspace_config.source_path / package_name
             try:
-                pkg_res = render_package(workspace_config, package_dir, no_hooks=no_hooks)
+                pkg_res = render_package(
+                    workspace_config, package_dir, flags=hook_flags
+                )
                 results.append(pkg_res)
             except Exception as e:
                 logger.debug(f"Render exception for package '{package_name}':", exc_info=True)

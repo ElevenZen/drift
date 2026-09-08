@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from drift.workspace_config import WorkspaceConfig
+from drift.lifecycle_hooks import HookExecFlags
 from drift.adopt_repo import (
     get_drifted_packages,
     check_source_cleanliness,
@@ -573,7 +574,9 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
         with self.assertRaises(RuntimeError) as ctx:
-            adopt_single_package(self.workspace_config, pkg, interactive=False)
+            adopt_single_package(
+                self.workspace_config, pkg, interactive=False, flags=HookExecFlags(streaming=False)
+            )
         self.assertIn("failed with exit code 1", str(ctx.exception))
 
     def test_adopt_permission_only_drift_applies_cleanly(self) -> None:

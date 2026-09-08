@@ -14,6 +14,13 @@ from .env_utils import (
     parse_env_file,
     parse_env_text,
 )
+from .process_utils import (
+    run_command,
+    format_output,
+    has_admin_privileges,
+    check_sudo_privilege,
+    run_sudo_command,
+)
 from .constants import (
     CONFIG_DIR_NAME,
     GLOBAL_CONFIG_FILE_NAME,
@@ -50,6 +57,14 @@ from .package_config import (
     PackageRequirements,
     load_package_config_rendered,
     load_package_config_from_source_dir,
+)
+from .lifecycle_hooks import (
+    HookExecFlags,
+    execute_hook_script,
+    trigger_package_hook_with_render,
+    trigger_pre_source_lifecycle_hook,
+    trigger_probe_lifecycle_hook,
+    trigger_package_lifecycle_hook,
 )
 from .render_core import (
     render_template,

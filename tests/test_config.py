@@ -607,7 +607,8 @@ class TestConfigClasses(unittest.TestCase):
                     ["/scripts/setup.sh"],
                     cwd="/opt/app",
                     text=True,
-                    timeout=60
+                    timeout=60,
+                    streaming=True
                 )
 
             mock_run.reset_mock()
@@ -617,13 +618,15 @@ class TestConfigClasses(unittest.TestCase):
                 execute_hook_command(
                     cmd=["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=Path(r"C:\app"),
-                    timeout_seconds=60
+                    timeout_seconds=60,
+                    streaming=False
                 )
                 mock_run.assert_called_with(
                     ["powershell.exe", "-File", r"C:\scripts\setup.ps1"],
                     cwd=r"C:\app",
                     text=True,
-                    timeout=60
+                    timeout=60,
+                    streaming=False
                 )
 
     def test_check_sudo_and_root_windows(self) -> None:

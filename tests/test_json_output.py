@@ -217,3 +217,28 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.assertEqual(res["failure"]["next_action_type"], "adopt_or_force")
         self.assertEqual(res["failure"]["requires_rollback"], False)
         self.assertEqual(res["failure"]["recommended_command"], "drift adopt")
+
+    def test_deploy_with_hook_json_does_not_pollute_stdout(self) -> None:
+        """Verifies that hook stdout is NOT streamed to sys.stdout in --json mode, maintaining clean JSON output."""
+        hook_script = os.path.join(self.src_dir, "pkg_a", "post_render.sh")
+        with open(hook_script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\necho 'RAW_HOOK_OUTPUT_SHOULD_NOT_POLLUTE_JSON'\n")
+        os.chmod(hook_script, 0o755)
+
+        # Update pkg_a config to enable post_render hook
+        cfg_path = os.path.join(self.src_dir, "pkg_a", "drift_package.toml")
+        with open(cfg_path, "a", encoding="utf-8") as f:
+            f.write("\n[hooks]\npost_render = 'post_render.sh'\n")
+
+        stdout = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout
+        try:
+            main(["-C", self.drift_root, "--no-git-root", "render", "pkg_a", "--json"])
+        finally:
+            sys.stdout = old_stdout
+
+        raw = stdout.getvalue().strip()
+        self.assertNotIn("RAW_HOOK_OUTPUT_SHOULD_NOT_POLLUTE_JSON", raw)
+        parsed = json.loads(raw)
+        self.assertEqual(parsed["status"], "SUCCESS")

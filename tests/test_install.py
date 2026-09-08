@@ -334,7 +334,7 @@ class TestInstallRepo(unittest.TestCase):
         cwd = Path(self.system_target_dir)
 
         # 1. Test CalledProcessError
-        with patch("subprocess.run") as mock_run:
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(
                 returncode=5,
                 cmd=["dummy.sh"],
@@ -353,7 +353,7 @@ class TestInstallRepo(unittest.TestCase):
             self.assertIn("Some severe error output", str(ctx.exception))
 
         # 2. Test TimeoutExpired
-        with patch("subprocess.run") as mock_run:
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(
                 cmd=["dummy.sh"],
                 timeout=120,
@@ -427,7 +427,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # All lifecycle hooks always execute in user space without sudo (preserving all injected envs)
         for hook_name in LIFECYCLE_HOOK_NAMES:
-            with patch("subprocess.run") as mock_run:
+            with patch("drift.lifecycle_hooks.run_command") as mock_run:
                 mock_run.return_value.returncode = 0
                 trigger_package_lifecycle_hook(
                     pkg=pkg,
@@ -455,7 +455,7 @@ class TestInstallRepo(unittest.TestCase):
 
         config = PackageConfig(name=pkg)
 
-        with patch("subprocess.run") as mock_run:
+        with patch("drift.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value.returncode = 0
             execute_hook_script(
                 hook_path=hook_script,

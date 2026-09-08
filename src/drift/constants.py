@@ -147,11 +147,22 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
 
 INITIAL_ENV: List[str] = list(os.environ.keys())
+
+DEFAULT_HOOK_NON_INTERACTIVE_ENVS: Dict[str, str] = {
+    "PAGER": "cat",
+    "GIT_PAGER": "cat",
+    "SYSTEMD_PAGER": "cat",
+    "BAT_PAGER": "cat",
+    "DEBIAN_FRONTEND": "noninteractive",
+    "CI": "true",
+    "DRIFT_HOOK": "1",
+    "DRIFT_NON_INTERACTIVE": "1",
+}
 
 SYSTEM_FACT_KEYS: List[str] = [
     "drift_os",

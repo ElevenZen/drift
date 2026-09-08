@@ -13,6 +13,14 @@ import tempfile
 from pathlib import Path
 from typing import Optional, Union, List, Any
 
+from .process_utils import (
+    format_output,
+    has_admin_privileges,
+    check_sudo_privilege,
+    run_command,
+    run_sudo_command,
+)
+
 logger = logging.getLogger(__name__)
 
 COMMON_WINDOWS_PATH_ENVS = {
@@ -79,118 +87,6 @@ def is_relative_to(path: Path, other: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def _format_stream_output(stream_val: Any) -> Optional[str]:
-    if stream_val is None:
-        return None
-    if isinstance(stream_val, bytes):
-        text = stream_val.decode("utf-8", errors="replace")
-    else:
-        text = str(stream_val)
-    text = text.rstrip()
-    return text if text.strip() else None
-
-
-def run_command(cmd: Union[str, List[str]], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
-    """Logs the command before executing it with subprocess.run, and logs stdout/stderr in debug mode."""
-    logger.debug(f"External: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
-    params: Any = {"check": True, "capture_output": True}
-    params.update(kwargs)
-    try:
-        res = subprocess.run(cmd, **params)
-        stdout_msg = _format_stream_output(res.stdout)
-        if stdout_msg:
-            logger.debug(f"stdout:\n{stdout_msg}")
-        stderr_msg = _format_stream_output(res.stderr)
-        if stderr_msg:
-            logger.debug(f"stderr:\n{stderr_msg}")
-        return res
-    except subprocess.CalledProcessError as e:
-        stdout_msg = _format_stream_output(e.stdout)
-        if stdout_msg:
-            logger.debug(f"stdout:\n{stdout_msg}")
-        stderr_msg = _format_stream_output(e.stderr)
-        if stderr_msg:
-            logger.debug(f"stderr:\n{stderr_msg}")
-        raise
-
-
-def has_admin_privileges() -> bool:
-    """Checks if current process has root / administrator privileges."""
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            return bool(ctypes.windll.shell32.IsUserAnAdmin())
-        except Exception:
-            return False
-    else:
-        return os.geteuid() == 0
-
-
-def run_sudo_command(
-    cmd: Union[str, List[str]],
-    sudo: bool = True,
-    **kwargs: Any
-) -> "subprocess.CompletedProcess[Any]":
-    """Executes a command with cross-platform privilege handling.
-
-    On Linux/macOS: prepends 'sudo' if sudo is True and user is not already root (euid != 0).
-    On Windows: verifies admin privileges if sudo is True, or runs command directly.
-    """
-    if sudo:
-        if sys.platform == "win32":
-            if not has_admin_privileges():
-                from .exceptions import DriftError
-                raise DriftError(
-                    "This operation requires elevated Administrator privileges (sudo = true). "
-                    "Please run drift from an elevated Administrator terminal / PowerShell window."
-                )
-        else:
-            if not has_admin_privileges():
-                if isinstance(cmd, list):
-                    if not cmd or cmd[0] != "sudo":
-                        cmd = ["sudo"] + list(cmd)
-                elif isinstance(cmd, str):
-                    if not cmd.startswith("sudo "):
-                        cmd = f"sudo {cmd}"
-
-    return run_command(cmd, **kwargs)
-
-
-def check_sudo_privilege(sudo_required: bool = True) -> None:
-    """Checks if administrative/root privileges are available before staging or installing.
-
-    On Windows: ensures the current process is running in an elevated Administrator terminal.
-    On POSIX: executes a test probe ('sudo -v' or 'sudo true') to authenticate and prompt the user early.
-    If the user fails to authenticate, interrupts, or is not an administrator, raises PermissionError.
-    """
-    if not sudo_required:
-        return
-
-    if sys.platform == "win32":
-        if not has_admin_privileges():
-            raise PermissionError(
-                "One or more packages require elevated Administrator privileges (sudo = true).\n"
-                "Please run Drift from an elevated Administrator PowerShell / Command Prompt window."
-            )
-    else:
-        if os.geteuid() == 0:
-            return
-
-        logger.debug("Prompting / verifying sudo credentials before staging and installation...")
-        try:
-            res = subprocess.run(["sudo", "-v"], check=False)
-            if res.returncode != 0:
-                res = subprocess.run(["sudo", "true"], check=False)
-            if res.returncode != 0:
-                raise PermissionError(
-                    "Failed to acquire sudo credentials. Operation aborted before modifying files."
-                )
-        except (subprocess.SubprocessError, FileNotFoundError, KeyboardInterrupt) as e:
-            raise PermissionError(
-                f"Sudo privilege check failed ({e}). Operation aborted."
-            ) from e
 
 
 def resolve_system_target(relative_path: Path, relative_base: Path) -> Path:
