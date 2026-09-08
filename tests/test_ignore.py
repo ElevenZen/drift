@@ -224,3 +224,21 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertTrue(custom_ignore.match_path(Path("test.tmp")))
         self.assertFalse(custom_ignore.match_path(Path("test.txt")))
 
+    def test_create_stow_ignore_file_method(self) -> None:
+        """Verifies that create_stow_ignore_file generates the .stow-local-ignore file with expected contents."""
+        from drift.constants import STOW_LOCAL_IGNORE_FILE_NAME
+        ignore = DriftIgnore(["^/custom_ignored\\.txt$"])
+        target_dir = self.pkg_dir / "target_pkg"
+        ignore.create_stow_ignore_file(target_dir)
+
+        stow_ignore_file = target_dir / STOW_LOCAL_IGNORE_FILE_NAME
+        self.assertTrue(stow_ignore_file.is_file())
+        content = stow_ignore_file.read_text(encoding="utf-8")
+        self.assertIn("^/custom_ignored\\.txt$", content)
+        self.assertIn(r"^/drift_package\.toml$", content)
+
+        # Calling again when content is unchanged doesn't fail
+        ignore.create_stow_ignore_file(target_dir)
+        self.assertTrue(stow_ignore_file.is_file())
+
+

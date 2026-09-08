@@ -7,6 +7,7 @@ import subprocess
 from unittest.mock import patch
 
 from drift.process_utils import (
+    strip_ansi,
     format_output,
     has_admin_privileges,
     check_sudo_privilege,
@@ -17,6 +18,23 @@ from drift.constants import set_test_mode
 
 
 class TestProcessUtils(unittest.TestCase):
+    def test_strip_ansi(self) -> None:
+        self.assertEqual(strip_ansi(None), "")
+        self.assertEqual(strip_ansi(""), "")
+        self.assertEqual(strip_ansi("plain text"), "plain text")
+        # Color codes
+        self.assertEqual(strip_ansi("\x1b[31mRed Text\x1b[0m"), "Red Text")
+        self.assertEqual(strip_ansi("\x1b[1;32;40mBold Green\x1b[0m"), "Bold Green")
+        self.assertEqual(strip_ansi("\x1b[38;5;196m256 Color\x1b[0m"), "256 Color")
+        self.assertEqual(strip_ansi("\x1b[38;2;255;128;0mRGB Color\x1b[0m"), "RGB Color")
+        # Style & Cursor sequences
+        self.assertEqual(strip_ansi("\x1b[1m\x1b[4mUnderline Bold\x1b[22m\x1b[24m"), "Underline Bold")
+        self.assertEqual(strip_ansi("\x1b[2K\x1b[1GProgress Line"), "Progress Line")
+        # OSC escape sequences
+        self.assertEqual(strip_ansi("\x1b]0;Window Title\x07Message"), "Message")
+        # Bytes decoding
+        self.assertEqual(strip_ansi(b"\x1b[33mYellow Bytes\x1b[0m"), "Yellow Bytes")
+
     def test_format_output(self) -> None:
         self.assertIsNone(format_output(None))
         self.assertIsNone(format_output(""))
@@ -24,6 +42,7 @@ class TestProcessUtils(unittest.TestCase):
         self.assertIsNone(format_output(b""))
         self.assertEqual(format_output("hello world\n"), "hello world")
         self.assertEqual(format_output(b"hello bytes\n"), "hello bytes")
+        self.assertEqual(format_output("\x1b[31;1mError: file missing\x1b[0m\n"), "Error: file missing")
 
     def test_has_admin_privileges(self) -> None:
         res = has_admin_privileges()
@@ -113,6 +132,48 @@ class TestProcessUtils(unittest.TestCase):
             res = run_sudo_command([sys.executable, "-c", "print('sudo ok')"], sudo=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn("sudo ok", res.stdout)
+
+    def test_run_command_strips_ansi_in_debug_logs_and_errors(self) -> None:
+        set_test_mode(True, enable_logging=True)
+        try:
+            # 1. Non-streaming success cleans debug logs and CompletedProcess
+            with self.assertLogs("drift.process_utils", level="DEBUG") as cm:
+                res = run_command([
+                    sys.executable, "-c",
+                    "import sys; print('\\x1b[32mSUCCESS_COLOR\\x1b[0m'); print('\\x1b[33mWARN_COLOR\\x1b[0m', file=sys.stderr)"
+                ], text=True)
+            logs = "\n".join(cm.output)
+            self.assertIn("stdout:\nSUCCESS_COLOR", logs)
+            self.assertIn("stderr:\nWARN_COLOR", logs)
+            self.assertNotIn("\x1b[32m", logs)
+            self.assertNotIn("\x1b[33m", logs)
+            self.assertEqual(res.stdout.strip(), "SUCCESS_COLOR")
+            self.assertEqual(res.stderr.strip(), "WARN_COLOR")
+
+            # 2. Non-streaming error cleans debug logs and CalledProcessError
+            with self.assertLogs("drift.process_utils", level="DEBUG") as cm:
+                with self.assertRaises(subprocess.CalledProcessError) as ctx:
+                    run_command([
+                        sys.executable, "-c",
+                        "import sys; print('\\x1b[31;1mFATAL_ERROR\\x1b[0m', file=sys.stderr); sys.exit(1)"
+                    ], text=True)
+            logs = "\n".join(cm.output)
+            self.assertIn("stderr:\nFATAL_ERROR", logs)
+            self.assertNotIn("\x1b[31;1m", logs)
+            self.assertEqual(ctx.exception.stderr.strip(), "FATAL_ERROR")
+            self.assertNotIn("\x1b[31;1m", ctx.exception.stderr)
+
+            # 3. Streaming error cleans CalledProcessError
+            with patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(subprocess.CalledProcessError) as ctx:
+                    run_command([
+                        sys.executable, "-c",
+                        "import sys; print('\\x1b[31mSTREAM_ERR\\x1b[0m', file=sys.stderr); sys.exit(2)"
+                    ], streaming=True, text=True)
+            self.assertEqual(ctx.exception.stderr.strip(), "STREAM_ERR")
+            self.assertNotIn("\x1b[31m", ctx.exception.stderr)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
 
 if __name__ == "__main__":

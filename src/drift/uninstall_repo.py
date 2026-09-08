@@ -312,10 +312,7 @@ def run_primitive_7_uninstall_packages(
     hook_flags = HookExecFlags.resolve(flags)
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
-    if state_file.exists():
-        registry = load_state_registry(state_file)
-    else:
-        registry = StateRegistry({})
+    registry = load_state_registry(state_file)
 
     # 2. Filter packages
     safe_map, rejected_pkgs = filter_uninstallable_packages(workspace_config, registry, package_names, force)
@@ -380,7 +377,7 @@ def run_primitive_7_uninstall_packages(
         )
 
     # 3. Save state registry
-    save_state_registry(state_file, registry)
+    registry.save()
 
     # 4. Commit changes in install repo
     if successfully_uninstalled:

@@ -65,18 +65,6 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
         return metadata
 
 
-def create_stow_ignore_file(
-    install_pkg_dir: Path,
-    ignore_handler: DriftIgnore
-) -> None:
-    """Generates install/<pkg>/.stow-local-ignore using DriftIgnore patterns plus MANAGED_CONFIG_FILES."""
-    stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
-    install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    content = ignore_handler.generate_stow_local_ignore_content()
-    stow_ignore_path.write_text(content, encoding="utf-8")
-    logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path}")
-
-
 def process_package_changes(
     pkg: str,
     install_base: Path,
@@ -193,7 +181,7 @@ def copy_ignore_and_config_files(
         atomic_copy_file(render_ignore, install_ignore)
 
     # 2. Create physical .stow-local-ignore
-    create_stow_ignore_file(install_pkg_dir, ignore_handler=ignore_handler)
+    ignore_handler.create_stow_ignore_file(install_pkg_dir)
 
     # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
     render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -276,7 +264,7 @@ def run_primitive_4_stage_render_to_install(
     # Set state of packages to "staging" before staging to prevent partial staging issues
     for pkg, metadata in pkg_metadata.items():
         state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
-    save_state_registry(state_file, state_registry)
+    state_registry.save()
 
     pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
 
@@ -307,7 +295,7 @@ def run_primitive_4_stage_render_to_install(
     # Set state of packages to "staged" after successful staging
     for pkg in pkg_metadata.keys():
         state_registry.set_package_state(pkg, "staged")
-    save_state_registry(state_file, state_registry)
+    state_registry.save()
 
     # Return only the packages that have actual changes
     return pkg_changes_with_actual_changes

@@ -18,8 +18,9 @@ class PackageState:
 class StateRegistry:
     """Manages reading, updating, and saving install/state.toml with timestamps and metadata."""
 
-    def __init__(self, packages: Dict[str, PackageState]):
+    def __init__(self, packages: Dict[str, PackageState], state_file: Optional[Path] = None):
         self.packages = packages
+        self.state_file = state_file
 
     def get_package_state(self, pkg: str) -> Optional[str]:
         pkg_data = self.packages.get(pkg)
@@ -65,11 +66,15 @@ class StateRegistry:
                 return True
         return False
 
+    def save(self) -> None:
+        """Saves this state registry to disk using its associated state_file."""
+        save_state_registry(self)
+
 
 def load_state_registry(filepath: Path) -> StateRegistry:
     """Loads state.toml from the given filepath. Returns empty registry if file doesn't exist."""
     if not filepath.exists():
-        return StateRegistry({})
+        return StateRegistry({}, state_file=filepath)
     try:
         content = filepath.read_text(encoding="utf-8")
         data = parse_toml(content)
@@ -98,13 +103,16 @@ def load_state_registry(filepath: Path) -> StateRegistry:
                 install_method=install_method,
                 deployed_files=deployed_files
             )
-        return StateRegistry(packages)
+        return StateRegistry(packages, state_file=filepath)
     except Exception:
-        return StateRegistry({})
+        return StateRegistry({}, state_file=filepath)
 
 
-def save_state_registry(filepath: Path, registry: StateRegistry) -> None:
-    """Saves the state registry to the given filepath in valid TOML format."""
+def save_state_registry(registry: StateRegistry) -> None:
+    """Saves the state registry to its associated state_file in valid TOML format."""
+    if registry.state_file is None:
+        raise ValueError("No state_file path associated with StateRegistry to save.")
+    filepath = registry.state_file
     filepath.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for pkg, pkg_state in sorted(registry.packages.items()):

@@ -17,6 +17,7 @@ from .env_utils import (
 from .process_utils import (
     run_command,
     format_output,
+    strip_ansi,
     has_admin_privileges,
     check_sudo_privilege,
     run_sudo_command,

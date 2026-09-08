@@ -585,7 +585,6 @@ def sync_deployed_files_manifest(
 
 def update_state_registry_post_deployment(
     state_registry: StateRegistry,
-    state_file: Path,
     pkg: str,
     install_method: str,
     current_files: List[Path],
@@ -606,17 +605,16 @@ def update_state_registry_post_deployment(
         package_changes=package_changes
     )
 
-    save_state_registry(state_file, state_registry)
+    state_registry.save()
 
 
-def execute_package_deployment(
+def deploy_one_package_impl(
     workspace_config: WorkspaceConfig,
+    state_registry: StateRegistry,
     pkg: str,
     metadata: PackageConfig,
     target_dir: Path,
     install_pkg_dir: Path,
-    state_registry: StateRegistry,
-    state_file: Path,
     resolve_symlinks: bool,
     is_first_time: bool,
     package_changes: Optional[PackageStageChanges],
@@ -637,12 +635,9 @@ def execute_package_deployment(
         resolve_symlinks=resolve_symlinks,
     )
 
+    # Generate or update .stow-local-ignore file if using stow method
     if metadata.get_install_method(workspace_config) == "stow":
-        stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
-        stow_ignore_content = ignore_handler.generate_stow_local_ignore_content()
-        if (not stow_ignore_path.exists()
-                or stow_ignore_path.read_text(encoding="utf-8") != stow_ignore_content):
-            stow_ignore_path.write_text(stow_ignore_content, encoding="utf-8")
+        ignore_handler.create_stow_ignore_file(install_pkg_dir)
     
     # Remove full_redeploy parameter and rely on package_changes to determine deployment mode
     full_redeploy = (package_changes is None)
@@ -675,7 +670,7 @@ def execute_package_deployment(
                 state_registry.packages.pop(pkg, None)
             else:
                 state_registry.set_package_state(pkg, "installed", install_method=metadata.get_install_method(workspace_config))
-            save_state_registry(state_file, state_registry)
+            state_registry.save()
             logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{pkg}'. Deployment stopped (no rollback needed).")
         raise
 
@@ -688,7 +683,7 @@ def execute_package_deployment(
         full_redeploy=full_redeploy,
         package_changes=package_changes
     )
-    save_state_registry(state_file, state_registry)
+    state_registry.save()
     
     # 3. Physical Deployment Execution
     if full_redeploy:
@@ -730,7 +725,6 @@ def execute_package_deployment(
         if success or no_rollback_err:
             update_state_registry_post_deployment(
                 state_registry=state_registry,
-                state_file=state_file,
                 pkg=pkg,
                 install_method=metadata.get_install_method(workspace_config),
                 current_files=current_files,
@@ -758,11 +752,10 @@ def execute_package_deployment(
     )
 
 
-def deploy_package_impl(
+def deploy_one_package(
     workspace_config: WorkspaceConfig,
-    pkg: str,
     state_registry: StateRegistry,
-    state_file: Path,
+    pkg: str,
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None,
@@ -837,19 +830,18 @@ def deploy_package_impl(
     
     # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
-    save_state_registry(state_file, state_registry)
+    state_registry.save()
     
     logger.info(f"🚀 Deploying package: {pkg}")
     
     with metadata.package_envs(workspace_config):
-        return execute_package_deployment(
+        return deploy_one_package_impl(
             workspace_config=workspace_config,
+            state_registry=state_registry,
             pkg=pkg,
             metadata=metadata,
             target_dir=target_dir,
             install_pkg_dir=install_pkg_dir,
-            state_registry=state_registry,
-            state_file=state_file,
             resolve_symlinks=resolve_symlinks,
             is_first_time=is_first_time,
             package_changes=package_changes,
@@ -857,11 +849,10 @@ def deploy_package_impl(
         )
 
 
-def deploy_package(
+def deploy_one_package_with_error_handling(
     workspace_config: WorkspaceConfig,
-    pkg: str,
     state_registry: StateRegistry,
-    state_file: Path,
+    pkg: str,
     resolve_symlinks: bool,
     force: bool,
     package_changes: Optional[PackageStageChanges] = None,
@@ -869,11 +860,10 @@ def deploy_package(
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     try:
-        return deploy_package_impl(
+        return deploy_one_package(
             workspace_config=workspace_config,
-            pkg=pkg,
             state_registry=state_registry,
-            state_file=state_file,
+            pkg=pkg,
             resolve_symlinks=resolve_symlinks,
             force=force,
             package_changes=package_changes,
@@ -937,11 +927,10 @@ def run_primitive_5_install_deployment(
             pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
         else:
             pkg_change = None
-        pkg_res = deploy_package(
+        pkg_res = deploy_one_package_with_error_handling(
             workspace_config=workspace_config,
-            pkg=pkg,
             state_registry=state_registry,
-            state_file=state_file,
+            pkg=pkg,
             resolve_symlinks=resolve_symlinks,
             force=force,
             package_changes=pkg_change,

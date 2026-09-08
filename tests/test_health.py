@@ -270,7 +270,7 @@ exit 0
         registry.set_package_state(pkg1, "installed")
         registry.set_package_state(pkg2, "installed")
         registry.set_package_state(pkg3, "installed")
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # Run all
         all_res = run_primitive_health_checks(self.workspace_config)
@@ -317,7 +317,7 @@ exit 0
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed")
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         with patch("sys.stdout.write") as mock_stdout:
             run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "health", pkg, "--json"])

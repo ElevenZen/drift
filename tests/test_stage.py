@@ -562,7 +562,7 @@ class TestStageRepo(unittest.TestCase):
         from drift.state_registry import load_state_registry, save_state_registry
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "staging")
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # Attempt to stage - should abort with Safety Abort
         with self.assertRaises(RuntimeError) as ctx:
@@ -772,7 +772,7 @@ class TestStageRepo(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         reg = load_state_registry(state_file)
         reg.set_package_state("pkg_a", "staging")
-        save_state_registry(state_file, reg)
+        save_state_registry(reg)
 
         (self.install_dir / "pkg_a" / "uncommitted_midfail.txt").write_text("midfail file", encoding="utf-8")
 

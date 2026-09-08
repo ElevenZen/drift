@@ -75,28 +75,31 @@ class TestInstallRepo(unittest.TestCase):
         # Test loading missing registry
         registry = load_state_registry(state_file)
         self.assertEqual(registry.packages, {})
+        self.assertEqual(registry.state_file, state_file)
         self.assertFalse(registry.has_deploying_package())
 
-        # Test setting and saving states
+        # Test setting and saving states using registry.save()
         registry.set_package_state("nvim", "deploying")
         registry.set_package_state("tmux", "installed")
         self.assertTrue(registry.has_deploying_package())
         self.assertEqual(registry.get_package_state("nvim"), "deploying")
         self.assertEqual(registry.get_package_state("tmux"), "installed")
 
-        save_state_registry(state_file, registry)
+        registry.save()
         self.assertTrue(os.path.isfile(state_file))
 
         # Test loading from file
         loaded = load_state_registry(state_file)
+        self.assertEqual(loaded.state_file, state_file)
         self.assertEqual(loaded.get_package_state("nvim"), "deploying")
         self.assertEqual(loaded.get_package_state("tmux"), "installed")
         self.assertTrue(loaded.has_deploying_package())
 
-        # Test removing
+        # Test removing and saving again
         loaded.remove_package("nvim")
         self.assertFalse(loaded.has_deploying_package())
         self.assertIsNone(loaded.get_package_state("nvim"))
+        loaded.save()
 
     def test_package_state_dataclass(self) -> None:
         """Verifies the PackageState dataclass attributes and defaults."""
@@ -474,7 +477,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
         """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_package_install_method in env."""
-        from drift.install_repo import deploy_package_impl
+        from drift.install_repo import deploy_one_package
         from drift.state_registry import StateRegistry
 
         pkg = "pkg_env_hooks"
@@ -512,11 +515,10 @@ class TestInstallRepo(unittest.TestCase):
 
         from unittest.mock import patch
         with patch("subprocess.run", side_effect=mock_run_cmd):
-            deploy_package_impl(
+            deploy_one_package(
                 workspace_config=self.workspace_config,
-                pkg=pkg,
                 state_registry=registry,
-                state_file=state_file,
+                pkg=pkg,
                 resolve_symlinks=False,
                 force=True
             )
@@ -1099,7 +1101,7 @@ class TestInstallRepo(unittest.TestCase):
         from drift.state_registry import load_state_registry, save_state_registry
         registry = load_state_registry(Path(state_file))
         registry.set_package_state(pkg, "deploying")
-        save_state_registry(Path(state_file), registry)
+        save_state_registry(registry)
 
         # Attempt to deploy - should abort with Safety Abort
         with self.assertRaises(RuntimeError) as ctx:
@@ -1152,7 +1154,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_skipped_package_not_set_to_deploying_state(self) -> None:
         """Verifies that skipped packages (enable_install=False or missing dir) are not set to 'deploying' in state.toml."""
-        from drift.install_repo import deploy_package_impl
+        from drift.install_repo import deploy_one_package
         from drift.state_registry import load_state_registry
 
         state_file = self.install_dir / "state.toml"
@@ -1170,11 +1172,10 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        res_disabled = deploy_package_impl(
+        res_disabled = deploy_one_package(
             workspace_config=self.workspace_config,
-            pkg=pkg_disabled,
             state_registry=registry,
-            state_file=state_file,
+            pkg=pkg_disabled,
             resolve_symlinks=True,
             force=False
         )
@@ -1187,7 +1188,7 @@ class TestInstallRepo(unittest.TestCase):
         pkg_missing = "pkg_missing_dir"
         # Setup drift_package.toml in source only so load_config_for_install doesn't find it in install/
         # Or place drift_package.toml in a file instead of directory
-        # If install/pkg_missing_dir doesn't exist, load_config_for_install raises error before deploy_package_impl
+        # If install/pkg_missing_dir doesn't exist, load_config_for_install raises error before deploy_one_package
         # If install/pkg_missing_dir has a config file but is not a dir for files:
         pkg_missing_dir = self.install_dir / pkg_missing
         pkg_missing_dir.mkdir(parents=True, exist_ok=True)
@@ -1204,11 +1205,10 @@ class TestInstallRepo(unittest.TestCase):
         from drift.package_config import PackageConfig
         metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=self.system_target_dir)
         with patch("drift.install_repo.load_config_for_install", return_value=metadata):
-            res_missing = deploy_package_impl(
+            res_missing = deploy_one_package(
                 workspace_config=self.workspace_config,
-                pkg=pkg_missing,
                 state_registry=registry,
-                state_file=state_file,
+                pkg=pkg_missing,
                 resolve_symlinks=True,
                 force=False
             )
@@ -1464,15 +1464,17 @@ class TestInstallRepo(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         state_file.parent.mkdir(parents=True, exist_ok=True)
         save_state_registry(
-            state_file,
-            StateRegistry(packages={
-                pkg: PackageState(
-                    state="installed",
-                    install_method="copy",
-                    last_deployed="2026-08-20T00:00:00Z",
-                    deployed_files=[Path("app.conf")]
-                )
-            })
+            StateRegistry(
+                packages={
+                    pkg: PackageState(
+                        state="installed",
+                        install_method="copy",
+                        last_deployed="2026-08-20T00:00:00Z",
+                        deployed_files=[Path("app.conf")]
+                    )
+                },
+                state_file=state_file
+            )
         )
 
         # Host system has app.conf as a symlink pointing to an external file

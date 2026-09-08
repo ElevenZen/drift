@@ -10,6 +10,7 @@ from .constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
     DEFAULT_STOW_IGNORE_PATTERNS,
+    STOW_LOCAL_IGNORE_FILE_NAME,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,14 @@ class DriftIgnore(IgnoreHandler):
         lines.extend(self.export_stow_ignore_patterns())
         return "\n".join(lines) + "\n"
 
+    def create_stow_ignore_file(self, target_dir: Path) -> None:
+        """Generates <target_dir>/.stow-local-ignore using DriftIgnore patterns plus MANAGED_CONFIG_FILES."""
+        stow_ignore_path = target_dir / STOW_LOCAL_IGNORE_FILE_NAME
+        target_dir.mkdir(parents=True, exist_ok=True)
+        content = self.generate_stow_local_ignore_content()
+        if not stow_ignore_path.exists() or stow_ignore_path.read_text(encoding="utf-8") != content:
+            stow_ignore_path.write_text(content, encoding="utf-8")
+            logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path}")
 
     def filter_deployable_files(self, install_pkg_dir: Path) -> List[Path]:
         """
@@ -133,7 +142,6 @@ class DriftIgnore(IgnoreHandler):
         return [ rel_file for rel_file in tree_relative_files(install_pkg_dir)
                 if rel_file.name not in MANAGED_CONFIG_FILES
                     and not self.match_path(rel_file) ]
-
 
     def match_path(self, rel_path: Path) -> bool:
         """Implements GNU Stow's ignore matching algorithm on a relative path."""
@@ -163,3 +171,4 @@ class DriftIgnore(IgnoreHandler):
                 logger.warning(f"Invalid regex pattern '{pattern}': {e}")
 
         return False
+

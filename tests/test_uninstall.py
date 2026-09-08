@@ -81,7 +81,7 @@ class TestUninstall(unittest.TestCase):
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="stow")
         registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
         
         # Commit initial state so git tracks it
         # or it will say nothing to commit when we try to commit the uninstall changes
@@ -133,7 +133,7 @@ class TestUninstall(unittest.TestCase):
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="copy")
         registry.set_package_deployed_files(pkg, [Path("config.txt")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # Commit initial state so git tracks it
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -172,7 +172,7 @@ class TestUninstall(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed")
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
         
         # Commit initial state so git tracks it
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -217,7 +217,7 @@ class TestUninstall(unittest.TestCase):
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="stow")
         registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
         
         # Commit initial state so git tracks it
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -290,7 +290,7 @@ fi
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="copy")
         registry.set_package_deployed_files(pkg, [Path("app.conf")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -337,7 +337,7 @@ fi
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="copy")
         registry.set_package_deployed_files(pkg, [Path("sample.txt")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -377,7 +377,7 @@ fi
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "installed", install_method="copy")
         registry.set_package_deployed_files(pkg, [Path("sample.txt")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)

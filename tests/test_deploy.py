@@ -310,13 +310,12 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(state_registry.get_package_state("pkg_a"), "deploying")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
-        from drift.install_repo import deploy_package
+        from drift.install_repo import deploy_one_package_with_error_handling
         with self.assertRaises(RuntimeError) as ctx2:
-            deploy_package(
-                self.workspace_config,
-                "pkg_a",
+            deploy_one_package_with_error_handling(
+                workspace_config=self.workspace_config,
                 state_registry=state_registry,
-                state_file=state_file,
+                pkg="pkg_a",
                 resolve_symlinks=True,
                 force=False,
             )

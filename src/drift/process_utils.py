@@ -1,5 +1,6 @@
 """Process execution and administrative privilege utilities."""
 
+import re
 import os
 import sys
 import shlex
@@ -10,17 +11,49 @@ from typing import Optional, Union, List, Any
 
 logger = logging.getLogger(__name__)
 
+ANSI_ESCAPE_RE = re.compile(
+    r"""
+    \x1B
+    (?:
+        [@-Z\\^_]                     # 2-character Fe escape sequences (excluding [ and ])
+    |
+        \[[0-?]*[ -/]*[@-~]           # CSI sequences (colors, cursor control, etc.)
+    |
+        \][^\x07\x1b]*(?:\x07|\x1b\\) # OSC sequences (window title, hyperlinks, etc.)
+    |
+        [()#%*+-][@-~]                # Charset and other 2-character sequences
+    )
+    """,
+    re.VERBOSE,
+)
 
-def format_output(stream_val: Any) -> Optional[str]:
-    """Formats raw process output (bytes or str) into a clean stripped string."""
+
+def strip_ansi(text: Any) -> str:
+    """Removes ANSI color and style decoration escape codes from text or decoded bytes."""
+    if text is None:
+        return ""
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
+    return ANSI_ESCAPE_RE.sub("", str(text))
+
+
+def clean_stream_val(stream_val: Any) -> Any:
+    """Cleans ANSI escape codes from stream values, preserving original str or bytes type."""
     if stream_val is None:
         return None
+    if isinstance(stream_val, str):
+        return strip_ansi(stream_val)
     if isinstance(stream_val, bytes):
-        text = stream_val.decode("utf-8", errors="replace")
-    else:
-        text = str(stream_val)
-    text = text.rstrip()
-    return text if text.strip() else None
+        return strip_ansi(stream_val.decode("utf-8", errors="replace")).encode("utf-8")
+    return stream_val
+
+
+def format_output(stream_val: Any) -> Optional[str]:
+    """Formats raw process output (bytes or str) into a clean stripped string without ANSI styling."""
+    if stream_val is None:
+        return None
+    cleaned = strip_ansi(stream_val).rstrip()
+    return cleaned if cleaned.strip() else None
 
 
 def has_admin_privileges() -> bool:
@@ -39,7 +72,7 @@ def check_sudo_privilege(sudo_required: bool = True) -> None:
     """Checks if administrative/root privileges are available before staging or installing.
 
     On Windows: ensures the current process is running in an elevated Administrator terminal.
-    On POSIX: executes a test probe (\x27sudo -v\x27 or \x27sudo true\x27) to authenticate and prompt the user early.
+    On POSIX: executes a test probe ('sudo -v' or 'sudo true') to authenticate and prompt the user early.
     If the user fails to authenticate, interrupts, or is not an administrator, raises PermissionError.
     """
     if not sudo_required:
@@ -78,10 +111,11 @@ def run_command(
     """Logs the command before executing it with subprocess.
 
     If streaming=True, stdout and stderr are streamed to sys.stdout and sys.stderr in real time
-    while executing, output is captured in CompletedProcess, and no debug dump is logged after completion.
+    while executing, output is captured in CompletedProcess without ANSI escape codes, and no
+    debug dump is logged after completion.
 
-    If streaming=False, subprocess.run is used with capture_output=True, and stdout/stderr are logged
-    to logger.debug after process finishes.
+    If streaming=False, subprocess.run is used with capture_output=True, and clean stdout/stderr
+    (stripped of ANSI styling) are logged to logger.debug after process finishes.
     """
     logger.debug(f"External: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
 
@@ -96,6 +130,8 @@ def run_command(
             stderr_msg = format_output(res.stderr)
             if stderr_msg:
                 logger.debug(f"stderr:\n{stderr_msg}")
+            res.stdout = clean_stream_val(res.stdout)
+            res.stderr = clean_stream_val(res.stderr)
             return res
         except subprocess.CalledProcessError as e:
             stdout_msg = format_output(e.stdout)
@@ -104,6 +140,8 @@ def run_command(
             stderr_msg = format_output(e.stderr)
             if stderr_msg:
                 logger.debug(f"stderr:\n{stderr_msg}")
+            e.stdout = clean_stream_val(e.stdout)
+            e.stderr = clean_stream_val(e.stderr)
             raise
 
     # Streaming mode:
@@ -172,6 +210,8 @@ def run_command(
         t_err.join(timeout=1.0)
         stdout_val = "".join(stdout_chunks) if is_text else b"".join(stdout_chunks)
         stderr_val = "".join(stderr_chunks) if is_text else b"".join(stderr_chunks)
+        stdout_val = clean_stream_val(stdout_val)
+        stderr_val = clean_stream_val(stderr_val)
         raise subprocess.TimeoutExpired(cmd, timeout, output=stdout_val, stderr=stderr_val)
 
     t_out.join()
@@ -179,6 +219,8 @@ def run_command(
 
     stdout_val = "".join(stdout_chunks) if is_text else b"".join(stdout_chunks)
     stderr_val = "".join(stderr_chunks) if is_text else b"".join(stderr_chunks)
+    stdout_val = clean_stream_val(stdout_val)
+    stderr_val = clean_stream_val(stderr_val)
 
     if check and retcode != 0:
         raise subprocess.CalledProcessError(retcode, cmd, output=stdout_val, stderr=stderr_val)

@@ -124,7 +124,7 @@ def run_primitive_8_rollback_recovery(
         reloaded_registry.set_package_state(pkg, "installed")
     for pkg in packages_to_uninstall:
         reloaded_registry.remove_package(pkg)
-    save_state_registry(state_file, reloaded_registry)
+    reloaded_registry.save()
 
     if packages_to_uninstall:
         logger.info(f"🗑️ Cleanly uninstalled failed first-time package(s): {packages_to_uninstall}")

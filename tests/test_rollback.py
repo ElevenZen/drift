@@ -78,7 +78,7 @@ class TestRollback(unittest.TestCase):
         registry = load_state_registry(state_file)
         registry.set_package_state("pkg_a", "installed")
         registry.set_package_deployed_files("pkg_a", [Path("file.txt")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # Initial commit in install repo
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -101,7 +101,7 @@ class TestRollback(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         registry.set_package_state("pkg_a", "deploying")
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # 4. We also dirty the target system file
         with open(self.system_target_dir / "file.txt", "w", encoding="utf-8") as f:
@@ -157,7 +157,7 @@ class TestRollback(unittest.TestCase):
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg_first, "deploying", install_method="copy")
         registry.set_package_deployed_files(pkg_first, [Path("app_config.json")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         # 4. Simulate target host having the partially delivered file
         (self.system_target_dir / "app_config.json").write_text('{"installed": true}', encoding="utf-8")
@@ -240,7 +240,7 @@ class TestRollback(unittest.TestCase):
         registry.set_package_state("pkg_a", "deploying")
         registry.set_package_state(pkg_first, "deploying", install_method="copy")
         registry.set_package_deployed_files(pkg_first, [Path("brand_new.txt")])
-        save_state_registry(state_file, registry)
+        save_state_registry(registry)
 
         workspace_cfg = WorkspaceConfig(
             source_directory=Path("src"),
