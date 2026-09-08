@@ -67,16 +67,9 @@ def load_config_from_render(render_base: Path, pkg: str, force: bool = False) ->
 
 def create_stow_ignore_file(
     install_pkg_dir: Path,
-    render_pkg_dir: Optional[Path] = None,
-    ignore_handler: Optional[DriftIgnore] = None
+    ignore_handler: DriftIgnore
 ) -> None:
     """Generates install/<pkg>/.stow-local-ignore using DriftIgnore patterns plus MANAGED_CONFIG_FILES."""
-    if ignore_handler is None:
-        if render_pkg_dir is not None:
-            ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
-        else:
-            ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
-
     stow_ignore_path = install_pkg_dir / STOW_LOCAL_IGNORE_FILE_NAME
     install_pkg_dir.mkdir(parents=True, exist_ok=True)
     content = ignore_handler.generate_stow_local_ignore_content()
@@ -180,13 +173,16 @@ def process_package_changes(
             atomic_copy_file(src, dst)
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
-    copy_ignore_and_config_files(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
+    copy_ignore_and_config_files(
+            render_pkg_dir=render_pkg_dir,
+            install_pkg_dir=install_pkg_dir,
+            ignore_handler=ignore_handler)
 
 
 def copy_ignore_and_config_files(
-    install_pkg_dir: Path,
     render_pkg_dir: Path,
-    ignore_handler: Optional[DriftIgnore] = None
+    install_pkg_dir: Path,
+    ignore_handler: DriftIgnore
 ) -> None:
     """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
     # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
@@ -197,7 +193,7 @@ def copy_ignore_and_config_files(
         atomic_copy_file(render_ignore, install_ignore)
 
     # 2. Create physical .stow-local-ignore
-    create_stow_ignore_file(install_pkg_dir, render_pkg_dir, ignore_handler=ignore_handler)
+    create_stow_ignore_file(install_pkg_dir, ignore_handler=ignore_handler)
 
     # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
     render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
