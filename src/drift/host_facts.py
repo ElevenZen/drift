@@ -92,27 +92,60 @@ def get_host_user() -> str:
         return os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
 
 
-def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
-    """Returns a list of local non-loopback IP addresses (LAN IPs) for the host.
+def _get_ips_from_getifaddrs() -> List[str]:
+    """Enumerates all network interface IPs using POSIX libc getifaddrs (macOS, Linux, FreeBSD)."""
+    try:
+        import ctypes
+        import ctypes.util
 
-    By default, only local system tables and interfaces are inspected without outbound network traffic.
-    Outbound internet route probing is only performed if probe_wan_ip is explicitly True.
-    """
-    ips: List[str] = []
+        libc_name = ctypes.util.find_library("c") or "libc.so"
+        libc = ctypes.CDLL(libc_name)
 
-    # 1. Primary outbound interface IP (only if explicitly enabled via settings)
-    if probe_wan_ip:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            if ip and not ip.startswith("127.") and ip not in ips:
-                ips.append(ip)
-        except Exception:
+        class ifaddrs(ctypes.Structure):
             pass
 
-    # 2. Hostname resolution IPs
+        ifaddrs._fields_ = [
+            ("ifa_next", ctypes.POINTER(ifaddrs)),
+            ("ifa_name", ctypes.c_char_p),
+            ("ifa_flags", ctypes.c_uint),
+            ("ifa_addr", ctypes.c_void_p),
+            ("ifa_netmask", ctypes.c_void_p),
+            ("ifa_dstaddr", ctypes.c_void_p),
+            ("ifa_data", ctypes.c_void_p),
+        ]
+
+        addrs = ctypes.POINTER(ifaddrs)()
+        if libc.getifaddrs(ctypes.byref(addrs)) != 0:
+            return []
+
+        ips: List[str] = []
+        curr = addrs
+        while curr:
+            ifa = curr.contents
+            if ifa.ifa_addr:
+                addr_ptr = ifa.ifa_addr
+                # Detect AF_INET (IPv4): on BSD/macOS sa_family is at byte offset 1; on Linux at offset 0
+                if sys.platform == "darwin" or sys.platform.startswith("freebsd"):
+                    family = ctypes.c_uint8.from_address(addr_ptr + 1).value
+                else:
+                    family = ctypes.c_uint16.from_address(addr_ptr).value
+
+                if family == socket.AF_INET:
+                    raw_ip = ctypes.string_at(addr_ptr + 4, 4)
+                    ip_str = socket.inet_ntoa(raw_ip)
+                    if not ip_str.startswith("127.") and ip_str not in ips:
+                        ips.append(ip_str)
+            curr = ifa.ifa_next
+
+        libc.freeifaddrs(addrs)
+        return ips
+    except Exception:
+        return []
+
+
+def _get_ips_from_windows() -> List[str]:
+    """Enumerates adapter IP addresses on Windows."""
+    ips: List[str] = []
     try:
         hostname = socket.gethostname()
         _, _, host_ips = socket.gethostbyname_ex(hostname)
@@ -121,15 +154,43 @@ def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
                 ips.append(ip)
     except Exception:
         pass
+    return ips
 
-    # 3. getaddrinfo IP enumeration
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, family=socket.AF_INET):
-            ip = info[4][0]
+
+def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
+    """Returns a list of local non-loopback IP addresses (LAN IPs) for the host across all network interfaces.
+
+    Uses zero-dependency kernel interface enumeration (getifaddrs on POSIX / macOS / Linux) to discover
+    all local network adapters without DNS or mDNS lookups.
+    Outbound internet route probing is only performed if probe_wan_ip is explicitly True.
+    """
+    ips: List[str] = []
+
+    # 1. Direct kernel network interface enumeration (macOS, Linux, BSD)
+    if sys.platform != "win32":
+        ips.extend(_get_ips_from_getifaddrs())
+    else:
+        ips.extend(_get_ips_from_windows())
+
+    # 2. Supplementary UDP routing table probes (covers special virtual bridges)
+    probe_destinations = [
+        ("10.255.255.255", 1),
+        ("172.31.255.255", 1),
+        ("192.168.255.255", 1),
+    ]
+    if probe_wan_ip:
+        probe_destinations.append(("8.8.8.8", 80))
+
+    for dst_ip, port in probe_destinations:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect((dst_ip, port))
+            ip = s.getsockname()[0]
+            s.close()
             if ip and not ip.startswith("127.") and ip not in ips:
                 ips.append(ip)
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     return ips
 

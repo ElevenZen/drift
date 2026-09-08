@@ -99,7 +99,21 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         self.assertIn("drift_distro", facts)
         self.assertIn("drift_hostname", facts)
         self.assertIn("drift_user", facts)
+        self.assertIn("drift_ip_addresses", facts)
         self.assertTrue(all(isinstance(v, str) for v in facts.values()))
+
+    def test_get_host_ip_addresses_enumerates_interfaces(self) -> None:
+        from drift.host_facts import get_host_ip_addresses
+        ips = get_host_ip_addresses(probe_wan_ip=False)
+        self.assertIsInstance(ips, list)
+        for ip in ips:
+            self.assertIsInstance(ip, str)
+            self.assertFalse(ip.startswith("127."))
+            # Verify valid IPv4 string format
+            parts = ip.split(".")
+            self.assertEqual(len(parts), 4)
+            for part in parts:
+                self.assertTrue(0 <= int(part) <= 255)
 
 
 if __name__ == "__main__":

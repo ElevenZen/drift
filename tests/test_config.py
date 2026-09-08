@@ -1757,13 +1757,13 @@ class TestDriftSettings(unittest.TestCase):
             mock_sock = MagicMock()
             mock_sock_cls.return_value = mock_sock
 
-            # 1. By default, probe_wan_ip is False -> socket.connect is NEVER called
+            # 1. By default, probe_wan_ip is False -> socket.connect is NEVER called with public WAN target (8.8.8.8)
             get_host_ip_addresses(probe_wan_ip=False)
-            mock_sock.connect.assert_not_called()
+            self.assertFalse(any(call[0][0][0] == "8.8.8.8" for call in mock_sock.connect.call_args_list))
 
-            # 2. When probe_wan_ip is True -> socket.connect is called to discover route
+            # 2. When probe_wan_ip is True -> socket.connect is called with public WAN target
             get_host_ip_addresses(probe_wan_ip=True)
-            mock_sock.connect.assert_called_once_with(("8.8.8.8", 80))
+            self.assertTrue(any(call[0][0][0] == "8.8.8.8" for call in mock_sock.connect.call_args_list))
 
 
 if __name__ == "__main__":
