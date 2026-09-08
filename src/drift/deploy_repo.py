@@ -13,6 +13,7 @@ from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageCha
 from .install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from .lifecycle_hooks import HookExecFlags
+from .exceptions import HookExecutionError
 from .result_models import (
     NextActionType,
     CompletedStep,
@@ -168,6 +169,20 @@ def execute_sequential_compile_and_apply(
             flags=hook_flags,
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
+    except HookExecutionError as e:
+        if not e.requires_rollback:
+            try:
+                run_primitive_6_commit_install_repo(
+                    workspace_config,
+                    commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_label}",
+                    target_pkgs=target_pkgs
+                )
+            except Exception as commit_err:
+                logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
+            logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure: {e.message}")
+            raise RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}") from e
+        print_emergency_recovery_card(failed_step, str(e), target_pkgs)
+        raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise RuntimeError(f"Midway crash: {failed_step} failed.") from e

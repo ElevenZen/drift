@@ -13,7 +13,7 @@ from .package_config import (
 from .lifecycle_hooks import (
     HookExecFlags,
     trigger_package_hook_with_render,
-    trigger_package_lifecycle_hook,
+    trigger_package_hook,
 )
 from .file_utils import ensure_dir_exists_with_sudo
 from .constants import (
@@ -132,7 +132,7 @@ def trigger_hook_from_install(
     cwd = _resolve_hook_cwd(workspace_config, package_name, hook_name, pkg_config)
 
     with pkg_config.package_envs(workspace_config):
-        res = trigger_package_lifecycle_hook(
+        res = trigger_package_hook(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,

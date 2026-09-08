@@ -20,7 +20,7 @@ from .result_models import (
 from .lifecycle_hooks import (
     HookExecFlags,
     trigger_package_hook_with_render,
-    trigger_package_lifecycle_hook,
+    trigger_package_hook,
 )
 
 logger = logging.getLogger(__name__)
@@ -172,7 +172,7 @@ def run_health_probe_from_install(
 
     def _trigger():
         with pkg_config.package_envs(workspace_config):
-            return trigger_package_lifecycle_hook(
+            return trigger_package_hook(
                 pkg=pkg,
                 hook_name="health",
                 metadata=pkg_config,

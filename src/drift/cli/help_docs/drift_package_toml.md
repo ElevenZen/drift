@@ -121,6 +121,13 @@ post_render = "scripts/generate_checksums.sh"
 # Run runtime health check probes on installed package (executed from host target directory)
 health = "scripts/health_check.sh"
 
+# Control whether installation hook failure triggers an emergency rollback state (default: true).
+# Set to false if hook failure does not corrupt system files and only requires stopping with a report.
+# Can also be set to a list of installation hook names: e.g. rollback_on_failure = ["pre_install", "post_install"]
+# (Allowed hook names: pre_install, post_install, pre_update, post_update)
+rollback_on_failure = true
+
+
 # Optional Windows-specific hook overrides.
 # When running on Windows (win32), hook paths defined here automatically
 # override the default [hooks] entries.

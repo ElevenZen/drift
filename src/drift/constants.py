@@ -135,6 +135,13 @@ LIFECYCLE_HOOK_NAMES = (
     *TARGET_CWD_HOOK_NAMES,
 )
 
+INSTALLATION_HOOK_NAMES = (
+    "pre_install",
+    "post_install",
+    "pre_update",
+    "post_update",
+)
+
 UNINSTALL_HOOK_NAMES = (
     "pre_uninstall",
     "post_uninstall",

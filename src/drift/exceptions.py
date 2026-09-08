@@ -1,4 +1,4 @@
-"""Domain exception hierarchy for the Drift dotfiles manager."""
+from typing import Optional
 
 from .constants import ExitCode
 
@@ -26,3 +26,23 @@ class RenderError(DriftError, RuntimeError):
 class CollisionError(DriftError, RuntimeError):
     """Raised during install_repo collision guard safety aborts (untracked destination path collision or cross-package state collision)."""
     exit_code: int = ExitCode.COLLISION_ERROR
+
+
+class HookExecutionError(DriftError, RuntimeError):
+    """Raised when a lifecycle hook execution script fails."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        package: str,
+        hook_name: str,
+        message: str,
+        requires_rollback: bool = True,
+        exit_code: Optional[int] = None,
+    ) -> None:
+        super().__init__(message)
+        self.package = package
+        self.hook_name = hook_name
+        self.message = message
+        self.requires_rollback = requires_rollback
+        self.hook_exit_code = exit_code

@@ -30,6 +30,7 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST,
     LIFECYCLE_HOOK_NAMES,
+    INSTALLATION_HOOK_NAMES,
     WINDOWS_PLATFORM_ALIASES,
     DEFAULT_HOOK_TIMEOUT,
     INITIAL_ENV,
@@ -215,6 +216,7 @@ class PackageHooks:
     post_render: Optional[Path] = None
     health: Optional[Path] = None
     timeout: int = DEFAULT_HOOK_TIMEOUT
+    rollback_on_failure: Union[bool, List[str]] = True
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
 
     def __setattr__(self, name: str, value: Any) -> None:
@@ -230,6 +232,16 @@ class PackageHooks:
     def package_config(self, value: Optional["PackageConfig"]) -> None:
         self._package_config = value
 
+    def should_rollback_on_failure(self, hook_name: str) -> bool:
+        """Returns whether failure of the specified hook requires a system rollback."""
+        if hook_name not in INSTALLATION_HOOK_NAMES:
+            return False
+        if isinstance(self.rollback_on_failure, bool):
+            return self.rollback_on_failure
+        if isinstance(self.rollback_on_failure, (list, tuple, set)):
+            return hook_name in self.rollback_on_failure
+        return True
+
     def validate(self, package_name: str = "") -> None:
         """Validates hook configurations."""
         for hook_name in LIFECYCLE_HOOK_NAMES:
@@ -243,6 +255,18 @@ class PackageHooks:
         if self.timeout <= 0:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ValueError(f"timeout must be a positive integer{name_str}.")
+        if not isinstance(self.rollback_on_failure, bool):
+            if isinstance(self.rollback_on_failure, (list, tuple, set)):
+                for h in self.rollback_on_failure:
+                    if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
+                        name_str = f" for package '{package_name}'" if package_name else ""
+                        raise ValueError(
+                            f"Invalid hook name '{h}' in rollback_on_failure. "
+                            f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
+                        )
+            else:
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise TypeError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
     @classmethod
     def _validate_hook_dict(
@@ -252,7 +276,10 @@ class PackageHooks:
         is_subtable: bool = False
     ) -> None:
         """Helper to validate unknown keys, value types, and platform sub-tables in a hook dictionary."""
-        known_keys = set(LIFECYCLE_HOOK_NAMES) | {"timeout"}
+        known_keys = set(LIFECYCLE_HOOK_NAMES) | {
+            "timeout",
+            "rollback_on_failure",
+        }
         if not is_subtable:
             known_keys |= set(WINDOWS_PLATFORM_ALIASES)
 
@@ -267,6 +294,20 @@ class PackageHooks:
             if val is not None and not isinstance(val, (str, Path)):
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise TypeError(f"{hook_name} must be a string{name_str}.")
+
+        if "rollback_on_failure" in hook_dict:
+            val = hook_dict["rollback_on_failure"]
+            if not isinstance(val, bool) and not isinstance(val, (list, tuple, set)):
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise TypeError(f"'rollback_on_failure' must be a boolean or list of hook names{name_str}.")
+            if isinstance(val, (list, tuple, set)):
+                for h in val:
+                    if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
+                        name_str = f" for package '{package_name}'" if package_name else ""
+                        raise ValueError(
+                            f"Invalid hook name '{h}' in 'rollback_on_failure'. "
+                            f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
+                        )
 
         if not is_subtable:
             for alias in WINDOWS_PLATFORM_ALIASES:
@@ -304,7 +345,10 @@ class PackageHooks:
                 windows_hooks = hooks_dict.get(alias)
                 if isinstance(windows_hooks, dict):
                     for k, v in windows_hooks.items():
-                        if k in LIFECYCLE_HOOK_NAMES or k == "timeout":
+                        if k in LIFECYCLE_HOOK_NAMES or k in {
+                            "timeout",
+                            "rollback_on_failure",
+                        }:
                             effective_hooks[k] = v
                     break
 
@@ -318,6 +362,17 @@ class PackageHooks:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ValueError(f"timeout must be a positive integer{name_str}.")
 
+        raw_rollback = effective_hooks.get("rollback_on_failure")
+        if raw_rollback is None:
+            resolved_rollback: Union[bool, List[str]] = True
+        elif isinstance(raw_rollback, bool):
+            resolved_rollback = raw_rollback
+        elif isinstance(raw_rollback, (list, tuple, set)):
+            resolved_rollback = [str(x).strip() for x in raw_rollback]
+        else:
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise TypeError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
+
         hooks = cls(
             probe=normalize_hook_value(effective_hooks.get("probe")),
             pre_source=normalize_hook_value(effective_hooks.get("pre_source")),
@@ -329,7 +384,8 @@ class PackageHooks:
             post_uninstall=normalize_hook_value(effective_hooks.get("post_uninstall")),
             post_render=normalize_hook_value(effective_hooks.get("post_render")),
             health=normalize_hook_value(effective_hooks.get("health")),
-            timeout=raw_timeout
+            timeout=raw_timeout,
+            rollback_on_failure=resolved_rollback,
         )
         hooks.validate(package_name)
         return hooks
@@ -351,7 +407,7 @@ class PackageHooks:
         flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Executes a package lifecycle hook script if specified and found."""
-        from .lifecycle_hooks import HookExecFlags, trigger_package_lifecycle_hook
+        from .lifecycle_hooks import HookExecFlags, trigger_package_hook
 
         exec_flags = HookExecFlags.resolve(flags=flags)
         if exec_flags.no_hooks:
@@ -363,7 +419,7 @@ class PackageHooks:
             )
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
-        return trigger_package_lifecycle_hook(
+        return trigger_package_hook(
             pkg=self._package_config.name,
             hook_name=hook_name,
             metadata=self._package_config,
@@ -380,8 +436,8 @@ class PackageHooks:
         """Executes the probe hook with template rendering into render sandbox directory."""
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
-        from .lifecycle_hooks import trigger_probe_lifecycle_hook
-        return trigger_probe_lifecycle_hook(
+        from .lifecycle_hooks import trigger_probe_hook
+        return trigger_probe_hook(
             workspace_config=workspace_config,
             package_name=self._package_config.name,
             pkg_config=self._package_config,
@@ -407,8 +463,8 @@ class PackageHooks:
         """Triggers the pre_source hook with workspace template rendering into the render sandbox directory."""
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
-        from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
-        return trigger_pre_source_lifecycle_hook(
+        from .lifecycle_hooks import trigger_pre_source_hook
+        return trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name=self._package_config.name,
             pkg_config=self._package_config,

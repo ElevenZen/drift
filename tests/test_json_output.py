@@ -6,6 +6,7 @@ import unittest
 import subprocess
 from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from drift.cli import main
 from drift.result_models import (
@@ -242,3 +243,44 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.assertNotIn("RAW_HOOK_OUTPUT_SHOULD_NOT_POLLUTE_JSON", raw)
         parsed = json.loads(raw)
         self.assertEqual(parsed["status"], "SUCCESS")
+
+    def test_deploy_post_update_hook_failure_json_no_rollback(self) -> None:
+        """Verifies that when rollback_on_failure=False, failed hook in --json reports requires_rollback=False and recommended_command='drift deploy'."""
+        # 1. First deploy
+        devnull = StringIO()
+        with patch("sys.stdout", devnull):
+            main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+
+        # 2. Add failing post_update hook with rollback_on_failure = false
+        hook_script = os.path.join(self.src_dir, "pkg_a", "post_update.sh")
+        with open(hook_script, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nexit 1\n")
+        os.chmod(hook_script, 0o755)
+
+        cfg_path = os.path.join(self.src_dir, "pkg_a", "drift_package.toml")
+        with open(cfg_path, "w", encoding="utf-8") as f:
+            f.write("""[package]
+name = "pkg_a"
+[hooks]
+post_update = "post_update.sh"
+rollback_on_failure = false
+""")
+
+        stdout = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = stdout
+        try:
+            with self.assertRaises(SystemExit) as cm:
+                main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
+            self.assertEqual(cm.exception.code, 1)
+        finally:
+            sys.stdout = old_stdout
+
+        raw = stdout.getvalue().strip()
+        parsed = json.loads(raw)
+        self.assertEqual(parsed["status"], "FAILED")
+        self.assertIsNotNone(parsed["failure"])
+        self.assertEqual(parsed["failure"]["requires_rollback"], False)
+        self.assertEqual(parsed["failure"]["recommended_command"], "drift deploy")
+        self.assertIn("post_update", parsed["failure"]["error_message"])
+

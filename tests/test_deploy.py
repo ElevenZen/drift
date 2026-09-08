@@ -3,11 +3,13 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
+from drift.lifecycle_hooks import HookExecFlags
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.deploy_repo import run_primitive_deploy_pipeline
 
@@ -212,6 +214,114 @@ target_directory = "{self.system_target_dir}"
                 run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
             
             self.assertIn("Git configuration error: 'user.name' is not configured", str(context.exception))
+
+    def test_deploy_post_update_hook_failure_with_rollback_on_failure_false(self) -> None:
+        """Verifies that when rollback_on_failure=False, a failing post_update hook stops and reports without leaving package in deploying state."""
+        # 1. First-time deploy succeeds
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertTrue((self.system_target_dir / "file.txt").is_file())
+
+        # 2. Add a failing post_update hook script and set rollback_on_failure = false
+        pkg_dir = self.source_dir / "pkg_a"
+        scripts_dir = pkg_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        hook_file = scripts_dir / "post_update.sh"
+        hook_file.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook_file.chmod(0o755)
+
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        post_update = "scripts/post_update.sh"
+        rollback_on_failure = false
+        """, encoding="utf-8")
+
+        (pkg_dir / "extra.conf").write_text("extra content", encoding="utf-8")
+
+        # 3. Deploy update - should fail on hook but NOT report midway crash
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_deploy_pipeline(
+                self.workspace_config,
+                packages_to_deploy=["pkg_a"],
+                flags=HookExecFlags(streaming=False),
+            )
+
+        self.assertNotIn("Midway crash", str(ctx.exception))
+        self.assertIn("stopped due to hook failure", str(ctx.exception))
+
+        # 4. Verify extra.conf was successfully delivered and package is recorded as installed
+        self.assertTrue((self.system_target_dir / "extra.conf").is_file())
+        state_file = self.install_dir / "state.toml"
+        state_registry = load_state_registry(state_file)
+        self.assertEqual(state_registry.get_package_state("pkg_a"), "installed")
+
+        # 5. Fix hook and re-deploy without needing rollback or force
+        hook_file.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        run_primitive_deploy_pipeline(
+            self.workspace_config,
+            packages_to_deploy=["pkg_a"],
+            flags=HookExecFlags(streaming=False),
+        )
+        self.assertTrue((self.system_target_dir / "extra.conf").is_file())
+
+    def test_deploy_post_update_hook_failure_with_rollback_on_failure_true(self) -> None:
+        """Verifies that when rollback_on_failure=True (default), a failing post_update hook triggers emergency midway crash state."""
+        # 1. First-time deploy succeeds
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertTrue((self.system_target_dir / "file.txt").is_file())
+
+        # 2. Add a failing post_update hook script with default rollback_on_failure = true
+        pkg_dir = self.source_dir / "pkg_a"
+        scripts_dir = pkg_dir / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        hook_file = scripts_dir / "post_update.sh"
+        hook_file.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        hook_file.chmod(0o755)
+
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        post_update = "scripts/post_update.sh"
+        rollback_on_failure = true
+        """, encoding="utf-8")
+
+        # 3. Deploy update - should fail with Midway crash
+        with patch("sys.stderr", new=StringIO()):
+            with self.assertRaises(RuntimeError) as ctx:
+                run_primitive_deploy_pipeline(
+                    self.workspace_config,
+                    packages_to_deploy=["pkg_a"],
+                    flags=HookExecFlags(streaming=False),
+                )
+
+        self.assertIn("Midway crash", str(ctx.exception))
+
+        # 4. Verify package is in 'deploying' state requiring rollback
+        state_file = self.install_dir / "state.toml"
+        state_registry = load_state_registry(state_file)
+        self.assertEqual(state_registry.get_package_state("pkg_a"), "deploying")
+
+        # 5. Subsequent deploy without force or rollback aborts with safety check
+        from drift.install_repo import deploy_package
+        with self.assertRaises(RuntimeError) as ctx2:
+            deploy_package(
+                self.workspace_config,
+                "pkg_a",
+                state_registry=state_registry,
+                state_file=state_file,
+                resolve_symlinks=True,
+                force=False,
+            )
+        self.assertIn("Safety Abort", str(ctx2.exception))
+        self.assertIn("drift rollback pkg_a", str(ctx2.exception))
 
 
 if __name__ == "__main__":

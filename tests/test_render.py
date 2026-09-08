@@ -1549,7 +1549,7 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_pre_source_hook_static_in_src_copied_and_executed_with_src_cwd(self) -> None:
         """Verifies that a static pre_source hook located inside src/ is copied into render/ before executing with cwd=src/."""
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+        from drift.lifecycle_hooks import trigger_pre_source_hook
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
@@ -1582,7 +1582,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
 """, encoding="utf-8")
 
         # Trigger pre_source hook
-        trigger_pre_source_lifecycle_hook(
+        trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name="pkg_static_hook",
         )
@@ -1602,7 +1602,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+        from drift.lifecycle_hooks import trigger_pre_source_hook
 
         # Setup workspace config with envsubst engine
         config_dir = self.drift_root / "config"
@@ -1648,7 +1648,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 """, encoding="utf-8")
 
         # Trigger pre_source hook
-        trigger_pre_source_lifecycle_hook(
+        trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name="pkg_hook",
         )
@@ -1778,7 +1778,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_no_hooks_bypasses_pre_source_and_post_render_hooks(self) -> None:
         """Verifies that no_hooks=True completely bypasses pre_source and post_render hook execution."""
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+        from drift.lifecycle_hooks import trigger_pre_source_hook
         from drift.render_package import render_package
 
         workspace_config = WorkspaceConfig(
@@ -1814,7 +1814,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         # 1. Direct hook functions with no_hooks=True should return without error
         from drift.lifecycle_hooks import HookExecFlags
-        trigger_pre_source_lifecycle_hook(
+        trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name="pkg_hooks_bypass",
             flags=HookExecFlags(no_hooks=True)

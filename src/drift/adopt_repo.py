@@ -16,7 +16,7 @@ from .git_utils import (
     run_command
 )
 from .file_utils import remove_file_or_dir, atomic_copy_file
-from .lifecycle_hooks import HookExecFlags, trigger_pre_source_lifecycle_hook
+from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
 logger = logging.getLogger(__name__)
 
@@ -788,8 +788,7 @@ def adopt_single_package(
     install_pkg_dir = workspace_config.install_path / pkg
 
     # Trigger pre_source hook before adopting drifts into source directory
-    from .lifecycle_hooks import trigger_pre_source_lifecycle_hook
-    trigger_pre_source_lifecycle_hook(workspace_config, pkg, flags=flags)
+    trigger_pre_source_hook(workspace_config, pkg, flags=flags)
 
     skipped_files = []
 

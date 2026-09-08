@@ -222,24 +222,24 @@ class TestPackageHook(unittest.TestCase):
                     execute_hook(self.drift_root, "pkg_a", "pre_source")
                 self.assertEqual(cm.exception.code, ExitCode.GENERAL_ERROR)
 
-    def test_trigger_pre_source_lifecycle_hook_return_types(self) -> None:
-        """Verifies that trigger_pre_source_lifecycle_hook returns HookResult."""
+    def test_trigger_pre_source_hook_return_types(self) -> None:
+        """Verifies that trigger_pre_source_hook returns HookResult."""
         from drift.lifecycle_hooks import (
-            trigger_pre_source_lifecycle_hook,
+            trigger_pre_source_hook,
             execute_hook_script,
             HookExecFlags,
         )
         from drift.package_config import load_package_config_from_source_dir
 
         # 1. Successful execution -> status == "SUCCESS", duration_ms >= 0
-        res = trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_hook")
+        res = trigger_pre_source_hook(self.workspace_config, "pkg_hook")
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue(bool(res))
         self.assertGreaterEqual(res.duration_ms, 0.0)
         self.assertIn("pre_source", res.hook_name)
 
         # 2. no_hooks=True -> status == "SKIPPED", bool(res) == False
-        res_no_hooks = trigger_pre_source_lifecycle_hook(
+        res_no_hooks = trigger_pre_source_hook(
             self.workspace_config, "pkg_hook", flags=HookExecFlags(no_hooks=True)
         )
         self.assertEqual(res_no_hooks.status, "SKIPPED")
@@ -248,12 +248,12 @@ class TestPackageHook(unittest.TestCase):
 
         # 3. Missing package source dir -> raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            trigger_pre_source_lifecycle_hook(self.workspace_config, "nonexistent_pkg")
+            trigger_pre_source_hook(self.workspace_config, "nonexistent_pkg")
 
         # 3b. Package with no drift_package.toml at all -> status == "SKIPPED"
         pkg_no_config_dir = self.drift_root / "src" / "pkg_no_config"
         pkg_no_config_dir.mkdir(parents=True, exist_ok=True)
-        res_no_config = trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_no_config")
+        res_no_config = trigger_pre_source_hook(self.workspace_config, "pkg_no_config")
         self.assertEqual(res_no_config.status, "SKIPPED")
         self.assertFalse(bool(res_no_config))
 
@@ -261,7 +261,7 @@ class TestPackageHook(unittest.TestCase):
         pkg_no_hook_dir = self.drift_root / "src" / "pkg_no_hook"
         pkg_no_hook_dir.mkdir(parents=True, exist_ok=True)
         (pkg_no_hook_dir / "drift_package.toml").write_text("[package]\nname = 'pkg_no_hook'\n", encoding="utf-8")
-        res_unconfigured = trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_no_hook")
+        res_unconfigured = trigger_pre_source_hook(self.workspace_config, "pkg_no_hook")
         self.assertEqual(res_unconfigured.status, "SKIPPED")
         self.assertFalse(bool(res_unconfigured))
 
@@ -273,7 +273,7 @@ class TestPackageHook(unittest.TestCase):
             encoding="utf-8"
         )
         with self.assertRaises(Exception):
-            trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_corrupt")
+            trigger_pre_source_hook(self.workspace_config, "pkg_corrupt")
 
         # 3e. Package with missing declared hook script -> raises FileNotFoundError
         pkg_missing_script_dir = self.drift_root / "src" / "pkg_missing_script"
@@ -283,7 +283,7 @@ class TestPackageHook(unittest.TestCase):
             encoding="utf-8"
         )
         with self.assertRaises(FileNotFoundError):
-            trigger_pre_source_lifecycle_hook(self.workspace_config, "pkg_missing_script")
+            trigger_pre_source_hook(self.workspace_config, "pkg_missing_script")
 
         # 4. Direct execute_hook_script -> returns HookResult with duration_ms
         pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
@@ -420,7 +420,7 @@ class TestPackageHook(unittest.TestCase):
 
     def test_trigger_pre_source_hook_with_rendering(self) -> None:
         """Verifies that pre_source hook specified as a template file is rendered to render/ before execution."""
-        from drift.lifecycle_hooks import trigger_pre_source_lifecycle_hook
+        from drift.lifecycle_hooks import trigger_pre_source_hook
         from drift.workspace_config import RenderEngineConfig
 
         self.workspace_config.render_engine_configs = {
@@ -455,7 +455,7 @@ echo "VALUE=$DYNAMIC_VAL"
         """, encoding="utf-8")
 
         # Trigger pre_source hook
-        res = trigger_pre_source_lifecycle_hook(
+        res = trigger_pre_source_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_templated_pre_source",
             flags=HookExecFlags(streaming=False),
@@ -549,7 +549,7 @@ echo "VALUE=$DYNAMIC_VAL"
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
-        with patch("drift.lifecycle_hooks.trigger_package_lifecycle_hook") as mock_trigger:
+        with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
             hooks.trigger("pre_install", hook_base_dir=self.drift_root, cwd=self.drift_root, flags=HookExecFlags(streaming=False))
             mock_trigger.assert_called_with(
@@ -561,7 +561,7 @@ echo "VALUE=$DYNAMIC_VAL"
                 flags=HookExecFlags(no_hooks=False, streaming=False, inject_non_interactive_envs=True)
             )
 
-        with patch("drift.lifecycle_hooks.trigger_probe_lifecycle_hook") as mock_probe:
+        with patch("drift.lifecycle_hooks.trigger_probe_hook") as mock_probe:
             mock_probe.return_value = MagicMock()
             hooks.trigger_probe(workspace_config=self.workspace_config, flags=HookExecFlags(streaming=False))
             mock_probe.assert_called_with(
@@ -640,7 +640,7 @@ echo "VALUE=$DYNAMIC_VAL"
         """Verifies load_envs flag in HookExecFlags controls loading package_envs context."""
         from drift.lifecycle_hooks import (
             HookExecFlags,
-            trigger_pre_source_lifecycle_hook,
+            trigger_pre_source_hook,
         )
 
         # Package with custom env override
@@ -666,7 +666,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         (scripts_dir / "check_env.sh").chmod(0o755)
 
         # 1. load_envs=True (default) -> CUSTOM_PKG_VAR is loaded
-        res_loaded = trigger_pre_source_lifecycle_hook(
+        res_loaded = trigger_pre_source_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_env_test",
             flags=HookExecFlags(load_envs=True, streaming=False)
@@ -675,7 +675,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertIn("CUSTOM_PKG_VAR=loaded_by_drift", res_loaded.stdout or "")
 
         # 2. load_envs=False -> CUSTOM_PKG_VAR is not loaded
-        res_unloaded = trigger_pre_source_lifecycle_hook(
+        res_unloaded = trigger_pre_source_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_env_test",
             flags=HookExecFlags(load_envs=False, streaming=False)
@@ -735,7 +735,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         install_dir = self.drift_root / "install" / "pkg_hook"
         install_dir.mkdir(parents=True, exist_ok=True)
 
-        with patch("drift.lifecycle_hooks.trigger_package_lifecycle_hook") as mock_trigger:
+        with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
 
             # 1. trigger_pre_install without redundant cwd
@@ -776,7 +776,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         from drift.lifecycle_hooks import (
             HookExecFlags,
             execute_hook_script,
-            trigger_probe_lifecycle_hook,
+            trigger_probe_hook,
         )
         from drift.package_config import load_package_config_from_source_dir
 
@@ -811,18 +811,101 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(res_no_raise.exit_code, 42)
         self.assertIn("error details", res_no_raise.stderr or "")
 
-        # 3. trigger_probe_lifecycle_hook defaults to raise_on_error=False
+        # 3. trigger_probe_hook defaults to raise_on_error=False
         (self.src_pkg_dir / "drift_package.toml").write_text(
             '[package]\nname = "pkg_hook"\n[hooks]\nprobe = "scripts/fail.sh"\n',
             encoding="utf-8"
         )
-        probe_res = trigger_probe_lifecycle_hook(
+        probe_res = trigger_probe_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_hook",
             flags=HookExecFlags(streaming=False),
         )
         self.assertEqual(probe_res.status, "FAILED")
         self.assertEqual(probe_res.exit_code, 42)
+
+    def test_package_hooks_rollback_on_failure_parsing_and_validation(self) -> None:
+        """Verifies parsing and validation for rollback_on_failure in PackageHooks."""
+        from drift.package_config import PackageHooks
+        from drift.exceptions import ConfigError
+
+        # 1. Default is True
+        h_default = PackageHooks.from_dict({})
+        self.assertTrue(h_default.should_rollback_on_failure("post_update"))
+        self.assertTrue(h_default.should_rollback_on_failure("pre_install"))
+
+        # 2. Boolean False
+        h_false = PackageHooks.from_dict({"rollback_on_failure": False})
+        self.assertFalse(h_false.should_rollback_on_failure("post_update"))
+        self.assertFalse(h_false.should_rollback_on_failure("pre_install"))
+
+        # 3. List of hook names
+        h_list = PackageHooks.from_dict({"rollback_on_failure": ["pre_install", "post_install"]})
+        self.assertTrue(h_list.should_rollback_on_failure("pre_install"))
+        self.assertTrue(h_list.should_rollback_on_failure("post_install"))
+        self.assertFalse(h_list.should_rollback_on_failure("post_update"))
+
+        # 4. Invalid hook name in list raises ValueError
+        with self.assertRaises(ValueError):
+            PackageHooks.from_dict({"rollback_on_failure": ["invalid_hook_name"]})
+
+        # Non-installation lifecycle hooks (probe, post_render, health, uninstall) raise ValueError
+        for non_install_hook in ("probe", "pre_source", "post_render", "pre_uninstall", "post_uninstall", "health"):
+            with self.assertRaises(ValueError):
+                PackageHooks.from_dict({"rollback_on_failure": [non_install_hook]})
+
+        # Non-installation hooks always return False for should_rollback_on_failure
+        self.assertFalse(h_default.should_rollback_on_failure("probe"))
+        self.assertFalse(h_default.should_rollback_on_failure("post_render"))
+        self.assertFalse(h_default.should_rollback_on_failure("health"))
+
+        # 5. Invalid type raises TypeError
+        with self.assertRaises(TypeError):
+            PackageHooks.from_dict({"rollback_on_failure": 123})
+
+    def test_execute_hook_script_raises_hook_execution_error_with_rollback_flag(self) -> None:
+        """Verifies execute_hook_script raises HookExecutionError with requires_rollback matching config."""
+        from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
+        from drift.package_config import PackageConfig, PackageHooks
+        from drift.exceptions import HookExecutionError
+
+        failing_script = self.scripts_dir / "fail.sh"
+        failing_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        failing_script.chmod(0o755)
+
+        # 1. Package with rollback_on_failure = False
+        pkg_no_rb = PackageConfig(
+            name="pkg_hook",
+            hooks=PackageHooks(rollback_on_failure=False)
+        )
+        with self.assertRaises(HookExecutionError) as ctx:
+            execute_hook_script(
+                hook_path=failing_script,
+                pkg="pkg_hook",
+                hook_name="post_update",
+                metadata=pkg_no_rb,
+                cwd=self.src_pkg_dir,
+                flags=HookExecFlags(streaming=False),
+            )
+        self.assertFalse(ctx.exception.requires_rollback)
+        self.assertEqual(ctx.exception.hook_name, "post_update")
+        self.assertEqual(ctx.exception.package, "pkg_hook")
+
+        # 2. Package with rollback_on_failure = True (default)
+        pkg_rb = PackageConfig(
+            name="pkg_hook",
+            hooks=PackageHooks(rollback_on_failure=True)
+        )
+        with self.assertRaises(HookExecutionError) as ctx:
+            execute_hook_script(
+                hook_path=failing_script,
+                pkg="pkg_hook",
+                hook_name="post_update",
+                metadata=pkg_rb,
+                cwd=self.src_pkg_dir,
+                flags=HookExecFlags(streaming=False),
+            )
+        self.assertTrue(ctx.exception.requires_rollback)
 
 
 if __name__ == "__main__":

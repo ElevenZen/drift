@@ -16,6 +16,7 @@ from .process_utils import run_command
 from .result_models import HookResult
 from .constants import DEFAULT_HOOK_NON_INTERACTIVE_ENVS, INITIAL_ENV
 from .env_utils import env_scope
+from .exceptions import HookExecutionError
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +196,17 @@ def execute_hook_script(
             if stderr_str.strip():
                 err_msg += f"Stderr:\n{stderr_str.strip()}\n"
             logger.error(err_msg)
+            should_rollback = True
+            if metadata is not None and hasattr(metadata, "hooks") and metadata.hooks is not None:
+                should_rollback = metadata.hooks.should_rollback_on_failure(hook_name)
             if exec_flags.raise_on_error:
-                raise RuntimeError(err_msg) from e
+                raise HookExecutionError(
+                    package=pkg,
+                    hook_name=hook_name,
+                    message=err_msg,
+                    requires_rollback=should_rollback,
+                    exit_code=124,
+                ) from e
             return HookResult(
                 command="hook",
                 package=pkg,
@@ -225,8 +235,17 @@ def execute_hook_script(
             if stderr_str.strip():
                 err_msg += f"Stderr:\n{stderr_str.strip()}\n"
             logger.error(err_msg)
+            should_rollback = True
+            if metadata is not None and hasattr(metadata, "hooks") and metadata.hooks is not None:
+                should_rollback = metadata.hooks.should_rollback_on_failure(hook_name)
             if exec_flags.raise_on_error:
-                raise RuntimeError(err_msg) from e
+                raise HookExecutionError(
+                    package=pkg,
+                    hook_name=hook_name,
+                    message=err_msg,
+                    requires_rollback=should_rollback,
+                    exit_code=e.returncode,
+                ) from e
             return HookResult(
                 command="hook",
                 package=pkg,
@@ -355,13 +374,13 @@ def trigger_package_hook_with_render(
     return _execute()
 
 
-def trigger_pre_source_lifecycle_hook(
+def trigger_pre_source_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     pkg_config: Optional[PackageConfig] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
-    """Executes the pre_source lifecycle hook for a package in the source directory."""
+    """Executes the pre_source hook for a package in the source directory."""
     return trigger_package_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
@@ -371,13 +390,13 @@ def trigger_pre_source_lifecycle_hook(
     )
 
 
-def trigger_probe_lifecycle_hook(
+def trigger_probe_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     pkg_config: Optional[PackageConfig] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
-    """Executes the probe lifecycle hook for a package in the source directory."""
+    """Executes the probe hook for a package in the source directory."""
     exec_flags = replace(flags, raise_on_error=False) if flags is not None else HookExecFlags(raise_on_error=False)
     return trigger_package_hook_with_render(
         workspace_config=workspace_config,
@@ -388,7 +407,7 @@ def trigger_probe_lifecycle_hook(
     )
 
 
-def trigger_package_lifecycle_hook(
+def trigger_package_hook(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
@@ -397,7 +416,7 @@ def trigger_package_lifecycle_hook(
     custom_timeout: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
-    """Executes a package lifecycle hook script if specified and found.
+    """Executes a package hook script if specified and found.
 
     This function automatically checks if the hook is configured on the package metadata.
     If the hook is not set, it returns a HookResult with status="SKIPPED".
@@ -443,4 +462,5 @@ def trigger_package_lifecycle_hook(
     )
     res.hook_base_dir = str(hook_base_dir)
     return res
+
 

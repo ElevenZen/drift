@@ -62,9 +62,9 @@ from .lifecycle_hooks import (
     HookExecFlags,
     execute_hook_script,
     trigger_package_hook_with_render,
-    trigger_pre_source_lifecycle_hook,
-    trigger_probe_lifecycle_hook,
-    trigger_package_lifecycle_hook,
+    trigger_pre_source_hook,
+    trigger_probe_hook,
+    trigger_package_hook,
 )
 from .render_core import (
     render_template,
@@ -154,3 +154,12 @@ from .workspace_status import (
 from .workspace_diff import (
     run_primitive_diff,
 )
+from .exceptions import (
+    DriftError,
+    ConfigError,
+    DriftDetectedError,
+    RenderError,
+    CollisionError,
+    HookExecutionError,
+)
+

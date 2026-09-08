@@ -15,7 +15,7 @@ from .file_utils import (
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES
 from .ignore import DriftIgnore, IgnoreHandler
 from .folder_diff import list_folder_paths
-from .lifecycle_hooks import HookExecFlags, trigger_pre_source_lifecycle_hook
+from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ def run_primitive_11_add_resources(
         raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
 
     # Trigger pre_source hook before reading/writing source directory
-    trigger_pre_source_lifecycle_hook(
+    trigger_pre_source_hook(
         workspace_config, package_name, flags=flags
     )
 

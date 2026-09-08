@@ -14,7 +14,7 @@ from typing import List, Optional, Union, Tuple, Set
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_config_for_install
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME, LineEnding
-from .exceptions import CollisionError
+from .exceptions import CollisionError, HookExecutionError
 from .ignore import DriftIgnore
 from .lifecycle_hooks import HookExecFlags
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
@@ -230,6 +230,16 @@ def handle_internal_symlink_conflicts(
             processed_paths=processed_paths
         )
 
+    # Check if the canonical path of target_dir still points inside drift_root after resolving conflicts
+    abs_drift_root = workspace_config.drift_root.resolve()
+    resolved_target = target_dir.resolve()
+    if resolved_target == abs_drift_root or is_relative_to(resolved_target, abs_drift_root):
+        raise CollisionError(
+            f"Safety Abort: Target directory '{target_dir}' (resolved to '{resolved_target}') "
+            f"points inside drift workspace root '{workspace_config.drift_root}'. "
+            f"Resolving this automatically is unsafe. Please resolve manually."
+        )
+
 
 def run_collision_guard(
     workspace_config: WorkspaceConfig,
@@ -240,7 +250,6 @@ def run_collision_guard(
     target_dir: Path,
     is_first_time: bool,
     resolve_symlinks: bool,
-    install_base: Path
 ) -> None:
     """Handles collision backing up before any file deployment using FolderDiff."""
     # 0. Safety Abort Check for parents ABOVE or AT target_dir
@@ -267,6 +276,7 @@ def run_collision_guard(
         resolve_symlinks=resolve_symlinks,
         processed_paths=processed_paths
     )
+
 
     # 2. Recursive Audit using FolderDiff
     diff = compare_folders(
@@ -477,20 +487,23 @@ def reconcile_orphaned_files(
 def run_full_file_delivery(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    install_base: Path,
     install_pkg_dir: Path,
     target_dir: Path,
     metadata: PackageConfig,
-    deployable_files: List[Path],
-    stow_sufficient: bool
+    deployable_files: List[Path]
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
-    if metadata.get_install_method(workspace_config) == "copy":
+    install_base = workspace_config.install_path
+    install_method = metadata.get_install_method(workspace_config)
+    if install_method == "copy":
         run_full_copy_deployment(
-                install_pkg_dir, target_dir, metadata.sudo,
-                deployable_files=deployable_files)
+            install_pkg_dir, target_dir, metadata.sudo,
+            deployable_files=deployable_files
+        )
         return
-    if metadata.get_install_method(workspace_config) == "stow":
+    if install_method == "stow":
+        stow_version = get_stow_version()
+        stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
         if stow_sufficient:
             run_stow_deployment(install_base, target_dir, pkg, metadata.sudo, stow_sufficient)
             return
@@ -610,7 +623,6 @@ def execute_package_deployment(
     flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
-    install_base = workspace_config.install_path
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
     
     # 1. Collision Guard
@@ -623,7 +635,6 @@ def execute_package_deployment(
         target_dir=target_dir,
         is_first_time=is_first_time,
         resolve_symlinks=resolve_symlinks,
-        install_base=install_base
     )
 
     if metadata.get_install_method(workspace_config) == "stow":
@@ -653,10 +664,20 @@ def execute_package_deployment(
 
     # 2. Lifecycle Hooks & State registry update
     hook_flags = HookExecFlags.resolve(flags)
-    if is_first_time:
-        metadata.hooks.trigger_pre_install(install_pkg_dir, flags=hook_flags)
-    else:
-        metadata.hooks.trigger_pre_update(install_pkg_dir, flags=hook_flags)
+    try:
+        if is_first_time:
+            metadata.hooks.trigger_pre_install(install_pkg_dir, flags=hook_flags)
+        else:
+            metadata.hooks.trigger_pre_update(install_pkg_dir, flags=hook_flags)
+    except HookExecutionError as e:
+        if not e.requires_rollback:
+            if is_first_time:
+                state_registry.packages.pop(pkg, None)
+            else:
+                state_registry.set_package_state(pkg, "installed", install_method=metadata.get_install_method(workspace_config))
+            save_state_registry(state_file, state_registry)
+            logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{pkg}'. Deployment stopped (no rollback needed).")
+        raise
 
     # Persist the full target file manifest to state.toml before hooks & physical delivery
     # so that midway crashes have an authoritative list of files to uninstall
@@ -670,19 +691,14 @@ def execute_package_deployment(
     save_state_registry(state_file, state_registry)
     
     # 3. Physical Deployment Execution
-    stow_version = get_stow_version() if metadata.get_install_method(workspace_config) == "stow" else None
-    stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
-    
     if full_redeploy:
         run_full_file_delivery(
             workspace_config=workspace_config,
             pkg=pkg,
-            install_base=install_base,
             install_pkg_dir=install_pkg_dir,
             target_dir=target_dir,
             metadata=metadata,
             deployable_files=current_files,
-            stow_sufficient=stow_sufficient
         )
     else:
         assert package_changes is not None
@@ -697,20 +713,30 @@ def execute_package_deployment(
     logger.debug(f"   File delivery completed via {metadata.get_install_method(workspace_config)}")
     
     # Post Hooks
-    if is_first_time:
-        metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, flags=hook_flags)
-    else:
-        metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, flags=hook_flags)
-        
-    update_state_registry_post_deployment(
-        state_registry=state_registry,
-        state_file=state_file,
-        pkg=pkg,
-        install_method=metadata.get_install_method(workspace_config),
-        current_files=current_files,
-        full_redeploy=full_redeploy,
-        package_changes=package_changes
-    )
+    success = False
+    no_rollback_err = False
+    try:
+        if is_first_time:
+            metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, flags=hook_flags)
+        else:
+            metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, flags=hook_flags)
+        success = True
+    except HookExecutionError as e:
+        if not e.requires_rollback:
+            no_rollback_err = True
+            logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{pkg}'. Files remain installed (no rollback needed).")
+        raise
+    finally:
+        if success or no_rollback_err:
+            update_state_registry_post_deployment(
+                state_registry=state_registry,
+                state_file=state_file,
+                pkg=pkg,
+                install_method=metadata.get_install_method(workspace_config),
+                current_files=current_files,
+                full_redeploy=full_redeploy,
+                package_changes=package_changes
+            )
 
     logger.info(f"✨ Package '{pkg}' deployed successfully.")
 
