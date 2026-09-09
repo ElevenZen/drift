@@ -1299,7 +1299,7 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
         (pkg_install_dir / "rogue_link.txt").write_text("rogue target content", encoding="utf-8")
 
-        drift_internal_target = self.drift_root / "config" / "drift.toml"
+        drift_internal_target = self.drift_root / "config" / "drift_workspace.toml"
         drift_internal_target.parent.mkdir(parents=True, exist_ok=True)
         drift_internal_target.write_text("[workspace]\n", encoding="utf-8")
 

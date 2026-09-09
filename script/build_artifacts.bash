@@ -162,7 +162,7 @@ if [[ "${RUN_TESTS}" = true ]]; then
             "${ZIPAPP_FILE}" --help > /dev/null
 
             # 2. Test help docs page loading from zipapp
-            "${ZIPAPP_FILE}" help drift.toml > /dev/null
+            "${ZIPAPP_FILE}" help drift_workspace.toml > /dev/null
 
             # 3. Initialize workspace
             "${ZIPAPP_FILE}" init > /dev/null

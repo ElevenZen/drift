@@ -10,19 +10,20 @@ if TYPE_CHECKING:
 
 from .constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
-    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
     INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
-    get_default_drift_toml_content,
-    get_default_drift_local_toml_content,
+    get_default_drift_workspace_toml_content,
+    DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_secrets_env_content,
     get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
 )
+from .ignore import get_default_install_stow_ignore_content
 from .check_repo import (
     ComponentStatus,
     WorkspaceHealthReport,
@@ -150,10 +151,10 @@ def repair_install_stow_ignore(
     stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
 
     if stow_ignore_res.status != ComponentStatus.GOOD:
-        actions.append(f"Restored 'install/{STOW_LOCAL_IGNORE_FILE_NAME}' with '{INSTALL_STOW_IGNORE_PATTERN}'.")
+        actions.append(f"Restored 'install/{STOW_LOCAL_IGNORE_FILE_NAME}'.")
         if not dry_run:
             install_dir.mkdir(parents=True, exist_ok=True)
-            stow_ignore_path.write_text(f"{INSTALL_STOW_IGNORE_PATTERN}\n", encoding="utf-8")
+            stow_ignore_path.write_text(get_default_install_stow_ignore_content(), encoding="utf-8")
     return actions
 
 
@@ -181,34 +182,69 @@ def repair_workspace_config(
     dry_run: bool = False,
     workspace_config: Optional["WorkspaceConfig"] = None,
 ) -> List[str]:
-    """Repairs global config/drift.toml if missing."""
+    """Repairs workspace configuration, renaming legacy config files or generating default if missing."""
     actions: List[str] = []
+    config_dir = drift_root / CONFIG_DIR_NAME
+    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+    local_config_file = config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME
+
+    # 1. Detect and rename legacy workspace configuration files
+    legacy_mappings = [
+        ("drift.toml", WORKSPACE_CONFIG_FILE_NAME),
+        ("drift.local.toml", WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+        ("drift.envst.toml", f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"),
+        ("drift.local.envst.toml", f"{WORKSPACE_CONFIG_LOCAL_FILE_NAME.split('.')[0]}.local.envst.toml"),
+    ]
+
+    for old_name, new_name in legacy_mappings:
+        old_path = config_dir / old_name
+        if not old_path.is_file():
+            continue
+        target_path = config_dir / new_name
+
+        if target_path.exists():
+            actions.append(
+                f"⚠️ Found legacy file '{CONFIG_DIR_NAME}/{old_name}', but '{CONFIG_DIR_NAME}/{new_name}' already exists. "
+                f"Please migrate and remove '{old_name}' manually."
+            )
+            continue
+
+        actions.append(f"Renamed legacy workspace configuration file '{CONFIG_DIR_NAME}/{old_name}' to '{CONFIG_DIR_NAME}/{new_name}'.")
+        if not dry_run:
+            old_path.rename(target_path)
+
+    # 2. Check if main workspace configuration needs to be generated or inspected
+    main_config_files = [
+            config_file,
+            config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml",
+            config_dir / "drift.toml",
+            config_dir / "drift.envst.toml",
+    ]
+    main_config_occupied = any(f.exists() for f in main_config_files)
     config_res = check_workspace_config(drift_root)
-    config_dir = drift_root / CONFIG_DIR_NAME
-    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
-
     if config_res.status == ComponentStatus.NOT_FOUND:
-        actions.append(f"Generated default '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'.")
         if not dry_run:
             config_dir.mkdir(parents=True, exist_ok=True)
-            config_file.write_text(get_default_drift_toml_content(), encoding="utf-8")
+            config_file.write_text(get_default_drift_workspace_toml_content(), encoding="utf-8")
+        if not main_config_occupied:
+            actions.append(f"Generated default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
     elif config_res.status == ComponentStatus.BROKEN:
-        actions.append(f"⚠️ Warning: '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}' is invalid ({config_res.details}). Manual inspection required.")
+        actions.append(f"⚠️ Warning: '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' is invalid ({config_res.details}). Manual inspection required.")
 
-    return actions
-
-
-def repair_workspace_local_config(drift_root: Path, dry_run: bool = False) -> List[str]:
-    """Repairs config/drift.local.toml template if missing."""
-    actions: List[str] = []
-    config_dir = drift_root / CONFIG_DIR_NAME
-    local_config_file = config_dir / GLOBAL_CONFIG_LOCAL_FILE_NAME
-
-    if not local_config_file.exists():
-        actions.append(f"Generated '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_LOCAL_FILE_NAME}' template.")
+    # 3. Check and restore drift_workspace.local.toml template if missing
+    local_config_files = [
+            local_config_file,
+            config_dir / f"{WORKSPACE_CONFIG_LOCAL_FILE_NAME.split('.')[0]}.local.envst.toml",
+            config_dir / "drift.local.toml",
+            config_dir / "drift.local.envst.toml",
+    ]
+    local_config_occupied = any(f.exists() for f in local_config_files)
+    if not local_config_occupied:
         if not dry_run:
             config_dir.mkdir(parents=True, exist_ok=True)
-            local_config_file.write_text(get_default_drift_local_toml_content(), encoding="utf-8")
+            local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
+        actions.append(f"Generated '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_LOCAL_FILE_NAME}' template.")
+
     return actions
 
 
@@ -243,36 +279,7 @@ def repair_engine_inputs(
         except Exception:
             ws_config = None
 
-    if ws_config is not None:
-        configured_engines = list(ws_config.render_engine_configs.values())
-        for engine in configured_engines:
-            if engine.is_disabled:
-                actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
-                continue
-            input_path = engine.input_file
-            if not input_path.is_absolute():
-                input_path = config_dir / input_path
-
-            if not input_path.exists():
-                filename = input_path.name
-                if filename == "envsubst.bash":
-                    actions.append(f"Created default '{CONFIG_DIR_NAME}/envsubst.bash'.")
-                    if not dry_run:
-                        config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(get_default_envsubst_content(), encoding="utf-8")
-                elif filename == "mustache.envst.json":
-                    actions.append(f"Created default '{CONFIG_DIR_NAME}/mustache.envst.json'.")
-                    if not dry_run:
-                        config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(get_default_mustache_content(), encoding="utf-8")
-                elif filename == "jinja2.mustache.json":
-                    actions.append(f"Created default '{CONFIG_DIR_NAME}/jinja2.mustache.json'.")
-                    if not dry_run:
-                        config_dir.mkdir(parents=True, exist_ok=True)
-                        input_path.write_text(get_default_jinja2_content(), encoding="utf-8")
-                else:
-                    actions.append(f"⚠️ Warning: Missing custom engine input file '{engine.input_file}'. Manual creation required.")
-    else:
+    if ws_config is None:
         # Fallback to checking default engine files if config is not loadable
         default_templates = [
             ("envsubst.bash", get_default_envsubst_content()),
@@ -286,6 +293,36 @@ def repair_engine_inputs(
                 if not dry_run:
                     config_dir.mkdir(parents=True, exist_ok=True)
                     fpath.write_text(content, encoding="utf-8")
+        return actions
+
+    configured_engines = list(ws_config.render_engine_configs.values())
+    for engine in configured_engines:
+        if engine.is_disabled:
+            actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
+            continue
+        input_path = config_dir / engine.input_file
+
+        if input_path.exists():
+            continue
+
+        filename = input_path.name
+        if filename == "envsubst.bash":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/envsubst.bash'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_envsubst_content(), encoding="utf-8")
+        elif filename == "mustache.envst.json":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/mustache.envst.json'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_mustache_content(), encoding="utf-8")
+        elif filename == "jinja2.mustache.json":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/jinja2.mustache.json'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_jinja2_content(), encoding="utf-8")
+        else:
+            actions.append(f"⚠️ Warning: Missing custom engine input file '{engine.input_file}'. Manual creation required.")
 
     return actions
 
@@ -310,8 +347,8 @@ def repair_drift_workspace(
 
     ws_config = workspace_config
     if ws_config is None:
-        config_file = drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
-        envst_file = drift_root / CONFIG_DIR_NAME / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
+        config_file = drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        envst_file = drift_root / CONFIG_DIR_NAME / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
         if config_file.exists() or envst_file.exists():
             from .workspace_config import load_workspace_config
             try:
@@ -327,7 +364,6 @@ def repair_drift_workspace(
     actions.extend(repair_install_stow_ignore(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_state_registry(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_workspace_config(drift_root, dry_run=dry_run, workspace_config=ws_config))
-    actions.extend(repair_workspace_local_config(drift_root, dry_run=dry_run))
     actions.extend(repair_secrets_env(drift_root, dry_run=dry_run))
     actions.extend(repair_engine_inputs(drift_root, dry_run=dry_run, workspace_config=ws_config))
 

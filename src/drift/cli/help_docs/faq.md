@@ -37,7 +37,7 @@ drift deploy <pkg>
 ---
 
 ### Q4: How do I recover from missing or broken workspace infrastructure (e.g. after cloning or accidental deletion)?
-**Situation**: State Git repositories (`render/.git`, `install/.git`), root `.gitignore`, or local configuration templates (`config/drift.local.toml`, `config/secrets.env`) are missing.  
+**Situation**: State Git repositories (`render/.git`, `install/.git`), root `.gitignore`, or local configuration templates (`config/drift_workspace.local.toml`, `config/secrets.env`) are missing.  
 **Solution**: Run **`drift repair`** (or `drift repair --dry-run` to preview).
 *   Drift non-destructively audits and self-heals workspace structure, reconstructs missing Git databases, and scaffolds missing local config templates without touching your custom dotfiles.
 

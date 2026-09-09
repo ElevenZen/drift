@@ -9,7 +9,7 @@ class DriftError(Exception):
 
 
 class ConfigError(DriftError, ValueError):
-    """Raised when configuration files (drift.toml, drift.local.toml, drift_package.toml, secrets.env) are invalid, missing, or corrupt."""
+    """Raised when configuration files (drift_workspace.toml, drift_workspace.local.toml, drift_package.toml, secrets.env) are invalid, missing, or corrupt."""
     exit_code: int = ExitCode.CONFIG_ERROR
 
 

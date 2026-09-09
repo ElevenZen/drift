@@ -11,7 +11,7 @@ from typing import cast, Any, List, Tuple, Union
 
 from drift.constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     INTERNAL_RENDER_COMMAND,
@@ -49,7 +49,7 @@ class TestRenderEngine(unittest.TestCase):
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
 
-        drift_toml_path = config_dir / "drift.toml"
+        drift_toml_path = config_dir / "drift_workspace.toml"
         drift_toml_path.write_text("""
             [workspace]
             render_directory = "my_render"
@@ -91,7 +91,7 @@ class TestRenderEngine(unittest.TestCase):
             input_file_path=dummy_input
         )
 
-        # Verify that envsubst successfully substituted the variable defined under [env] in drift.toml
+        # Verify that envsubst successfully substituted the variable defined under [env] in drift_workspace.toml
         self.assertEqual(output.strip(), "Greeting: hello_from_drift_toml")
 
         # Clean up os.environ to avoid leaking to other tests
@@ -1252,8 +1252,8 @@ class TestRenderPackage(unittest.TestCase):
         envsubst_sh = config_dir / "envsubst.sh"
         envsubst_sh.write_text("#!/bin/bash\n", encoding="utf-8")
 
-        # Setup drift.toml configuration
-        drift_toml = config_dir / GLOBAL_CONFIG_FILE_NAME
+        # Setup drift_workspace.toml configuration
+        drift_toml = config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             "[workspace]\n"
             "source_directory = \"src\"\n"

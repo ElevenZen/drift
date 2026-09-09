@@ -11,8 +11,8 @@ if TYPE_CHECKING:
 
 from .constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
-    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
     INSTALL_STOW_IGNORE_PATTERN,
@@ -156,21 +156,21 @@ def check_root_git_repo(drift_root: Path) -> CheckResult:
 
 def check_workspace_config(drift_root: Path) -> CheckResult:
     """
-    Checks the global workspace configuration file (config/drift.toml or template).
+    Checks the workspace configuration file (config/drift_workspace.toml or template).
     """
+    from .workspace_config import load_workspace_config, render_envst_load_toml
+
     config_dir = drift_root / CONFIG_DIR_NAME
-    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
-    envst_file = config_dir / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
+    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+    envst_file = config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
 
     if not config_file.exists() and not envst_file.exists():
         return CheckResult(
             name="Workspace Configuration",
             status=ComponentStatus.NOT_FOUND,
-            details=f"'{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}' not found.",
-            fix_hint=f"Create default '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'"
+            details=f"'{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' not found.",
+            fix_hint=f"Create default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'"
         )
-
-    from .workspace_config import load_workspace_config, render_envst_load_toml
 
     try:
         data = render_envst_load_toml(config_file)
@@ -178,8 +178,8 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
             return CheckResult(
                 name="Workspace Configuration",
                 status=ComponentStatus.NOT_FOUND,
-                details=f"'{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}' not found.",
-                fix_hint=f"Create default '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'"
+                details=f"'{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' not found.",
+                fix_hint=f"Create default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'"
             )
 
         if (
@@ -196,14 +196,14 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
                 fix_hint="Add '[workspace]' and '[packages.enable]' sections"
             )
 
-        # Validate full workspace config loading
-        load_workspace_config(drift_root)
+        # Validate full workspace config loading (without legacy check)
+        load_workspace_config(drift_root, check_legacy=False)
     except Exception as e:
         return CheckResult(
             name="Workspace Configuration",
             status=ComponentStatus.BROKEN,
             details=f"Invalid configuration syntax or schema: {e}",
-            fix_hint="Fix configuration syntax in drift.toml"
+            fix_hint="Fix configuration syntax in drift_workspace.toml"
         )
 
     return CheckResult(

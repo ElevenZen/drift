@@ -1,6 +1,6 @@
-# 📝 drift.toml Complete Global Configuration Reference
+# 📝 drift_workspace.toml Complete Global Configuration Reference
 
-Below is a complete, fully documented template for the global `config/drift.toml` file:
+Below is a complete, fully documented template for the global `config/drift_workspace.toml` file:
 
 ```toml
 [workspace]
@@ -24,22 +24,44 @@ default_target_directory = "~"
 # Options: "stow" (symlinks) or "copy" (physical copies)
 default_install_method = "stow"
 
+# Optional path to a dynamic Python workspace configuration hook.
+# Relative to workspace 'config/' directory or workspace root (defaults to "drift_workspace.py").
+# hook_file = "drift_workspace.py"
+
 
 # ---------------------------------------------------------------------
-# Workspace Environment Variables & Native Self-Referencing
+# Dynamic Python Workspace Hook (config/drift_workspace.py)
 # ---------------------------------------------------------------------
-# Drift configurations natively support topological variable self-referencing ($VAR, ${VAR})
-# directly within .toml files. External render engines (e.g. drift.local.envst.toml) can also
+# For programmatic configuration across heterogeneous machines without external scripts,
+# author a Python hook in `config/drift_workspace.py` (or specify via `hook_file` above).
+# The hook receives a `WorkspaceHookContext` object with `context.config`, `context.facts`,
+# `context.env`, and `context.discovered_packages`:
+#
+# def configure_workspace(context):
+#     cfg = context.config
+#     facts = context.facts
+#     if facts.get("drift_os") == "darwin":
+#         cfg.setdefault("packages", {}).setdefault("enable", {})["macos_tools"] = True
+#     return cfg
+
+
+# ---------------------------------------------------------------------
+# Workspace Environment Variables, Native Variable Stitching & Topological Resolution
+# ---------------------------------------------------------------------
+# Drift configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR})
+# directly within .toml files. External render engines (e.g. drift_workspace.local.envst.toml) can also
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
-# Referencing Rules:
+# Variable Stitching & Referencing Rules:
 # 1. Topological Stitching in [env]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
 #    Drift automatically evaluates dependencies using Kahn's topological sort algorithm with cycle detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
 # 3. Unidirectional Evaluation Flow: ONLY variables defined in [env] (and inherited process environment/facts)
-#    can be referenced across other drift.toml sections. Variables outside [env] cannot be referenced inside [env].
-# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
+#    can be referenced across other drift_workspace.toml sections. Variables outside [env] cannot be referenced inside [env].
+# 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
+#    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
+# 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
 [env]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"

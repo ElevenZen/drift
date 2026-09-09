@@ -6,12 +6,12 @@ Below is a complete, fully documented template for `drift_package.toml` (or `dri
 [package]
 # How files are deployed to the host.
 # Options: "stow" (symlinks, GNU Stow logic) or "copy" (physical copies)
-# Falls back to "default_install_method" in drift.toml if unspecified.
+# Falls back to "default_install_method" in drift_workspace.toml if unspecified.
 install_method = "stow"
 
 # The target folder path on the host where files should be mapped.
 # Supports home expansion (~).
-# Falls back to "default_target_directory" in drift.toml if unspecified.
+# Falls back to "default_target_directory" in drift_workspace.toml if unspecified.
 target_directory = "~/.config/my_app"
 
 # Optional Windows-specific target folder path.
@@ -53,13 +53,13 @@ fully_controlled_dirs = [
 # ip = ["192.168.1.0/24"]             # Allowed LAN IPs (exact IP, CIDR subnet e.g. 10.0.0.0/8, or wildcard e.g. 192.168.1.*)
 
 # ---------------------------------------------------------------------
-# Package Environment Variables & Native Self-Referencing
+# Package Environment Variables, Native Variable Stitching & 7-Tier Precedence
 # ---------------------------------------------------------------------
-# Drift TOML configurations natively support topological variable self-referencing ($VAR, ${VAR}).
+# Drift TOML configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR}).
 # External render engines (e.g. drift_package.envst.toml) can also be used if dynamic generation
 # is needed, but native self-referencing is the built-in, zero-dependency default for .toml files.
 #
-# Referencing Rules:
+# Variable Stitching & Referencing Rules:
 # 1. [env.fallback] (Tier 7): Baseline defaults applied ONLY when unset across upper tiers.
 #    Evaluated first against base environment. CANNOT reference [env.override].
 # 2. [env.override] (Tier 2): High-priority overrides (overwrites facts/workspace env; CLI wins).
@@ -68,7 +68,9 @@ fully_controlled_dirs = [
 # 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved [env]
 #    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
 #    Variables defined outside [env] cannot be referenced inside [env].
-# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings without interpolation.
+# 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
+#    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
+# 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings without interpolation.
 
 [env.fallback]
 # Baseline default values (applied only when unset across all other scopes)
@@ -198,6 +200,6 @@ When rendering package templates and running hook scripts, variables resolve in 
 3. **`drift_package_*` Package Facts**: Authoritative package paths, target directory, install method.
 4. **`drift_*` System Facts**: Authoritative host OS, architecture, distro, hostname, user.
 5. **`secrets` in Workspace**: Loaded from `config/secrets.env` / Secret Provider.
-6. **`[env]` in Workspace Config**: Shared defaults from `config/drift.toml` / `drift.local.toml`.
+6. **`[env]` in Workspace Config**: Shared defaults from `config/drift_workspace.toml` / `drift_workspace.local.toml`.
 7. **`[env.fallback]` in Package Config**: Package defaults used only when unset by upper tiers.
 

@@ -65,7 +65,7 @@ The architecture separates configurations into four distinct physical and logica
 
 1.  **Declarative Source (`src/`, `config/`)**:
     *   Contains template configurations, raw config files, and global shell variables.
-    *   An explicit list of enabled packages for the active machine is defined in **`config/drift.toml`**.
+    *   An explicit list of enabled packages for the active machine is defined in **`config/drift_workspace.toml`**.
     *   Committed directly to the main git repository.
 2.  **Sandbox Render Zone (`render/`)**:
     *   A clean directory initialized as a local Git repository.
@@ -208,7 +208,7 @@ Restores the system configuration and the local state database to the last known
 
 ### Primitive 9: Workspace Garbage Collection [High-level: `drift gc`]
 Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories:
-1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift.toml`.
+1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift_workspace.toml`.
 2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml`), preventing database pollution.
 3.  **Auto-Commit Database changes**: Auto-stages and commits zombie removal operations inside `render/` and `install/` databases.
 
@@ -232,14 +232,14 @@ Executes live runtime health check probe scripts declared in `drift_package.toml
 
 ### Primitive 13: Repository Cloning & Legacy Migration [High-level: `drift clone`]
 Clones a remote Git repository and automatically bootstraps the workspace:
-1.  **Case A (Drift Workspace)**: Clones the repository and immediately triggers non-destructive self-healing (`repair_drift_workspace`) to reconstruct local databases (`render/.git`, `install/.git`, `state.toml`), `.gitignore` rules, and local config templates (`config/drift.local.toml`, `config/secrets.env`).
-2.  **Case B (Plain / Legacy Dotfiles)**: Migrates plain dotfiles into `src/<pkg_name>/`, initializes full Drift workspace infrastructure, generates `drift_package.toml` and `.drift_ignore`, and enables the package in `config/drift.toml`.
+1.  **Case A (Drift Workspace)**: Clones the repository and immediately triggers non-destructive self-healing (`repair_drift_workspace`) to reconstruct local databases (`render/.git`, `install/.git`, `state.toml`), `.gitignore` rules, and local config templates (`config/drift_workspace.local.toml`, `config/secrets.env`).
+2.  **Case B (Plain / Legacy Dotfiles)**: Migrates plain dotfiles into `src/<pkg_name>/`, initializes full Drift workspace infrastructure, generates `drift_package.toml` and `.drift_ignore`, and enables the package in `config/drift_workspace.toml`.
 
 ### Primitive 14: Workspace Diagnostics & Self-Healing [High-level: `drift repair`]
 Audits and self-heals workspace structure, repositories, configuration templates, and secrets:
 1.  Reconstructs missing Git state databases (`render/.git`, `install/.git`) and `install/state.toml`.
 2.  Rebuilds `.gitignore` and `install/.stow-local-ignore` isolation rules.
-3.  Generates default templates for `config/drift.local.toml` and `config/secrets.env` if missing.
+3.  Generates default templates for `config/drift_workspace.local.toml` and `config/secrets.env` if missing.
 
 ---
 
@@ -262,7 +262,7 @@ The `drift` Python command provides a unified interface for all primitives and h
 *   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
 *   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
 *   **`drift complete [<shell>] [--install] [--json]`**: Generates or installs native interactive shell tab-completion scripts (bash, zsh, fish, nu).
-*   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
+*   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
 
 ### Low-Level Control Commands (Ordered by Pipeline Lifecycle)
 These commands are for advanced users or CI/CD pipelines to trigger specific primitives:
@@ -280,8 +280,8 @@ These commands are for advanced users or CI/CD pipelines to trigger specific pri
 
 This section provides the essential syntax and specifications for global and package-level configurations.
 
-### A. Global Workspace Configuration: `config/drift.toml` Specification
-Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift.toml` (which can itself be a template named `drift.envst.toml`). This file orchestrates two main responsibilities:
+### A. Global Workspace Configuration: `config/drift_workspace.toml` Specification
+Rather than scanning the filesystem blindly, the drift engine relies on a centralized workspace configuration file located at `config/drift_workspace.toml` (which can itself be a template named `drift_workspace.envst.toml`). This file orchestrates two main responsibilities:
 1. **Workspace Paths & Rendering Engines**: Defines directories (`source_directory`, `render_directory`, `install_directory`, `backup_directory`, `default_target_directory`, `default_install_method`) and template engines with their file suffixes and rendering subprocess commands (e.g. `envsubst`, `mustache`).
 2. **Enabled Packages Registry**: Declares exactly which package subfolders under `src/` are globally active via the `[packages.enable]` section.
 
@@ -293,7 +293,7 @@ Rather than scanning the filesystem blindly, the drift engine relies on a centra
 
 ```toml
 # =====================================================================
-# drift.toml Configuration
+# drift_workspace.toml Configuration
 # =====================================================================
 
 [workspace]
@@ -353,8 +353,8 @@ qbittorrent = true
 proxychains = false
 ```
 
-#### Meta-Config Templating: `drift.envst.toml` & `drift.local.envst.toml`
-To allow complete bootstrapping of workspaces under different environment parameters, the workspace config files (`drift.toml` and `drift.local.toml`) can themselves be templates named `drift.envst.toml` or `drift.local.envst.toml`. Drift automatically compiles them on-the-fly using `envsubst` populated with active system-level environment variables.
+#### Meta-Config Templating: `drift_workspace.envst.toml` & `drift_workspace.local.envst.toml`
+To allow complete bootstrapping of workspaces under different environment parameters, the workspace config files (`drift_workspace.toml` and `drift_workspace.local.toml`) can themselves be templates named `drift_workspace.envst.toml` or `drift_workspace.local.envst.toml`. Drift automatically compiles them on-the-fly using `envsubst` populated with active system-level environment variables.
 
 For example, a user or provisioning script can compute machine capabilities and export an environment variable containing the desired package roster:
 ```bash
@@ -364,7 +364,7 @@ cuda_toolkit = true
 desktop_hyprland = false
 "
 ```
-And author `config/drift.local.envst.toml`:
+And author `config/drift_workspace.local.envst.toml`:
 ```toml
 [packages.enable]
 DEFAULT = false
@@ -373,7 +373,7 @@ ${DRIFT_PACKAGES}
 When Drift loads the workspace configuration, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs.
 
 #### Native TOML Variable Stitching & Topological DAG Resolution
-Rather than requiring developers to wrap static configuration files in template extensions (e.g. `drift.envst.toml` or `drift_package.envst.toml`) and invoke `envsubst`, Drift provides **native, zero-dependency topological variable stitching** across all TOML configuration files (`drift.toml`, `drift.local.toml`, `drift_package.toml`, `drift_package.local.toml`).
+Rather than requiring developers to wrap static configuration files in template extensions (e.g. `drift_workspace.envst.toml` or `drift_package.envst.toml`) and invoke `envsubst`, Drift provides **native, zero-dependency topological variable stitching** across all TOML configuration files (`drift_workspace.toml`, `drift_workspace.local.toml`, `drift_package.toml`, `drift_package.local.toml`).
 
 1. **Topological Inter-Variable Composition**:
    - Variables defined within `[env]` (or `[env.override]` / `[env.fallback]`) can reference each other (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`, `DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"`).
@@ -402,7 +402,7 @@ To isolate secret tokens, private API keys, and work-specific emails from public
    - **Tier 3 - Package Facts (`drift_package_*`)**: Dynamic attributes (`drift_package_name`, `drift_package_target_dir`, `drift_package_install_method`, etc.).
    - **Tier 4 - System Facts (`drift_*`)**: Auto-populated host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - **Tier 5 - Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
-   - **Tier 6 - Global Workspace Environment (`[env]` table in `drift.toml`)**: Shared, non-sensitive environment defaults.
+   - **Tier 6 - Global Workspace Environment (`[env]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
    - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
 
 2. **Transient, Clean-Room Isolation**:
@@ -415,7 +415,7 @@ To isolate secret tokens, private API keys, and work-specific emails from public
 Rather than utilizing closed/hardcoded compilation scripts, the drift workspace supports registering flexible, custom-defined template render engines.
 
 #### 1. Custom Render Engine Schema
-Under the `[render.<engine_name>]` tables in `drift.toml`, developers can define arbitrary engines. Each engine declaration supports three main properties:
+Under the `[render.<engine_name>]` tables in `drift_workspace.toml`, developers can define arbitrary engines. Each engine declaration supports three main properties:
 1.  **`input_file`**: The file path providing active variables or values to the engine (e.g. a shell environment script or JSON dataset). If relative, the path is always resolved against the `config/` base folder.
 2.  **`suffix`**: The file extension pattern matched by the engine (e.g., matching `.envst` or `.mustache`).
 3.  **`render_command`**: The exact shell execution pattern used to compile files. It supports two special interpolation placeholders:
@@ -484,12 +484,12 @@ enable_install = true
 # Deployment method. Options: 
 #   - "stow" : Creates symbolic links from target_directory to install/ folder. (Standard for user dotfiles)
 #   - "copy" : Physically copies files from install/ to target_directory. (Standard for system/etc configs)
-# Falls back to "default_install_method" in drift.toml if unspecified.
+# Falls back to "default_install_method" in drift_workspace.toml if unspecified.
 install_method = "stow"
 
 # The physical path where this package should be deployed on Unix/Linux/macOS hosts.
 # Supports home expansion (~ at the beginning).
-# Falls back to "default_target_directory" in drift.toml if unspecified.
+# Falls back to "default_target_directory" in drift_workspace.toml if unspecified.
 target_directory = "~/.config/example"
 
 # Optional Windows-specific target folder path.
@@ -626,7 +626,7 @@ After parsing a package's configuration, the drift engine dynamically loads pack
 > 3. Package facts (`drift_package_*`).
 > 4. Host facts (`drift_*`).
 > 5. Secret variables loaded from `config/secrets.env`.
-> 6. Global workspace environment variables in `config/drift.toml` (`[env]` table).
+> 6. Global workspace environment variables in `config/drift_workspace.toml` (`[env]` table).
 > 7. Package `[env.fallback]` defaults.
 >
 > This guarantees that templates and hook scripts always receive the exact, authoritative package attributes regardless of any external or global environment definitions.
@@ -692,7 +692,7 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
 To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax highlighting, linting, autocomplete) for template files within editors (such as VSCode, Neovim, or Emacs), the system enforces a strict suffix naming convention:
 *   **Format**: `[filename].[engine_prefix].[target_extension]`
 *   **Suffix No-Dot Restriction**: The suffix defined for any render engine (such as `envst` or `mustache`) **cannot contain any dots ('.')**. This is validated during configuration loading, and any engine suffix containing dots will cause validation to fail.
-*   **Officially Supported Engines** (Custom engines can be defined in `drift.toml`):
+*   **Officially Supported Engines** (Custom engines can be defined in `drift_workspace.toml`):
     1.  *Envsubst*: Uses suffix **`.envst.[ext]`** (e.g., `dot-bashrc.envst.sh`, `all_proxy.envst.conf`).
     2.  *Mustache*: Uses suffix **`.mustache.[ext]`** (e.g., `home.mustache.nix`, `settings.mustache.json`).
 *   **Why this is superior**: Because the terminal extension is the actual target format (like `.sh`, `.nix`, `.json`), text editors instantly apply the correct syntax highlighting, formatters, and LSP environments without requiring custom regex filetype mappings.
@@ -744,8 +744,8 @@ Files are categorized and safely routed to prevent overwriting or data loss:
 ### E. Execution Safeguards and Package Exclusion
 To enable granular control over modular configurations, the deployment pipeline respects three cascading enablement switches across different execution phases:
 
-#### 1. Global Activation Switch: `drift.toml [packages.enable]`
-*   **Location**: Global workspace config (`config/drift.toml`).
+#### 1. Global Activation Switch: `drift_workspace.toml [packages.enable]`
+*   **Location**: Global workspace config (`config/drift_workspace.toml`).
 *   **Affected Phase**: **Global Workspace Discovery**.
 *   **How it works**: This table controls whether a package is active on this machine.
     *   If a package is set to `false` (or is unlisted while `DEFAULT = false` is active), the orchestrator completely ignores its directory.
@@ -769,11 +769,11 @@ To enable granular control over modular configurations, the deployment pipeline 
 ### F. Orphan Package Garbage Collection & Uninstall Protection
 To maintain parity between declarations and system states, the deployer enforces two robust policies:
 1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
-    *   When executing a **Bulk All-Packages Deployment** (`drift deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift.toml` (and respects `enable_install = false` in `drift_package.toml`).
+    *   When executing a **Bulk All-Packages Deployment** (`drift deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift_workspace.toml` (and respects `enable_install = false` in `drift_package.toml`).
     *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the post-deployment GC step **automatically executes Primitive 7 (Uninstall) on this orphan package** during Stage 3.
     *   This ensures decommissioned packages are automatically and cleanly purged from the host system.
 2.  **Uninstall Protection Safeguard**:
-    *   If a user tries to manually uninstall a package (e.g. `drift uninstall proxychains`), but that package is **still active/enabled** inside `config/drift.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
+    *   If a user tries to manually uninstall a package (e.g. `drift uninstall proxychains`), but that package is **still active/enabled** inside `config/drift_workspace.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
     *   In this case, the uninstaller will **halt and print an error**, instructing the user to first disable the package in declarations, **unless a `--force` flag is supplied**.
 
 ### G. Architectural Policy on Host Deletions & System Drift Adoption
@@ -877,7 +877,7 @@ The active configuration engine and orchestrator follow a strict sequence design
 
 #### 1. Discovery and Registry Check
 Deployment can be triggered in **Bulk Mode** (evaluating all declared active packages) or **Targeted Mode** (focusing on a specific package).
-*   **Discovery**: The orchestrator checks workspace declarations in `config/drift.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `drift_package.toml`.
+*   **Discovery**: The orchestrator checks workspace declarations in `config/drift_workspace.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `drift_package.toml`.
 *   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"deploying"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
 
 #### 2. Stage 1: Alignment Safeguard (System -> Install)

@@ -84,13 +84,13 @@ class TestWorkspaceClone(unittest.TestCase):
         self.assertTrue((dest_path / "install" / ".git").exists())
         self.assertTrue((dest_path / "install" / "state.toml").exists())
         self.assertTrue((dest_path / "install" / ".stow-local-ignore").exists())
-        self.assertTrue((dest_path / "config" / "drift.local.toml").exists())
+        self.assertTrue((dest_path / "config" / "drift_workspace.local.toml").exists())
         self.assertTrue((dest_path / "config" / "secrets.env").exists())
         self.assertTrue((dest_path / ".gitignore").exists())
 
         # Verify next steps contain instructions
         self.assertGreater(len(res.recommended_next_steps), 0)
-        self.assertIn("drift.local.toml", " ".join(res.recommended_next_steps))
+        self.assertIn("drift_workspace.local.toml", " ".join(res.recommended_next_steps))
         self.assertIn("secrets.env", " ".join(res.recommended_next_steps))
         self.assertEqual(res.recommended_next_command, f"cd {dest_path.name} && drift deploy")
 
@@ -126,7 +126,7 @@ class TestWorkspaceClone(unittest.TestCase):
         self.assertEqual(res.converted_legacy_package, "legacy_dotfiles")
 
         # Verify Drift structure
-        self.assertTrue((dest_path / "config" / "drift.toml").exists())
+        self.assertTrue((dest_path / "config" / "drift_workspace.toml").exists())
         self.assertTrue((dest_path / "render" / ".git").exists())
         self.assertTrue((dest_path / "install" / ".git").exists())
 
@@ -139,8 +139,8 @@ class TestWorkspaceClone(unittest.TestCase):
         self.assertTrue((pkg_dir / "drift_package.toml").exists())
         self.assertTrue((pkg_dir / ".drift_ignore").exists())
 
-        # Verify package is enabled in config/drift.toml
-        config_content = (dest_path / "config" / "drift.toml").read_text(encoding="utf-8")
+        # Verify package is enabled in config/drift_workspace.toml
+        config_content = (dest_path / "config" / "drift_workspace.toml").read_text(encoding="utf-8")
         self.assertIn("legacy_dotfiles = true", config_content)
 
         # Verify formatted output

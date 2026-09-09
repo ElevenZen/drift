@@ -42,7 +42,7 @@ class TestDeploy(unittest.TestCase):
         # Create global config file
         self.config_dir = self.drift_root / "config"
         self.config_dir.mkdir(parents=True, exist_ok=True)
-        self.config_file = self.config_dir / "drift.toml"
+        self.config_file = self.config_dir / "drift_workspace.toml"
         self.config_file.write_text("""
 [workspace]
 source_directory = "src"

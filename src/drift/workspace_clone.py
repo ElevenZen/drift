@@ -12,7 +12,7 @@ from .workspace_init import init_drift_workspace
 from .workspace_repair import repair_drift_workspace
 from .constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     get_default_drift_ignore_content,
@@ -52,9 +52,9 @@ def is_drift_repository(repo_path: Path) -> bool:
         return False
 
     config_dir = repo_path / CONFIG_DIR_NAME
-    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
-    envst_config = config_dir / f"{GLOBAL_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
-    root_config = repo_path / GLOBAL_CONFIG_FILE_NAME
+    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+    envst_config = config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
+    root_config = repo_path / WORKSPACE_CONFIG_FILE_NAME
     src_dir = repo_path / "src"
 
     if config_file.exists() or envst_config.exists() or root_config.exists() or src_dir.is_dir():
@@ -143,8 +143,8 @@ target_directory = "~"
         ignore_path.write_text(get_default_drift_ignore_content(), encoding="utf-8")
         actions.append(f"Generated default ignore patterns 'src/{pkg_name}/{DRIFT_IGNORE_FILE_NAME}'.")
 
-    # 6. Enable package in config/drift.toml
-    config_file = target_dir / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+    # 6. Enable package in config/drift_workspace.toml
+    config_file = target_dir / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
     if config_file.exists():
         config_content = config_file.read_text(encoding="utf-8")
         if f"{pkg_name} =" not in config_content:
@@ -156,7 +156,7 @@ target_directory = "~"
             else:
                 config_content += f"\n[packages.enable]\n{pkg_name} = true\n"
             config_file.write_text(config_content, encoding="utf-8")
-            actions.append(f"Enabled package '{pkg_name}' in '{CONFIG_DIR_NAME}/{GLOBAL_CONFIG_FILE_NAME}'.")
+            actions.append(f"Enabled package '{pkg_name}' in '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
 
     return actions
 
@@ -202,7 +202,7 @@ def run_primitive_clone(
             repaired_actions = repair_drift_workspace(target_dir)
         next_steps = [
             f"cd {target_dir.name}",
-            "Adjust local settings in 'config/drift.local.toml' (this overrides 'config/drift.toml'; see 'drift help drift.toml')",
+            "Adjust local settings in 'config/drift_workspace.local.toml' (this overrides 'config/drift_workspace.toml'; see 'drift help drift_workspace.toml')",
             "Define machine-specific environment variables and secrets in 'config/secrets.env' (see 'drift help workspace')",
             "Run 'drift deploy' (or 'drift status' / 'drift diff' to preview)"
         ]
@@ -213,7 +213,7 @@ def run_primitive_clone(
             f"cd {target_dir.name}",
             f"Review converted package configuration in 'src/{converted_pkg}/{PACKAGE_CONFIG_FILE_NAME}' (verify target_directory = \"~\" and install_method = \"stow\" or \"copy\"; see 'drift help drift_package.toml')",
             f"Review 'src/{converted_pkg}/.drift_ignore' (exclude files like README/scripts from deployment; see 'drift help ignore')",
-            "Adjust local settings in 'config/drift.local.toml' (this overrides 'config/drift.toml'; see 'drift help drift.toml')",
+            "Adjust local settings in 'config/drift_workspace.local.toml' (this overrides 'config/drift_workspace.toml'; see 'drift help drift_workspace.toml')",
             "Define machine-specific secrets and environment variables in 'config/secrets.env' (see 'drift help workspace')",
             "Run 'drift diff' or 'drift status' to preview, then run 'drift deploy'"
         ]

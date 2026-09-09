@@ -42,7 +42,7 @@ class TestPackageHealth(unittest.TestCase):
         for d in [self.config_dir, self.source_dir, self.render_dir, self.install_dir, self.backup_dir, self.system_target_dir]:
             d.mkdir(parents=True, exist_ok=True)
 
-        (self.config_dir / "drift.toml").write_text(f"""
+        (self.config_dir / "drift_workspace.toml").write_text(f"""
 [workspace]
 default_target_directory = "{self.system_target_dir}"
 [packages]

@@ -10,6 +10,7 @@ from .constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
     DEFAULT_STOW_IGNORE_PATTERNS,
+    INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
 )
 
@@ -97,6 +98,11 @@ class DriftIgnore(IgnoreHandler):
                     patterns.append(line_stripped)
         return cls(patterns)
 
+    @classmethod
+    def for_install_root(cls) -> "DriftIgnore":
+        """Creates a DriftIgnore instance with default ignore patterns plus state.toml for install/ root."""
+        return cls(patterns=[*DEFAULT_STOW_IGNORE_PATTERNS, INSTALL_STOW_IGNORE_PATTERN])
+
     def export_stow_ignore_patterns(self) -> List[str]:
         """Exports the list of ignore patterns combined with MANAGED_CONFIG_FILES in Stow format."""
         exported = []
@@ -171,4 +177,9 @@ class DriftIgnore(IgnoreHandler):
                 logger.warning(f"Invalid regex pattern '{pattern}': {e}")
 
         return False
+
+
+def get_default_install_stow_ignore_content() -> str:
+    """Generates default .stow-local-ignore content for install/ root."""
+    return DriftIgnore.for_install_root().generate_stow_local_ignore_content()
 

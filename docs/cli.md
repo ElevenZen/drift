@@ -58,13 +58,13 @@ Initializes the active directory as a drift workspace.
     2.  Verifies the main repository is tracked by Git (unless `--no-git-root` is active).
     3.  Creates `.gitignore` entries to isolate `render/` and `install/` database files.
     4.  Initializes `render/` and `install/` as independent, untracked local Git repositories.
-    5.  Creates default directory structure (`src/`, `config/drift.toml`, `config/envsubst.bash`, `config/mustache.envst.json`, `install/state.toml`).
+    5.  Creates default directory structure (`src/`, `config/drift_workspace.toml`, `config/envsubst.bash`, `config/mustache.envst.json`, `install/state.toml`).
 *   **Terminal Output**:
     ```bash
     ✨ Initialized drift workspace!
     📁 Created render/ sandbox Git database.
     📁 Created install/ local state Git database.
-    📝 Generated drift.toml template.
+    📝 Generated drift_workspace.toml template.
     📝 Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.
     ```
 
@@ -75,8 +75,8 @@ Create a new package directory with the default `drift_package.toml` configurati
 *   **Command Signature**: `drift new <package> [--force / -f] [--target / -t <target_directory>] [--method / -m <install_method>] [--json]`
 *   **Optional Arguments & Flags**:
     - `--force / -f`: Forcefully overwrites any existing `drift_package.toml` config file inside the package source directory.
-    - `--target / -t <target_directory>`: Explicitly configures the deployment target directory inside `drift_package.toml`. Defaults to `default_target_directory` in `drift.toml`.
-    - `--method / -m <install_method>`: Explicitly configures the installation method (`stow` or `copy`) inside `drift_package.toml`. Defaults to `default_install_method` in `drift.toml`.
+    - `--target / -t <target_directory>`: Explicitly configures the deployment target directory inside `drift_package.toml`. Defaults to `default_target_directory` in `drift_workspace.toml`.
+    - `--method / -m <install_method>`: Explicitly configures the installation method (`stow` or `copy`) inside `drift_package.toml`. Defaults to `default_install_method` in `drift_workspace.toml`.
     - `--json`: Outputs a `NewPackageResult` object in JSON format.
 *   **Probing Guard**: Halts if a configuration file already exists inside `src/<package>/` unless `--force` is provided.
 
@@ -177,10 +177,10 @@ Incorporate runtime system/GUI changes back into your declarative templates unde
 
 ---
 
-### I. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [--dry-run] [--no-hooks] [--json]`
+#### I. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [--dry-run] [--no-hooks] [--json]`
 *   **Command Options**:
     - `<packages...>`: Package name(s) to uninstall.
-    - `--force / -f`: Bypasses the active package safeguard, allowing uninstallation of packages that are still active/enabled in `config/drift.toml`.
+    - `--force / -f`: Bypasses the active package safeguard, allowing uninstallation of packages that are still active/enabled in `config/drift_workspace.toml`.
     - `--detach`: Decouples package management while keeping physical configuration files intact on the host system.
     - `--dry-run`: Simulates uninstallation without deleting files from disk.
     - `--no-hooks / --no-hook`: Skips `pre_uninstall` and `post_uninstall` lifecycle hooks.
@@ -192,7 +192,7 @@ Incorporate runtime system/GUI changes back into your declarative templates unde
 
 ### J. Garbage Collection: `drift gc [--dry-run] [--no-hooks] [--json]`
 Identifies and purges orphaned and untracked database entities across the workspace.
-*   **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift.toml`.
+*   **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift_workspace.toml`.
 *   **Zombie Folders**: Identifies and purges package subdirectories in `render/` and `install/` that lack valid configuration files.
 
 ---
@@ -207,7 +207,7 @@ Clones a remote or local Git repository and immediately reconstructs and heals t
 *   **Command Signature**: `drift clone <repository> [destination] [--branch / -b <branch>] [--depth <depth>] [--no-repair] [--json]`
 *   **Autonomous Bootstrap Healing**:
     - **Existing Drift Workspace**: Reconstructs untracked runtime databases (`render/` and `install/` Git repos, `state.toml`, `.gitignore`, `config/secrets.env`).
-    - **Legacy Dotfiles Repository**: Migrates root dotfiles into `src/<pkg>/`, generates `drift_package.toml` with `stow` install method, and registers in `drift.toml`.
+    - **Legacy Dotfiles Repository**: Migrates root dotfiles into `src/<pkg>/`, generates `drift_package.toml` with `stow` install method, and registers in `drift_workspace.toml`.
 
 ---
 
@@ -234,7 +234,6 @@ Generates zero-latency native shell tab-completion scripts compiled directly fro
     ```bash
     # Bash (~/.bashrc)
     eval "$(drift complete bash)"
-
     # Zsh (~/.zshrc)
     eval "$(drift complete zsh)"
 
@@ -250,7 +249,7 @@ Generates zero-latency native shell tab-completion scripts compiled directly fro
 ### O. Mini User Manual: `drift help [topic]`
 Provides built-in documentation with automatic terminal pager fallback.
 *   **Syntax**: `drift help [topic]`
-*   **Available Topics**: `overall`, `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`.
+*   **Available Topics**: `overall`, `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`.
 
 ---
 
@@ -285,7 +284,7 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | **`drift apply --force`** | Primitive 5 | Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml` | `enable_install = false` is strictly respected |
 | **`drift rollback --force`** | Primitive 8 | Bypasses conflict state check; forces hard reset to clean Git HEAD even for packages in `"installed"` state | Valid package tracking in `install/` |
 | **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on `src/<pkg>/` (adopts drifts despite dirty source tree) | Valid patch application |
-| **`drift uninstall --force`** | Primitive 7 | Bypasses active package safeguard (uninstalls packages still enabled in `drift.toml`) | Only installed packages are uninstalled |
+| **`drift uninstall --force`** | Primitive 7 | Bypasses active package safeguard (uninstalls packages still enabled in `drift_workspace.toml`) | Only installed packages are uninstalled |
 | **`drift init --force`** | Workspace Init | Overwrites existing workspace templates and database configurations | Root path safety checks |
 
 ---
@@ -296,7 +295,7 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | :---: | :--- | :--- |
 | **`0`** | **`SUCCESS` / `HEALTHY`** | The command completed cleanly; status is clean, diffs match, or all health probes passed. |
 | **`1`** | **`GENERAL_ERROR` / `UNHEALTHY`** | Runtime failure, subprocess crash, unresolved file collision, or unhealthy probe. |
-| **`2`** | **`CONFIG_ERROR`** | Missing or malformed `drift.toml`, `drift_package.toml`, or invalid configuration types. |
+| **`2`** | **`CONFIG_ERROR`** | Missing or malformed `drift_workspace.toml`, `drift_package.toml`, or invalid configuration types. |
 | **`3`** | **`DRIFT_DETECTED`** | Sentinel safety guard tripped: uncommitted runtime system changes detected on host. |
 | **`4`** | **`RENDER_ERROR`** | Template compilation failure or missing required environment variable. |
 | **`5`** | **`COLLISION_ERROR`** | Target file collision detected during install or apply. |

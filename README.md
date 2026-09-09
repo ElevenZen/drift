@@ -18,7 +18,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
 * 🧩 **Native TOML Variable Stitching**: Compose variables topologically (`$VAR`, `${VAR}`) across all TOML configuration files with Kahn's algorithm DAG cycle detection—no external template wrappers or subprocesses required.
-* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift.local.toml` or dynamically compute package rosters via `envsubst` (`drift.local.envst.toml`). One unified repo scales from minimal cloud servers to high-end workstations.
+* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
 * 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, and Fish** with rich inline documentation hints and dynamic workspace package discovery.
@@ -170,10 +170,10 @@ Unlike monolithic dotfile managers that force you to deploy entire configuration
 
 A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
 
-*   **Granular Machine Enablement (`config/drift.local.toml`)**:
-    You can selectively enable or disable packages on each machine using the gitignored `config/drift.local.toml` override without modifying version-controlled source files:
+*   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
+    You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:
     ```toml
-    # config/drift.local.toml (Machine-specific override)
+    # config/drift_workspace.local.toml (Machine-specific override)
     [packages.enable]
     DEFAULT = false
     shell = true            # Enabled on all machines
@@ -181,10 +181,38 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     cuda_toolkit = true     # Enabled only on high-performance GPU compute nodes
     desktop_hyprland = false# Disabled on headless servers, enabled on laptops
     ```
-*   **Dynamic Host Profiling via Meta-Config Templating (`config/drift.local.envst.toml`)**:
-    For automated fleet deployments across servers and laptops, you can write a host-detection script that computes and exports environment variables such as `DRIFT_PACKAGES` (e.g. `export DRIFT_PACKAGES="cuda_toolkit = true\ndesktop_hyprland = false\n"`), and author a local configuration template:
+
+*   **Dynamic Python Workspace Hook (`config/drift_workspace.py`)**:
+    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."`). The hook executes on the fly without requiring any external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
+    ```python
+    # config/drift_workspace.py
+    def configure_workspace(context):
+        """Dynamically configure workspace packages and environment on the fly."""
+        cfg = context.config
+        facts = context.facts
+        os_name = facts.get("drift_os", "")
+        hostname = facts.get("drift_hostname", "")
+
+        # 1. Dynamically compute enabled package roster
+        enable = cfg.setdefault("packages", {}).setdefault("enable", {})
+        enable["shell"] = True
+        enable["nvim"] = True
+        enable["cuda_toolkit"] = (os_name == "linux" and "gpu" in hostname)
+        enable["desktop_hyprland"] = (os_name == "linux" and "laptop" in hostname)
+        enable["macos_settings"] = (os_name == "darwin")
+
+        # 2. Dynamically inject workspace-level environment variables
+        env = cfg.setdefault("env", {})
+        if os_name == "darwin":
+            env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+
+        return cfg
+    ```
+
+*   **Dynamic Host Profiling via Meta-Config Templating (`config/drift_workspace.local.envst.toml`)**:
+    For automated fleet deployments across servers and laptops using shell environments, you can author a local configuration template:
     ```toml
-    # config/drift.local.envst.toml (Template rendered on-the-fly)
+    # config/drift_workspace.local.envst.toml (Template rendered on-the-fly)
     [packages.enable]
     DEFAULT = false
     ${DRIFT_PACKAGES}
@@ -192,14 +220,15 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     When Drift runs, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
 ### 🧩 4. Native TOML Variable Stitching & Topological Resolution
-Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all TOML configuration files (`drift.toml`, `drift_package.toml`, and their `.local.toml` counterparts) using Kahn's algorithm DAG topological sorting without invoking external subprocesses:
+Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all TOML configuration files (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts) using Kahn's algorithm DAG topological sorting without invoking external subprocesses:
 *   **Self-Referencing in `[env]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic cycle detection.
 *   **Unidirectional Evaluation**: `[env]` resolves first; non-env sections (`target_directory`, `hooks`, etc.) dynamically reference `[env]` variables without circular dependencies.
+*   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
 
 ### 🔗 5. Directed Acyclic Graph (DAG) Template Pipelines
-Drift supports declaring arbitrary, nested render engine pipelines in `drift.toml` (e.g., matching `.envst` or `.mustache`). 
+Drift supports declaring arbitrary, nested render engine pipelines in `drift_workspace.toml` (e.g., matching `.envst` or `.mustache`). 
 *   **Template Input Dependencies**: A render engine's input variables can itself be a template compiled by another engine (e.g., `mustache` needing a static JSON config generated from environment variables).
 *   **Cycle Detection**: Drift constructs a compiler dependency graph and executes cycle-detection validation, throwing `CyclicDependencyError` to prevent compilation loops.
 *   **Deferred Render Compilation**: If variables or templates are missing during boot, Drift gracefully logs a warning. Compilation is only blocked if a file in the active workspace *actually* relies on the disabled engine, preventing unrelated package bottlenecks.
@@ -221,7 +250,7 @@ Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package i
 ### 🧹 7. Autonomous Garbage Collection (Self-Cleaning)  
 Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
 
-When you toggle packages to `false` in `drift.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
+When you toggle packages to `false` in `drift_workspace.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
 *   **Automatic Trigger on Global Deploy**: Running `drift deploy` without package arguments automatically sweeps and purges stale database packages at the end of the deployment cycle.
 *   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
@@ -241,7 +270,7 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 
 ```
                      [ 1. DECLARATIVE SOURCE ]
-                     src/ (Templates & drift.toml)
+                  src/ (Templates & drift_workspace.toml)
                                  │
                                  ▼ (drift deploy)
                     [ 2. SANDBOX RENDER ZONE ]
@@ -291,10 +320,10 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 *When you set up a fresh machine and want to replicate your existing Drift configuration repository in one command, or migrate an old plain dotfiles repository.*
 
 1.  **Clone Drift Workspace**: Run `drift clone git@github.com:username/dotfiles.git`.
-    *   Drift fetches the remote repository and automatically executes a non-destructive repair (`drift repair`) to reconstruct the excluded `render/` and `install/` databases, `.gitignore` rules, and machine-specific local configuration templates (`config/drift.local.toml`, `config/secrets.env`).
+    *   Drift fetches the remote repository and automatically executes a non-destructive repair (`drift repair`) to reconstruct the excluded `render/` and `install/` databases, `.gitignore` rules, and machine-specific local configuration templates (`config/drift_workspace.local.toml`, `config/secrets.env`).
 2.  **Migrate Legacy Plain Dotfiles Repo**: Run `drift clone https://github.com/username/legacy-dotfiles.git`.
     *   Drift detects that the repository is a traditional plain dotfiles repository, isolates existing dotfiles into `src/legacy-dotfiles/`, generates `drift_package.toml` and `.drift_ignore`, and scaffolds the full Drift workspace infrastructure automatically.
-3.  **Review & Deploy**: Navigate into the directory (`cd dotfiles`), configure machine-specific overrides in `config/drift.local.toml` / `config/secrets.env`, and run `drift deploy`.
+3.  **Review & Deploy**: Navigate into the directory (`cd dotfiles`), configure machine-specific overrides in `config/drift_workspace.local.toml` / `config/secrets.env`, and run `drift deploy`.
 
 ---
 
@@ -338,7 +367,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 
 ## 📦 Deployment Methods (`stow` vs. `copy`) & Event Ordering
 
-Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift.toml`):
+Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift_workspace.toml`):
 
 | Feature | `install_method = "stow"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
 | :--- | :--- | :--- |
@@ -422,7 +451,7 @@ Drift executes all lifecycle hooks with predictable working directories and auto
 * **A**: In Drift, **`src/` is the single source of truth**. Simply run **`drift render <pkg>`** or **`drift deploy <pkg>`**; Drift will automatically re-compile and re-stage clean files from `src/`.
 
 ### 4. Self-Healing Missing Workspace Databases & Templates
-* **Q**: My Git databases (`render/.git`, `install/.git`), `.gitignore` rules, or local config templates (`config/drift.local.toml`, `config/secrets.env`) are missing.
+* **Q**: My Git databases (`render/.git`, `install/.git`), `.gitignore` rules, or local config templates (`config/drift_workspace.local.toml`, `config/secrets.env`) are missing.
 * **A**: Run **`drift repair`** to audit and reconstruct missing workspace databases, `.gitignore` rules, and template files non-destructively.
 
 ### 5. Recovering from Midway Deployment Failures
@@ -447,7 +476,7 @@ Drift executes all lifecycle hooks with predictable working directories and auto
 
 ## 📚 Further Reading & In-Depth Documentation
 
-*   **Interactive Built-in Manual (`drift help`)**: After reading this README, explore Drift's built-in manual pages directly from your terminal by running `drift help` or `drift help <topic>` (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift.toml`, `workspace`, `health`, `clone`, `faq`).
+*   **Interactive Built-in Manual (`drift help`)**: After reading this README, explore Drift's built-in manual pages directly from your terminal by running `drift help` or `drift help <topic>` (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
 *   **Deep Architectural Design (`docs/design.md`)**: If you want to understand the complete architectural design, atomic execution primitives, transaction state machines, safety guarantees, and low-level engine internals, read [docs/design.md](docs/design.md).
 
 ---

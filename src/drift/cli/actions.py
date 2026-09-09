@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Union, Any
 
-from ..constants import CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME, ExitCode, PackageStage
+from ..constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
 from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, CollisionError
 from ..workspace_config import WorkspaceConfig, load_workspace_config
 from ..workspace_init import init_drift_workspace

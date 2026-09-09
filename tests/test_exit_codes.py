@@ -92,7 +92,7 @@ class TestExitCodes(unittest.TestCase):
         self.assertEqual(stderr_buf.getvalue().strip(), "")
 
     def test_argparse_config_error_exit_code(self) -> None:
-        # Running render on a directory without drift.toml returns CONFIG_ERROR (2)
+        # Running render on a directory without drift_workspace.toml returns CONFIG_ERROR (2)
         stderr_buf = io.StringIO()
         with patch("sys.stderr", stderr_buf):
             with self.assertRaises(SystemExit) as cm:

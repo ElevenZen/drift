@@ -30,7 +30,25 @@ or `drift_package.local.toml`. This file dictates:
     (`probe`, `pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
     All lifecycle hooks always execute in user space without `sudo`, preserving all injected environment variables.
 
+---
+
+## 🧩 3. Variable Stitching & Fact Injections
+
+Package configurations natively participate in Drift's 7-tier variable stitching system:
+*   **Package Fact Injections**: Automatically interpolate dynamic facts:
+    *   `${drift_package_name}`: Active package name (e.g. `nvim`).
+    *   `${drift_package_target_dir}`: Resolved destination target directory path.
+    *   `${drift_package_source_dir}`: Path to source templates in `src/`.
+    *   `${drift_package_render_dir}`: Path to rendered files in `render/`.
+    *   `${drift_package_install_dir}`: Path to local state in `install/`.
+*   **Dual-Tier Package Scopes**:
+    *   `[env.fallback]`: Baseline default values used only when unset across higher tiers.
+    *   `[env.override]`: Highest-priority package values (overwrites workspace defaults and system facts).
+*   **Topological Evaluation**: Package variables seamlessly reference and stitch with workspace `[env]`, secret vault keys, and host facts.
+*   **Values-Only Scope**: Variable stitching operates **strictly within configuration values** (e.g. `target_directory`, hook commands, environment variable strings). TOML keys, table names, and section headers are not expanded.
+
 > [!TIP]
 > **Lifecycle Hooks Matrix**: For the complete lifecycle hooks execution table (trigger stages, working directories, privilege model, and default environment variables), see `drift help drift_package.toml`. You can test and execute any hook individually with `drift hook <package> <hook-name>`.
 
 👉 Run `drift help drift_package.toml` to view the comprehensive configuration reference.
+

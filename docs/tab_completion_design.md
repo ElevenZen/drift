@@ -7,7 +7,7 @@ This document specifies the technical design, command taxonomy, declarative sche
 ### Core Architectural Principles:
 1. **Single Source of Truth (`src/drift/cli/schema.py`)**: All commands, flags, descriptions, positional patterns, and choice hints live in a declarative Python schema. Shell scripts and CLI parser backends are compiled programmatically from this data model.
 2. **Rich Interactive Hints**: Shells with interactive menu support (Zsh and Fish) automatically display detailed documentation descriptions for subcommands, options, and fixed choices (e.g. lifecycle hooks, manual topics, install methods).
-3. **Dynamic Discovery**: Package names are queried live on `<TAB>` by scanning `src/`, with automatic fallback searching parent directories for `drift.toml` and honoring `-C / --directory`.
+3. **Dynamic Discovery**: Package names are queried live on `<TAB>` by scanning `src/`, with automatic fallback searching parent directories for `drift_workspace.toml` and honoring `-C / --directory`.
 4. **Dual-Mode `new` Command**: Seamlessly accepts free-text for brand-new packages or completes existing folders in `src/` to scaffold missing configuration files.
 5. **Zero-Latency Execution**: Generated shell scripts execute entirely in native shell memory, eliminating Python interpreter startup overhead during `<TAB>`.
 6. **Movable Global Flags**: Options designated in `MOVABLE_GLOBAL_FLAGS` (such as `--json` and `-v/--verbose`) are supported both before and after subcommands across all shell engines and CLI backends.
@@ -150,7 +150,7 @@ HELP_TOPICS: List[Choice] = [
     Choice("fcd", "Fully-Controlled Directories, wild file tracking, and adoption"),
     Choice("ignore", "PCRE ignore pattern rules and .drift_ignore mechanics"),
     Choice("drift_package.toml", "Package-level configuration reference"),
-    Choice("drift.toml", "Workspace-level configuration reference"),
+    Choice("drift_workspace.toml", "Workspace-level configuration reference"),
     Choice("workspace", "Multi-machine workflows, host profiling, and local overrides"),
     Choice("health", "Package runtime health check probes and hooks"),
     Choice("clone", "Workspace cloning, bootstrap self-healing, and legacy migration"),

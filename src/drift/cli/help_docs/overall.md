@@ -11,7 +11,7 @@ audits active system drifts, and executes deployments using atomic, transactiona
 ## 🔄 The Drift Data-Flow Loop
 ```
                      [ 1. DECLARATIVE SOURCE ]
-                     src/ (Templates & drift.toml)
+                     src/ & config/ (drift_workspace.toml)
                                  │
                                  ▼ (drift deploy)
                     [ 2. SANDBOX RENDER ZONE ]
@@ -51,7 +51,7 @@ audits active system drifts, and executes deployments using atomic, transactiona
     `drift help fcd`                   Understand Fully-Controlled Directories (FCDs) and file tracking.
     `drift help ignore`                Understand .drift_ignore syntax, install ignore logic, and FCD ignore mechanics.
     `drift help drift_package.toml`    View a complete, commented drift_package.toml configuration template.
-    `drift help drift.toml`            View a complete, commented drift.toml global template.
+    `drift help drift_workspace.toml`  View a complete, commented drift_workspace.toml global template.
     `drift help workspace`             Learn about workspace directories, local overrides, and the secrets vault.
     `drift help health`                Learn about package runtime health check probes and lifecycle hooks.
     `drift help clone`                 Learn about cloning Drift repositories and migrating legacy dotfiles.

@@ -9,18 +9,18 @@ from pathlib import Path
 from .constants import (
     CONFIG_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
-    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
-    INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
-    get_default_drift_toml_content,
-    get_default_drift_local_toml_content,
+    get_default_drift_workspace_toml_content,
+    DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_secrets_env_content,
     get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
 )
+from .ignore import get_default_install_stow_ignore_content
 from .check_repo import check_existing_workspace_status, ComponentStatus
 from .git_utils import (
     is_git_tracked,
@@ -92,27 +92,27 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     # Generate extra .stow-local-ignore at root of install/
     stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
-    stow_ignore_path.write_text(f"{INSTALL_STOW_IGNORE_PATTERN}\n", encoding="utf-8")
+    stow_ignore_path.write_text(get_default_install_stow_ignore_content(), encoding="utf-8")
 
-    # 6. Creates default directory templates (src/, config/drift.toml, config/drift.local.toml, install/state.toml)
+    # 6. Creates default directory templates (src/, config/drift_workspace.toml, config/drift_workspace.local.toml, install/state.toml)
     (drift_root / "src").mkdir(parents=True, exist_ok=True)
     config_dir = drift_root / "config"
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    config_file = config_dir / GLOBAL_CONFIG_FILE_NAME
-    config_file.write_text(get_default_drift_toml_content(), encoding="utf-8")
+    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+    config_file.write_text(get_default_drift_workspace_toml_content(), encoding="utf-8")
 
-    # Create drift.local.toml template
-    local_config_file = config_dir / GLOBAL_CONFIG_LOCAL_FILE_NAME
+    # Create drift_workspace.local.toml template
+    local_config_file = config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME
     if not local_config_file.exists() or force:
-        local_config_file.write_text(get_default_drift_local_toml_content(), encoding="utf-8")
+        local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
 
     # Create secrets.env template
     secrets_file = config_dir / SECRETS_ENV_FILE_NAME
     if not secrets_file.exists() or force:
         secrets_file.write_text(get_default_secrets_env_content(), encoding="utf-8")
 
-    # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift.toml
+    # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift_workspace.toml
     envsubst_input = config_dir / "envsubst.bash"
     if not envsubst_input.exists():
         envsubst_input.write_text(get_default_envsubst_content(), encoding="utf-8")

@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import set_test_mode, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
+from drift.constants import set_test_mode, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 from drift.exceptions import ConfigError
 from drift.workspace_config import load_workspace_config
 from drift.workspace_hook import WorkspaceHookContext, apply_workspace_hook
@@ -26,7 +26,7 @@ class TestWorkspaceHook(unittest.TestCase):
         (self.drift_root / "src" / "pkg2").mkdir()
         (self.drift_root / CONFIG_DIR_NAME).mkdir(parents=True)
 
-        self.config_file = self.drift_root / CONFIG_DIR_NAME / GLOBAL_CONFIG_FILE_NAME
+        self.config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
         self.config_file.write_text("""
 [workspace]
 default_target_directory = "~"

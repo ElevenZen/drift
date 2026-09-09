@@ -62,10 +62,13 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         stow_ignore = os.path.join(self.drift_root, "install", STOW_LOCAL_IGNORE_FILE_NAME)
         self.assertTrue(os.path.isfile(stow_ignore))
         with open(stow_ignore, "r", encoding="utf-8") as f:
-            self.assertEqual(f.read().strip(), INSTALL_STOW_IGNORE_PATTERN)
+            stow_content = f.read()
+        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, stow_content)
+        self.assertIn(r"\.git", stow_content)
+        self.assertIn(r"^/drift_package\.toml$", stow_content)
 
-        # Check config/drift.toml template was created
-        config_file = os.path.join(self.drift_root, "config", "drift.toml")
+        # Check config/drift_workspace.toml template was created
+        config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
         self.assertTrue(os.path.isfile(config_file))
         with open(config_file, "r", encoding="utf-8") as f:
             drift_toml = f.read()
@@ -73,8 +76,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("source_directory = \"src\"", drift_toml)
         self.assertIn("default_install_method = \"stow\"", drift_toml)
 
-        # Check config/drift.local.toml template was created
-        local_config_file = os.path.join(self.drift_root, "config", "drift.local.toml")
+        # Check config/drift_workspace.local.toml template was created
+        local_config_file = os.path.join(self.drift_root, "config", "drift_workspace.local.toml")
         self.assertTrue(os.path.isfile(local_config_file))
 
         # Check config/secrets.env template was created and is gitignored
@@ -126,7 +129,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, ".git")))
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "render", ".git")))
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "install", ".git")))
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_init_twice_raises_error(self) -> None:
         """Verifies that running init twice raises an error."""
@@ -140,24 +143,24 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         """Verifies that running init twice with force=True succeeds and overwrites config files."""
         init_drift_workspace(self.drift_root)
 
-        # Modify drift.toml to see if it gets overwritten
-        config_file = os.path.join(self.drift_root, "config", "drift.toml")
+        # Modify drift_workspace.toml to see if it gets overwritten
+        config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
         with open(config_file, "w") as f:
             f.write("corrupted_or_modified_toml_content")
 
         # Running again with force=True should not raise an error
         init_drift_workspace(self.drift_root, force=True)
 
-        # Check that drift.toml was overwritten back to default content
+        # Check that drift_workspace.toml was overwritten back to default content
         with open(config_file, "r") as f:
             content = f.read()
         self.assertIn("[workspace]", content)
 
     def test_init_corrupt_config_raises_custom_error(self) -> None:
-        """Verifies that an existing corrupt/invalid drift.toml raises a helpful validation error."""
+        """Verifies that an existing corrupt/invalid drift_workspace.toml raises a helpful validation error."""
         init_drift_workspace(self.drift_root)
 
-        config_file = os.path.join(self.drift_root, "config", "drift.toml")
+        config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
         with open(config_file, "w") as f:
             f.write("this is invalid toml = [ { ")
 
@@ -176,7 +179,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
         init_drift_workspace(self.drift_root, force=True)
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, ".git")))
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_init_bare_repository_raises_error(self) -> None:
         """Verifies that initializing inside a bare git repository raises an error."""
@@ -207,7 +210,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
         # But with force, it should skip health checks and succeed
         init_drift_workspace(self.drift_root, force=True)
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_init_merge_in_progress_raises_error(self) -> None:
         """Verifies that initializing inside a repository with a merge/rebase in progress raises an error."""
@@ -245,11 +248,11 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn_stripped("Initialized drift workspace!", stdout.getvalue())
         self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
         self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
-        self.assertIn_stripped("Generated drift.toml template.", stdout.getvalue())
+        self.assertIn_stripped("Generated drift_workspace.toml template.", stdout.getvalue())
         self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
 
-        # Check drift.toml exists
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        # Check drift_workspace.toml exists
+        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_cli_init_argparse(self) -> None:
         """Verifies that argparse_backend CLI successfully initializes the workspace."""
@@ -265,11 +268,11 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn_stripped("Initialized drift workspace!", stdout.getvalue())
         self.assertIn_stripped("Created render/ sandbox Git database.", stdout.getvalue())
         self.assertIn_stripped("Created install/ local state Git database.", stdout.getvalue())
-        self.assertIn_stripped("Generated drift.toml template.", stdout.getvalue())
+        self.assertIn_stripped("Generated drift_workspace.toml template.", stdout.getvalue())
         self.assertIn_stripped("Generated config/envsubst.bash, config/mustache.envst.json, and config/jinja2.mustache.json.", stdout.getvalue())
 
-        # Check drift.toml exists
-        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        # Check drift_workspace.toml exists
+        self.assertTrue(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_cli_init_typer_with_force(self) -> None:
         """Verifies that typer_backend CLI successfully initializes with --force."""
@@ -302,9 +305,9 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         # Workspace should be initialized inside nested_dir literally, not self.drift_root
         self.assertTrue(os.path.isdir(os.path.join(sub_dir, "render", ".git")))
         self.assertTrue(os.path.isdir(os.path.join(sub_dir, "install", ".git")))
-        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
         # The parent self.drift_root should NOT have these folders/files created
-        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_cli_init_typer_with_no_git_root(self) -> None:
         """Verifies that Typer CLI respects --no-git-root."""
@@ -320,8 +323,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             main(["-C", sub_dir, "--no-git-root", "init"])
 
         # Workspace should be inside nested_typer_dir
-        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
-        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
     def test_cli_init_argparse_with_no_git_root(self) -> None:
         """Verifies that Argparse CLI respects --no-git-root."""
@@ -337,8 +340,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             run_argparse_cli(["-C", sub_dir, "--no-git-root", "init"])
 
         # Workspace should be inside nested_argparse_dir
-        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift.toml")))
-        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift.toml")))
+        self.assertTrue(os.path.isfile(os.path.join(sub_dir, "config", "drift_workspace.toml")))
+        self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
 
 if __name__ == "__main__":

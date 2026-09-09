@@ -241,4 +241,26 @@ class TestDriftIgnore(unittest.TestCase):
         ignore.create_stow_ignore_file(target_dir)
         self.assertTrue(stow_ignore_file.is_file())
 
+    def test_for_install_root_and_default_install_content(self) -> None:
+        """Verifies DriftIgnore.for_install_root() and get_default_install_stow_ignore_content()."""
+        from drift.ignore import get_default_install_stow_ignore_content
+        from drift.constants import INSTALL_STOW_IGNORE_PATTERN, DEFAULT_STOW_IGNORE_PATTERNS
+
+        ignore = DriftIgnore.for_install_root()
+        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, ignore.patterns)
+        for p in DEFAULT_STOW_IGNORE_PATTERNS:
+            self.assertIn(p, ignore.patterns)
+
+        # state.toml is matched (ignored)
+        self.assertTrue(ignore.match_path(Path("state.toml")))
+        self.assertTrue(ignore.match_path(Path(".git")))
+        self.assertTrue(ignore.match_path(Path("README.md")))
+        self.assertFalse(ignore.match_path(Path("some_package/file.txt")))
+
+        content = get_default_install_stow_ignore_content()
+        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, content)
+        self.assertIn(r"^/drift_package\.toml$", content)
+        self.assertIn(r"\.git", content)
+
+
 

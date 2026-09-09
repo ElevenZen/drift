@@ -1,22 +1,24 @@
 # =====================================================================
-# drift.toml Configuration
+# drift_workspace.toml Configuration
 # =====================================================================
 
 # ---------------------------------------------------------------------
-# Workspace Environment Variables & Native Self-Referencing
+# Workspace Environment Variables, Native Variable Stitching & Topological Resolution
 # ---------------------------------------------------------------------
-# Drift configurations natively support topological variable self-referencing ($VAR, ${VAR})
-# directly within .toml files. External render engines (e.g. drift.local.envst.toml) can also
+# Drift configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR})
+# directly within .toml files. External render engines (e.g. drift_workspace.local.envst.toml) can also
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
-# Referencing Rules:
+# Variable Stitching & Referencing Rules:
 # 1. Topological Stitching in [env]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
 #    Drift builds a dependency DAG and resolves variables in topological order with cyclic detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
 # 3. Unidirectional Evaluation Flow: ONLY variables defined in [env] (and inherited process environment/facts)
-#    can be referenced across other drift.toml sections. Variables outside [env] cannot be referenced inside [env].
-# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
+#    can be referenced across other drift_workspace.toml sections. Variables outside [env] cannot be referenced inside [env].
+# 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
+#    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
+# 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
 [env]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
@@ -40,7 +42,7 @@ DEFAULT = false
 # ---------------------------------------------------------------------
 # Define template rendering engines for compiling dotfiles and configuration templates.
 # Note: Standard .toml files already support native ${VAR} self-referencing without engines.
-# Render engines below compile template files (e.g. .zshrc.envst, config.j2, or drift.local.envst.toml).
+# Render engines below compile template files (e.g. .zshrc.envst, config.j2, or drift_workspace.local.envst.toml).
 [render.envsubst]
 # Shell script providing env variables for envsubst
 # If it's a relative path, it's always relative to the 'config' folder under drift root directory.
@@ -95,3 +97,7 @@ install_directory = "install"
 
 # Backup archive folder for collisions & deletions
 backup_directory = "backup"
+
+# Optional path to a dynamic Python workspace configuration hook.
+# Relative to workspace 'config/' directory or workspace root (defaults to "drift_workspace.py").
+# hook_file = "drift_workspace.py"

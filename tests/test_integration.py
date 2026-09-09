@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from drift.workspace_config import WorkspaceConfig, load_workspace_config
 from drift.state_registry import load_state_registry
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, GLOBAL_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 
 class TestIntegration(unittest.TestCase):
     def setUp(self):

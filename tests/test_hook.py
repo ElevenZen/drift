@@ -168,7 +168,7 @@ class TestPackageHook(unittest.TestCase):
         # Setup git workspace config
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "drift.toml").write_text('[workspace]\nsource_directory = "src"\n[packages.enable]\npkg_hook = true\n', encoding="utf-8")
+        (config_dir / "drift_workspace.toml").write_text('[workspace]\nsource_directory = "src"\n[packages.enable]\npkg_hook = true\n', encoding="utf-8")
 
         # 1. Typer CLI
         stdout = StringIO()
@@ -506,7 +506,7 @@ echo "VALUE=$DYNAMIC_VAL"
         """Verifies drift hook CLI with --from source and --from install."""
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "drift.toml").write_text('[workspace]\nsource_directory = "src"\n[packages.enable]\npkg_hook = true\n', encoding="utf-8")
+        (config_dir / "drift_workspace.toml").write_text('[workspace]\nsource_directory = "src"\n[packages.enable]\npkg_hook = true\n', encoding="utf-8")
 
         # 1. CLI with --from source for pre_source hook
         stdout = StringIO()

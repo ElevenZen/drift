@@ -45,9 +45,9 @@ class TestHelpDocs(unittest.TestCase):
         drift_pkg_toml = get_help_page("drift_package.toml")
         self.assertIn("drift_package.toml Complete Configuration Reference", drift_pkg_toml)
 
-        # drift.toml
-        drift_toml = get_help_page("drift.toml")
-        self.assertIn("drift.toml Complete Global Configuration Reference", drift_toml)
+        # drift_workspace.toml
+        drift_ws_toml = get_help_page("drift_workspace.toml")
+        self.assertIn("drift_workspace.toml Complete Global Configuration Reference", drift_ws_toml)
 
         # ignore
         ignore_doc = get_help_page("ignore")
@@ -60,7 +60,8 @@ class TestHelpDocs(unittest.TestCase):
         # workspace
         workspace_doc = get_help_page("workspace")
         self.assertIn("drift Workspace & Configuration Overrides", workspace_doc)
-        self.assertIn("Dual-Layered Configuration Merging", workspace_doc)
+        self.assertIn("Configuration Merging & Python Hooks", workspace_doc)
+        self.assertIn("Dynamic Python Workspace Hook", workspace_doc)
         self.assertIn(f"Environment Secret Vault (`{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}`)", workspace_doc)
 
         # health
@@ -76,6 +77,38 @@ class TestHelpDocs(unittest.TestCase):
         self.assertIn("Drift Frequently Asked Questions & Troubleshooting (FAQ)", faq_doc)
         self.assertIn("drift deploy --force", faq_doc)
         self.assertIn("--no-hooks", faq_doc)
+
+    def test_get_help_page_aliases(self) -> None:
+        """Verifies that topic aliases map correctly to their canonical documentation pages."""
+        pkg_toml = get_help_page("drift_package.toml")
+        ws_toml = get_help_page("drift_workspace.toml")
+        overall = get_help_page("overall")
+        workspace = get_help_page("workspace")
+        health = get_help_page("health")
+        clone = get_help_page("clone")
+        faq = get_help_page("faq")
+        fcd = get_help_page("fcd")
+        ignore = get_help_page("ignore")
+
+        # package config aliases
+        for alias in ("package_config", "pkg_config", "package-config", "pkg-config", "drift_package", "drift_package_toml", "package.toml", "pkg.toml"):
+            self.assertEqual(get_help_page(alias), pkg_toml, f"Alias '{alias}' failed to resolve to drift_package.toml")
+
+        # workspace config aliases
+        for alias in ("workspace_config", "ws_config", "workspace-config", "ws-config", "drift_workspace", "drift_workspace_toml", "workspace.toml", "ws.toml", "drift.toml", "drift_toml"):
+            self.assertEqual(get_help_page(alias), ws_toml, f"Alias '{alias}' failed to resolve to drift_workspace.toml")
+
+        # other topic aliases
+        self.assertEqual(get_help_page("arch"), overall)
+        self.assertEqual(get_help_page("intro"), overall)
+        self.assertEqual(get_help_page("ws"), workspace)
+        self.assertEqual(get_help_page("secrets"), workspace)
+        self.assertEqual(get_help_page("check"), health)
+        self.assertEqual(get_help_page("hooks"), health)
+        self.assertEqual(get_help_page("migrate"), clone)
+        self.assertEqual(get_help_page("troubleshooting"), faq)
+        self.assertEqual(get_help_page("controlled_dirs"), fcd)
+        self.assertEqual(get_help_page(".drift_ignore"), ignore)
 
     def test_get_help_page_invalid_topic_raises_error(self) -> None:
         """Verifies that querying an unknown/invalid help topic raises ValueError."""

@@ -22,7 +22,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         # Create config and env file
         self.config_dir = os.path.join(self.drift_root, "config")
         os.makedirs(self.config_dir, exist_ok=True)
-        with open(os.path.join(self.config_dir, "drift.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.config_dir, "drift_workspace.toml"), "w", encoding="utf-8") as f:
             f.write("""
             [workspace]
             source_directory = "src"
@@ -128,8 +128,8 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
     def test_cli_render_failure_does_not_print_success_message(self) -> None:
         """Verifies that when rendering fails, CLI exits with error code and does not print success."""
         from pathlib import Path
-        # Enable var render engine in drift.local.toml
-        (Path(self.drift_root) / "config" / "drift.local.toml").write_text("""
+        # Enable var render engine in drift_workspace.local.toml
+        (Path(self.drift_root) / "config" / "drift_workspace.local.toml").write_text("""
         [render.var]
         suffix = "var"
         render_command = "internal"

@@ -111,9 +111,9 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.target_dir = os.path.join(self.temp_dir.name, "home")
         os.makedirs(self.target_dir, exist_ok=True)
 
-        # Update drift.toml
+        # Update drift_workspace.toml
         self.config_dir = os.path.join(self.drift_root, "config")
-        with open(os.path.join(self.config_dir, "drift.toml"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.config_dir, "drift_workspace.toml"), "w", encoding="utf-8") as f:
             f.write("""
             [workspace]
             source_directory = "src"

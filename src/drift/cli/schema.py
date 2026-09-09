@@ -93,7 +93,7 @@ HELP_TOPICS: List[Choice] = [
     Choice("fcd", "Fully-Controlled Directories, wild file tracking, and adoption"),
     Choice("ignore", "PCRE ignore pattern rules and .drift_ignore mechanics"),
     Choice("drift_package.toml", "Package-level configuration reference"),
-    Choice("drift.toml", "Workspace-level configuration reference"),
+    Choice("drift_workspace.toml", "Workspace-level configuration reference"),
     Choice("workspace", "Multi-machine workflows, host profiling, and local overrides"),
     Choice("health", "Package runtime health check probes and hooks"),
     Choice("clone", "Workspace cloning, bootstrap self-healing, and legacy migration"),
@@ -381,7 +381,7 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
-                        description="Force uninstallation even if package is still active in drift.toml"
+                        description="Force uninstallation even if package is still active in drift_workspace.toml"
                     ),
                     OptionSpec(["--dry-run"], "Preview uninstallation without making changes"),
                     OptionSpec(
@@ -496,7 +496,7 @@ def build_completion_schema() -> CompletionSchema:
                 positionals=[
                     PositionalSpec(
                         name="topic",
-                        description="Specific topic to display (package, src, render, install, drift_package.toml, drift.toml, workspace, health, clone)",
+                        description="Specific topic to display (package, src, render, install, drift_package.toml, drift_workspace.toml, workspace, health, clone)",
                         source_type=SourceType.FIXED_CHOICES,
                         choices=HELP_TOPICS,
                         nargs="?",

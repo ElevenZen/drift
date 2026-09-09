@@ -11,7 +11,8 @@ from unittest.mock import patch
 
 from drift.constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     INITIAL_ENV,
@@ -179,7 +180,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
 class TestStrictVariablePrecedence(unittest.TestCase):
     """Integration tests verifying the strict precedence:
 
-    Host Environment > Secret Vault (secrets.env) > Global Workspace Config ([env] in drift.toml)
+    Host Environment > Secret Vault (secrets.env) > Global Workspace Config ([env] in drift_workspace.toml)
     """
 
     def setUp(self) -> None:
@@ -225,14 +226,14 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def test_host_env_overrides_secrets_and_workspace_config(self) -> None:
         """Host environment variable has the highest precedence.
 
-        It must override both secrets.env and drift.toml [env].
+        It must override both secrets.env and drift_workspace.toml [env].
         """
         var_name = "DRIFT_PRECEDENCE_VAR_1"
         os.environ[var_name] = "host_wins"
         set_initial_env([var_name] + list(self.original_environ.keys()))
 
-        # Write drift.toml with [env]
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        # Write drift_workspace.toml with [env]
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -279,12 +280,12 @@ pkg_test = true
         self.assertEqual(os.environ[var_name], "host_wins")
 
     def test_secrets_env_overrides_workspace_config(self) -> None:
-        """Secret vault (secrets.env) has higher precedence than drift.toml [env]."""
+        """Secret vault (secrets.env) has higher precedence than drift_workspace.toml [env]."""
         var_name = "DRIFT_PRECEDENCE_VAR_2"
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -334,7 +335,7 @@ pkg_test = true
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -375,7 +376,7 @@ pkg_test = true
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             """
 [workspace]
@@ -414,12 +415,12 @@ pkg_test = true
         self.assertNotIn(var_name, os.environ)
 
     def test_host_env_overrides_secrets_without_workspace_config(self) -> None:
-        """Host env overrides secrets even when the variable is not in drift.toml."""
+        """Host env overrides secrets even when the variable is not in drift_workspace.toml."""
         var_name = "DRIFT_HOST_SECRET_VAR"
         os.environ[var_name] = "host_api_key"
         set_initial_env([var_name] + list(self.original_environ.keys()))
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             """
 [workspace]
@@ -454,12 +455,12 @@ pkg_test = true
         self.assertEqual(os.environ[var_name], "host_api_key")
 
     def test_local_toml_merging_env(self) -> None:
-        """drift.local.toml overrides drift.toml [env] settings."""
+        """drift_workspace.local.toml overrides drift_workspace.toml [env] settings."""
         var_name = "DRIFT_MERGED_VAR"
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -478,7 +479,7 @@ DEFAULT = true
             encoding="utf-8"
         )
 
-        local_toml = self.config_dir / "drift.local.toml"
+        local_toml = self.config_dir / "drift_workspace.local.toml"
         local_toml.write_text(
             f"""
 [env]
@@ -509,7 +510,7 @@ DEFAULT = true
 
         set_initial_env(["VAR_A", "VAR_D", "VAR_E"] + list(self.original_environ.keys()))
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             """
 [workspace]
@@ -589,7 +590,7 @@ VAR_F="secret_f"
         os.environ.pop(var_toml, None)
         set_initial_env([k for k in os.environ.keys() if k not in (var_secret, var_toml)])
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -634,7 +635,7 @@ pkg_test = true
         var_name = "DRIFT_CLI_TEST_VAR"
         os.environ[var_name] = "cli_host_override"
 
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
 [workspace]
@@ -874,8 +875,8 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         self.assertEqual(result["env"]["raw_text"], "${DONT_TOUCH_ME}")
 
     def test_workspace_config_with_stitched_env_and_field_interpolation(self) -> None:
-        """Verifies that workspace drift.toml resolves [env] stitching and interpolates fields."""
-        drift_toml = self.config_dir / GLOBAL_CONFIG_FILE_NAME
+        """Verifies that workspace drift_workspace.toml resolves [env] stitching and interpolates fields."""
+        drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             """
 [workspace]

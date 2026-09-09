@@ -304,7 +304,7 @@ def run_primitive_7_uninstall_packages(
         workspace_config: The workspace configuration instance.
         package_names: Specific package name(s) to uninstall, or None to uninstall all orphans.
         force: If True, bypasses the active package safeguard, allowing uninstallation of packages
-            that are still active/enabled in the workspace configuration (drift.toml).
+            that are still active/enabled in the workspace configuration (drift_workspace.toml).
         dry_run: If True, simulates uninstallation without removing files from disk.
         detach: If True, deregisters packages from Drift tracking while leaving deployed files on disk.
         flags: Optional HookExecFlags controlling hook execution options.
@@ -328,7 +328,7 @@ def run_primitive_7_uninstall_packages(
     if rejected_pkgs:
         for pkg in rejected_pkgs:
             logger.error(f"🛡️  [SAFEGUARD] Package '{pkg}' is still active/enabled in workspace configuration.")
-        logger.error("   To safely uninstall, first disable it in drift.toml or use --force.")
+        logger.error("   To safely uninstall, first disable it in drift_workspace.toml or use --force.")
         raise RuntimeError(f"Safeguard abort: Package(s) {', '.join(rejected_pkgs)} are active.")
 
     if not safe_map:

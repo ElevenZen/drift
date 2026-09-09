@@ -48,13 +48,13 @@ class TestBuildArtifacts(unittest.TestCase):
 
             # 3. Test help documentation loading from inside zipapp
             res_doc = subprocess.run(
-                [sys.executable, str(zipapp_path), "help", "drift.toml"],
+                [sys.executable, str(zipapp_path), "help", "drift_workspace.toml"],
                 capture_output=True,
                 text=True,
                 env=env
             )
             self.assertEqual(res_doc.returncode, 0)
-            self.assertIn("drift.toml Complete Global Configuration Reference", res_doc.stdout)
+            self.assertIn("drift_workspace.toml Complete Global Configuration Reference", res_doc.stdout)
 
             # 4. Test end-to-end workspace initialization, package creation, and deployment
             workspace_dir = temp_path / "workspace"
@@ -70,7 +70,7 @@ class TestBuildArtifacts(unittest.TestCase):
                 env=env
             )
             self.assertEqual(res_init.returncode, 0)
-            self.assertTrue((workspace_dir / "config" / "drift.toml").exists())
+            self.assertTrue((workspace_dir / "config" / "drift_workspace.toml").exists())
 
             res_new = subprocess.run(
                 [sys.executable, str(zipapp_path), "new", "test_pkg", "--target", str(target_dir)],

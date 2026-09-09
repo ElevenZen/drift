@@ -3,8 +3,14 @@
 from enum import IntEnum
 
 CONFIG_DIR_NAME = "config"
-GLOBAL_CONFIG_FILE_NAME = "drift.toml"
-GLOBAL_CONFIG_LOCAL_FILE_NAME = "drift.local.toml"
+WORKSPACE_CONFIG_FILE_NAME = "drift_workspace.toml"
+WORKSPACE_CONFIG_LOCAL_FILE_NAME = "drift_workspace.local.toml"
+LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
+    "drift.toml",
+    "drift.local.toml",
+    "drift.envst.toml",
+    "drift.local.envst.toml",
+)
 PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
 SECRETS_ENV_FILE_NAME = "secrets.env"
 PACKAGE_CONFIG_FILE_NAME_LIST = [PACKAGE_CONFIG_FILE_NAME]
@@ -14,7 +20,7 @@ DRIFT_IGNORE_LEGACY_FILE_NAME = ".driftignore"
 DRIFT_IGNORE_FILE_NAME_LIST = (DRIFT_IGNORE_FILE_NAME, DRIFT_IGNORE_LEGACY_FILE_NAME)
 STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
-INSTALL_STOW_IGNORE_PATTERN = "^/state.toml"
+INSTALL_STOW_IGNORE_PATTERN = r"^/state\.toml"
 INTERNAL_RENDER_COMMAND = "internal"
 MANAGED_CONFIG_FILES = (PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME,
                         *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
@@ -183,11 +189,11 @@ SYSTEM_FACT_KEYS: List[str] = [
     "drift_ip_addresses",
 ]
 
-DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
+DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT = (
 """# =====================================================================
-# drift.local.toml - Machine-Specific Configuration Overrides
+# drift_workspace.local.toml - Machine-Specific Configuration Overrides
 # =====================================================================
-# This file is gitignored and contains local overrides for drift.toml.
+# This file is gitignored and contains local overrides for drift_workspace.toml.
 
 [workspace]
 # default_target_directory = "~"
@@ -196,6 +202,7 @@ DEFAULT_DRIFT_LOCAL_TOML_CONTENT = (
 # gui_apps = false
 """
 )
+DEFAULT_DRIFT_LOCAL_TOML_CONTENT = DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT
 
 DEFAULT_SECRETS_ENV_CONTENT = (
     "# =====================================================================\n"
@@ -318,9 +325,9 @@ def get_default_drift_ignore_content() -> str:
     return DEFAULT_DRIFT_IGNORE_CONTENT
 
 
-def get_default_drift_local_toml_content() -> str:
-    """Gets default drift.local.toml template content."""
-    return DEFAULT_DRIFT_LOCAL_TOML_CONTENT
+def get_default_drift_workspace_local_toml_content() -> str:
+    """Gets default drift_workspace.local.toml template content."""
+    return DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT
 
 
 def get_default_secrets_env_content() -> str:
@@ -343,21 +350,21 @@ def get_default_jinja2_content() -> str:
     return DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT
 
 
-def get_default_drift_toml_content() -> str:
-    """Gets the default drift.toml template content."""
+def get_default_drift_workspace_toml_content() -> str:
+    """Gets the default drift_workspace.toml template content."""
     try:
         import pkgutil
-        data = pkgutil.get_data("drift", "templates/drift_default.toml")
+        data = pkgutil.get_data("drift", "templates/drift_workspace_default.toml")
         if data:
             return data.decode("utf-8")
     except Exception:
         pass
 
-    template_path = Path(__file__).resolve().parent / "templates" / "drift_default.toml"
+    template_path = Path(__file__).resolve().parent / "templates" / "drift_workspace_default.toml"
     if template_path.exists():
         return template_path.read_text(encoding="utf-8")
 
-    raise FileNotFoundError(f"Default drift.toml template file not found at {template_path}")
+    raise FileNotFoundError(f"Default drift_workspace.toml template file not found at {template_path}")
 
 
 def update_initial_env() -> None:

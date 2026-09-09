@@ -36,7 +36,9 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved [env]
 #    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
 #    Variables defined outside [env] cannot be referenced inside [env].
-# 4. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings.
+# 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
+#    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
+# 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings.
 
 [env.fallback]
 # Baseline default values (applied only when unset across all other scopes)

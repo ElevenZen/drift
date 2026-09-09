@@ -11,11 +11,11 @@ from unittest.mock import patch
 
 from drift.constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
-    GLOBAL_CONFIG_LOCAL_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
-    get_default_drift_local_toml_content,
+    DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     set_test_mode,
 )
 from drift.check_repo import (
@@ -110,10 +110,10 @@ class TestCheckRepoModular(unittest.TestCase):
         report = check_existing_workspace_status(self.drift_root)
         self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
 
-    def test_corrupt_drift_toml_is_broken(self) -> None:
-        """Invalid syntax in drift.toml must report BROKEN."""
+    def test_corrupt_drift_workspace_toml_is_broken(self) -> None:
+        """Invalid syntax in drift_workspace.toml must report BROKEN."""
         init_drift_workspace(self.drift_root)
-        (self.drift_root / "config" / "drift.toml").write_text("invalid_toml = [ {", encoding="utf-8")
+        (self.drift_root / "config" / "drift_workspace.toml").write_text("invalid_toml = [ {", encoding="utf-8")
 
         res = check_workspace_config(self.drift_root)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -140,7 +140,7 @@ class TestCheckRepoModular(unittest.TestCase):
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
     def test_missing_engine_inputs_is_broken(self) -> None:
-        """If drift.toml declares an engine input file that is missing on disk, reports BROKEN."""
+        """If drift_workspace.toml declares an engine input file that is missing on disk, reports BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "config" / "envsubst.bash").unlink()
 
@@ -249,14 +249,14 @@ class TestWorkspaceRepair(unittest.TestCase):
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())
 
-    def test_repair_recovers_missing_drift_local_toml(self) -> None:
-        """Repair creates missing config/drift.local.toml template."""
+    def test_repair_recovers_missing_drift_workspace_local_toml(self) -> None:
+        """Repair creates missing config/drift_workspace.local.toml template."""
         init_drift_workspace(self.drift_root)
-        (self.drift_root / "config" / "drift.local.toml").unlink()
+        (self.drift_root / "config" / "drift_workspace.local.toml").unlink()
 
         actions = repair_drift_workspace(self.drift_root)
-        self.assertTrue(any("drift.local.toml" in a for a in actions))
-        self.assertTrue((self.drift_root / "config" / "drift.local.toml").is_file())
+        self.assertTrue(any("drift_workspace.local.toml" in a for a in actions))
+        self.assertTrue((self.drift_root / "config" / "drift_workspace.local.toml").is_file())
 
     def test_repair_recovers_missing_secrets_env(self) -> None:
         """Repair creates missing config/secrets.env template and ensures it is gitignored."""
@@ -307,10 +307,10 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertTrue(any("bare Git repository" in a or "Manual resolution required" in a for a in actions))
 
     def test_repair_custom_engine_input_warns_user(self) -> None:
-        """If user has custom engine input in drift.toml that is missing, repair warns user."""
+        """If user has custom engine input in drift_workspace.toml that is missing, repair warns user."""
         init_drift_workspace(self.drift_root)
-        # Append a custom engine to drift.toml
-        config_path = self.drift_root / "config" / "drift.toml"
+        # Append a custom engine to drift_workspace.toml
+        config_path = self.drift_root / "config" / "drift_workspace.toml"
         content = config_path.read_text(encoding="utf-8")
         content += "\n[render.custom]\ninput_file = \"custom_input.txt\"\nsuffix = \"custom\"\nrender_command = \"cat {input} {src} > {dest}\"\n"
         config_path.write_text(content, encoding="utf-8")
@@ -318,6 +318,73 @@ class TestWorkspaceRepair(unittest.TestCase):
         actions = repair_drift_workspace(self.drift_root)
         self.assertTrue(any("custom_input.txt" in a for a in actions))
 
+    def test_legacy_drift_toml_detection_raises_error(self) -> None:
+        """Verifies that load_workspace_config raises ConfigError when legacy file exists, while check_workspace_config checks new file."""
+        init_drift_workspace(self.drift_root)
+        # Create legacy drift.toml in config/
+        legacy_file = self.drift_root / "config" / "drift.toml"
+        legacy_file.write_text("[workspace]\n", encoding="utf-8")
+
+        from drift.exceptions import ConfigError
+        from drift.workspace_config import load_workspace_config
+
+        # 1. load_workspace_config must fail fast on legacy file
+        with self.assertRaises(ConfigError) as ctx:
+            load_workspace_config(self.drift_root)
+        self.assertIn("Legacy workspace configuration file 'drift.toml' is no longer supported", str(ctx.exception))
+        self.assertIn("drift repair", str(ctx.exception))
+
+        # 2. check_workspace_config reports GOOD because drift_workspace.toml is present and valid
+        res = check_workspace_config(self.drift_root)
+        self.assertEqual(res.status, ComponentStatus.GOOD)
+
+        # 3. If drift_workspace.toml is missing, check_workspace_config reports NOT_FOUND
+        (self.drift_root / "config" / "drift_workspace.toml").unlink()
+        res_missing = check_workspace_config(self.drift_root)
+        self.assertEqual(res_missing.status, ComponentStatus.NOT_FOUND)
+
+    def test_repair_renames_legacy_drift_toml_and_local_toml(self) -> None:
+        """Verifies that repair automatically renames legacy config files to drift_workspace.*."""
+        init_drift_workspace(self.drift_root)
+        ws_file = self.drift_root / "config" / "drift_workspace.toml"
+        local_file = self.drift_root / "config" / "drift_workspace.local.toml"
+
+        legacy_main = self.drift_root / "config" / "drift.toml"
+        legacy_local = self.drift_root / "config" / "drift.local.toml"
+
+        ws_file.rename(legacy_main)
+        local_file.rename(legacy_local)
+
+        self.assertTrue(legacy_main.is_file())
+        self.assertTrue(legacy_local.is_file())
+        self.assertFalse(ws_file.exists())
+        self.assertFalse(local_file.exists())
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.toml' to 'config/drift_workspace.toml'" in a for a in actions))
+        self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.local.toml' to 'config/drift_workspace.local.toml'" in a for a in actions))
+
+        self.assertFalse(legacy_main.exists())
+        self.assertFalse(legacy_local.exists())
+        self.assertTrue(ws_file.is_file())
+        self.assertTrue(local_file.is_file())
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertTrue(report.is_healthy())
+
+    def test_repair_dry_run_plans_legacy_rename_without_modifying(self) -> None:
+        """Verifies that dry-run repair lists legacy file renames without modifying disk."""
+        init_drift_workspace(self.drift_root)
+        ws_file = self.drift_root / "config" / "drift_workspace.toml"
+        legacy_main = self.drift_root / "config" / "drift.toml"
+        ws_file.rename(legacy_main)
+
+        actions = repair_drift_workspace(self.drift_root, dry_run=True)
+        self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.toml' to 'config/drift_workspace.toml'" in a for a in actions))
+        self.assertTrue(legacy_main.is_file())
+        self.assertFalse(ws_file.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
+

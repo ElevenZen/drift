@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import cast, Any
 from drift.constants import (
     CONFIG_DIR_NAME,
-    GLOBAL_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DEFAULT_HOOK_TIMEOUT,
@@ -982,7 +982,7 @@ class TestConfigLoaders(unittest.TestCase):
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        config_path = config_dir / WORKSPACE_CONFIG_FILE_NAME
 
         # Test valid file
         config_path.write_text("""
@@ -1108,10 +1108,10 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertIsNone(local_res)
 
     def test_package_toml_template_rendering(self) -> None:
-        # 1. Create config/drift.toml
+        # 1. Create config/drift_workspace.toml
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        drift_toml_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        drift_toml_path = config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml_path.write_text("""
             [workspace]
             render_directory = "my_render"
@@ -1163,8 +1163,8 @@ class TestConfigLoaders(unittest.TestCase):
     def test_workspace_local_config_merge(self) -> None:
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
-        local_path = config_dir / "drift.local.toml"
+        config_path = config_dir / WORKSPACE_CONFIG_FILE_NAME
+        local_path = config_dir / "drift_workspace.local.toml"
 
         config_path.write_text("""
             [workspace]
@@ -1213,7 +1213,7 @@ class TestConfigLoaders(unittest.TestCase):
         # Create workspace config structure
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
+        config_path = config_dir / WORKSPACE_CONFIG_FILE_NAME
         config_path.write_text("""
             [workspace]
             render_directory = "my_render"
@@ -1253,8 +1253,8 @@ class TestConfigLoaders(unittest.TestCase):
     def test_workspace_config_env_loading(self) -> None:
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
-        config_path = config_dir / GLOBAL_CONFIG_FILE_NAME
-        local_path = config_dir / "drift.local.toml"
+        config_path = config_dir / WORKSPACE_CONFIG_FILE_NAME
+        local_path = config_dir / "drift_workspace.local.toml"
 
         config_path.write_text("""
             [workspace]
@@ -1369,7 +1369,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
 
-        base, ext = os.path.splitext(GLOBAL_CONFIG_FILE_NAME)
+        base, ext = os.path.splitext(WORKSPACE_CONFIG_FILE_NAME)
         config_envst_name = base + ".envst" + ext
         envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
         with open(envst_toml_path, "w", encoding="utf-8") as f:
@@ -1394,7 +1394,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         from drift.exceptions import ConfigError
 
         os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
-        base, ext = os.path.splitext(GLOBAL_CONFIG_FILE_NAME)
+        base, ext = os.path.splitext(WORKSPACE_CONFIG_FILE_NAME)
         config_envst_name = base + ".envst" + ext
         envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
         with open(envst_toml_path, "w", encoding="utf-8") as f:
@@ -1714,7 +1714,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
 
 class TestSettingsConfig(unittest.TestCase):
-    """Tests for SettingsConfig and [settings] in drift.toml."""
+    """Tests for SettingsConfig and [settings] in drift_workspace.toml."""
 
     def test_settings_config_defaults(self) -> None:
         from drift.workspace_config import SettingsConfig
@@ -1726,6 +1726,8 @@ class TestSettingsConfig(unittest.TestCase):
         s1 = SettingsConfig.from_dict({"probe_wan_ip": True})
         self.assertTrue(s1.probe_wan_ip)
 
+    def test_settings_config_from_dict_aliases(self) -> None:
+        from drift.workspace_config import SettingsConfig
         s2 = SettingsConfig.from_dict({"probe_network_ip": True})
         self.assertTrue(s2.probe_wan_ip)
 
@@ -1764,7 +1766,7 @@ class TestSettingsConfig(unittest.TestCase):
 
 
 class TestWorkspaceSectionConfig(unittest.TestCase):
-    """Tests for WorkspaceSectionConfig and [workspace] in drift.toml."""
+    """Tests for WorkspaceSectionConfig and [workspace] in drift_workspace.toml."""
 
     def test_workspace_section_defaults(self) -> None:
         ws_sec = WorkspaceSectionConfig()
