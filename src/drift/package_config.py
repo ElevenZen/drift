@@ -1273,6 +1273,17 @@ def load_package_config_from_source_dir(
     return config
 
 
+def load_package_config_from_render_dir(render_base: Path, pkg: str) -> PackageConfig:
+    """Loads package configuration strictly from the render/ sandbox directory."""
+    config_file = render_base / pkg / PACKAGE_CONFIG_FILE_NAME
+    if not config_file.exists():
+        raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
+    try:
+        return load_package_config_rendered(config_file)
+    except Exception as e:
+        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
+
+
 def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
     """Loads package configuration strictly from the install/ base directory."""
     install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME

@@ -829,7 +829,8 @@ To safely determine whether a package should execute its `pre/post_install` or `
     - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
 *   **Safety Abort Logic**:
     When a package enters Primitive 4 or 5, the system checks its current state.
-    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity.
+    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity. Passing `--force` overrides this safety interlock.
+    - **Declarative Exclusions (`enable_install = false`)**: Packages with `enable_install = false` are never staged or deployed, regardless of whether `--force` is supplied. `--force` only overrides runtime safeguards, not declarative package rules.
     - **Nesting and Scope Safety Checks**: 
       The target directory written in the configuration (`target_directory` or `default_target_directory`) cannot be inside or equal to the `drift` workspace root (`drift_root`). If the absolute target directory is inside or equal to the absolute workspace root, the operation **aborts immediately** with a `ValueError`. This protects the workspace from accidentally being polluted or recursively linked.
     - A package in **`"staged"`** state is allowed to proceed to deployment or be re-staged.
@@ -901,9 +902,9 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
-    - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false`.
+    - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
-    - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted.
+    - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
         1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `added_files`, `modified_files`, `deleted_files`) for the function return value and downstream physical deployment.
         2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>` where they can be executed by Drift during installation.

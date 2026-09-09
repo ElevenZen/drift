@@ -21,7 +21,19 @@ def run_primitive_10_create_new_package(
     target_directory: Optional[str] = None,
     install_method: Optional[str] = None
 ) -> Path:
-    """Scaffolds a new package directory and a default package configuration file."""
+    """Scaffolds a new package directory and a default package configuration file (Primitive 10).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_name: The name of the new package to scaffold.
+        force: If True, overwrites any existing package configuration file in the package
+            source directory without raising a FileExistsError.
+        target_directory: Optional custom target directory override.
+        install_method: Optional install method override ('stow' or 'copy').
+
+    Returns:
+        The Path to the created package source directory.
+    """
     package_dir = workspace_config.source_path / package_name
     
     package_dir.mkdir(parents=True, exist_ok=True)

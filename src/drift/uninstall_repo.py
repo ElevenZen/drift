@@ -298,11 +298,19 @@ def run_primitive_7_uninstall_packages(
     detach: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> UninstallResult:
-    """
-    Uninstalls or detaches one or more packages from the system.
-    Safeguard: Aborts if the package is still enabled in workspace config unless force=True.
-    If package_names is None, uninstalls all orphans.
-    Returns the UninstallResult containing details of uninstalled packages.
+    """Uninstalls or detaches one or more packages from the system (Primitive 7).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_names: Specific package name(s) to uninstall, or None to uninstall all orphans.
+        force: If True, bypasses the active package safeguard, allowing uninstallation of packages
+            that are still active/enabled in the workspace configuration (drift.toml).
+        dry_run: If True, simulates uninstallation without removing files from disk.
+        detach: If True, deregisters packages from Drift tracking while leaving deployed files on disk.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        UninstallResult containing details of uninstalled packages.
 
     Note:
         Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only

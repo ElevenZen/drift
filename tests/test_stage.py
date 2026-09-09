@@ -201,6 +201,12 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("No active packages are enabled", str(cm.exception))
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
+        # Force should also not stage a package whose enable_install is False
+        with self.assertRaises(RuntimeError) as cm_force:
+            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b", force=True)
+        self.assertIn("No active packages are enabled", str(cm_force.exception))
+        self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
+
     def test_stage_stow_ignores_and_symlinking(self) -> None:
         """Verifies that files matching PCRE .drift_ignore are ignored, and a symlink is created."""
         # 1. First render pkg_ignored
@@ -773,6 +779,25 @@ class TestStageRepo(unittest.TestCase):
             run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
         self.assertIn("Safety Abort: Package 'pkg_a' is currently in 'staging' state", str(ctx.exception))
         self.assertIn("drift rollback pkg_a", str(ctx.exception))
+
+    def test_load_package_config_from_render_dir_missing_raises_error(self) -> None:
+        """Verifies that load_package_config_from_render_dir raises RuntimeError if drift_package.toml is missing."""
+        from drift.package_config import load_package_config_from_render_dir
+        non_existent_pkg = "pkg_does_not_exist"
+        with self.assertRaises(RuntimeError) as ctx:
+            load_package_config_from_render_dir(self.render_dir, non_existent_pkg)
+        self.assertIn("Failed to find drift_package.toml", str(ctx.exception))
+
+    def test_load_package_config_from_render_dir_invalid_toml_raises_error(self) -> None:
+        """Verifies that load_package_config_from_render_dir raises RuntimeError if drift_package.toml is invalid."""
+        from drift.package_config import load_package_config_from_render_dir
+        corrupt_pkg_dir = self.render_dir / "pkg_corrupt"
+        corrupt_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (corrupt_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text("invalid = = toml", encoding="utf-8")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            load_package_config_from_render_dir(self.render_dir, "pkg_corrupt")
+        self.assertIn("Failed to load package configuration", str(ctx.exception))
 
 
 if __name__ == "__main__":

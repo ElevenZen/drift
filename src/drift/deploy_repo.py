@@ -216,7 +216,20 @@ def run_primitive_deploy_pipeline(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> DeployResult:
-    """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply."""
+    """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
+        force: If True, bypasses the Sentinel Drift check (allowing deployment even if uncommitted
+            drifts exist in install/) and passes force to Primitive 4 (staging) and Primitive 5
+            (install deployment) to bypass midway failed state checks and uncommitted modification safeguards.
+            Note: Does NOT bypass 'enable_install = false' package configurations.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        DeployResult containing detailed status and deployed packages.
+    """
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
     logger.info("🔍 Running pre-flight Git configuration checks...")
     check_repo_can_commit(workspace_config.render_path)

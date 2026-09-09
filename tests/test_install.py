@@ -1182,6 +1182,17 @@ class TestInstallRepo(unittest.TestCase):
         reloaded = load_state_registry(state_file)
         self.assertNotEqual(reloaded.get_package_state(pkg_disabled), "deploying")
 
+        # Also verify that force=True does NOT bypass enable_install=False
+        res_forced = deploy_one_package(
+            workspace_config=self.workspace_config,
+            state_registry=registry,
+            pkg=pkg_disabled,
+            resolve_symlinks=True,
+            force=True
+        )
+        self.assertEqual(res_forced.status, "SKIPPED")
+        self.assertEqual(res_forced.error, "enable_install is False")
+
         # 2. Test package with missing install directory (corrupted stage)
         pkg_missing = "pkg_missing_dir"
         # Setup drift_package.toml in source only so load_config_for_install doesn't find it in install/

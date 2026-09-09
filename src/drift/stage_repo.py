@@ -9,7 +9,11 @@ from dataclasses import dataclass, field
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
 from .workspace_config import WorkspaceConfig
-from .package_config import load_package_config_rendered, PackageConfig
+from .package_config import (
+    load_package_config_rendered,
+    load_package_config_from_render_dir,
+    PackageConfig,
+)
 from .file_utils import (
     file_contents_differ,
     backup_and_delete_one_file,
@@ -44,25 +48,6 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
             f"Package '{pkg}' in install directory has uncommitted local modifications. "
             "Please commit or stash your changes before staging, or use --force flag to bypass this check."
         )
-
-
-def load_config_from_render(render_base: Path, pkg: str, force: bool = False) -> PackageConfig:
-    try:
-        # the drift_package.toml should exist as a static package config.
-        config_file = render_base / pkg / PACKAGE_CONFIG_FILE_NAME
-        if not config_file.exists():
-            raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
-        else:
-            metadata = load_package_config_rendered(config_file)
-        return metadata
-    except Exception as e:
-        if not force:
-            raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
-        logger.warning(f"Config load failed for '{pkg}' in render sandbox, but proceeding due to --force: {e}")
-        metadata = PackageConfig(pkg)
-        metadata.enable_render = True
-        metadata.enable_install = False
-        return metadata
 
 
 def process_package_changes(
@@ -200,6 +185,13 @@ def run_primitive_4_stage_render_to_install(
 ) -> List[PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
+    Args:
+        workspace_config: The workspace configuration instance.
+        target_pkgs: Specific package name(s) to stage, or None for all active packages.
+        force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
+            and ignores uncommitted local modifications in the install/ directory.
+            Note: Does NOT bypass 'enable_install = false' package configurations.
+
     Returns:
         A list of PackageStageChanges objects representing package changes.
     """
@@ -222,8 +214,8 @@ def run_primitive_4_stage_render_to_install(
     # Filter out packages that are not enabled for installation/deployment.
     pkg_metadata = {}
     for pkg in active_packages:
-        metadata = load_config_from_render(render_base, pkg, force=force)
-        if not (force or metadata.enable_install):
+        metadata = load_package_config_from_render_dir(render_base, pkg)
+        if not metadata.enable_install:
             continue
         # Verify hook files exist and are regular files in render/ sandbox
         metadata.hooks.check_hook_files(render_base / pkg)

@@ -844,7 +844,21 @@ def run_primitive_adopt_drifts(
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> List[str]:
-    """High-level orchestrator for adopting system drifts back to declarative templates."""
+    """High-level orchestrator for adopting system drifts back to declarative templates (Primitive Adopt).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_names: Specific package name(s) to adopt, or None to discover all drifted packages.
+        interactive: If True, interactively prompts for conflict resolution.
+        accept_conflicts: If True, writes Git conflict merge markers directly into source template files.
+        force: If True, bypasses the Git cleanliness safeguard on package source directories (src/<pkg>/),
+            allowing adoption to proceed even if uncommitted modifications exist in source.
+        dry_run: If True, previews drift adoption without writing patches to disk.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        List of package names successfully adopted and resolved.
+    """
     # 1. Discovery
     if not package_names:
         package_names = get_drifted_packages(workspace_config)

@@ -59,6 +59,7 @@ from .package_config import (
     PackageRequirements,
     load_package_config_rendered,
     load_package_config_from_source_dir,
+    load_package_config_from_render_dir,
 )
 from .lifecycle_hooks import (
     HookExecFlags,

@@ -763,7 +763,6 @@ def deploy_one_package(
 ) -> PackageInstallResult:
     """
     Core function to deploy a single package configuration.
-    force flag skips the enable_install check and allows deployment even if enable_install is False.
     force flag skips the check for current state being 'staging' or 'deploying', allowing deployment even if previous operation failed midway.
     """
 
@@ -771,8 +770,7 @@ def deploy_one_package(
     hook_flags = HookExecFlags.resolve(flags)
     
     metadata = load_config_for_install(install_base, pkg)
-    # TODO: it's a strange design to let force bypass 'enable_install' field, maybe remove this force bypass.
-    if not (force or metadata.enable_install):
+    if not metadata.enable_install:
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return PackageInstallResult(
             package=pkg,
@@ -899,7 +897,21 @@ def run_primitive_5_install_deployment(
     package_changes: Optional[List[PackageStageChanges]] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> InstallDeploymentResult:
-    """Applies changes from the install/ state database to the active host system (Primitive 5)."""
+    """Applies changes from the install/ state database to the active host system (Primitive 5).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        packages_to_redeploy: Specific package name(s) to deploy, or None for all installed packages.
+        resolve_symlinks: Whether symlinks should be resolved during deployment.
+        force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
+            in the state database, allowing deployment even if a previous operation failed midway.
+            Note: Does NOT bypass 'enable_install = false' package configurations.
+        package_changes: Optional pre-calculated stage changes per package.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        InstallDeploymentResult with detailed per-package deployment results.
+    """
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
     hook_flags = HookExecFlags.resolve(flags)
@@ -916,14 +928,14 @@ def run_primitive_5_install_deployment(
                         if (install_base / pkg).is_dir() }
 
     # Pre-flight check for administrator/sudo privileges if any active package requires sudo
-    needs_sudo = any(m.sudo for pkg, m in pkg_metadata_map.items() if force or m.enable_install)
+    needs_sudo = any(m.sudo for pkg, m in pkg_metadata_map.items() if m.enable_install)
     if needs_sudo:
         from .file_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
     if not hook_flags.no_hooks:
         for pkg, metadata in pkg_metadata_map.items():
-            if force or metadata.enable_install:
+            if metadata.enable_install:
                 metadata.hooks.check_hook_files(install_base / pkg)
     
     results: List[PackageInstallResult] = []

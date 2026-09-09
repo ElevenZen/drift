@@ -57,7 +57,19 @@ def run_primitive_8_rollback_recovery(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> List[str]:
-    """Reverts failed midway deployments and restores system files to the last committed clean state."""
+    """Reverts failed midway deployments and restores system files to the last committed clean state (Primitive 8).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_names: Specific package name(s) to rollback, or None for all target packages.
+        force: If True, bypasses the failed midway conflict state safeguard ('staging' or 'deploying'),
+            allowing a hard reset of packages to their last committed clean Git HEAD state even if they
+            are currently in 'installed' state.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        List of package names successfully restored/rolled back.
+    """
     state_file = workspace_config.install_path / "state.toml"
     state_registry = load_state_registry(state_file)
 
