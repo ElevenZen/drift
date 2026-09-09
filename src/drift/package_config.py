@@ -665,7 +665,7 @@ def resolve_and_interpolate_package_config(
     data: dict,
     package_name: str,
     workspace_config: Optional[WorkspaceConfig] = None,
-) -> Tuple[dict, Dict[str, str], Dict[str, str]]:
+) -> dict:
     """Resolves environment variables and interpolates references across a package config dictionary.
 
     Follows the 7-Tier Precedence Model:
@@ -682,10 +682,7 @@ def resolve_and_interpolate_package_config(
         workspace_config: Optional workspace configuration for deriving directory facts.
 
     Returns:
-        A tuple of:
-        1. interpolated_data: Fully interpolated configuration dictionary (excluding [env]).
-        2. override_map: Resolved dictionary of [env.override] / [env.overwrite] variables.
-        3. fallback_map: Resolved dictionary of [env.fallback] variables.
+        Fully interpolated and stitched configuration dictionary ready for dump_toml or PackageConfig.from_dict.
     """
     env_data = data.get("env", {})
 
@@ -725,7 +722,19 @@ def resolve_and_interpolate_package_config(
         error_cls=ConfigError
     )
 
-    return interpolated_data, override_map, fallback_map
+    stitched_data = dict(interpolated_data)
+    env_dict: Dict[str, Any] = {}
+    if override_map:
+        env_dict["override"] = override_map
+    if fallback_map:
+        env_dict["fallback"] = fallback_map
+
+    if env_dict:
+        stitched_data["env"] = env_dict
+    elif "env" in stitched_data:
+        del stitched_data["env"]
+
+    return stitched_data
 
 
 @dataclass
@@ -997,7 +1006,6 @@ class PackageConfig:
         data: dict,
         package_name: str,
         source_files: Sequence[Optional[Path]] = (),
-        workspace_config: Optional[WorkspaceConfig] = None,
     ) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         if not package_name or not isinstance(package_name, str):
@@ -1035,14 +1043,11 @@ class PackageConfig:
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise ConfigError(f"Unknown package option: '{key}'{name_str}")
 
-        # Resolve environment variables and interpolate configuration sections
-        interpolated_data, override_map, fallback_map = resolve_and_interpolate_package_config(
-            data,
-            package_name=str(name),
-            workspace_config=workspace_config
-        )
-        package_data = interpolated_data.get("package", {})
-        hooks_data = interpolated_data.get("hooks", {})
+        # Parse package environment tables ([env.override], [env.fallback])
+        override_map: Dict[str, str] = {}
+        fallback_map: Dict[str, str] = {}
+        if env_data:
+            override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
 
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
         hooks = PackageHooks.from_dict(
@@ -1051,7 +1056,7 @@ class PackageConfig:
         )
 
         # Parse declarative requirements ([package.requirements] or top-level [requirements])
-        req_data = package_data.get("requirements") or interpolated_data.get("requirements") or {}
+        req_data = package_data.get("requirements") or data.get("requirements") or {}
         requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
 
         fcd = package_data.get("fully_controlled_dirs", [])
@@ -1271,23 +1276,30 @@ def load_package_config_from_source_dir(
         local_dict = {}
     combined_dict = merge_toml(base_dict, local_dict)
 
-    # Determine output path: render/<package_name>/drift_package.toml
+    # 1. Resolve environment variables and stitch configuration sections
+    stitched_dict = resolve_and_interpolate_package_config(
+        combined_dict,
+        package_name=pkg_name,
+        workspace_config=workspace_config,
+    )
+
+    # 2. Determine output path: render/<package_name>/drift_package.toml
     output_file_path = workspace_config.render_path / pkg_name / PACKAGE_CONFIG_FILE_NAME
     output_file_path.parent.mkdir(parents=True, exist_ok=True)
-    toml_str = dump_toml(combined_dict)
+    toml_str = dump_toml(stitched_dict)
     output_file_path.write_text(toml_str, encoding="utf-8")
+    # copy file permission from the template input.
     if base_info and base_info.path.exists():
         try:
             shutil.copymode(base_info.path, output_file_path)
         except Exception:
             pass
 
-    # Load from the rendered path
+    # 3. Load PackageConfig from the stitched dictionary
     try:
-        config = PackageConfig.from_dict(combined_dict,
+        config = PackageConfig.from_dict(stitched_dict,
                                          package_name=pkg_name,
-                                         source_files=source_files,
-                                         workspace_config=workspace_config)
+                                         source_files=source_files)
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
     return config

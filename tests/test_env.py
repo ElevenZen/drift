@@ -925,7 +925,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 "timeout": 45,
             }
         }
-        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="my_daemon")
+        from drift.package_config import resolve_and_interpolate_package_config
+        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon")
         self.assertEqual(pkg_cfg.name, "my_daemon")
         self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
         self.assertEqual(pkg_cfg.env_override["SERVICE_URL"], "http://127.0.0.1:8000")
@@ -977,7 +979,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_facts_and_precedence(self) -> None:
         """Verifies that all four package facts are available and 7-tier precedence is respected in package config."""
-        from drift.package_config import PackageConfig
+        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
         from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Test CLI environment precedence (Tier 1 INITIAL_ENV)
@@ -1021,7 +1023,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         # Simulate workspace environment variable in os.environ (Tier 6)
         os.environ["OVERRIDDEN_BY_WORKSPACE"] = "workspace_val"
 
-        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
+        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_pkg", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", source_files=[pkg_toml_path])
         self.assertEqual(pkg_cfg.name, "my_pkg")
         self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
         self.assertEqual(pkg_cfg.env_override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
@@ -1035,7 +1038,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
         from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import PackageConfig
+        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
 
         ws = WorkspaceConfig(
             drift_root_path=self.drift_root,
@@ -1064,14 +1067,15 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             }
         }
-        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="custom_pkg", workspace_config=ws)
+        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="custom_pkg", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="custom_pkg")
         self.assertEqual(pkg_cfg.env_override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
         self.assertEqual(pkg_cfg.env_override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
         self.assertEqual(pkg_cfg.env_override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
 
     def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
         """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
-        from drift.package_config import PackageConfig
+        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
         from drift.exceptions import ConfigError
 
         # drift_package_name is always set
@@ -1085,7 +1089,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             }
         }
-        pkg_cfg = PackageConfig.from_dict(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
+        stitched = resolve_and_interpolate_package_config(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg")
         self.assertEqual(pkg_cfg.env_override["NAME_REF"], "my_pkg")
 
         # Referencing dir facts without workspace_config raises ConfigError
@@ -1100,13 +1105,13 @@ ALL_PROXY = "${SOCKS_PROXY}"
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_dict_dir_ref, package_name="my_pkg", workspace_config=None)
+            resolve_and_interpolate_package_config(pkg_dict_dir_ref, package_name="my_pkg", workspace_config=None)
         self.assertIn("drift_package_source_dir", str(ctx.exception))
 
     def test_package_config_fallback_references_drift_package_source_dir(self) -> None:
         """Verifies that [env.fallback] can reference ${drift_package_source_dir} and respect precedence."""
         from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import PackageConfig
+        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
         from drift.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
@@ -1139,7 +1144,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         }
 
         # 1. When EXTERNAL_VAR is unset in os.environ, fallback takes effect
-        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
+        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="pkg_fallback_test")
         expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
         self.assertEqual(pkg_cfg.env_fallback["FALLBACK_SRC_DIR"], expected_src)
         self.assertEqual(pkg_cfg.env_fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
@@ -1150,6 +1156,57 @@ ALL_PROXY = "${SOCKS_PROXY}"
             with pkg_cfg.package_envs(ws):
                 self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
                 self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
+
+    def test_load_package_config_from_source_dir_writes_stitched_toml_and_renders(self) -> None:
+        """Verifies that load_package_config_from_source_dir writes out stitched TOML and load_package_config_rendered reads it."""
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.package_config import load_package_config_from_source_dir, load_package_config_rendered
+        from drift.render_engine_config import RenderEngineRegistry
+
+        ws = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                source_directory=Path("src"),
+                render_directory=Path("render"),
+                install_directory=Path("install"),
+                backup_directory=Path("backup"),
+                default_target_directory=Path("/target"),
+                default_install_method="stow",
+            ),
+            packages_enable={},
+            packages_enable_default=True,
+            render_engine_configs=RenderEngineRegistry(),
+            env={},
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "pkg_stitched_test"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f"""
+        [package]
+        name = "pkg_stitched_test"
+        target_directory = "${{drift_package_source_dir}}/my_target"
+
+        [env.fallback]
+        FALLBACK_SRC = "${{drift_package_source_dir}}"
+        """, encoding="utf-8")
+
+        # 1. Load from source dir with workspace config
+        loaded_cfg = load_package_config_from_source_dir(pkg_src_dir, ws)
+        expected_src = str(self.drift_root / "src" / "pkg_stitched_test")
+        self.assertEqual(str(loaded_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(loaded_cfg.env_fallback["FALLBACK_SRC"], expected_src)
+
+        # 2. Verify rendered file on disk in render/
+        rendered_toml_path = self.drift_root / "render" / "pkg_stitched_test" / "drift_package.toml"
+        self.assertTrue(rendered_toml_path.exists())
+        rendered_content = rendered_toml_path.read_text(encoding="utf-8")
+        self.assertNotIn("${drift_package_source_dir}", rendered_content)
+        self.assertIn(f"{expected_src}/my_target", rendered_content)
+
+        # 3. Load from rendered file directly (without workspace config)
+        rendered_cfg = load_package_config_rendered(rendered_toml_path)
+        self.assertEqual(str(rendered_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(rendered_cfg.env_fallback["FALLBACK_SRC"], expected_src)
 
 
 if __name__ == "__main__":

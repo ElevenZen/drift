@@ -63,6 +63,7 @@ from .package_config import (
     PackageConfig,
     PackageHooks,
     PackageRequirements,
+    resolve_and_interpolate_package_config,
     load_package_config_rendered,
     load_package_config_from_source_dir,
     load_package_config_from_render_dir,
