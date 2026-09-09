@@ -329,8 +329,9 @@ class TestWorkspaceRepair(unittest.TestCase):
         from drift.workspace_config import load_workspace_config
 
         # 1. load_workspace_config must fail fast on legacy file
-        with self.assertRaises(ConfigError) as ctx:
-            load_workspace_config(self.drift_root)
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            with self.assertRaises(ConfigError) as ctx:
+                load_workspace_config(self.drift_root)
         self.assertIn("Legacy workspace configuration file 'drift.toml' is no longer supported", str(ctx.exception))
         self.assertIn("drift repair", str(ctx.exception))
 
@@ -360,7 +361,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertFalse(ws_file.exists())
         self.assertFalse(local_file.exists())
 
-        actions = repair_drift_workspace(self.drift_root)
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            actions = repair_drift_workspace(self.drift_root)
         self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.toml' to 'config/drift_workspace.toml'" in a for a in actions))
         self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.local.toml' to 'config/drift_workspace.local.toml'" in a for a in actions))
 
@@ -379,7 +381,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         legacy_main = self.drift_root / "config" / "drift.toml"
         ws_file.rename(legacy_main)
 
-        actions = repair_drift_workspace(self.drift_root, dry_run=True)
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            actions = repair_drift_workspace(self.drift_root, dry_run=True)
         self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.toml' to 'config/drift_workspace.toml'" in a for a in actions))
         self.assertTrue(legacy_main.is_file())
         self.assertFalse(ws_file.exists())

@@ -36,3 +36,22 @@ where = ["src"]
 [tool.setuptools.package-data]
 drift = ["templates/*", "templates/*.toml"]
 "drift.cli" = ["help_docs/*", "help_docs/*.md"]
+
+[tool.coverage.run]
+source = ["src/drift"]
+omit = [
+    "tests/*",
+    "/tmp/*",
+    "*/tmp/*",
+]
+
+[tool.coverage.report]
+ignore_errors = true
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
