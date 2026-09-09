@@ -21,7 +21,7 @@ from .constants import (
 )
 from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import load_package_config_from_source_dir
-from .render_input import find_engine_for_file, render_input_templates
+from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
 from .exceptions import ConfigError
 from .lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
@@ -60,10 +60,9 @@ def render_or_copy_file(
         dest_path.mkdir(parents=True, exist_ok=True)
         return (relative_path.as_posix(), False)
 
-    engines = list(workspace_config.render_engine_configs.values())
     engine: Optional[RenderEngineConfig] = None
     if pkg_config.enable_render:
-        engine = find_engine_for_file(relative_path.as_posix(), engines)
+        engine = workspace_config.render_engine_configs.find_engine_for_file(relative_path.as_posix())
 
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
@@ -309,7 +308,7 @@ def run_primitive_2_render_packages(
     with secrets_env_scope(workspace_config.drift_root):
         # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
         render_input_templates(
-            engines=list(workspace_config.render_engine_configs.values()),
+            engines=workspace_config.render_engine_configs,
             drift_root=workspace_config.drift_root,
             render_dir=workspace_config.workspace.render_directory,
         )

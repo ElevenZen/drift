@@ -123,8 +123,6 @@ from .deploy_repo import (
     run_primitive_deploy_pipeline_with_error_handling,
 )
 from .render_input import (
-    find_engine_for_file,
-    strip_engine_suffix,
     resolve_dependencies,
     check_cyclic_dependencies,
     render_input_templates,

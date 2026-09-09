@@ -165,6 +165,18 @@ class RenderEngineRegistry(MutableMapping):
                 )
         return cls(configs)
 
+    def find_engine_for_file(self, filename: str) -> Optional[RenderEngineConfig]:
+        """Finds which engine (if any) should render the given file based on suffix patterns."""
+        for engine in self._engines.values():
+            suffix = engine.suffix
+            if not suffix:
+                continue
+            if filename.endswith(f".{suffix}"):
+                return engine
+            if f".{suffix}." in filename:
+                return engine
+        return None
+
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:
         """Calculates the new template filename based on the old template's engine suffix and the new target filename.
         

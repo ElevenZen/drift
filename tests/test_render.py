@@ -20,8 +20,6 @@ from drift.workspace_config import RenderEngineConfig, WorkspaceConfig, Workspac
 from drift.render_engine_config import RenderEngineRegistry
 from drift.render_core import render_template, render_template_to_file, RenderError
 from drift.render_input import (
-    find_engine_for_file,
-    strip_engine_suffix,
     resolve_dependencies,
     check_cyclic_dependencies,
     render_input_templates,
@@ -321,33 +319,22 @@ class TestDependencyResolver(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_find_engine_for_file(self) -> None:
-        engines = [
-            RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
-            RenderEngineConfig(name="mustache", input_file=Path("mustache.json"), suffix="mustache", render_command="cmd")
-        ]
+        registry = RenderEngineRegistry({
+            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
+            "mustache": RenderEngineConfig(name="mustache", input_file=Path("mustache.json"), suffix="mustache", render_command="cmd")
+        })
         # Match by intermediate segment
-        engine1: RenderEngineConfig = cast(RenderEngineConfig,
-                                           find_engine_for_file("mustache.envst.json", engines))
+        engine1 = registry.find_engine_for_file("mustache.envst.json")
+        self.assertIsNotNone(engine1)
         self.assertEqual(engine1.name, "envsubst")
         # Match by terminal suffix
-        engine2: RenderEngineConfig = cast(RenderEngineConfig,
-                                           find_engine_for_file("mustache.mustache", engines))
+        engine2 = registry.find_engine_for_file("mustache.mustache")
+        self.assertIsNotNone(engine2)
         self.assertEqual(engine2.name, "mustache")
         # No match
-        self.assertIsNone(find_engine_for_file("static.json", engines))
+        self.assertIsNone(registry.find_engine_for_file("static.json"))
 
     def test_strip_engine_suffix(self) -> None:
-        # 1. Test legacy strip_engine_suffix wrapper
-        self.assertEqual(strip_engine_suffix("mustache.envst.json", "envst"), "mustache.json")
-        self.assertEqual(strip_engine_suffix("settings.mustache.json", "mustache"), "settings.json")
-        self.assertEqual(strip_engine_suffix("mustache.envst", "envst"), "mustache")
-        self.assertEqual(strip_engine_suffix("no_suffix.json", "envst"), "no_suffix.json")
-        self.assertEqual(
-            strip_engine_suffix("file.envst.extra.envst.json", "envst"),
-            "file.envst.extra.json"
-        )
-
-        # 2. Test new member method RenderEngineConfig.strip_suffix
         envst_engine = RenderEngineConfig(name="envsubst", input_file=Path(""), suffix="envst", render_command="")
         mustache_engine = RenderEngineConfig(name="mustache", input_file=Path(""), suffix="mustache", render_command="")
         
@@ -361,18 +348,18 @@ class TestDependencyResolver(unittest.TestCase):
         )
 
     def test_resolve_dependencies(self) -> None:
-        engines = [
-            RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
-            RenderEngineConfig(name="mustache", input_file=Path("mustache.envst.json"), suffix="mustache", render_command="cmd")
-        ]
-        deps = resolve_dependencies(engines)
+        registry = RenderEngineRegistry({
+            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
+            "mustache": RenderEngineConfig(name="mustache", input_file=Path("mustache.envst.json"), suffix="mustache", render_command="cmd")
+        })
+        deps = resolve_dependencies(registry)
         self.assertEqual(deps, {"envsubst": None, "mustache": "envsubst"})
 
         # Self-dependency should be mapped to None (treated as static)
-        self_dep_engines = [
-            RenderEngineConfig(name="envsubst", input_file=Path("envsubst.envst.bash"), suffix="envst", render_command="cmd")
-        ]
-        self_deps = resolve_dependencies(self_dep_engines)
+        self_dep_registry = RenderEngineRegistry({
+            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("envsubst.envst.bash"), suffix="envst", render_command="cmd")
+        })
+        self_deps = resolve_dependencies(self_dep_registry)
         self.assertEqual(self_deps, {"envsubst": None})
 
     def test_check_cyclic_dependencies(self) -> None:
@@ -417,7 +404,10 @@ class TestDependencyResolver(unittest.TestCase):
             render_command="cat %s # %i"
         )
 
-        engines = [envsubst_engine, mustache_engine]
+        engines = RenderEngineRegistry({
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine
+        })
 
         # Call render_input_templates
         render_input_templates(engines, self.drift_root)
@@ -440,7 +430,7 @@ class TestDependencyResolver(unittest.TestCase):
         )
         # Calling render_input_templates should not raise FileNotFoundError anymore.
         # It logs a warning and updates input_file to Path("").
-        render_input_templates([envsubst_engine], self.drift_root)
+        render_input_templates(RenderEngineRegistry({"envsubst": envsubst_engine}), self.drift_root)
         self.assertEqual(envsubst_engine.input_file, Path(""))
 
     def test_multi_level_dependency_tree(self) -> None:
@@ -469,7 +459,12 @@ class TestDependencyResolver(unittest.TestCase):
         engine_c = RenderEngineConfig(name="engine_c", input_file=Path("c.suf_a"), suffix="suf_c", render_command="cat %s # %i")
         engine_d = RenderEngineConfig(name="engine_d", input_file=Path("d.suf_c"), suffix="suf_d", render_command="cat %s # %i")
 
-        engines = [engine_a, engine_b, engine_c, engine_d]
+        engines = RenderEngineRegistry({
+            "engine_a": engine_a,
+            "engine_b": engine_b,
+            "engine_c": engine_c,
+            "engine_d": engine_d,
+        })
 
         # 1. Resolve and check dependencies
         from drift.render_input import resolve_dependencies
@@ -521,7 +516,10 @@ class TestDependencyResolver(unittest.TestCase):
             suffix="mustache",
             render_command="cat %s # %i"
         )
-        engines = [envsubst_engine, mustache_engine]
+        engines = RenderEngineRegistry({
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine
+        })
 
         # Test custom render directory name
         render_input_templates(engines, self.drift_root, render_dir="my_custom_render_sandbox")
@@ -557,7 +555,10 @@ class TestDependencyResolver(unittest.TestCase):
             render_command="cat %s # %i"
         )
 
-        engines = [envsubst_engine, mustache_engine]
+        engines = RenderEngineRegistry({
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine
+        })
 
         # Render
         render_input_templates(engines, self.drift_root)
@@ -1065,7 +1066,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Calling render_input_templates should not raise FileNotFoundError anymore
         # It logs a warning and updates engine_config.input_file to Path("")
-        render_input_templates([engine_config], self.drift_root)
+        render_input_templates(RenderEngineRegistry({"missing_static_engine": engine_config}), self.drift_root)
         self.assertEqual(engine_config.input_file, Path(""))
 
         # Create a mock template
@@ -1101,7 +1102,10 @@ class TestRenderPackage(unittest.TestCase):
             render_command="mustache %i %s"
         )
 
-        render_input_templates([dep_engine, mustache_engine], self.drift_root)
+        render_input_templates(RenderEngineRegistry({
+            "envsubst": dep_engine,
+            "mustache": mustache_engine
+        }), self.drift_root)
         self.assertEqual(mustache_engine.input_file, Path(""))
 
     def test_render_package_name_starts_with_dot_dash(self) -> None:
@@ -1457,7 +1461,11 @@ class TestRenderPackage(unittest.TestCase):
         )
 
         # render_input_templates should not throw, but should gracefully set jinja2.input_file = Path("")
-        render_input_templates([envsubst_engine, mustache_engine, jinja2_engine], self.drift_root)
+        render_input_templates(RenderEngineRegistry({
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine,
+            "jinja2": jinja2_engine
+        }), self.drift_root)
         self.assertEqual(jinja2_engine.input_file, Path(""))
         self.assertTrue(jinja2_engine.is_disabled)
 

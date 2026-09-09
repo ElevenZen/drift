@@ -2,44 +2,27 @@
 
 import logging
 from pathlib import Path
-from typing import Mapping, Dict, List, Optional, Union
-from .workspace_config import RenderEngineConfig
+from typing import Mapping, Dict, Optional, Union
+from .render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from .render_core import render_template_to_file
 from .constants import CONFIG_DIR_NAME, INTERNAL_RENDER_COMMAND
 
 logger = logging.getLogger(__name__)
 
 
-def find_engine_for_file(filename: str, engines: List[RenderEngineConfig]) -> Optional[RenderEngineConfig]:
-    """Finds which engine (if any) should render the given file based on suffix patterns."""
-    for engine in engines:
-        suffix = engine.suffix
-        if not suffix:
-            continue
-        if filename.endswith(f".{suffix}"):
-            return engine
-        if f".{suffix}." in filename:
-            return engine
-    return None
-
-
-def strip_engine_suffix(filename: str, suffix: str) -> str:
-    """Strips the engine suffix segment from the filename, replacing only the last occurrence (legacy wrapper)."""
-    temp_config = RenderEngineConfig(name="temp", input_file=Path(""), suffix=suffix, render_command="")
-    return temp_config.strip_suffix(filename)
-
-
-def resolve_dependencies(engines: List[RenderEngineConfig]) -> Dict[str, Optional[str]]:
+def resolve_dependencies(
+    engines: RenderEngineRegistry
+) -> Dict[str, Optional[str]]:
     """Resolves the input file dependency relationships among engines as a map of:
 
     engine_name -> dependency_engine_name (or None)
     """
     dependency_map: Dict[str, Optional[str]] = {}
-    for engine in engines:
+    for engine in engines.values():
         if engine.is_internal or not engine.input_file or str(engine.input_file) in ("", "."):
             dependency_map[engine.name] = None
             continue
-        dep_engine = find_engine_for_file(str(engine.input_file), engines)
+        dep_engine = engines.find_engine_for_file(str(engine.input_file))
         # If dep_engine is the same as engine, it means the input file is static and not rendered by any other engine
         if dep_engine and dep_engine.name != engine.name:
             dependency_map[engine.name] = dep_engine.name
@@ -100,7 +83,7 @@ def resolve_static_input_file(
 
 
 def render_input_templates(
-    engines: List[RenderEngineConfig],
+    engines: RenderEngineRegistry,
     drift_root: Path,
     render_dir: Union[Path, str] = "render"
 ) -> None:
@@ -109,7 +92,7 @@ def render_input_templates(
     renders input templates, prints progress, and updates each RenderEngineConfig.input_file path.
 
     Args:
-        engines: The list of RenderEngineConfig instances.
+        engines: The RenderEngineRegistry instance.
         drift_root: The root path of the drift workspace.
         render_dir: Relative or absolute path / name of the render directory (defaults to "render").
 
@@ -125,7 +108,6 @@ def render_input_templates(
     check_cyclic_dependencies(dependency_map)
 
     # 3. Render templates using the dependency map directly
-    engines_by_name = {e.name: e for e in engines}
     render_dir_path = Path(render_dir)
     memo: Dict[str, Path] = {}
 
@@ -139,10 +121,10 @@ def render_input_templates(
 
         dep_name = dependency_map[engine.name]
         if dep_name:
-            dep_engine = engines_by_name[dep_name]
+            dep_engine = engines[dep_name]
             dep_input_file = get_or_render_input_file(dep_engine)
             if dep_input_file == Path(""):
-                logger.warning(f"Render engine '{engine.name}' is disabled because dependent engine"
+                logger.warning(f"Render engine '{engine.name}' is disabled because dependent engine "
                                f"'{dep_name}' is disabled")
                 memo[engine.name] = Path("")
                 return Path("")
@@ -187,6 +169,6 @@ def render_input_templates(
             return path
 
     # Render inputs for all engines and update their paths
-    for engine in engines:
+    for engine in engines.values():
         rendered_path = get_or_render_input_file(engine)
         engine.input_file = rendered_path

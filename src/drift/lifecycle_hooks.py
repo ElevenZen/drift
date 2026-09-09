@@ -275,6 +275,7 @@ def trigger_package_hook_with_render(
 
     If the hook file is located inside the source package directory and matched by a template engine,
     it is rendered into the render sandbox directory first before execution.
+    Otherwise it will be executed directly without rendering.
 
     custom_cwd: Optional working directory for hook execution. If not provided, defaults to the package source directory.
     """
