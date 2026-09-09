@@ -1629,15 +1629,15 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg")
         self.assertEqual(pkg_alias.env_override, {"THEME": "nord"})
 
-        # 3. Flat [env] keys treated as override
+        # 3. Flat [env] keys raise ConfigError
         data_flat = {
             "package": {"name": "test_pkg"},
             "env": {
                 "CUSTOM_KEY": "custom_val"
             }
         }
-        pkg_flat = PackageConfig.from_dict(data_flat, package_name="test_pkg")
-        self.assertEqual(pkg_flat.env_override, {"CUSTOM_KEY": "custom_val"})
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict(data_flat, package_name="test_pkg")
 
         # 4. Error on non-dict sub-tables
         with self.assertRaises(ConfigError):

@@ -651,11 +651,13 @@ def parse_package_env_tables(env_data: Any, package_name: str) -> Tuple[Dict[str
                 raise ConfigError(f"[env.fallback] must be a table of key-value pairs for package '{package_name}'.")
             for sub_k, sub_v in v.items():
                 fallback_map[str(sub_k)] = str(sub_v)
+        elif isinstance(v, dict):
+            raise ConfigError(f"Unknown sub-table [env.{k}] for package '{package_name}'. Expected [env.override] or [env.fallback].")
         else:
-            if isinstance(v, dict):
-                raise ConfigError(f"Unknown sub-table [env.{k}] for package '{package_name}'.")
-            # TODO: please add a warning here.
-            override_map[str(k)] = str(v)
+            raise ConfigError(
+                f"Direct key-value pair '{k}' in [env] is not supported for package '{package_name}'. "
+                f"Please define variables under [env.override] or [env.fallback]."
+            )
 
     return override_map, fallback_map
 

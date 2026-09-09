@@ -930,6 +930,24 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(str(pkg_cfg.hooks.post_install), "scripts/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
 
+    def test_package_config_with_direct_env_raises_error(self) -> None:
+        """Verifies that direct key-value pairs in package [env] raise ConfigError."""
+        from drift.package_config import PackageConfig
+        from drift.exceptions import ConfigError
+
+        pkg_dict = {
+            "package": {
+                "name": "legacy_pkg",
+            },
+            "env": {
+                "LEGACY_VAR": "legacy_val",
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg")
+        self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported for package 'legacy_pkg'", str(ctx.exception))
+        self.assertIn("Please define variables under [env.override] or [env.fallback]", str(ctx.exception))
+
     def test_escaped_variable_stitching(self) -> None:
         """Verifies that \\$VAR and \\${VAR} escape variable stitching in [env] and config fields."""
         from drift.env_utils import resolve_env_references, interpolate_config_dict
