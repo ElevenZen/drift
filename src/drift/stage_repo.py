@@ -4,7 +4,7 @@ import datetime
 import shutil
 import logging
 from pathlib import Path
-from typing import List, Union, Optional, Sequence
+from typing import List, Union, Optional, Sequence, Tuple
 from dataclasses import dataclass, field
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
@@ -21,7 +21,7 @@ from .file_utils import (
     atomic_copy_file,
     copy_file_mode_with_sudo
 )
-from .folder_diff import compare_folders
+from .folder_diff import compare_folders, FolderDiff
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
 from .state_registry import load_state_registry, save_state_registry
@@ -50,21 +50,21 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
         )
 
 
-def process_package_changes(
+def compute_package_stage_diff(
     pkg: str,
     install_base: Path,
     render_base: Path,
-    backup_base: Path,
-    changes: PackageStageChanges
-) -> None:
-    """Processes deletions, additions, and modifications for a single package using FolderDiff.
-    
-    1. Runs compare_folders with drift_ignore to calculate deployable file changes for the return value.
-    2. Runs compare_folders without drift_ignore to stage ALL physical files into install/ (including hooks).
+) -> Tuple[PackageStageChanges, FolderDiff, DriftIgnore]:
+    """Computes deployable and physical file changes between render/ and install/ for a single package.
+
+    Returns:
+        Tuple of (stage_changes, all_diff, ignore_handler):
+        - stage_changes: PackageStageChanges containing deployable added/modified/deleted files.
+        - all_diff: FolderDiff containing all physical differences (including hooks and non-ignored files).
+        - ignore_handler: The DriftIgnore instance for the package.
     """
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
-    backup_dir = backup_base / pkg / "deleted_files"
 
     if not render_pkg_dir.exists():
         raise RuntimeError(f"Render sandbox directory for package '{pkg}' does not exist. Please render first.")
@@ -78,12 +78,12 @@ def process_package_changes(
         ignore_handler=ignore_handler,
         resolve_symlinks=False
     )
-    for rel_file in deploy_diff.deleted:
-        changes.deleted_files.append(rel_file)
-    for rel_file in deploy_diff.added:
-        changes.added_files.append(rel_file)
-    for rel_file in deploy_diff.modified:
-        changes.modified_files.append(rel_file)
+    stage_changes = PackageStageChanges(
+        package_name=pkg,
+        added_files=list(deploy_diff.added),
+        modified_files=list(deploy_diff.modified),
+        deleted_files=list(deploy_diff.deleted),
+    )
 
     # 2. Compute all physical file changes without ignore_handler to stage everything into install/
     all_diff = compare_folders(
@@ -92,6 +92,24 @@ def process_package_changes(
         ignore_handler=None,
         resolve_symlinks=False
     )
+    # Exclude MANAGED_CONFIG_FILES from deleted list as they are managed/generated in install/
+    all_diff.deleted = [p for p in all_diff.deleted if p.name not in MANAGED_CONFIG_FILES]
+
+    return stage_changes, all_diff, ignore_handler
+
+
+def apply_package_stage_changes(
+    pkg: str,
+    install_base: Path,
+    render_base: Path,
+    backup_base: Path,
+    all_diff: FolderDiff,
+    ignore_handler: DriftIgnore,
+) -> None:
+    """Applies calculated physical deletions, additions, and modifications for a single package into install/."""
+    install_pkg_dir = install_base / pkg
+    render_pkg_dir = render_base / pkg
+    backup_dir = backup_base / pkg / "deleted_files"
 
     # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)
     for rel_file in all_diff.deleted:
@@ -147,9 +165,10 @@ def process_package_changes(
 
     # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
     copy_ignore_and_config_files(
-            render_pkg_dir=render_pkg_dir,
-            install_pkg_dir=install_pkg_dir,
-            ignore_handler=ignore_handler)
+        render_pkg_dir=render_pkg_dir,
+        install_pkg_dir=install_pkg_dir,
+        ignore_handler=ignore_handler
+    )
 
 
 def copy_ignore_and_config_files(
@@ -227,13 +246,7 @@ def run_primitive_4_stage_render_to_install(
     if not pkg_metadata:
         raise RuntimeError("No active packages are enabled for installation/deployment.")
 
-    # Pre-flight check for administrator/sudo privileges if any active package requires sudo
-    needs_sudo = any(m.sudo for m in pkg_metadata.values())
-    if needs_sudo:
-        from .file_utils import check_sudo_privilege
-        check_sudo_privilege(True)
-
-    # 1. First verify package states from state registry before checking uncommitted changes.
+    # 2. First verify package states from state registry before checking uncommitted changes.
     # If a package is in 'staging' or 'deploying' state, a previous operation failed midway
     # (which naturally causes uncommitted changes in install/), so we must report the mid-fail state first.
     state_file = install_base / "state.toml"
@@ -255,27 +268,55 @@ def run_primitive_4_stage_render_to_install(
 
     logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
 
-    # Set state of packages to "staging" before staging to prevent partial staging issues
+    # 3. Compute stage diffs and deployable changes for all packages
+    computed_diffs = {}
+    for pkg in pkg_metadata.keys():
+        stage_changes, all_diff, ignore_handler = compute_package_stage_diff(
+            pkg=pkg,
+            install_base=install_base,
+            render_base=render_base,
+        )
+        computed_diffs[pkg] = (stage_changes, all_diff, ignore_handler)
+
+    # Identify packages that have physical stage changes
+    packages_to_stage = {
+        pkg: (changes, all_diff, ignore_handler)
+        for pkg, (changes, all_diff, ignore_handler) in computed_diffs.items()
+        if all_diff.added or all_diff.modified or all_diff.deleted
+    }
+
+    # 4. Check sudo privilege ONLY if any package with actual changes requires sudo
+    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage.keys())
+    if needs_sudo:
+        from .file_utils import check_sudo_privilege
+        check_sudo_privilege(True)
+
+    # 5. Set state of packages to "staging" before staging to prevent partial staging issues
     for pkg, metadata in pkg_metadata.items():
         state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
     state_registry.save()
 
-    pkg_changes = {pkg: PackageStageChanges(package_name=pkg) for pkg in pkg_metadata.keys()}
-
-    # 2. Process deletions, additions, and modifications in a single unified step
-    for pkg, metadata in pkg_metadata.items():
-        process_package_changes(
+    # 6. Apply stage changes to install/ directory for each package with changes
+    for pkg, (changes, all_diff, ignore_handler) in packages_to_stage.items():
+        apply_package_stage_changes(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
             backup_base=backup_base,
-            changes=pkg_changes[pkg]
+            all_diff=all_diff,
+            ignore_handler=ignore_handler,
         )
 
+    # 7. Set state of packages to "staged" after successful staging
+    for pkg in pkg_metadata.keys():
+        state_registry.set_package_state(pkg, "staged")
+    state_registry.save()
+
     pkg_changes_with_actual_changes = [
-            change for change in pkg_changes.values()
-            if change.added_files or change.modified_files or change.deleted_files]
-    
+        changes for changes, _, _ in computed_diffs.values()
+        if changes.added_files or changes.modified_files or changes.deleted_files
+    ]
+
     if pkg_changes_with_actual_changes:
         logger.info("✨ Staging completed. Summary of changes:")
         for pkg_change in pkg_changes_with_actual_changes:
@@ -285,11 +326,6 @@ def run_primitive_4_stage_render_to_install(
                         f"-{len(pkg_change.deleted_files)}")
     else:
         logger.info("✨ Staging completed. No changes detected.")
-
-    # Set state of packages to "staged" after successful staging
-    for pkg in pkg_metadata.keys():
-        state_registry.set_package_state(pkg, "staged")
-    state_registry.save()
 
     # Return only the packages that have actual changes
     return pkg_changes_with_actual_changes

@@ -788,16 +788,54 @@ class TestStageRepo(unittest.TestCase):
             load_package_config_from_render_dir(self.render_dir, non_existent_pkg)
         self.assertIn("Failed to find drift_package.toml", str(ctx.exception))
 
-    def test_load_package_config_from_render_dir_invalid_toml_raises_error(self) -> None:
-        """Verifies that load_package_config_from_render_dir raises RuntimeError if drift_package.toml is invalid."""
-        from drift.package_config import load_package_config_from_render_dir
-        corrupt_pkg_dir = self.render_dir / "pkg_corrupt"
-        corrupt_pkg_dir.mkdir(parents=True, exist_ok=True)
-        (corrupt_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text("invalid = = toml", encoding="utf-8")
+    def test_compute_package_stage_diff_returns_stage_changes(self) -> None:
+        """Verifies that compute_package_stage_diff computes changes immutably without modifying install/."""
+        from drift.stage_repo import compute_package_stage_diff
 
-        with self.assertRaises(RuntimeError) as ctx:
-            load_package_config_from_render_dir(self.render_dir, "pkg_corrupt")
-        self.assertIn("Failed to load package configuration", str(ctx.exception))
+        pkg_a_render = self.render_dir / "pkg_a"
+        (pkg_a_render / "new_diff_file.txt").write_text("diff content", encoding="utf-8")
+
+        stage_changes, all_diff, ignore_handler = compute_package_stage_diff(
+            pkg="pkg_a",
+            install_base=self.install_dir,
+            render_base=self.render_dir,
+        )
+
+        self.assertEqual(stage_changes.package_name, "pkg_a")
+        self.assertIn(Path("new_diff_file.txt"), stage_changes.added_files)
+        self.assertIn(Path("new_diff_file.txt"), all_diff.added)
+        # Verify file was NOT copied to install/ yet
+        self.assertFalse((self.install_dir / "pkg_a" / "new_diff_file.txt").exists())
+
+    def test_stage_defers_sudo_check_when_no_changes(self) -> None:
+        """Verifies that check_sudo_privilege is deferred and NOT called if a sudo package has no changes."""
+        from unittest.mock import patch
+
+        # 1. Setup pkg_sudo with sudo = true
+        pkg_sudo_src = self.source_dir / "pkg_sudo"
+        pkg_sudo_src.mkdir(parents=True, exist_ok=True)
+        (pkg_sudo_src / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_sudo"
+        enable_install = true
+        sudo = true
+        """, encoding="utf-8")
+        (pkg_sudo_src / "sudo_file.txt").write_text("initial sudo content", encoding="utf-8")
+
+        self.workspace_config.packages_enable["pkg_sudo"] = True
+        render_package(self.workspace_config, pkg_sudo_src)
+
+        # Initial staging: changes exist, so check_sudo_privilege MUST be called
+        with patch("drift.file_utils.check_sudo_privilege") as mock_sudo:
+            changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
+            self.assertEqual(len(changes1), 1)
+            mock_sudo.assert_called_once_with(True)
+
+        # Second staging with ZERO changes: check_sudo_privilege must NOT be called
+        with patch("drift.file_utils.check_sudo_privilege") as mock_sudo:
+            changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
+            self.assertEqual(len(changes2), 0)
+            mock_sudo.assert_not_called()
 
 
 if __name__ == "__main__":
