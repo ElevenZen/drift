@@ -312,12 +312,11 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         self.assertEqual(res.status, "SUCCESS")
 
     def test_render_package_templated_probe_hook(self) -> None:
-        """Verifies that probe hooks matching template engines (e.g. probe.sh.envst) are rendered before execution."""
-        from drift.workspace_config import RenderEngineConfig
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
-        self.workspace_config.render_engine_configs = {
+        self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
-        }
+        })
 
         pkg_dir = self.drift_root / "src" / "templated_probe_pkg"
         pkg_dir.mkdir(parents=True)

@@ -26,6 +26,7 @@ from drift.workspace_config import (
     WorkspaceSectionConfig,
     SettingsConfig,
     RenderEngineConfig,
+    RenderEngineRegistry,
     RenderSourceMatch,
     load_workspace_config,
 )
@@ -202,7 +203,7 @@ class TestConfigClasses(unittest.TestCase):
             
             # Setup engines
             engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-            config = WorkspaceConfig(render_engine_config={"envsubst": engine})
+            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry({"envsubst": engine}))
             
             targets = ["config.toml", "settings.json"]
             
@@ -232,7 +233,7 @@ class TestConfigClasses(unittest.TestCase):
         """Verifies find_source_file_for_rendered_names correctly identifies directories."""
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir).resolve()
-            config = WorkspaceConfig(render_engine_config={})
+            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry())
             
             targets = ["my_folder", "other_folder"]
             
@@ -257,7 +258,7 @@ class TestConfigClasses(unittest.TestCase):
             src_pkg_dir.mkdir(parents=True)
             
             engine = RenderEngineConfig(name="envst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-            config = WorkspaceConfig(render_engine_config={"envst": engine})
+            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry({"envst": engine}))
             
             # 1. Exact match (static file)
             f1 = src_pkg_dir / "dot-bashrc"
@@ -1078,17 +1079,17 @@ class TestConfigLoaders(unittest.TestCase):
         # Create WorkspaceConfig
         workspace_config = WorkspaceConfig(drift_root_path=self.drift_root)
         engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-        workspace_config.render_engine_config = {"envsubst": engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": engine})
 
         # 1. No files exist - should return (None, None)
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
         self.assertIsNone(base_res)
         self.assertIsNone(local_res)
 
         # 2. drift_package.envst.toml exists
         template_drift_path = pkg_dir / package_config_template_name
         template_drift_path.write_text("", encoding="utf-8")
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
         res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "template")
@@ -1099,7 +1100,7 @@ class TestConfigLoaders(unittest.TestCase):
         # 3. drift_package.toml exists (takes precedence over drift_package.envst.toml)
         drift_package_toml_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
         drift_package_toml_path.write_text("", encoding="utf-8")
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config)
+        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
         res = cast(PackageConfigFileInfo, base_res)
         self.assertIsNotNone(res)
         self.assertEqual(res.type, "static")
@@ -1360,6 +1361,95 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertTrue(config.render_engine_configs["var"].is_internal)
         self.assertFalse(config.render_engine_configs["var"].is_disabled)
         self.assertEqual(config.render_engine_configs["var"].input_file, Path(""))
+
+    def test_render_engine_registry_class(self) -> None:
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry, RenderSourceMatch
+        from drift.exceptions import ConfigError
+
+        # Test from_dict empty / non-dict
+        self.assertEqual(len(RenderEngineRegistry.from_dict({})), 0)
+        with self.assertRaises(ConfigError):
+            RenderEngineRegistry.from_dict("invalid")
+        with self.assertRaises(ConfigError):
+            RenderEngineRegistry.from_dict({"test": {"invalid_key": 123}})
+
+        # Test valid instantiation and mapping operations
+        engine = RenderEngineConfig(
+            name="envst",
+            input_file=Path("input.env"),
+            suffix="envst",
+            render_command="render %i %s"
+        )
+        registry = RenderEngineRegistry({"envst": engine})
+        registry.validate()
+
+        # Test mapping protocol: getitem, setitem, delitem, len, contains, iter, keys, values, items, get, repr, eq
+        self.assertEqual(len(registry), 1)
+        self.assertIn("envst", registry)
+        self.assertEqual(registry["envst"], engine)
+        self.assertEqual(registry.get("envst"), engine)
+        self.assertIsNone(registry.get("missing"))
+        self.assertEqual(list(registry.keys()), ["envst"])
+        self.assertEqual(list(registry.values()), [engine])
+        self.assertEqual(list(registry.items()), [("envst", engine)])
+        self.assertEqual(list(iter(registry)), ["envst"])
+        self.assertIn("RenderEngineRegistry", repr(registry))
+        self.assertEqual(registry, {"envst": engine})
+        self.assertEqual(registry, RenderEngineRegistry({"envst": engine}))
+        self.assertNotEqual(registry, "not_a_registry")
+
+        # Test copy
+        copied = registry.copy()
+        self.assertEqual(copied, registry)
+        self.assertIsNot(copied, registry)
+
+        # Test __setitem__ type validation
+        with self.assertRaises(TypeError):
+            registry["bad"] = "not_an_engine"  # type: ignore
+
+        # Test __delitem__
+        del registry["envst"]
+        self.assertEqual(len(registry), 0)
+        self.assertNotIn("envst", registry)
+
+        # Re-add engine
+        registry["envst"] = engine
+
+        # Test make_new_template_name
+        self.assertEqual(registry.make_new_template_name("file.envst", "new_file"), "new_file.envst")
+        self.assertEqual(registry.make_new_template_name("dot-old.envst.sh", "dot-new.sh"), "dot-new.envst.sh")
+        self.assertEqual(registry.make_new_template_name("plain.txt", "target.txt"), "target.txt")
+
+        # Test find_source_file_for_rendered_names & find_conflict_in_source_dir
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td)
+            (p / "hello.envst.txt").write_text("content", encoding="utf-8")
+            (p / "plain.txt").write_text("plain", encoding="utf-8")
+            (p / "subdir").mkdir()
+
+            # Static match
+            match = registry.find_source_file_for_rendered_names(p, ["plain.txt"])
+            self.assertIsNotNone(match)
+            self.assertEqual(match.path, p / "plain.txt")
+            self.assertIsNone(match.engine)
+
+            # Template match form 2
+            match_tmpl = registry.find_source_file_for_rendered_names(p, ["hello.txt"])
+            self.assertIsNotNone(match_tmpl)
+            self.assertEqual(match_tmpl.path, p / "hello.envst.txt")
+            self.assertEqual(match_tmpl.engine, engine)
+
+            # Conflict in source dir
+            conflict = registry.find_conflict_in_source_dir(p, Path("hello.txt"))
+            self.assertIsNotNone(conflict)
+            self.assertEqual(conflict.status, "match")
+
+            # Blocking conflict (file blocking directory path)
+            block_conflict = registry.find_conflict_in_source_dir(p, Path("plain.txt/nested/file.txt"))
+            self.assertIsNotNone(block_conflict)
+            self.assertEqual(block_conflict.status, "block")
+
+
 
     def test_meta_rendering_drift_envst_toml(self) -> None:
         from drift.workspace_config import load_workspace_config

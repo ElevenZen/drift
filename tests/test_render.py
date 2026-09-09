@@ -17,6 +17,7 @@ from drift.constants import (
     INTERNAL_RENDER_COMMAND,
 )
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
+from drift.render_engine_config import RenderEngineRegistry
 from drift.render_core import render_template, render_template_to_file, RenderError
 from drift.render_input import (
     find_engine_for_file,
@@ -597,7 +598,7 @@ class TestRenderPackage(unittest.TestCase):
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
-        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
         # 3. Create a package src directory
         pkg_dir = drift_root / "src" / "my_pkg"
@@ -644,9 +645,9 @@ class TestRenderPackage(unittest.TestCase):
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            render_engine_config={
+            render_engine_configs=RenderEngineRegistry({
                 "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
-            }
+            })
         )
 
         pkg_dir = drift_root / "src" / "my_pkg"
@@ -754,7 +755,7 @@ class TestRenderPackage(unittest.TestCase):
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
-        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
         pkg_dir = drift_root / "src" / "my_pkg"
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -792,7 +793,7 @@ class TestRenderPackage(unittest.TestCase):
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
-        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
         pkg_dir = drift_root / "src" / "my_pkg"
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -1021,10 +1022,10 @@ class TestRenderPackage(unittest.TestCase):
             # Using cat and some markers to simulate mustache.
             render_command="bash -c 'cat %i %s'"
         )
-        workspace_config.render_engine_config = {
+        workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": envsubst_engine,
             "mustache": mustache_engine
-        }
+        })
 
         # 3. Create a package that uses mustache
         pkg_dir = drift_root / "src" / "my_pkg"
@@ -1275,15 +1276,14 @@ class TestRenderPackage(unittest.TestCase):
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
         )
-        from drift.workspace_config import RenderEngineConfig
-        workspace_config.render_engine_config = {
+        workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
                 name="envsubst",
                 input_file=Path("envsubst.sh"),
                 suffix="envst",
                 render_command="bash -c 'envsubst < %s # %i'"
             )
-        }
+        })
 
         # Assert environment variable is NOT in current env
         self.assertNotIn("PRIMITIVE_SECRET_VAR", os.environ)
@@ -1388,14 +1388,14 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            render_engine_config={
+            render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
                     input_file=Path("envsubst.bash"),
                     suffix="envst",
                     render_command="bash -c 'source %i && envsubst < %s'"
                 )
-            }
+            })
         )
 
         pkg_dir = self.drift_root / "src" / "pkg_env_test"
@@ -1477,7 +1477,7 @@ class TestRenderPackage(unittest.TestCase):
             suffix="jinja2",
             render_command="jinja2 %i %s"
         )
-        workspace_config.render_engine_config = {"jinja2": disabled_engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"jinja2": disabled_engine})
 
         # Setup pkg_good
         pkg_good_dir = self.drift_root / "src" / "pkg_good"
@@ -1573,7 +1573,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
             packages_enable={"pkg_hook": True},
             packages_enable_default=False
         )
-        workspace_config.render_engine_config = {"envsubst": envsubst_engine}
+        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": envsubst_engine})
 
         # Setup pkg_hook with a templated pre_source hook
         pkg_src_dir = self.drift_root / "src" / "pkg_hook"
@@ -1842,14 +1842,14 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             drift_root_path=self.drift_root,
             packages_enable={"pkg_bad_ignore": True},
             packages_enable_default=False,
-            render_engine_config={
+            render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
                     render_command="bash -c 'source %i && envsubst < %s'"
                 )
-            }
+            })
         )
 
         pkg_src_dir = self.drift_root / "src" / "pkg_bad_ignore"
@@ -1879,14 +1879,14 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            render_engine_config={
+            render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
                     render_command=INTERNAL_RENDER_COMMAND
                 )
-            }
+            })
         )
 
         pkg_src_dir = self.drift_root / "src" / "my_templated_pkg"

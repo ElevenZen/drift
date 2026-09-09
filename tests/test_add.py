@@ -28,21 +28,22 @@ class TestAddResource(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
-        from drift.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
+        from drift.workspace_config import WorkspaceSectionConfig
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir,
             ),
             packages_enable={},
-            render_engine_config={
+            render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
                     input_file=Path("env.sh"),
                     suffix="envst",
                     render_command="bash -c 'source %i && envsubst < %s'"
                 )
-            }
+            })
         )
 
     def tearDown(self):

@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.render_engine_config import RenderEngineRegistry
 from drift.lifecycle_hooks import HookExecFlags
 from drift.adopt_repo import (
     get_drifted_packages,
@@ -81,7 +82,7 @@ class TestAdopt(unittest.TestCase):
                 default_target_directory=self.workspace_path / "system_home",
             ),
             packages_enable={},
-            render_engine_config={"envsubst": env_engine}
+            render_engine_configs=RenderEngineRegistry({"envsubst": env_engine})
         )
 
         from unittest.mock import patch
@@ -214,23 +215,24 @@ class TestAdopt(unittest.TestCase):
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        render_engines = self.workspace_config.render_engine_configs
 
         # Test for a file that does not exist yet
         rel_path = Path("dot-bashrc")
-        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
         self.assertIsNone(resolved) # Does not exist yet
 
         # Create static file dot-bashrc
         static_file = src_pkg_dir / "dot-bashrc"
         static_file.write_text("static", encoding="utf-8")
-        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
         self.assertEqual(resolved, static_file)
 
         # Clean static, test template resolution (dot-bashrc -> dot-bashrc.envst)
         static_file.unlink()
         template_file = src_pkg_dir / "dot-bashrc.envst"
         template_file.write_text("templated", encoding="utf-8")
-        resolved = resolve_source_file_path(self.workspace_config, pkg, rel_path)
+        resolved = resolve_source_file_path(render_engines, src_pkg_dir, rel_path)
         self.assertEqual(resolved, template_file)
 
     def test_adopt_addition(self) -> None:
@@ -289,7 +291,7 @@ class TestAdopt(unittest.TestCase):
         src_file.write_text("bash", encoding="utf-8")
 
         # Run adopt deletion
-        adopt_deletion(self.workspace_config, pkg, rel_path)
+        adopt_deletion(self.workspace_config.render_engine_configs, src_pkg_dir, rel_path)
 
         # File should be removed from src/
         self.assertFalse(src_file.exists())
@@ -327,7 +329,7 @@ class TestAdopt(unittest.TestCase):
             old_rel_path=Path("dot-old_name.txt"),
             target_src_filename="dot-new_name.envst.txt"
         )
-        adopt_rename(self.workspace_config, pkg, pkg_install_dir,
+        adopt_rename(self.workspace_config.render_engine_configs, src_pkg_dir,
                      Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
 
         # Verify old template is deleted, new template is created with dot- prefix and correct template suffixes, and modifications are applied!
@@ -367,7 +369,7 @@ class TestAdopt(unittest.TestCase):
         )
 
         # 4. Adopt the rename
-        adopt_rename(self.workspace_config, pkg, pkg_install_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
+        adopt_rename(self.workspace_config.render_engine_configs, src_pkg_dir, Path("dot-old_name.txt"), Path("dot-new_name.txt"), patch_content)
 
         # Verify a new file is created with new name in src/ and contains full content
         src_new_file = src_pkg_dir / "dot-new_name.txt"
@@ -393,8 +395,9 @@ class TestAdopt(unittest.TestCase):
 
         # non-interactive handle_single_addition should return False due to collision conflict
         resolved = handle_single_addition(
-            self.workspace_config,
-            pkg,
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            src_pkg_dir,
             pkg_install_dir,
             rel_path,
             interactive=False
@@ -415,9 +418,8 @@ class TestAdopt(unittest.TestCase):
         rel_path = Path("dot-missing.txt")
 
         resolved = handle_single_deletion(
-            self.workspace_config,
-            pkg,
-            pkg_install_dir,
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
             rel_path,
             interactive=False
         )

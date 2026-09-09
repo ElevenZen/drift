@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .workspace_config import WorkspaceConfig
+from .render_engine_config import RenderEngineRegistry
 from .constants import CONFIG_DIR_NAME
 from .result_models import AdoptResult, PackageAdoptResult
 from .git_utils import (
@@ -157,23 +158,13 @@ def test_file_conflict(src_file: Path, install_file: Path, install_base: Path, p
     return check_patch_conflicts(src_file, patch_content)
 
 
-def get_package_source_render_dir(workspace_config: WorkspaceConfig, pkg: str) -> Path:
-    """Returns the package source directory to render."""
-    src_pkg_dir = workspace_config.source_path / pkg
-    try:
-        from .package_config import load_package_config_from_source_dir
-        pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
-        return pkg_config.get_source_directory_to_render(src_pkg_dir)
-    except Exception:
-        return src_pkg_dir
-
-
-def resolve_source_file_path(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> Optional[Path]:
+def resolve_source_file_path(
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    rel_path: Path
+) -> Optional[Path]:
     """Resolves the physical file path inside src_dir_to_render using find_source_file_for_rendered_names."""
-    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
-    
-    # Locate a file in src_dir_to_render / rel_path.parent that renders to rel_path.name
-    match_info = workspace_config.find_source_file_for_rendered_names(
+    match_info = render_engines.find_source_file_for_rendered_names(
         src_dir_to_render / rel_path.parent,
         [rel_path.name]
     )
@@ -209,9 +200,9 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
         f.write(content)
 
 
-def adopt_deletion(workspace_config: WorkspaceConfig, pkg: str, rel_path: Path) -> None:
+def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path) -> None:
     """Symmetrically deletes the corresponding file from declarative source folder."""
-    src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
+    src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
         remove_file_or_dir(src_file)
 
@@ -260,26 +251,24 @@ def generate_adjusted_patch(
 
 
 def adopt_rename(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
     old_rel_path: Path,
     new_rel_path: Path,
     patch_content: str,
     accept_conflicts: bool = False
 ) -> None:
     """Symmetrically renames the source template file and applies any content patch."""
-    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
-    old_src_file = resolve_source_file_path(workspace_config, pkg, old_rel_path)
+    old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     if old_src_file and old_src_file.exists():
-        new_src_name = workspace_config.make_new_template_name(old_src_file.name,
-                                                               new_rel_path.name)
+        new_src_name = render_engines.make_new_template_name(old_src_file.name,
+                                                             new_rel_path.name)
         new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
 
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(old_src_file, new_src_file)
     else:
-        logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Creating a new template file for '{new_rel_path}'.")
+        logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in source directory. Creating a new template file for '{new_rel_path}'.")
         new_src_file = src_dir_to_render / new_rel_path
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         new_src_file.touch()
@@ -321,7 +310,9 @@ def fallback_side_by_side(src_file: Path, install_file: Path) -> None:
 # --- The Dry-Run Engine ---
 
 def dry_run_adopt(
-    workspace_config: WorkspaceConfig,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    install_base: Path,
     pkg: str,
     additions: List[Path],
     deletions: List[Path],
@@ -331,8 +322,7 @@ def dry_run_adopt(
     """Prints a clear preview of all drift changes and potential conflicts."""
     logger.info(f"\n🔍 [DRY RUN] Previewing drift adoption for package '{pkg}':")
     
-    pkg_dir = workspace_config.source_path / pkg
-    install_pkg_dir = workspace_config.install_path / pkg
+    install_pkg_dir = install_base / pkg
 
     if additions:
         logger.info("   [+] Additions (will be copied to source):")
@@ -352,7 +342,7 @@ def dry_run_adopt(
     if modifications:
         logger.info("   [~] Modifications:")
         for file in modifications:
-            src_file = resolve_source_file_path(workspace_config, pkg, file)
+            src_file = resolve_source_file_path(render_engines, src_dir_to_render, file)
             if not src_file:
                 logger.info(f"       ~ {file} [Static Overwrite]")
                 continue
@@ -362,7 +352,7 @@ def dry_run_adopt(
             if is_templated:
                 install_file = install_pkg_dir / file
                 pkg_rel_path = Path(pkg) / file
-                has_conflict = test_file_conflict(src_file, install_file, workspace_config.install_path, pkg_rel_path)
+                has_conflict = test_file_conflict(src_file, install_file, install_base, pkg_rel_path)
                 if has_conflict:
                     logger.info(f"       ~ {file} [CONFLICTS with template: {src_file.name}]")
                 else:
@@ -374,14 +364,15 @@ def dry_run_adopt(
 # --- The Main Dispatcher ---
 
 def handle_single_addition(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
+    render_engines: RenderEngineRegistry,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
     install_pkg_dir: Path,
     rel_path: Path,
     interactive: bool
 ) -> bool:
     """Handles drift reconciliation for a single file addition."""
-    target_existing_src = resolve_source_file_path(workspace_config, pkg, rel_path)
+    target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if target_existing_src is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot adopt addition '{rel_path}' because the target already exists in source. Skipping.")
@@ -396,8 +387,6 @@ def handle_single_addition(
                 return True
         return False
 
-    src_pkg_dir: Path = workspace_config.source_path / pkg
-    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
         return True
@@ -422,14 +411,13 @@ def handle_single_addition(
 
 
 def handle_single_deletion(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
     rel_path: Path,
     interactive: bool
 ) -> bool:
     """Handles drift reconciliation for a single file deletion."""
-    target_existing_src = resolve_source_file_path(workspace_config, pkg, rel_path)
+    target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if target_existing_src is None:
         if not interactive:
             logger.warning(f"⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
@@ -438,7 +426,7 @@ def handle_single_deletion(
         return True
 
     if not interactive:
-        adopt_deletion(workspace_config, pkg, rel_path)
+        adopt_deletion(render_engines, src_dir_to_render, rel_path)
         return True
     else:
         print(f"\nFound host file deletion: {rel_path}")
@@ -448,7 +436,7 @@ def handle_single_deletion(
         print("[3] Skip file")
         choice = input("Select option [1-3]: ").strip()
         if choice == "1":
-            adopt_deletion(workspace_config, pkg, rel_path)
+            adopt_deletion(render_engines, src_dir_to_render, rel_path)
             return True
         elif choice == "2":
             return True
@@ -457,9 +445,8 @@ def handle_single_deletion(
 
 
 def handle_rename_non_interactive(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
     old_rel_path: Path,
     new_rel_path: Path,
     old_src_file: Optional[Path],
@@ -469,12 +456,12 @@ def handle_rename_non_interactive(
 ) -> bool:
     """Processes a rename drift non-interactively."""
     if not has_patch_conflict:
-        adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content)
+        adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content)
         return True
     else:
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{old_src_file.name if old_src_file else ''}'")
-            adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content, accept_conflicts=True)
+            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, accept_conflicts=True)
             return True
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{old_src_file.name if old_src_file else ''}'. Skipping.")
@@ -483,9 +470,9 @@ def handle_rename_non_interactive(
 
 
 def handle_rename_interactive(
-    workspace_config: WorkspaceConfig,
+    render_engines: RenderEngineRegistry,
     pkg: str,
-    pkg_dir: Path,
+    src_dir_to_render: Path,
     install_pkg_dir: Path,
     old_rel_path: Path,
     new_rel_path: Path,
@@ -502,7 +489,7 @@ def handle_rename_interactive(
         print("[3] Skip file")
         choice = input("Select option [1-3]: ").strip()
         if choice == "1":
-            adopt_rename(workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path, patch_content)
+            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content)
             return True
         elif choice == "2":
             return True
@@ -520,13 +507,13 @@ def handle_rename_interactive(
         if choice in ["1", "2", "3"]:
             # Perform rename first
             if old_src_file and old_src_file.exists():
-                new_src_name = workspace_config.make_new_template_name(old_src_file.name,
-                                                                       new_rel_path.name)
-                new_src_file = pkg_dir / new_rel_path.parent / new_src_name
+                new_src_name = render_engines.make_new_template_name(old_src_file.name,
+                                                                     new_rel_path.name)
+                new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
                 new_src_file.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(old_src_file, new_src_file)
             else:
-                new_src_file = pkg_dir / new_rel_path
+                new_src_file = src_dir_to_render / new_rel_path
                 new_src_file.parent.mkdir(parents=True, exist_ok=True)
                 new_src_file.touch()
 
@@ -552,10 +539,12 @@ def handle_rename_interactive(
 
 
 def handle_single_rename(
-    workspace_config: WorkspaceConfig,
+    render_engines: RenderEngineRegistry,
     pkg: str,
-    pkg_dir: Path,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
     install_pkg_dir: Path,
+    install_base: Path,
     old_rel_path: Path,
     new_rel_path: Path,
     interactive: bool,
@@ -563,7 +552,7 @@ def handle_single_rename(
 ) -> bool:
     """Handles drift reconciliation for a single file/template rename."""
     # Check if the target already exists in source
-    target_existing_src = resolve_source_file_path(workspace_config, pkg, new_rel_path)
+    target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, new_rel_path)
     if target_existing_src is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot rename '{old_rel_path}' to '{new_rel_path}' because the target already exists in source. Skipping.")
@@ -577,11 +566,11 @@ def handle_single_rename(
                 return True
         return False
 
-    old_src_file = resolve_source_file_path(workspace_config, pkg, old_rel_path)
+    old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     has_patch_conflict = False
     if old_src_file and old_src_file.exists():
         patch_content = generate_adjusted_patch(
-            workspace_config.install_path,
+            install_base,
             pkg,
             new_rel_path,
             old_rel_path=old_rel_path,
@@ -590,16 +579,16 @@ def handle_single_rename(
         has_patch_conflict = check_patch_conflicts(old_src_file, patch_content)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Treating as new file addition.")
-        return handle_single_addition(workspace_config, pkg, install_pkg_dir, new_rel_path, interactive)
+        return handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir, new_rel_path, interactive)
 
     if not interactive:
         return handle_rename_non_interactive(
-            workspace_config, pkg, install_pkg_dir, old_rel_path, new_rel_path,
+            render_engines, src_dir_to_render, old_rel_path, new_rel_path,
             old_src_file, patch_content, has_patch_conflict, accept_conflicts
         )
     else:
         return handle_rename_interactive(
-            workspace_config, pkg, pkg_dir, install_pkg_dir, old_rel_path, new_rel_path,
+            render_engines, pkg, src_dir_to_render, install_pkg_dir, old_rel_path, new_rel_path,
             old_src_file, patch_content, has_patch_conflict
         )
 
@@ -710,26 +699,28 @@ def handle_modification_interactive(
 
 
 def handle_single_modification(
-    workspace_config: WorkspaceConfig,
+    render_engines: RenderEngineRegistry,
     pkg: str,
-    pkg_dir: Path,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
     install_pkg_dir: Path,
+    install_base: Path,
     rel_path: Path,
     interactive: bool,
     accept_conflicts: bool
 ) -> bool:
     """Handles drift reconciliation for a single file/template modification."""
-    src_file = resolve_source_file_path(workspace_config, pkg, rel_path)
+    src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     pkg_rel_path = Path(pkg) / rel_path
     install_file = install_pkg_dir / rel_path
 
     if not src_file:
         # Symmetrically handle static file as an addition so the user has full choice in interactive mode.
-        return handle_single_addition(workspace_config, pkg,
+        return handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render,
                                       install_pkg_dir, rel_path, interactive)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
-    patch_content = generate_unified_patch(workspace_config.install_path, pkg_rel_path)
+    patch_content = generate_unified_patch(install_base, pkg_rel_path)
 
     # Check if there are content diff hunks in the patch
     has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
@@ -777,10 +768,19 @@ def adopt_one_package_drifts(
         subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
         return PackageAdoptResult(package=pkg, status="SUCCESS")
 
+    src_pkg_dir = workspace_config.source_path / pkg
+    render_engines = workspace_config.render_engine_configs
+    try:
+        from .package_config import load_package_config_from_source_dir
+        pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
+        src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
+    except Exception:
+        src_dir_to_render = src_pkg_dir
+
     if dry_run:
         # In dry-run mode, unstage the index changes so that the install repository working index remains untouched.
         subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
-        dry_run_adopt(workspace_config, pkg, additions, deletions, modifications, renames)
+        dry_run_adopt(render_engines, src_dir_to_render, workspace_config.install_path, pkg, additions, deletions, modifications, renames)
         return PackageAdoptResult(
             package=pkg,
             adopted_additions=[str(p) for p in additions],
@@ -790,9 +790,8 @@ def adopt_one_package_drifts(
             status="SUCCESS",
         )
 
-    pkg_dir = workspace_config.source_path / pkg
-    src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
     install_pkg_dir = workspace_config.install_path / pkg
+    install_base = workspace_config.install_path
 
     # Trigger pre_source hook before adopting drifts into source directory
     trigger_pre_source_hook(workspace_config, pkg, flags=flags)
@@ -805,7 +804,7 @@ def adopt_one_package_drifts(
 
     # 1. Process Additions
     for rel_path in additions:
-        resolved = handle_single_addition(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
+        resolved = handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path, interactive)
         if resolved:
             adopted_additions.append(str(rel_path))
         else:
@@ -813,7 +812,7 @@ def adopt_one_package_drifts(
 
     # 2. Process Deletions
     for rel_path in deletions:
-        resolved = handle_single_deletion(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
+        resolved = handle_single_deletion(render_engines, src_dir_to_render, rel_path, interactive)
         if resolved:
             adopted_deletions.append(str(rel_path))
         else:
@@ -822,7 +821,7 @@ def adopt_one_package_drifts(
     # 3. Process Renames
     for old_rel_path, new_rel_path in renames:
         resolved = handle_single_rename(
-            workspace_config, pkg, src_dir_to_render, install_pkg_dir,
+            render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
             old_rel_path, new_rel_path, interactive, accept_conflicts
         )
         if resolved:
@@ -834,7 +833,8 @@ def adopt_one_package_drifts(
     # 4. Process Modifications
     for rel_path in modifications:
         resolved = handle_single_modification(
-            workspace_config, pkg, src_dir_to_render, install_pkg_dir, rel_path, interactive, accept_conflicts
+            render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
+            rel_path, interactive, accept_conflicts
         )
         if resolved:
             adopted_modifications.append(str(rel_path))

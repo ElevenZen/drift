@@ -36,68 +36,13 @@ from .env_utils import (
     interpolate_config_dict,
 )
 
+from .render_engine_config import (
+    RenderEngineConfig,
+    RenderEngineRegistry,
+    RenderSourceMatch,
+)
+
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class RenderEngineConfig:
-    """Represents a render engine configuration inside workspace configuration."""
-    name: str
-    input_file: Path = Path("")
-    suffix: str = ""
-    render_command: str = ""
-
-    def __post_init__(self) -> None:
-        """Coerces any string path fields to pathlib.Path objects for absolute safety."""
-        self.input_file = Path(self.input_file) if self.input_file is not None else Path("")
-
-    @property
-    def is_internal(self) -> bool:
-        """Returns True if the engine uses Drift's built-in Python substitution renderer."""
-        return self.render_command == INTERNAL_RENDER_COMMAND
-
-    def validate(self) -> None:
-        """Validates render engine configuration values."""
-        if not self.name or not isinstance(self.name, str):
-            raise ValueError("Render engine must have a non-empty 'name'.")
-        if not self.suffix or not isinstance(self.suffix, str):
-            raise ValueError("suffix must be a non-empty string.")
-        if "." in self.suffix:
-            raise ValueError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
-        if not self.render_command or not isinstance(self.render_command, str):
-            raise ValueError("render_command must be a non-empty string.")
-        if not self.is_internal:
-            if not isinstance(self.input_file, Path) or str(self.input_file) in ("", "."):
-                raise ValueError("input_file must be a non-empty Path.")
-
-    @property
-    def is_disabled(self) -> bool:
-        """Returns True if the render engine is disabled due to missing or empty input file."""
-        if self.is_internal:
-            return False
-        return not self.input_file or str(self.input_file) in ("", ".")
-
-    def strip_suffix(self, filename: str) -> str:
-        """Strips the engine suffix segment from the filename, replacing only the last occurrence."""
-        suffix = self.suffix
-        if filename.endswith(f".{suffix}"):
-            return filename[:-len(f".{suffix}")]
-        
-        pattern = f".{suffix}."
-        idx = filename.rfind(pattern)
-        if idx != -1:
-            # Replaces only the last occurrence of the pattern with "."
-            return filename[:idx] + "." + filename[idx + len(pattern):]
-        return filename
-
-
-@dataclass
-class RenderSourceMatch:
-    """Encapsulates a match or blocking entry found in the source directory."""
-    path: Path
-    engine: Optional[RenderEngineConfig]
-    target_name: str
-    status: str = "match"  # "match" or "block"
 
 
 @dataclass
@@ -220,7 +165,7 @@ class WorkspaceConfig:
     workspace: WorkspaceSectionConfig = field(default_factory=WorkspaceSectionConfig)
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
-    render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
+    render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
     env: Dict[str, str] = field(default_factory=dict)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
 
@@ -230,21 +175,15 @@ class WorkspaceConfig:
         workspace: Optional[WorkspaceSectionConfig] = None,
         packages_enable: Optional[Dict[str, bool]] = None,
         packages_enable_default: bool = False,
-        render_engine_configs: Optional[Dict[str, RenderEngineConfig]] = None,
+        render_engine_configs: Optional[RenderEngineRegistry] = None,
         env: Optional[Dict[str, str]] = None,
         settings: Optional[SettingsConfig] = None,
-        render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
     ) -> None:
         self.drift_root_path = Path(drift_root_path)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
         self.packages_enable = packages_enable if packages_enable is not None else {}
         self.packages_enable_default = packages_enable_default
-        if render_engine_configs is not None:
-            self.render_engine_configs = render_engine_configs
-        elif render_engine_config is not None:
-            self.render_engine_configs = render_engine_config
-        else:
-            self.render_engine_configs = {}
+        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
         self.env = env if env is not None else {}
         self.settings = settings if settings is not None else SettingsConfig()
 
@@ -259,12 +198,9 @@ class WorkspaceConfig:
             raise TypeError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
             raise TypeError("packages_enable_default must be a boolean.")
-        if not isinstance(self.render_engine_configs, dict):
-            raise TypeError("render_engine_configs must be a dictionary.")
-        for _, v in self.render_engine_configs.items():
-            if not isinstance(v, RenderEngineConfig):
-                raise TypeError("render_engine_configs values must be RenderEngineConfig instances.")
-            v.validate()
+        if not isinstance(self.render_engine_configs, RenderEngineRegistry):
+            raise TypeError("render_engine_configs must be a RenderEngineRegistry instance.")
+        self.render_engine_configs.validate()
         if not isinstance(self.env, dict):
             raise TypeError("env must be a dictionary.")
         if not isinstance(self.settings, SettingsConfig):
@@ -307,12 +243,12 @@ class WorkspaceConfig:
         return self.packages_enable
 
     @property
-    def render_engine_config(self) -> Dict[str, RenderEngineConfig]:
+    def render_engine_config(self) -> RenderEngineRegistry:
         """Alias property for render_engine_configs to support backward compatibility."""
         return self.render_engine_configs
 
     @render_engine_config.setter
-    def render_engine_config(self, value: Dict[str, RenderEngineConfig]) -> None:
+    def render_engine_config(self, value: RenderEngineRegistry) -> None:
         self.render_engine_configs = value
 
     @classmethod
@@ -336,29 +272,8 @@ class WorkspaceConfig:
         return sorted(packages)
 
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:
-        """Calculates the new template filename based on the old template's engine suffix and the new target filename.
-        
-        Example: old_template_name = "dot-old.envst.sh", new_rendered_name = "dot-new.sh"
-                 Returns: "dot-new.envst.sh"
-                 old_template_name = "dot-old.envst", new_rendered_name = "dot-new"
-                 Returns: "dot-new.envst"
-        """
-        old_parts = old_template_name.split(".")
-        engine_suffix = None
-        
-        # Determine engine config suffixes dynamically from workspace configurations
-        valid_suffixes = {engine.suffix for engine in self.render_engine_configs.values() if engine.suffix}
-        
-        # Search the old parts for any valid engine suffix
-        engine_suffix = next(part for part in reversed(old_parts) if part in valid_suffixes)
-        if not engine_suffix:
-            return new_rendered_name  # No engine suffix found, return the new name as is
-
-        dot_idx = new_rendered_name.rfind('.')
-        if dot_idx == -1:
-            return f"{new_rendered_name}.{engine_suffix}"
-        else:
-            return new_rendered_name[:dot_idx] + f".{engine_suffix}" + new_rendered_name[dot_idx:]
+        """Calculates the new template filename based on the old template's engine suffix and the new target filename."""
+        return self.render_engine_configs.make_new_template_name(old_template_name, new_rendered_name)
 
     def get_package_names_from_source_dir(self) -> List[str]:
         """Finds all potential package subdirectory names within the source directory."""
@@ -435,39 +350,9 @@ class WorkspaceConfig:
     ) -> Optional[RenderSourceMatch]:
         """
         Locates a file or directory in the given directory that will render to one of the rendered names.
-        Checks for static files/dirs first, then for templates using defined render engines.
-        Returns a RenderSourceMatch or None if no match is found.
-
-        The callers includes package_config_render, drift_new, reverse_sync.
+        Delegates to self.render_engine_configs.
         """
-        # 1. Static check
-        for name in target_names:
-            p = directory / name
-            if p.exists():
-                return RenderSourceMatch(path=p, engine=None, target_name=name, status="match")
-
-        # 2. Template check (using defined engines)
-        # Only normal file templates are considered for rendering; directories are not rendered.
-        # So directories with a template suffix won't conflict.
-        for engine in self.render_engine_configs.values():
-            suffix = engine.suffix
-            if not suffix:
-                continue
-            for name in target_names:
-                # Check for template form 1: name.suffix (e.g., config.envst)
-                template_name_1 = f"{name}.{suffix}"
-                p1 = directory / template_name_1
-                if p1.is_file():
-                    return RenderSourceMatch(path=p1, engine=engine, target_name=name, status="match")
-
-                # Check for template form 2: name with suffix inserted before last dot (e.g., config.envst.toml)
-                dot_idx = name.rfind('.')
-                if dot_idx != -1:
-                    template_name_2 = name[:dot_idx] + f".{suffix}" + name[dot_idx:]
-                    p2 = directory / template_name_2
-                    if p2.is_file():
-                        return RenderSourceMatch(path=p2, engine=engine, target_name=name, status="match")
-        return None
+        return self.render_engine_configs.find_source_file_for_rendered_names(directory, target_names)
 
     def find_conflict_in_source_dir(
         self,
@@ -476,38 +361,9 @@ class WorkspaceConfig:
     ) -> Optional[RenderSourceMatch]:
         """
         Finds a source file that renders to rel_target_path or a blocking path.
-        Returns RenderSourceMatch with status="match" if it's an exact rendering match,
-        or status="block" if an intermediate path segment is blocked by a file.
+        Delegates to self.render_engine_configs.
         """
-        # We avoid circular import by importing here
-        from .file_utils import translate_dot_prefixes_reverse
-        
-        translated_path = translate_dot_prefixes_reverse(rel_target_path)
-        parts = translated_path.parts
-        
-        current_dir = src_pkg_dir
-        for i, part in enumerate(parts):
-            match = self.find_source_file_for_rendered_names(current_dir, [part])
-            
-            if match:
-                if i == len(parts) - 1:
-                    # Last segment reached: exact conflict (match).
-                    match.status = "match"
-                    return match
-                else:
-                    # Not last segment: if it's a file, it's a conflict (file blocking directory).
-                    if match.path.is_file():
-                        match.status = "block"
-                        return match
-                    # Directory found, descend for next segment.
-                    current_dir = match.path
-            else:
-                # No match for this segment, no conflict possible for this path.
-                return None
-                
-            if not current_dir.exists() or not current_dir.is_dir():
-                return None
-        return None
+        return self.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, rel_target_path)
 
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
@@ -547,20 +403,7 @@ class WorkspaceConfig:
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")
 
         # Parse render engines configurations under [render.*]
-        render_data = data.get("render", {})
-        render_engine_configs = {}
-        known_render_keys = {"input_file", "suffix", "render_command"}
-        for name, config_dict in render_data.items():
-            if isinstance(config_dict, dict):
-                for key in config_dict:
-                    if key not in known_render_keys:
-                        raise ConfigError(f"Unknown option under render.{name}: '{key}'")
-                render_engine_configs[name] = RenderEngineConfig(
-                    name=name,
-                    input_file=Path(config_dict.get("input_file", "")),
-                    suffix=str(config_dict.get("suffix", "")),
-                    render_command=str(config_dict.get("render_command", ""))
-                )
+        render_engine_configs = RenderEngineRegistry.from_dict(data.get("render", {}))
 
         # Parse [env]
         env_data = data.get("env", {})

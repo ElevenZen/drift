@@ -36,6 +36,7 @@ from .constants import (
     INITIAL_ENV,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
+from .render_engine_config import RenderEngineRegistry
 from .env_utils import resolve_env_references, interpolate_config_dict, update_env_dict
 from .exceptions import ConfigError
 from .file_utils import expand_user_and_env
@@ -1116,7 +1117,7 @@ class PackageConfigFileInfo:
 
 def get_package_config_file_info(
     package_dir: Path,
-    workspace_config: WorkspaceConfig
+    render_engines: RenderEngineRegistry,
 ) -> Tuple[Optional[PackageConfigFileInfo], Optional[PackageConfigFileInfo]]:
     """Finds the package config file (or template) and its local override file (or template) in the given package directory.
 
@@ -1125,7 +1126,7 @@ def get_package_config_file_info(
     2. Local override PackageConfigFileInfo or None
     """
     # 1. Base config check
-    base_res = workspace_config.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    base_res = render_engines.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
     base_info = None
     if base_res:
         base_info = PackageConfigFileInfo(
@@ -1136,7 +1137,7 @@ def get_package_config_file_info(
 
     # 2. Local config check
     local_names = ["drift_package.local.toml", "package.local.toml"]
-    local_res = workspace_config.find_source_file_for_rendered_names(package_dir, local_names)
+    local_res = render_engines.find_source_file_for_rendered_names(package_dir, local_names)
     local_info = None
     if local_res:
         local_info = PackageConfigFileInfo(
@@ -1239,7 +1240,8 @@ def load_package_config_from_source_dir(
             raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
 
     # With workspace_config provided, we can render templates if needed.
-    base_info, local_info = get_package_config_file_info(package_dir, workspace_config)
+    base_info, local_info = get_package_config_file_info(
+            package_dir, workspace_config.render_engine_configs)
     logger.debug(f"Base package config info: {base_info}")
     logger.debug(f"Local package config info: {local_info}")
     if not base_info:

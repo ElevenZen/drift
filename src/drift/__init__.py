@@ -6,6 +6,11 @@ from .workspace_config import (
     SettingsConfig,
     load_workspace_config,
 )
+from .render_engine_config import (
+    RenderEngineConfig,
+    RenderEngineRegistry,
+    RenderSourceMatch,
+)
 from .env_utils import (
     load_env_settings,
     unload_env_settings,

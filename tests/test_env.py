@@ -32,6 +32,7 @@ from drift.env_utils import (
 from drift.workspace_config import (
     load_workspace_config
 )
+from drift.render_engine_config import RenderEngineRegistry
 from drift.render_package import run_primitive_2_render_packages
 
 
@@ -990,7 +991,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             ),
             packages_enable={},
             packages_enable_default=True,
-            render_engine_configs={},
+            render_engine_configs=RenderEngineRegistry(),
             env={},
         )
 
@@ -1048,7 +1049,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             ),
             packages_enable={},
             packages_enable_default=True,
-            render_engine_configs={},
+            render_engine_configs=RenderEngineRegistry(),
             env={},
         )
         pkg_dict = {

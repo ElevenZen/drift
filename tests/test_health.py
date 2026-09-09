@@ -50,20 +50,20 @@ default_target_directory = "{self.system_target_dir}"
 DEFAULT = true
 """, encoding="utf-8")
 
-        from drift.workspace_config import RenderEngineConfig
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir,
             ),
             packages_enable={"pkg_a": True},
-            render_engine_configs={
+            render_engine_configs=RenderEngineRegistry({
                 "envst": RenderEngineConfig(
                     name="envst",
                     suffix="envst",
                     render_command="internal"
                 )
-            }
+            })
         )
 
     def tearDown(self):

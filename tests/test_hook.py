@@ -382,14 +382,16 @@ class TestPackageHook(unittest.TestCase):
         input_file.parent.mkdir(parents=True, exist_ok=True)
         input_file.write_text("export FOO=bar\n", encoding="utf-8")
 
-        self.workspace_config.render_engine_config = {
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+
+        self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
                 name="envsubst",
                 suffix="envst",
                 input_file=Path("env.sh"),
                 render_command="bash -c 'source %i && envsubst < %s'"
             )
-        }
+        })
 
         # 1. Templated hook file (post_install configured as scripts/post_install.sh, source is scripts/post_install.envst.sh)
         tmpl_hook = self.scripts_dir / "post_install.envst.sh"
@@ -419,15 +421,15 @@ class TestPackageHook(unittest.TestCase):
     def test_trigger_pre_source_hook_with_rendering(self) -> None:
         """Verifies that pre_source hook specified as a template file is rendered to render/ before execution."""
         from drift.lifecycle_hooks import trigger_pre_source_hook
-        from drift.workspace_config import RenderEngineConfig
+        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
-        self.workspace_config.render_engine_configs = {
+        self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envst": RenderEngineConfig(
                 name="envst",
                 suffix="envst",
                 render_command="internal"
             )
-        }
+        })
 
         # Create package with templated pre_source hook
         pkg_b_dir = self.drift_root / "src" / "pkg_templated_pre_source"
