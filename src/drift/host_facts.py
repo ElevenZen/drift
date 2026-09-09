@@ -101,6 +101,7 @@ def _get_ips_from_getifaddrs() -> List[str]:
         libc_name = ctypes.util.find_library("c") or "libc.so"
         libc = ctypes.CDLL(libc_name)
 
+        # Define the ifaddrs structure for storing the result of getifaddrs()
         class ifaddrs(ctypes.Structure):
             pass
 
@@ -125,6 +126,9 @@ def _get_ips_from_getifaddrs() -> List[str]:
             if ifa.ifa_addr:
                 addr_ptr = ifa.ifa_addr
                 # Detect AF_INET (IPv4): on BSD/macOS sa_family is at byte offset 1; on Linux at offset 0
+                # Because Python Ctypes parse raw memory returned be getifaddrs(),
+                # we need to read the family field directly from the memory address.
+                # check 'struct sockaddr' layout for different platforms.
                 if sys.platform == "darwin" or sys.platform.startswith("freebsd"):
                     family = ctypes.c_uint8.from_address(addr_ptr + 1).value
                 else:
