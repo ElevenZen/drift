@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import sys
 import logging
 from pathlib import Path
@@ -61,13 +62,13 @@ def check_and_prevent_system_drifts(
                 drifted_files.append(line)
 
     if drifted_packages and not force:
-        first_pkg = drifted_packages[0]
+        pkg_cmd_str = shlex.join(drifted_packages)
         err_msg = (
-            f"❌ [DEPLOY ABORTED] System drift detected in package '{first_pkg}'!\n"
+            f"❌ [DEPLOY ABORTED] System drift detected in packages: {', '.join(drifted_packages)}!\n"
             "Host configurations have drifted from the state database.\n\n"
-            f"👉 Run 'drift diff -s {first_pkg}' to view the active system modifications.\n"
-            f"👉 Run 'drift adopt {first_pkg}' to incorporate these modifications into your template.\n"
-            f"👉 Run 'drift deploy {first_pkg} --force' to discard system drifts and overwrite."
+            f"👉 Run 'drift diff -s {pkg_cmd_str}' to view the active system modifications.\n"
+            f"👉 Run 'drift adopt {pkg_cmd_str}' to incorporate these modifications into your template.\n"
+            f"👉 Run 'drift deploy {pkg_cmd_str} --force' to discard system drifts and overwrite."
         )
         raise RuntimeError(err_msg)
 
@@ -76,7 +77,7 @@ def check_and_prevent_system_drifts(
 
 def print_emergency_recovery_card(failed_step: str, error_msg: str, package_names: List[str]) -> None:
     """Prints a highly visible emergency recovery instruction block to stderr."""
-    pkgs_str = " ".join(package_names) if package_names else "<packages>"
+    pkgs_str = shlex.join(package_names) if package_names else "<packages>"
     card = f"""
 \033[1;31m💥 [CRITICAL FAILURE] deployment failed during {failed_step}!\033[0m
    \033[1;31mError:\033[0m {error_msg}
@@ -328,7 +329,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             rec_cmd = "drift adopt"
         elif requires_rollback:
             next_action = NextActionType.ROLLBACK
-            rec_cmd = f"drift rollback {' '.join(packages_to_deploy)}"
+            rec_cmd = f"drift rollback {shlex.join(packages_to_deploy)}".strip()
         else:
             next_action = NextActionType.FIX_TEMPLATE
             rec_cmd = "drift deploy"

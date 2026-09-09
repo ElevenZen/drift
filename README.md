@@ -499,6 +499,18 @@ Drift executes all lifecycle hooks with predictable working directories and auto
   drift deploy --raw-errors
   ```
 
+### 9. Deploy Reports System Drift but `drift diff` Outputs Nothing (`install-commit`)
+* **Q**: What should I do when `drift deploy` halts with a "System drift detected" warning, but `drift diff` (or `drift diff -s`) outputs no differences?
+* **A**: This indicates that the `install/` local state database repository contains uncommitted Git changes that match the compiled `render/` output (most commonly caused by an interrupted deployment or a failed commit step). Because the working tree files in `install/` already match `render/` and the host system, `drift diff` detects no delta, but the underlying `install/.git` repository is dirty.
+  To resolve this cleanly, manually commit the staged changes in `install/`:
+  ```bash
+  # Commit uncommitted changes in the install state database:
+  drift install-commit -m "chore: sync uncommitted install state" [packages...]
+
+  # Then resume normal deployment:
+  drift deploy
+  ```
+
 👉 Run `drift help faq` for more tips and topic manuals.
 
 ---
