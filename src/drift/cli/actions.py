@@ -156,10 +156,9 @@ def execute_new_package(
 ) -> None:
     """Core function to create a new package, shared by both CLI backends."""
     from ..new_package import run_primitive_10_create_new_package
-    from ..constants import PACKAGE_CONFIG_FILE_NAME
 
     workspace_config = load_workspace_config_default(drift_root)
-    pkg_dir = run_primitive_10_create_new_package(
+    res = run_primitive_10_create_new_package(
         workspace_config,
         package_name,
         force=force,
@@ -167,13 +166,6 @@ def execute_new_package(
         install_method=install_method
     )
     if json_mode:
-        res = NewPackageResult(
-            package=package_name,
-            package_dir=str(pkg_dir),
-            config_file=str(pkg_dir / PACKAGE_CONFIG_FILE_NAME),
-            target_directory=target_directory or str(workspace_config.default_target_path),
-            install_method=install_method or workspace_config.workspace.default_install_method
-        )
         print(res.to_json())
 
 
@@ -256,7 +248,7 @@ def execute_adopt(
 
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    adopted_names = run_primitive_adopt_drifts(
+    res = run_primitive_adopt_drifts(
         workspace_config=workspace_config,
         package_names=package_names,
         interactive=interactive,
@@ -266,11 +258,6 @@ def execute_adopt(
         flags=flags,
     )
     if json_mode:
-        res = AdoptResult(
-            command="adopt",
-            status="SUCCESS",
-            packages=[PackageAdoptResult(package=p, status="SUCCESS") for p in adopted_names]
-        )
         print(res.to_json())
 
 
@@ -311,15 +298,10 @@ def execute_add(
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     paths = [Path(p) for p in import_paths]
-    run_primitive_11_add_resources(
+    res = run_primitive_11_add_resources(
         workspace_config, package_name, paths, dry_run=dry_run, flags=flags
     )
     if json_mode:
-        res = AddResourceResult(
-            package=package_name,
-            imported_files=[str(p) for p in paths],
-            dry_run=dry_run
-        )
         print(res.to_json())
 
 
@@ -336,17 +318,13 @@ def execute_rollback(
     
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    restored = run_primitive_8_rollback_recovery(
+    res = run_primitive_8_rollback_recovery(
         workspace_config=workspace_config,
         package_names=package_names,
         force=force,
         flags=flags,
     )
     if json_mode:
-        res = RollbackResult(
-            target_packages=package_names or [],
-            restored_packages=restored
-        )
         print(res.to_json())
 
 
@@ -358,98 +336,57 @@ def execute_deploy(
     no_hooks: bool = False
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
-    from ..deploy_repo import run_primitive_deploy_pipeline
+    from ..deploy_repo import run_primitive_deploy_pipeline_with_error_handling
     from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    try:
-        res = run_primitive_deploy_pipeline(
-            workspace_config=workspace_config,
-            packages_to_deploy=package_names,
-            force=force,
-            flags=flags,
-        )
-        if json_mode:
-            print(res.to_json())
-    except Exception as e:
-        if json_mode:
-            err_str = str(e)
-            is_drift = "System drift detected" in err_str
-            requires_rollback = "Midway crash" in err_str
-            if is_drift:
-                next_action = NextActionType.ADOPT_OR_FORCE
-                rec_cmd = "drift adopt"
-            elif requires_rollback:
-                next_action = NextActionType.ROLLBACK
-                rec_cmd = f"drift rollback {' '.join(package_names or [])}"
-            else:
-                next_action = NextActionType.FIX_TEMPLATE
-                rec_cmd = "drift deploy"
-
-            fail = DeployFailure(
-                step_index=0 if is_drift else 1,
-                step_name="sentinel_drift_check" if is_drift else "pipeline_execution",
-                package=package_names[0] if (package_names and len(package_names) == 1) else None,
-                error_message=err_str,
-                error_type=type(e).__name__,
-                requires_rollback=requires_rollback,
-                next_action_type=next_action,
-                recommended_command=rec_cmd
-            )
-            res = DeployResult(
-                status="ABORTED_DRIFT" if is_drift else "FAILED",
-                is_global_deploy=(package_names is None),
-                target_packages=package_names or [],
-                failure=fail
-            )
-            print(res.to_json())
-            if is_drift:
-                sys.exit(ExitCode.DRIFT_DETECTED)
-            elif isinstance(e, DriftError):
-                sys.exit(e.exit_code)
-            else:
-                sys.exit(ExitCode.GENERAL_ERROR)
-        raise
+    res = run_primitive_deploy_pipeline_with_error_handling(
+        workspace_config=workspace_config,
+        packages_to_deploy=package_names,
+        force=force,
+        flags=flags,
+    )
+    if json_mode:
+        print(res.to_json())
+        if res.status == "ABORTED_DRIFT":
+            sys.exit(ExitCode.DRIFT_DETECTED)
+        elif res.status != "SUCCESS":
+            sys.exit(ExitCode.GENERAL_ERROR)
+    elif res.status != "SUCCESS":
+        error_msg = res.failure.error_message if res.failure else "Deployment failed."
+        raise RuntimeError(error_msg)
 
 
 def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = False) -> None:
     """Core function to repair a damaged or partially-initialized drift workspace."""
-    from ..workspace_repair import repair_drift_workspace
+    from ..workspace_repair import repair_drift_workspace, build_repair_result
     from ..check_repo import check_existing_workspace_status
 
     report = check_existing_workspace_status(drift_root)
-    actions: List[str] = []
-    if not report.is_healthy():
-        if not json_mode:
-            logger.info(f"🔧 Repairing workspace at '{drift_root}'...")
-        actions = repair_drift_workspace(drift_root, dry_run=dry_run)
-        if not json_mode:
-            if actions:
-                for action in actions:
-                    logger.info(f"  ✨ {action}")
-                if not dry_run:
-                    logger.info("✨ Workspace repair complete!")
-                else:
-                    logger.info("✨ [Dry-Run] Workspace repair simulation complete.")
-            else:
-                logger.info("No repair actions were required.")
-    else:
-        if not json_mode:
-            logger.info(f"✨ Workspace at '{drift_root}' is already complete and healthy. No repairs needed.")
 
+    if report.is_healthy():
+        if json_mode:
+            print(build_repair_result(report, actions=[], dry_run=dry_run).to_json())
+        else:
+            logger.info(f"✨ Workspace at '{drift_root}' is already complete and healthy. No repairs needed.")
+        return
+
+    if not json_mode:
+        logger.info(f"🔧 Repairing workspace at '{drift_root}'...")
+    actions = repair_drift_workspace(drift_root, dry_run=dry_run)
     if json_mode:
-        checks_list = [
-            RepairCheckDetail(name=c.name, status=c.status.value, details=c.details, fix_hint=c.fix_hint)
-            for c in report.checks
-        ]
-        res = RepairResult(
-            overall_health=report.overall_status.value,
-            dry_run=dry_run,
-            actions_performed=actions,
-            checks=checks_list
-        )
-        print(res.to_json())
+        print(build_repair_result(report, actions=actions, dry_run=dry_run).to_json())
+    else:
+        if actions:
+            for action in actions:
+                logger.info(f"  ✨ {action}")
+            if not dry_run:
+                logger.info("✨ Workspace repair complete!")
+            else:
+                logger.info("✨ [Dry-Run] Workspace repair simulation complete.")
+        else:
+            logger.info("No repair actions were required.")
 
 
 def execute_health(

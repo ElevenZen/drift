@@ -60,7 +60,11 @@ class TestAddResource(unittest.TestCase):
         target_file.write_text("alias hi='echo hello'")
         
         # 2. Add to drift
-        run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+        res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.package, pkg)
+        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+        self.assertFalse(res.dry_run)
         
         # 3. Verify translation in src/
         imported_file = pkg_src_dir / "dot-bashrc"
@@ -81,7 +85,11 @@ class TestAddResource(unittest.TestCase):
         (target_dir / ".hidden").write_text("secret")
         
         # 2. Add to drift
-        run_primitive_11_add_resources(self.workspace_config, pkg, [self.system_target_dir / ".config"])
+        res = run_primitive_11_add_resources(self.workspace_config, pkg, [self.system_target_dir / ".config"])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.package, pkg)
+        self.assertEqual(len(res.imported_files), 2)
+        self.assertFalse(res.dry_run)
         
         # 3. Verify recursive translation
         self.assertTrue((pkg_src_dir / "dot-config" / "nvim" / "init.vim").exists())

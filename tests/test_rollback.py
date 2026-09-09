@@ -106,7 +106,9 @@ class TestRollback(unittest.TestCase):
             f.write("system dirty content")
 
         # Run rollback
-        run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.restored_packages, ["pkg_a"])
 
         # Verify:
         # 1. install/pkg_a/file.txt is restored to HEAD ("clean content")
@@ -178,8 +180,9 @@ class TestRollback(unittest.TestCase):
         )
 
         # Execute rollback on first-time package
-        restored = run_primitive_8_rollback_recovery(workspace_cfg, [pkg_first], force=False)
-        self.assertIn(pkg_first, restored)
+        res = run_primitive_8_rollback_recovery(workspace_cfg, [pkg_first], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIn(pkg_first, res.restored_packages)
 
         # Verify:
         # 1. Newly delivered file on host target is removed
@@ -250,8 +253,9 @@ class TestRollback(unittest.TestCase):
             packages_enable_default=False,
         )
 
-        restored = run_primitive_8_rollback_recovery(workspace_cfg, ["pkg_a", pkg_first], force=False)
-        self.assertEqual(set(restored), {"pkg_a", pkg_first})
+        res = run_primitive_8_rollback_recovery(workspace_cfg, ["pkg_a", pkg_first], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(set(res.restored_packages), {"pkg_a", pkg_first})
 
         # Verify pkg_a is restored to clean committed state ("clean content")
         self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "clean content")

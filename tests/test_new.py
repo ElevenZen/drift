@@ -20,14 +20,17 @@ class TestNewPackage(unittest.TestCase):
             config = WorkspaceConfig(drift_root_path=drift_root)
             
             pkg_name = "test_pkg"
-            pkg_dir = run_primitive_10_create_new_package(config, pkg_name)
+            res = run_primitive_10_create_new_package(config, pkg_name)
+            pkg_dir = Path(res.package_dir)
             
+            self.assertEqual(res.status, "SUCCESS")
+            self.assertEqual(res.package, pkg_name)
             self.assertTrue(pkg_dir.exists())
             self.assertTrue(pkg_dir.is_dir())
             self.assertEqual(pkg_dir.name, pkg_name)
             
             # Default should be drift_package.toml per spec
-            config_file = pkg_dir / "drift_package.toml"
+            config_file = Path(res.config_file)
             self.assertTrue(config_file.exists())
             self.assertTrue(config_file.is_file())
             
@@ -60,7 +63,8 @@ class TestNewPackage(unittest.TestCase):
             custom_ignore = pkg_dir / DRIFT_IGNORE_FILE_NAME
             custom_ignore.write_text("# Custom ignore rules\ncustom_rule/\n", encoding="utf-8")
             
-            run_primitive_10_create_new_package(config, pkg_name)
+            res = run_primitive_10_create_new_package(config, pkg_name)
+            self.assertEqual(res.status, "SUCCESS")
             
             # Existing .drift_ignore should be preserved
             self.assertEqual(custom_ignore.read_text(encoding="utf-8"), "# Custom ignore rules\ncustom_rule/\n")
@@ -82,7 +86,8 @@ class TestNewPackage(unittest.TestCase):
                 run_primitive_10_create_new_package(config, pkg_name)
             
             # Should succeed with force
-            run_primitive_10_create_new_package(config, pkg_name, force=True)
+            res = run_primitive_10_create_new_package(config, pkg_name, force=True)
+            self.assertEqual(res.status, "SUCCESS")
             content = (pkg_dir / "drift_package.toml").read_text()
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
 
@@ -96,7 +101,9 @@ class TestNewPackage(unittest.TestCase):
             
             pkg_name = "custom_pkg"
             target_dir = "~/.config/nvim"
-            pkg_dir = run_primitive_10_create_new_package(config, pkg_name, target_directory=target_dir)
+            res = run_primitive_10_create_new_package(config, pkg_name, target_directory=target_dir)
+            pkg_dir = Path(res.package_dir)
+            self.assertEqual(res.target_directory, target_dir)
             
             config_file = pkg_dir / "drift_package.toml"
             self.assertTrue(config_file.exists())

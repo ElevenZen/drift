@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
+from .result_models import AddResourceResult
 from .file_utils import (
     translate_dot_prefixes_reverse,
     is_relative_to,
@@ -95,13 +96,16 @@ def run_primitive_11_add_resources(
     import_paths: List[Path],
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> None:
+) -> AddResourceResult:
     """
     Orchestrates importing multiple resources into a package.
     1. Resolves package target directory and source render directory.
     2. Identifies all files to import, respecting ignores.
     3. Performs global conflict check before any copy.
     4. Executes the import with dot-prefix translation.
+
+    Returns:
+        AddResourceResult detailing the outcome of the import operation.
     """
     # 1. Resolve package source directory
     src_pkg_dir = workspace_config.source_path / package_name
@@ -123,7 +127,13 @@ def run_primitive_11_add_resources(
 
     if not full_worklist:
         logger.info(f"No resources to import into '{package_name}'.")
-        return
+        return AddResourceResult(
+            command="add",
+            status="SUCCESS",
+            package=package_name,
+            imported_files=[],
+            dry_run=dry_run,
+        )
 
     # 4. Global Conflict Check Phase
     for src_on_system, rel_target in full_worklist:
@@ -133,6 +143,7 @@ def run_primitive_11_add_resources(
             raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
 
     # 5. Execution Phase
+    imported_files: List[str] = [str(src_on_system) for src_on_system, _ in full_worklist]
     for src_on_system, rel_target in full_worklist:
         rel_src = translate_dot_prefixes_reverse(rel_target)
         dest_path = src_dir_to_render / rel_src
@@ -148,6 +159,19 @@ def run_primitive_11_add_resources(
         atomic_copy_file(src_on_system, dest_path)
 
     if dry_run:
-        return
+        return AddResourceResult(
+            command="add",
+            status="SUCCESS",
+            package=package_name,
+            imported_files=imported_files,
+            dry_run=True,
+        )
 
     logger.info(f"✨ Successfully imported {len(full_worklist)} file(s) into package '{package_name}'.")
+    return AddResourceResult(
+        command="add",
+        status="SUCCESS",
+        package=package_name,
+        imported_files=imported_files,
+        dry_run=False,
+    )

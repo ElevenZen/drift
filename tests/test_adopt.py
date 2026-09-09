@@ -23,7 +23,7 @@ from drift.adopt_repo import (
     adopt_deletion,
     adopt_modification,
     fallback_over_render,
-    adopt_single_package,
+    adopt_one_package_drifts,
     run_primitive_adopt_drifts,
 )
 
@@ -425,7 +425,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_unstage_on_skip(self) -> None:
         """Verifies that if a rename is skipped or failed, both old and new paths get unstaged at the end."""
-        from drift.adopt_repo import adopt_single_package
+        from drift.adopt_repo import adopt_one_package_drifts
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -450,8 +450,8 @@ class TestAdopt(unittest.TestCase):
         src_new_file = src_pkg_dir / "dot-new.txt"
         src_new_file.write_text("collision", encoding="utf-8")
 
-        # 3. Run adopt_single_package non-interactively
-        adopt_single_package(self.workspace_config, pkg, interactive=False)
+        # 3. Run adopt_one_package_drifts non-interactively
+        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
         # 4. Check git status. Both pkg_a/dot-old.txt and pkg_a/dot-new.txt should be unstaged (not in staged index)
         # because the rename conflicted and was skipped, triggering selective git restore --staged.
@@ -490,7 +490,7 @@ class TestAdopt(unittest.TestCase):
         # Create a drift in install/
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
-        adopt_single_package(self.workspace_config, pkg, interactive=False)
+        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
         # Hook must have run and generated hook_executed.txt in src_pkg_dir
         hook_out = src_pkg_dir / "hook_executed.txt"
@@ -532,7 +532,7 @@ class TestAdopt(unittest.TestCase):
         # Create a drift in install/
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
-        adopt_single_package(self.workspace_config, pkg, interactive=False)
+        adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
         # Hook must have run and generated hook_executed.txt in src_pkg_dir
         hook_out = src_pkg_dir / "hook_executed.txt"
@@ -572,7 +572,7 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "new_file.txt").write_text("drift content", encoding="utf-8")
 
         with self.assertRaises(RuntimeError) as ctx:
-            adopt_single_package(
+            adopt_one_package_drifts(
                 self.workspace_config, pkg, interactive=False, flags=HookExecFlags(streaming=False)
             )
         self.assertIn("failed with exit code 1", str(ctx.exception))
@@ -691,7 +691,8 @@ class TestAdopt(unittest.TestCase):
         resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg_clean, pkg_conflict], interactive=False)
 
         # Only pkg_clean should be resolved
-        self.assertEqual(resolved, [pkg_clean])
+        self.assertEqual(list(resolved), [pkg_clean])
+        self.assertEqual(resolved.status, "FAILED")
 
         # src/ for pkg_clean should be adopted
         self.assertEqual((src_clean / "config.json").read_text(encoding="utf-8"), '{"version": 2}')
@@ -735,7 +736,8 @@ class TestAdopt(unittest.TestCase):
         resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
 
         # Package was not fully resolved
-        self.assertEqual(resolved, [])
+        self.assertEqual(list(resolved), [])
+        self.assertEqual(resolved.status, "FAILED")
 
         # HEAD commit in install/ did not change
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -774,7 +776,8 @@ class TestAdopt(unittest.TestCase):
         resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
 
         # Package must be resolved cleanly
-        self.assertEqual(resolved, [pkg])
+        self.assertEqual(list(resolved), [pkg])
+        self.assertEqual(resolved.status, "SUCCESS")
 
         # Source template file must now have executable bit set
         self.assertTrue(bool(src_template.stat().st_mode & 0o111))
@@ -811,7 +814,7 @@ class TestAdopt(unittest.TestCase):
         with patch("builtins.input", return_value="3"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
 
-        self.assertEqual(resolved, [])
+        self.assertEqual(list(resolved), [])
 
         # HEAD commit in install/ did not advance
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -850,7 +853,7 @@ class TestAdopt(unittest.TestCase):
         with patch("builtins.input", return_value="4"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
 
-        self.assertEqual(resolved, [])
+        self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -889,7 +892,7 @@ class TestAdopt(unittest.TestCase):
         with patch("builtins.input", return_value="3"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
 
-        self.assertEqual(resolved, [])
+        self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -928,7 +931,7 @@ class TestAdopt(unittest.TestCase):
         with patch("builtins.input", return_value="5"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
 
-        self.assertEqual(resolved, [])
+        self.assertEqual(list(resolved), [])
 
         # install/ repo HEAD did not advance
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
@@ -972,7 +975,8 @@ class TestAdopt(unittest.TestCase):
 
         # Run adopt
         resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
-        self.assertEqual(resolved, [pkg])
+        self.assertEqual(list(resolved), [pkg])
+        self.assertEqual(resolved.status, "SUCCESS")
 
         # Verify modified file updated in source subfolder
         self.assertEqual((subfolder_dir / "app.conf").read_text(encoding="utf-8"), "setting=modified_on_host\n")
@@ -983,6 +987,44 @@ class TestAdopt(unittest.TestCase):
 
         # Verify not created at package root
         self.assertFalse((src_pkg / "new_tool.conf").exists())
+
+    def test_adopt_dry_run_detects_renames_and_leaves_index_clean(self) -> None:
+        """Verifies that dry-run mode accurately detects file renames and leaves install git index unstaged."""
+        pkg = "pkg_dry_run_rename"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "source_name.txt").write_text("content to rename", encoding="utf-8")
+        (install_pkg / "source_name.txt").write_text("content to rename", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init dry run rename src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init dry run rename install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Rename file on host (in install/)
+        (install_pkg / "source_name.txt").unlink()
+        (install_pkg / "renamed_dest.txt").write_text("content to rename", encoding="utf-8")
+
+        # Run adopt in dry_run mode
+        res = adopt_one_package_drifts(self.workspace_config, pkg, dry_run=True)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.adopted_renames, ["source_name.txt -> renamed_dest.txt"])
+        self.assertEqual(res.adopted_additions, [])
+        self.assertEqual(res.adopted_deletions, [])
+
+        # Source folder was NOT changed in dry-run
+        self.assertTrue((src_pkg / "source_name.txt").exists())
+        self.assertFalse((src_pkg / "renamed_dest.txt").exists())
+
+        # Git index in install/ must remain unstaged (no staged changes)
+        status_res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
+        for line in status_res.stdout.splitlines():
+            if len(line) >= 2:
+                self.assertIn(line[0], [" ", "?"])
 
 
 if __name__ == "__main__":

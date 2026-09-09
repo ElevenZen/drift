@@ -124,6 +124,8 @@ def run_command(
         params.update(kwargs)
         try:
             res = subprocess.run(cmd, **params)
+            cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
+            logger.debug(f"Command finished with exit code {res.returncode}: {cmd_str}")
             stdout_msg = format_output(res.stdout)
             if stdout_msg:
                 logger.debug(f"stdout:\n{stdout_msg}")
@@ -134,6 +136,8 @@ def run_command(
             res.stderr = clean_stream_val(res.stderr)
             return res
         except subprocess.CalledProcessError as e:
+            cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
+            logger.error(f"Command failed with exit code {e.returncode}: {cmd_str}")
             stdout_msg = format_output(e.stdout)
             if stdout_msg:
                 logger.debug(f"stdout:\n{stdout_msg}")

@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 from .workspace_config import WorkspaceConfig
+from .result_models import NewPackageResult
 from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
@@ -20,7 +21,7 @@ def run_primitive_10_create_new_package(
     force: bool = False,
     target_directory: Optional[str] = None,
     install_method: Optional[str] = None
-) -> Path:
+) -> NewPackageResult:
     """Scaffolds a new package directory and a default package configuration file (Primitive 10).
 
     Args:
@@ -32,7 +33,7 @@ def run_primitive_10_create_new_package(
         install_method: Optional install method override ('stow' or 'copy').
 
     Returns:
-        The Path to the created package source directory.
+        NewPackageResult containing details of the created package.
     """
     package_dir = workspace_config.source_path / package_name
     
@@ -68,4 +69,12 @@ def run_primitive_10_create_new_package(
         ignore_file.write_text(get_default_drift_ignore_content(), encoding="utf-8")
         logger.info(f"📝 Generated {DRIFT_IGNORE_FILE_NAME} at {ignore_file}")
     
-    return package_dir
+    return NewPackageResult(
+        command="new",
+        status="SUCCESS",
+        package=package_name,
+        package_dir=str(package_dir),
+        config_file=str(config_file),
+        target_directory=target_directory or str(workspace_config.default_target_path),
+        install_method=final_install_method,
+    )

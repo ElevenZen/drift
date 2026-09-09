@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple
 
 from .workspace_config import WorkspaceConfig
 from .constants import CONFIG_DIR_NAME
+from .result_models import AdoptResult, PackageAdoptResult
 from .git_utils import (
     get_git_status_porcelain,
     has_uncommitted_modifications,
@@ -754,34 +755,40 @@ def handle_single_modification(
         )
 
 
-def adopt_single_package(
+def adopt_one_package_drifts(
     workspace_config: WorkspaceConfig,
     pkg: str,
     interactive: bool = False,
     accept_conflicts: bool = False,
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> bool:
+) -> PackageAdoptResult:
     """Adopt drifts for a single package according to interactive or non-interactive choices.
-    
-    Returns True if all drifts in the package were resolved cleanly and can be committed;
-    returns False if any file was skipped or had unresolved conflicts.
+
+    Git cleanliness is handled by the caller, and this function assumes the package source directory is clean.
     """
-    if not dry_run:
-        # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
-        subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
+    # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
+    subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
 
     additions, deletions, modifications, renames = get_package_drifts(workspace_config.install_path, pkg)
     
     if not additions and not deletions and not modifications and not renames:
         logger.info(f"✨ Package '{pkg}' has no drifts.")
-        if not dry_run:
-            subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
-        return True
+        subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
+        return PackageAdoptResult(package=pkg, status="SUCCESS")
 
     if dry_run:
+        # In dry-run mode, unstage the index changes so that the install repository working index remains untouched.
+        subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
         dry_run_adopt(workspace_config, pkg, additions, deletions, modifications, renames)
-        return True
+        return PackageAdoptResult(
+            package=pkg,
+            adopted_additions=[str(p) for p in additions],
+            adopted_deletions=[str(p) for p in deletions],
+            adopted_modifications=[str(p) for p in modifications],
+            adopted_renames=[f"{old} -> {new}" for old, new in renames],
+            status="SUCCESS",
+        )
 
     pkg_dir = workspace_config.source_path / pkg
     src_dir_to_render = get_package_source_render_dir(workspace_config, pkg)
@@ -790,19 +797,27 @@ def adopt_single_package(
     # Trigger pre_source hook before adopting drifts into source directory
     trigger_pre_source_hook(workspace_config, pkg, flags=flags)
 
-    skipped_files = []
+    adopted_additions: List[str] = []
+    adopted_deletions: List[str] = []
+    adopted_renames: List[str] = []
+    adopted_modifications: List[str] = []
+    skipped_files: List[str] = []
 
     # 1. Process Additions
     for rel_path in additions:
         resolved = handle_single_addition(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
-        if not resolved:
-            skipped_files.append(rel_path)
+        if resolved:
+            adopted_additions.append(str(rel_path))
+        else:
+            skipped_files.append(str(rel_path))
 
     # 2. Process Deletions
     for rel_path in deletions:
         resolved = handle_single_deletion(workspace_config, pkg, install_pkg_dir, rel_path, interactive)
-        if not resolved:
-            skipped_files.append(rel_path)
+        if resolved:
+            adopted_deletions.append(str(rel_path))
+        else:
+            skipped_files.append(str(rel_path))
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in renames:
@@ -810,29 +825,40 @@ def adopt_single_package(
             workspace_config, pkg, src_dir_to_render, install_pkg_dir,
             old_rel_path, new_rel_path, interactive, accept_conflicts
         )
-        if not resolved:
-            skipped_files.append(old_rel_path)
-            skipped_files.append(new_rel_path)
+        if resolved:
+            adopted_renames.append(f"{old_rel_path} -> {new_rel_path}")
+        else:
+            skipped_files.append(str(old_rel_path))
+            skipped_files.append(str(new_rel_path))
 
     # 4. Process Modifications
     for rel_path in modifications:
         resolved = handle_single_modification(
             workspace_config, pkg, src_dir_to_render, install_pkg_dir, rel_path, interactive, accept_conflicts
         )
-        if not resolved:
-            skipped_files.append(rel_path)
+        if resolved:
+            adopted_modifications.append(str(rel_path))
+        else:
+            skipped_files.append(str(rel_path))
 
     # Unstage any skipped/failed files so they remain as uncommitted local drift in install/
     if skipped_files:
-        for rel_path in skipped_files:
-            rel_spec = (Path(pkg) / rel_path).as_posix()
+        for rel_path_str in skipped_files:
+            rel_spec = (Path(pkg) / rel_path_str).as_posix()
             subprocess.run([
                 "git", "-C", str(workspace_config.install_path),
                 "restore", "--staged", "--", rel_spec
             ], capture_output=True)
-        return False
 
-    return True
+    return PackageAdoptResult(
+        package=pkg,
+        adopted_additions=adopted_additions,
+        adopted_modifications=adopted_modifications,
+        adopted_deletions=adopted_deletions,
+        adopted_renames=adopted_renames,
+        skipped_files=skipped_files,
+        status="FAILED" if skipped_files else "SUCCESS",
+    )
 
 
 def run_primitive_adopt_drifts(
@@ -843,7 +869,7 @@ def run_primitive_adopt_drifts(
     force: bool = False,
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> List[str]:
+) -> AdoptResult:
     """High-level orchestrator for adopting system drifts back to declarative templates (Primitive Adopt).
 
     Args:
@@ -857,23 +883,23 @@ def run_primitive_adopt_drifts(
         flags: Optional HookExecFlags controlling hook execution options.
 
     Returns:
-        List of package names successfully adopted and resolved.
+        AdoptResult containing detailed results for all adopted packages.
     """
     # 1. Discovery
     if not package_names:
         package_names = get_drifted_packages(workspace_config)
         if not package_names:
             logger.info("✨ No drifted packages found in local state database.")
-            return []
+            return AdoptResult(command="adopt", status="SUCCESS", packages=[])
 
     # 2. Check cleanliness guard for each package
     for pkg in package_names:
         check_source_cleanliness(workspace_config, pkg, force=force)
 
     # 3. Process each package
-    resolved_packages = []
+    package_results: List[PackageAdoptResult] = []
     for pkg in package_names:
-        is_resolved = adopt_single_package(
+        pkg_res = adopt_one_package_drifts(
             workspace_config=workspace_config,
             pkg=pkg,
             interactive=interactive,
@@ -881,8 +907,9 @@ def run_primitive_adopt_drifts(
             dry_run=dry_run,
             flags=flags,
         )
-        if is_resolved:
-            resolved_packages.append(pkg)
+        package_results.append(pkg_res)
+
+    resolved_packages = [p.package for p in package_results if p.status == "SUCCESS"]
 
     # 4. Commit resolved packages in install base
     if resolved_packages and not dry_run:
@@ -894,4 +921,9 @@ def run_primitive_adopt_drifts(
             repo_name="install repo"
         )
 
-    return resolved_packages
+    all_success = all(p.status == "SUCCESS" for p in package_results)
+    return AdoptResult(
+        command="adopt",
+        status="SUCCESS" if all_success else "FAILED",
+        packages=package_results
+    )

@@ -60,16 +60,24 @@ class TestProcessUtils(unittest.TestCase):
                 run_command([sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"], text=True)
             logs = "\n".join(cm.output)
             self.assertIn("External:", logs)
+            self.assertIn("Command finished with exit code 0:", logs)
             self.assertIn("stdout:\nout", logs)
             self.assertIn("stderr:\nerr", logs)
         finally:
             set_test_mode(True, enable_logging=False)
 
     def test_run_command_non_streaming_error(self) -> None:
-        with self.assertRaises(subprocess.CalledProcessError) as ctx:
-            run_command([sys.executable, "-c", "import sys; print('failing', file=sys.stderr); sys.exit(42)"], text=True)
-        self.assertEqual(ctx.exception.returncode, 42)
-        self.assertIn("failing", ctx.exception.stderr)
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.process_utils", level="ERROR") as cm:
+                with self.assertRaises(subprocess.CalledProcessError) as ctx:
+                    run_command([sys.executable, "-c", "import sys; print('failing', file=sys.stderr); sys.exit(42)"], text=True)
+            self.assertEqual(ctx.exception.returncode, 42)
+            self.assertIn("failing", ctx.exception.stderr)
+            logs = "\n".join(cm.output)
+            self.assertIn("Command failed with exit code 42:", logs)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
     def test_run_command_streaming_captures_and_streams(self) -> None:
         captured_stdout = io.StringIO()

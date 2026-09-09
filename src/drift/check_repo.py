@@ -79,6 +79,31 @@ class WorkspaceHealthReport:
             lines.append(f"   {icon} {c.name}: [{c.status.value.upper()}] {c.details}{hint_str}")
         return "\n".join(lines)
 
+    def to_repair_result(
+        self,
+        actions: Optional[List[str]] = None,
+        dry_run: bool = False
+    ):
+        """Converts this health report and any performed repair actions into a RepairResult object."""
+        from .result_models import RepairResult, RepairCheckDetail
+
+        checks_list = [
+            RepairCheckDetail(
+                name=c.name,
+                status=c.status.value,
+                details=c.details,
+                fix_hint=c.fix_hint
+            )
+            for c in self.checks
+        ]
+        return RepairResult(
+            overall_health=self.overall_status.value,
+            dry_run=dry_run,
+            actions_performed=actions or [],
+            checks=checks_list
+        )
+
+
 
 def check_root_git_repo(drift_root: Path) -> CheckResult:
     """Checks the main workspace Git repository health."""

@@ -114,6 +114,7 @@ from .install_repo import (
 )
 from .deploy_repo import (
     run_primitive_deploy_pipeline,
+    run_primitive_deploy_pipeline_with_error_handling,
 )
 from .render_input import (
     find_engine_for_file,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .workspace_config import WorkspaceConfig
+from .result_models import RollbackResult
 from .state_registry import load_state_registry, save_state_registry
 from .install_repo import run_primitive_5_install_deployment
 from .uninstall_repo import run_primitive_7_uninstall_packages
@@ -56,7 +57,7 @@ def run_primitive_8_rollback_recovery(
     package_names: Optional[List[str]] = None,
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> List[str]:
+) -> RollbackResult:
     """Reverts failed midway deployments and restores system files to the last committed clean state (Primitive 8).
 
     Args:
@@ -68,25 +69,30 @@ def run_primitive_8_rollback_recovery(
         flags: Optional HookExecFlags controlling hook execution options.
 
     Returns:
-        List of package names successfully restored/rolled back.
+        RollbackResult containing details of the rollback operation.
     """
     state_file = workspace_config.install_path / "state.toml"
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = set(workspace_config.get_installed_packages(target_pkgs=package_names))
+    discovered = sorted(list(set(workspace_config.get_installed_packages(target_pkgs=package_names))))
     if not discovered:
         logger.info("✨ No active packages found to rollback.")
-        return []
+        return RollbackResult(
+            command="rollback",
+            status="SUCCESS",
+            target_packages=package_names or [],
+            restored_packages=[]
+        )
 
     # 2. Check conflict states if force is False
     if force:
-        packages_to_rollback = discovered
+        packages_to_rollback = set(discovered)
     else:
         packages_to_rollback = { pkg for pkg in discovered
                                 if state_registry.get_package_state(pkg)
                                     in ["staging", "deploying"]}
-        packages_state_wrong = discovered - packages_to_rollback
+        packages_state_wrong = set(discovered) - packages_to_rollback
         if len(packages_state_wrong) > 0:
             raise RuntimeError(
                     "The following packages are not in a failed midway/conflict state ('staging' or 'deploying'): "
@@ -96,7 +102,12 @@ def run_primitive_8_rollback_recovery(
                     "Use --force to override and rollback anyway.")
         if not packages_to_rollback:
             logger.info("✨ No packages in a failed midway/conflict state to rollback.")
-            return []
+            return RollbackResult(
+                command="rollback",
+                status="SUCCESS",
+                target_packages=package_names or list(discovered),
+                restored_packages=[]
+            )
 
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
 
@@ -144,4 +155,9 @@ def run_primitive_8_rollback_recovery(
         logger.info(f"✨ Restored previously committed clean state for: {packages_to_redeploy}")
 
     logger.info("✨ Rollback recovery complete.")
-    return list(packages_to_rollback)
+    return RollbackResult(
+        command="rollback",
+        status="SUCCESS",
+        target_packages=package_names or list(discovered),
+        restored_packages=sorted(list(packages_to_rollback))
+    )

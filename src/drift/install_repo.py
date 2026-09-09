@@ -853,7 +853,7 @@ def deploy_one_package(
         )
 
 
-def deploy_one_package_with_error_handling(
+def deploy_one_package_with_error_wrapping(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     pkg: str,
@@ -945,7 +945,7 @@ def run_primitive_5_install_deployment(
             pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
         else:
             pkg_change = None
-        pkg_res = deploy_one_package_with_error_handling(
+        pkg_res = deploy_one_package_with_error_wrapping(
             workspace_config=workspace_config,
             state_registry=state_registry,
             pkg=pkg,

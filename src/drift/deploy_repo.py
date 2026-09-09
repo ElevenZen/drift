@@ -274,3 +274,61 @@ def run_primitive_deploy_pipeline(
         gc=gc_res,
         completed_steps=completed_steps
     )
+
+
+def run_primitive_deploy_pipeline_with_error_handling(
+    workspace_config: WorkspaceConfig,
+    packages_to_deploy: Optional[List[str]] = None,
+    force: bool = False,
+    flags: Optional[HookExecFlags] = None,
+) -> DeployResult:
+    """Executes the deployment pipeline, catching exceptions and returning a structured DeployResult.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
+        force: If True, bypasses safeguards and proceeds with deployment.
+        flags: Optional HookExecFlags controlling hook execution options.
+
+    Returns:
+        DeployResult containing detailed status, deployed packages, or failure details.
+    """
+    try:
+        return run_primitive_deploy_pipeline(
+            workspace_config=workspace_config,
+            packages_to_deploy=packages_to_deploy,
+            force=force,
+            flags=flags,
+        )
+    except Exception as e:
+        err_str = str(e)
+        is_drift = "System drift detected" in err_str
+        requires_rollback = "Midway crash" in err_str
+        if is_drift:
+            next_action = NextActionType.ADOPT_OR_FORCE
+            rec_cmd = "drift adopt"
+        elif requires_rollback:
+            next_action = NextActionType.ROLLBACK
+            rec_cmd = f"drift rollback {' '.join(packages_to_deploy or [])}"
+        else:
+            next_action = NextActionType.FIX_TEMPLATE
+            rec_cmd = "drift deploy"
+
+        fail = DeployFailure(
+            step_index=0 if is_drift else 1,
+            step_name="sentinel_drift_check" if is_drift else "pipeline_execution",
+            package=packages_to_deploy[0] if (packages_to_deploy and len(packages_to_deploy) == 1) else None,
+            error_message=err_str,
+            error_type=type(e).__name__,
+            requires_rollback=requires_rollback,
+            next_action_type=next_action,
+            recommended_command=rec_cmd
+        )
+        return DeployResult(
+            command="deploy",
+            status="ABORTED_DRIFT" if is_drift else "FAILED",
+            is_global_deploy=(packages_to_deploy is None),
+            target_packages=packages_to_deploy or [],
+            failure=fail
+        )
+

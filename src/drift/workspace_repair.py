@@ -25,6 +25,7 @@ from .constants import (
 )
 from .check_repo import (
     ComponentStatus,
+    WorkspaceHealthReport,
     check_root_gitignore,
     check_render_repo,
     check_install_repo,
@@ -331,3 +332,13 @@ def repair_drift_workspace(
     actions.extend(repair_engine_inputs(drift_root, dry_run=dry_run, workspace_config=ws_config))
 
     return actions
+
+
+def build_repair_result(
+    report: "WorkspaceHealthReport",
+    actions: Optional[List[str]] = None,
+    dry_run: bool = False
+):
+    """Converts a WorkspaceHealthReport and performed actions into a RepairResult object."""
+    return report.to_repair_result(actions=actions, dry_run=dry_run)
+
