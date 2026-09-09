@@ -35,7 +35,7 @@ class TestIntegration(unittest.TestCase):
         
         # 2. Load workspace config
         self.workspace_config = load_workspace_config(self.drift_root)
-        self.workspace_config.default_target_directory = self.system_target_dir
+        self.workspace_config.workspace.default_target_directory = self.system_target_dir
         
         self.source_dir = self.workspace_config.source_path
         self.install_dir = self.workspace_config.install_path

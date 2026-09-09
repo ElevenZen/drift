@@ -49,8 +49,8 @@ def get_pending_delta_worklist(
     
     for pkg in packages:
         # Use paths relative to drift_root for diffing
-        rel_install = workspace_config.install_directory / pkg
-        rel_render = workspace_config.render_directory / pkg
+        rel_install = workspace_config.workspace.install_directory / pkg
+        rel_render = workspace_config.workspace.render_directory / pkg
         
         abs_install = workspace_config.install_path / pkg
         abs_render = workspace_config.render_path / pkg

@@ -28,14 +28,12 @@ class TestAddResource(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
-        from drift.workspace_config import RenderEngineConfig
+        from drift.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=self.system_target_dir,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir,
+            ),
             packages_enable={},
             render_engine_config={
                 "envsubst": RenderEngineConfig(

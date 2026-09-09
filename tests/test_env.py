@@ -899,8 +899,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         ws = load_workspace_config(self.drift_root)
         self.assertEqual(ws.env["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.env["ALL_PROXY"], "socks5h://127.0.0.1:9050")
-        self.assertEqual(ws.source_directory, Path("src_custom"))
-        self.assertEqual(str(ws.default_target_directory), "/custom/base/dest/user_home")
+        self.assertEqual(ws.workspace.source_directory, Path("src_custom"))
+        self.assertEqual(str(ws.workspace.default_target_directory), "/custom/base/dest/user_home")
 
     def test_package_config_with_env_override_and_field_interpolation(self) -> None:
         """Verifies that package drift_package.toml resolves [env.override] and interpolates package fields."""
@@ -958,7 +958,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
     def test_package_config_facts_and_precedence(self) -> None:
         """Verifies that all four package facts are available and 7-tier precedence is respected in package config."""
         from drift.package_config import PackageConfig
-        from drift.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Test CLI environment precedence (Tier 1 INITIAL_ENV)
         os.environ["CLI_OVERRIDE_VAR"] = "cli_val"
@@ -966,12 +966,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
         ws = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=Path("/target"),
-            default_install_method="stow",
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=Path("/target"),
+            ),
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs={},
@@ -1017,17 +1014,19 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
-        from drift.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
         from drift.package_config import PackageConfig
 
         ws = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("custom_src"),
-            render_directory=Path("custom_render"),
-            install_directory=Path("custom_install"),
-            backup_directory=Path("custom_backup"),
-            default_target_directory=Path("/target"),
-            default_install_method="stow",
+            workspace=WorkspaceSectionConfig(
+                source_directory=Path("custom_src"),
+                render_directory=Path("custom_render"),
+                install_directory=Path("custom_install"),
+                backup_directory=Path("custom_backup"),
+                default_target_directory=Path("/target"),
+                default_install_method="stow",
+            ),
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs={},

@@ -28,10 +28,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Create WorkspaceConfig
         self.workspace_config = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
             packages_enable={
                 "pkg_a": True,
                 "pkg_b": True,
@@ -39,7 +36,6 @@ class TestStageRepo(unittest.TestCase):
                 "pkg_misspelled": True
             },
             packages_enable_default=False,
-            drift_root_path=self.drift_root
         )
 
         # 1. Set up pkg_a (regular)
@@ -387,13 +383,9 @@ class TestStageRepo(unittest.TestCase):
         """Verifies that stage returns early if there are no active packages."""
         # Create config with no enabled packages
         empty_config = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
             packages_enable={},
             packages_enable_default=False,
-            drift_root_path=self.drift_root
         )
         changes = run_primitive_4_stage_render_to_install(empty_config)
         self.assertEqual(changes, [])

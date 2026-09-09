@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PackageConfig, PackageHooks
 from drift.state_registry import (
         load_state_registry,
@@ -52,17 +52,15 @@ class TestInstallRepo(unittest.TestCase):
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
 
         self.workspace_config = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir
+            ),
             packages_enable={
                 "pkg_stow": True,
                 "pkg_copy": True,
             },
             packages_enable_default=False,
-            drift_root_path=self.drift_root,
-            default_target_directory=self.system_target_dir
         )
 
     def tearDown(self) -> None:

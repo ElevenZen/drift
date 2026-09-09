@@ -2,8 +2,8 @@
 
 import logging
 from pathlib import Path
-from typing import Mapping, Dict, List, Optional
-from .workspace_config import RenderEngineConfig, WorkspaceConfig
+from typing import Mapping, Dict, List, Optional, Union
+from .workspace_config import RenderEngineConfig
 from .render_core import render_template_to_file
 from .constants import CONFIG_DIR_NAME, INTERNAL_RENDER_COMMAND
 
@@ -102,7 +102,7 @@ def resolve_static_input_file(
 def render_input_templates(
     engines: List[RenderEngineConfig],
     drift_root: Path,
-    workspace_config: Optional[WorkspaceConfig] = None
+    render_dir: Union[Path, str] = "render"
 ) -> None:
     """Resolves engine input dependencies, checks for cycles,
 
@@ -111,7 +111,7 @@ def render_input_templates(
     Args:
         engines: The list of RenderEngineConfig instances.
         drift_root: The root path of the drift workspace.
-        workspace_config: Optional WorkspaceConfig instance to read the render directory name from.
+        render_dir: Relative or absolute path / name of the render directory (defaults to "render").
 
     Raises:
         ValueError: If a cyclic dependency is detected.
@@ -126,7 +126,7 @@ def render_input_templates(
 
     # 3. Render templates using the dependency map directly
     engines_by_name = {e.name: e for e in engines}
-    render_dir = workspace_config.render_directory if workspace_config else "render"
+    render_dir_path = Path(render_dir)
     memo: Dict[str, Path] = {}
 
     def get_or_render_input_file(engine: RenderEngineConfig) -> Path:
@@ -158,8 +158,8 @@ def render_input_templates(
                 return Path("")
 
             output_filename = dep_engine.strip_suffix(template_file_path.name)
-            # The 'render' string is read dynamically from the workspace_config if provided
-            output_file_path = drift_root / render_dir / CONFIG_DIR_NAME / output_filename
+            # The 'render' directory is read dynamically from render_dir
+            output_file_path = drift_root / render_dir_path / CONFIG_DIR_NAME / output_filename
 
             # Use logger.info with a high-signal format
             logger.info(f"🎨 Rendering engine input: {engine.name} (via {dep_name})")

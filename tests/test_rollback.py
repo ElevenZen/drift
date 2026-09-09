@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.rollback_repo import run_primitive_8_rollback_recovery
 
@@ -37,16 +37,14 @@ class TestRollback(unittest.TestCase):
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         self.workspace_config = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir
+            ),
             packages_enable={
                 "pkg_a": True,
             },
             packages_enable_default=False,
-            drift_root_path=self.drift_root,
-            default_target_directory=self.system_target_dir
         )
 
         # 1. Setup pkg_a in source
@@ -169,16 +167,14 @@ class TestRollback(unittest.TestCase):
 
         # Enable in workspace config
         workspace_cfg = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir
+            ),
             packages_enable={
                 pkg_first: True,
             },
             packages_enable_default=False,
-            drift_root_path=self.drift_root,
-            default_target_directory=self.system_target_dir
         )
 
         # Execute rollback on first-time package
@@ -243,17 +239,15 @@ class TestRollback(unittest.TestCase):
         save_state_registry(registry)
 
         workspace_cfg = WorkspaceConfig(
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir
+            ),
             packages_enable={
                 "pkg_a": True,
                 pkg_first: True,
             },
             packages_enable_default=False,
-            drift_root_path=self.drift_root,
-            default_target_directory=self.system_target_dir
         )
 
         restored = run_primitive_8_rollback_recovery(workspace_cfg, ["pkg_a", pkg_first], force=False)

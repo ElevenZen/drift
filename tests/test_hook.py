@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PACKAGE_CONFIG_FILE_NAME
 from drift.package_hook import run_primitive_trigger_hook
 from drift.lifecycle_hooks import HookExecFlags
@@ -25,11 +25,9 @@ class TestPackageHook(unittest.TestCase):
 
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=self.target_dir,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.target_dir,
+            ),
             packages_enable={"pkg_hook": True},
             packages_enable_default=False
         )

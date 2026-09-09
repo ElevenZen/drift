@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.package_health import (
@@ -53,11 +53,9 @@ DEFAULT = true
         from drift.workspace_config import RenderEngineConfig
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=self.system_target_dir,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir,
+            ),
             packages_enable={"pkg_a": True},
             render_engine_configs={
                 "envst": RenderEngineConfig(
@@ -67,7 +65,6 @@ DEFAULT = true
                 )
             }
         )
-        self.workspace_config.default_target_directory = self.system_target_dir
 
     def tearDown(self):
         if self._old_home is not None:

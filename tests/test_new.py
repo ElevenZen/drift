@@ -17,7 +17,7 @@ class TestNewPackage(unittest.TestCase):
             src_dir = drift_root / "src"
             src_dir.mkdir()
             
-            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            config = WorkspaceConfig(drift_root_path=drift_root)
             
             pkg_name = "test_pkg"
             pkg_dir = run_primitive_10_create_new_package(config, pkg_name)
@@ -51,7 +51,7 @@ class TestNewPackage(unittest.TestCase):
             src_dir = drift_root / "src"
             src_dir.mkdir()
             
-            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            config = WorkspaceConfig(drift_root_path=drift_root)
             
             pkg_name = "pkg_with_custom_ignore"
             pkg_dir = src_dir / pkg_name
@@ -71,7 +71,7 @@ class TestNewPackage(unittest.TestCase):
             src_dir = drift_root / "src"
             src_dir.mkdir()
             
-            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            config = WorkspaceConfig(drift_root_path=drift_root)
             
             pkg_name = "existing_pkg"
             pkg_dir = src_dir / pkg_name
@@ -92,7 +92,7 @@ class TestNewPackage(unittest.TestCase):
             src_dir = drift_root / "src"
             src_dir.mkdir()
             
-            config = WorkspaceConfig(drift_root_path=drift_root, source_directory=Path("src"))
+            config = WorkspaceConfig(drift_root_path=drift_root)
             
             pkg_name = "custom_pkg"
             target_dir = "~/.config/nvim"

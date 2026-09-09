@@ -5,7 +5,7 @@ import tempfile
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.workspace_diff import run_primitive_diff
 
 # Disable interactive pagers during tests to prevent blocking and pop-up windows.
@@ -30,11 +30,9 @@ class TestDiff(unittest.TestCase):
             
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=self.system_target_dir,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir,
+            ),
             packages_enable={"pkg_a": True}
         )
         

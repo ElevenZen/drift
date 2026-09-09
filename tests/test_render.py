@@ -16,7 +16,7 @@ from drift.constants import (
     SECRETS_ENV_FILE_NAME,
     INTERNAL_RENDER_COMMAND,
 )
-from drift.workspace_config import RenderEngineConfig, WorkspaceConfig
+from drift.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_core import render_template, render_template_to_file, RenderError
 from drift.render_input import (
     find_engine_for_file,
@@ -522,10 +522,8 @@ class TestDependencyResolver(unittest.TestCase):
         )
         engines = [envsubst_engine, mustache_engine]
 
-        # Use WorkspaceConfig with a custom render directory name
-        workspace_config = WorkspaceConfig(render_directory=Path("my_custom_render_sandbox"))
-
-        render_input_templates(engines, self.drift_root, workspace_config)
+        # Test custom render directory name
+        render_input_templates(engines, self.drift_root, render_dir="my_custom_render_sandbox")
 
         # Expected output should reside inside "my_custom_render_sandbox/config/"
         expected_output_path = self.drift_root / "my_custom_render_sandbox" / "config" / "mustache.json"
@@ -592,8 +590,6 @@ class TestRenderPackage(unittest.TestCase):
         # 2. Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -648,8 +644,6 @@ class TestRenderPackage(unittest.TestCase):
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             render_engine_config={
                 "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
             }
@@ -698,8 +692,6 @@ class TestRenderPackage(unittest.TestCase):
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
 
         pkg_dir = drift_root / "src" / "pkg_with_empty_dirs"
@@ -755,8 +747,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -795,8 +785,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -845,8 +833,6 @@ class TestRenderPackage(unittest.TestCase):
         # pkg_c is not listed, but packages_enable_default is True
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             packages_enable={
                 "pkg_a": True,
                 "pkg_b": False,
@@ -885,8 +871,6 @@ class TestRenderPackage(unittest.TestCase):
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
 
         # 1. Create render directory
@@ -899,42 +883,34 @@ class TestRenderPackage(unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(render_dir), capture_output=True, check=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(render_dir), capture_output=True, check=True)
 
-        # 3. Write a file inside render directory
-        test_file_path = render_dir / "test.txt"
-        test_file_path.write_text("Hello render", encoding="utf-8")
+        # 3. Create uncommitted files
+        (render_dir / "pkg_a").mkdir()
+        (render_dir / "pkg_a" / "file.txt").write_text("pkg_a rendered")
+        (render_dir / "pkg_b").mkdir()
+        (render_dir / "pkg_b" / "file.txt").write_text("pkg_b rendered")
 
-        # 4. Commit using run_primitive_3_commit_render_repo (unscoped)
-        msg = "Test dynamic commit message"
-        run_primitive_3_commit_render_repo(workspace_config, msg)
+        # 4. Run commit render repo primitive
+        commit_msg = "feat: render packages initial commit"
+        run_primitive_3_commit_render_repo(workspace_config, commit_msg)
 
-        # 5. Verify the commit message
+        # Verify commit message
         log_res = subprocess.run(
             ["git", "-C", str(render_dir), "log", "-1", "--pretty=%B"],
             capture_output=True,
             text=True,
             check=True
         )
-        self.assertEqual(log_res.stdout.strip(), msg)
+        self.assertEqual(log_res.stdout.strip(), commit_msg)
 
-        # 6. Run again on a clean repo (should return gracefully without error)
-        run_primitive_3_commit_render_repo(workspace_config, "Should not commit anything")
+        # 5. Modify both pkg_a and pkg_b
+        (render_dir / "pkg_a" / "file.txt").write_text("pkg_a modified")
+        (render_dir / "pkg_b" / "file.txt").write_text("pkg_b modified")
 
-        # 7. Test scoped commit to a specific package
-        pkg_a_dir = render_dir / "pkg_a"
-        pkg_b_dir = render_dir / "pkg_b"
-        pkg_a_dir.mkdir(parents=True, exist_ok=True)
-        pkg_b_dir.mkdir(parents=True, exist_ok=True)
-
-        with open(pkg_a_dir / "file_a.txt", "w", encoding="utf-8") as f:
-            f.write("pkg_a file")
-        with open(pkg_b_dir / "file_b.txt", "w", encoding="utf-8") as f:
-            f.write("pkg_b file")
-
-        # Commit pkg_a specifically
-        scoped_msg = "Commit pkg_a changes"
+        # 6. Commit ONLY pkg_a using target_pkgs
+        scoped_msg = "feat: update only pkg_a"
         run_primitive_3_commit_render_repo(workspace_config, scoped_msg, ["pkg_a"])
 
-        # Verify only pkg_a was committed
+        # Verify pkg_a is committed and clean, but pkg_b still has unstaged/uncommitted changes
         status_res = subprocess.run(
             ["git", "-C", str(render_dir), "status", "--porcelain"],
             capture_output=True,
@@ -942,10 +918,8 @@ class TestRenderPackage(unittest.TestCase):
             check=True
         )
         status_output = status_res.stdout.strip()
-        # pkg_b should still be untracked (marked as ??)
-        self.assertTrue("?? pkg_b/" in status_output or "?? pkg_b/file_b.txt" in status_output)
-        # pkg_a should NOT be in the status output because it is clean
-        self.assertNotIn("pkg_a/", status_output)
+        self.assertNotIn("pkg_a/file.txt", status_output)
+        self.assertIn("pkg_b/file.txt", status_output)
 
         # Verify the commit message of the scoped commit
         log_scoped = subprocess.run(
@@ -965,8 +939,6 @@ class TestRenderPackage(unittest.TestCase):
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
 
         # 1. Create package source directories under src/
@@ -1031,8 +1003,6 @@ class TestRenderPackage(unittest.TestCase):
         # 2. Setup WorkspaceConfig with engines
         workspace_config = WorkspaceConfig(
             drift_root_path=drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             packages_enable={"my_pkg": True}
         )
         envsubst_engine = RenderEngineConfig(
@@ -1141,8 +1111,6 @@ class TestRenderPackage(unittest.TestCase):
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
 
         # Create package dir starting with dot-
@@ -1175,8 +1143,6 @@ class TestRenderPackage(unittest.TestCase):
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
         )
 
         # Create package dir
@@ -1308,8 +1274,6 @@ class TestRenderPackage(unittest.TestCase):
         # Define workspace config
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render")
         )
         from drift.workspace_config import RenderEngineConfig
         workspace_config.render_engine_config = {
@@ -1361,8 +1325,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render")
         )
 
         from drift.render_package import run_primitive_2_render_packages
@@ -1404,8 +1366,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render")
         )
 
         from drift.render_package import run_primitive_2_render_packages
@@ -1428,8 +1388,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             render_engine_config={
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
@@ -1510,8 +1468,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             packages_enable={"pkg_good": True, "pkg_broken": True},
             packages_enable_default=False
         )
@@ -1553,10 +1509,6 @@ class TestRenderPackage(unittest.TestCase):
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_static_hook": True},
             packages_enable_default=False
         )
@@ -1618,10 +1570,6 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_hook": True},
             packages_enable_default=False
         )
@@ -1783,10 +1731,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_hooks_bypass": True},
             packages_enable_default=False
         )
@@ -1830,10 +1774,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_subfolder": True},
             packages_enable_default=False
         )
@@ -1876,10 +1816,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_missing_sub": True},
             packages_enable_default=False
         )
@@ -1904,10 +1840,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
             packages_enable={"pkg_bad_ignore": True},
             packages_enable_default=False,
             render_engine_config={
@@ -1947,8 +1879,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
             render_engine_config={
                 "envsubst": RenderEngineConfig(
                     name="envsubst",

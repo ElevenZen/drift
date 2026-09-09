@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig
+from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry, PackageState
 from drift.uninstall_repo import run_primitive_7_uninstall_packages
 from drift.constants import PACKAGE_CONFIG_FILE_NAME
@@ -31,15 +31,11 @@ class TestUninstall(unittest.TestCase):
             
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
-            default_target_directory=self.system_target_dir,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir,
+            ),
             packages_enable={"pkg_a": True}
         )
-        # Ensure it doesn't expand to real home during test
-        self.workspace_config.default_target_directory = self.system_target_dir
 
         
         # Initialize Git in install_dir for Primitive 6 commit

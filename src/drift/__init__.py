@@ -2,7 +2,8 @@
 from .toml_utils import parse_toml
 from .workspace_config import (
     WorkspaceConfig,
-    DriftSettings,
+    WorkspaceSectionConfig,
+    SettingsConfig,
     load_workspace_config,
 )
 from .env_utils import (

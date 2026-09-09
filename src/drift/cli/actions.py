@@ -172,7 +172,7 @@ def execute_new_package(
             package_dir=str(pkg_dir),
             config_file=str(pkg_dir / PACKAGE_CONFIG_FILE_NAME),
             target_directory=target_directory or str(workspace_config.default_target_path),
-            install_method=install_method or workspace_config.default_install_method
+            install_method=install_method or workspace_config.workspace.default_install_method
         )
         print(res.to_json())
 

@@ -891,7 +891,7 @@ class PackageConfig:
     def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
         if sys.platform == "win32":
             return "copy"
-        return self.install_method or workspace_config.default_install_method
+        return self.install_method or workspace_config.workspace.default_install_method
 
     def load_package_envs(
         self,

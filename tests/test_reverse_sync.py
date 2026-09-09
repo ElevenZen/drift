@@ -43,10 +43,6 @@ class TestReverseSync(unittest.TestCase):
         # Default WorkspaceConfig
         self.workspace_config = WorkspaceConfig(
             drift_root_path=self.drift_root,
-            source_directory=Path("src"),
-            render_directory=Path("render"),
-            install_directory=Path("install"),
-            backup_directory=Path("backup"),
         )
 
     def tearDown(self) -> None:

@@ -311,7 +311,7 @@ def run_primitive_2_render_packages(
         render_input_templates(
             engines=list(workspace_config.render_engine_configs.values()),
             drift_root=workspace_config.drift_root,
-            workspace_config=workspace_config
+            render_dir=workspace_config.workspace.render_directory,
         )
 
         # 2. Identify and render packages

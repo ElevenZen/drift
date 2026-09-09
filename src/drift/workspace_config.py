@@ -99,7 +99,7 @@ class RenderSourceMatch:
 
 
 @dataclass
-class DriftSettings:
+class SettingsConfig:
     """Workspace-level settings defined in [settings] in drift.toml."""
     probe_wan_ip: bool = False
 
@@ -109,8 +109,8 @@ class DriftSettings:
             raise TypeError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
 
     @classmethod
-    def from_dict(cls, data: Any) -> "DriftSettings":
-        """Builds a DriftSettings instance from a parsed TOML dictionary."""
+    def from_dict(cls, data: Any) -> "SettingsConfig":
+        """Builds a SettingsConfig instance from a parsed TOML dictionary."""
         if not data:
             return cls()
         if not isinstance(data, dict):
@@ -134,63 +134,39 @@ class DriftSettings:
         return settings
 
 
+
+
 @dataclass
-class WorkspaceConfig:
-    """Represents the global workspace configurations inside config/drift.toml."""
-    drift_root_path: Path = Path(".")
+class WorkspaceSectionConfig:
+    """Represents options defined under the [workspace] section in drift.toml."""
     source_directory: Path = Path("src")
     render_directory: Path = Path("render")
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
     default_target_directory: Path = Path("~")
     default_install_method: str = "stow"
-    packages_enable: Dict[str, bool] = field(default_factory=dict)
-    packages_enable_default: bool = False
-    render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
-    env: Dict[str, str] = field(default_factory=dict)
-    settings: DriftSettings = field(default_factory=DriftSettings)
     hook_file: Optional[Path] = None
 
     def __init__(
         self,
-        drift_root_path: Union[Path, str] = Path("."),
         source_directory: Union[Path, str] = Path("src"),
         render_directory: Union[Path, str] = Path("render"),
         install_directory: Union[Path, str] = Path("install"),
         backup_directory: Union[Path, str] = Path("backup"),
         default_target_directory: Union[Path, str] = Path("~"),
         default_install_method: str = "stow",
-        packages_enable: Optional[Dict[str, bool]] = None,
-        packages_enable_default: bool = False,
-        render_engine_configs: Optional[Dict[str, RenderEngineConfig]] = None,
-        env: Optional[Dict[str, str]] = None,
-        settings: Optional[DriftSettings] = None,
-        render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
-        self.drift_root_path = Path(drift_root_path)
         self.source_directory = Path(source_directory)
         self.render_directory = Path(render_directory)
         self.install_directory = Path(install_directory)
         self.backup_directory = Path(backup_directory)
         self.default_target_directory = expand_user_and_env(Path(default_target_directory))
-        self.default_install_method = default_install_method
-        self.packages_enable = packages_enable if packages_enable is not None else {}
-        self.packages_enable_default = packages_enable_default
-        if render_engine_configs is not None:
-            self.render_engine_configs = render_engine_configs
-        elif render_engine_config is not None:
-            self.render_engine_configs = render_engine_config
-        else:
-            self.render_engine_configs = {}
-        self.env = env if env is not None else {}
-        self.settings = settings if settings is not None else DriftSettings()
+        self.default_install_method = str(default_install_method)
         self.hook_file = Path(hook_file) if hook_file is not None else None
 
     def validate(self) -> None:
-        """Validates workspace configuration values."""
-        if not isinstance(self.drift_root_path, Path):
-            raise TypeError("drift_root_path must be a Path object.")
+        """Validates [workspace] section configuration values."""
         if not isinstance(self.source_directory, Path) or str(self.source_directory) == ".":
             raise ValueError("source_directory must be a non-empty path.")
         if not isinstance(self.render_directory, Path) or str(self.render_directory) == ".":
@@ -205,6 +181,78 @@ class WorkspaceConfig:
             raise ValueError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
         if self.default_install_method not in ("stow", "copy"):
             raise ValueError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "WorkspaceSectionConfig":
+        """Builds a WorkspaceSectionConfig instance from a parsed TOML dictionary."""
+        if not isinstance(data, dict):
+            raise ConfigError("[workspace] must be a TOML table.")
+        known_workspace_keys = {
+            "source_directory",
+            "render_directory",
+            "install_directory",
+            "backup_directory",
+            "default_target_directory",
+            "default_install_method",
+            "hook_file",
+        }
+        for key in data:
+            if key not in known_workspace_keys:
+                raise ConfigError(f"Unknown workspace option: '{key}'")
+
+        return cls(
+            source_directory=data.get("source_directory", "src"),
+            render_directory=data.get("render_directory", "render"),
+            install_directory=data.get("install_directory", "install"),
+            backup_directory=data.get("backup_directory", "backup"),
+            default_target_directory=data.get("default_target_directory", "~"),
+            default_install_method=data.get("default_install_method", "stow"),
+            hook_file=data.get("hook_file"),
+        )
+
+
+@dataclass
+class WorkspaceConfig:
+    """Represents the global workspace configurations inside config/drift.toml."""
+    drift_root_path: Path = Path(".")
+    workspace: WorkspaceSectionConfig = field(default_factory=WorkspaceSectionConfig)
+    packages_enable: Dict[str, bool] = field(default_factory=dict)
+    packages_enable_default: bool = False
+    render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
+    env: Dict[str, str] = field(default_factory=dict)
+    settings: SettingsConfig = field(default_factory=SettingsConfig)
+
+    def __init__(
+        self,
+        drift_root_path: Union[Path, str] = Path("."),
+        workspace: Optional[WorkspaceSectionConfig] = None,
+        packages_enable: Optional[Dict[str, bool]] = None,
+        packages_enable_default: bool = False,
+        render_engine_configs: Optional[Dict[str, RenderEngineConfig]] = None,
+        env: Optional[Dict[str, str]] = None,
+        settings: Optional[SettingsConfig] = None,
+        render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
+    ) -> None:
+        self.drift_root_path = Path(drift_root_path)
+        self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
+        self.packages_enable = packages_enable if packages_enable is not None else {}
+        self.packages_enable_default = packages_enable_default
+        if render_engine_configs is not None:
+            self.render_engine_configs = render_engine_configs
+        elif render_engine_config is not None:
+            self.render_engine_configs = render_engine_config
+        else:
+            self.render_engine_configs = {}
+        self.env = env if env is not None else {}
+        self.settings = settings if settings is not None else SettingsConfig()
+
+    def validate(self) -> None:
+        """Validates workspace configuration values."""
+        if not isinstance(self.drift_root_path, Path):
+            raise TypeError("drift_root_path must be a Path object.")
+        if not isinstance(self.workspace, WorkspaceSectionConfig):
+            raise TypeError("workspace must be a WorkspaceSectionConfig instance.")
+        self.workspace.validate()
         if not isinstance(self.packages_enable, dict):
             raise TypeError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
@@ -217,8 +265,8 @@ class WorkspaceConfig:
             v.validate()
         if not isinstance(self.env, dict):
             raise TypeError("env must be a dictionary.")
-        if not isinstance(self.settings, DriftSettings):
-            raise TypeError("settings must be a DriftSettings instance.")
+        if not isinstance(self.settings, SettingsConfig):
+            raise TypeError("settings must be a SettingsConfig instance.")
         self.settings.validate()
 
     @property
@@ -229,27 +277,27 @@ class WorkspaceConfig:
     @property
     def source_path(self) -> Path:
         """Returns the absolute path to source directory."""
-        return self.drift_root_path / self.source_directory
+        return self.drift_root_path / self.workspace.source_directory
 
     @property
     def render_path(self) -> Path:
         """Returns the absolute path to render directory."""
-        return self.drift_root_path / self.render_directory
+        return self.drift_root_path / self.workspace.render_directory
 
     @property
     def install_path(self) -> Path:
         """Returns the absolute path to install directory."""
-        return self.drift_root_path / self.install_directory
+        return self.drift_root_path / self.workspace.install_directory
 
     @property
     def backup_path(self) -> Path:
         """Returns the absolute path to backup directory."""
-        return self.drift_root_path / self.backup_directory
+        return self.drift_root_path / self.workspace.backup_directory
 
     @property
     def default_target_path(self) -> Path:
         """Returns the resolved path to default target directory."""
-        return self.default_target_directory
+        return self.workspace.default_target_directory
 
     @property
     def packages(self) -> Dict[str, bool]:
@@ -470,21 +518,8 @@ class WorkspaceConfig:
 
         if "workspace" not in data:
             raise ConfigError("Missing '[workspace]' section in workspace configuration.")
-            
-        workspace_data = data.get("workspace", {})
-        # Error for unknown workspace options
-        known_workspace_keys = {
-            "source_directory",
-            "render_directory",
-            "install_directory",
-            "backup_directory",
-            "default_target_directory",
-            "default_install_method",
-            "hook_file",
-        }
-        for key in workspace_data:
-            if key not in known_workspace_keys:
-                raise ConfigError(f"Unknown workspace option: '{key}'")
+
+        workspace_section = WorkspaceSectionConfig.from_dict(data.get("workspace", {}))
 
         if "packages" not in data or not isinstance(data.get("packages"), dict) or "enable" not in data["packages"]:
             raise ConfigError("Missing '[packages.enable]' section in workspace configuration.")
@@ -534,25 +569,16 @@ class WorkspaceConfig:
 
         # Parse [settings]
         settings_data = data.get("settings", {})
-        settings = DriftSettings.from_dict(settings_data)
-
-        # Expand home directory and env vars for default_target_directory on load
-        default_target_dir = expand_user_and_env(workspace_data.get("default_target_directory", "~"))
+        settings = SettingsConfig.from_dict(settings_data)
 
         config = cls(
             drift_root_path=Path(drift_root_path).resolve(),
-            source_directory=Path(workspace_data.get("source_directory", "src")),
-            render_directory=Path(workspace_data.get("render_directory", "render")),
-            install_directory=Path(workspace_data.get("install_directory", "install")),
-            backup_directory=Path(workspace_data.get("backup_directory", "backup")),
-            default_target_directory=default_target_dir,
-            default_install_method=str(workspace_data.get("default_install_method", "stow")),
+            workspace=workspace_section,
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
             env=env,
             settings=settings,
-            hook_file=workspace_data.get("hook_file"),
         )
         config.validate()
         return config

@@ -35,7 +35,7 @@ def run_primitive_10_create_new_package(
     final_config_name = PACKAGE_CONFIG_FILE_NAME
     config_file = package_dir / final_config_name
 
-    final_install_method: str = install_method or workspace_config.default_install_method
+    final_install_method: str = install_method or workspace_config.workspace.default_install_method
     if final_install_method not in ("stow", "copy"):
         raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
 

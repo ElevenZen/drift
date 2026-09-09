@@ -23,6 +23,8 @@ from drift.toml_utils import (
 from drift.exceptions import ConfigError
 from drift.workspace_config import (
     WorkspaceConfig,
+    WorkspaceSectionConfig,
+    SettingsConfig,
     RenderEngineConfig,
     RenderSourceMatch,
     load_workspace_config,
@@ -140,10 +142,10 @@ class TestConfigParser(unittest.TestCase):
 class TestConfigClasses(unittest.TestCase):
     def test_workspace_config_defaults(self) -> None:
         config = WorkspaceConfig()
-        self.assertEqual(config.render_directory, Path("render"))
-        self.assertEqual(config.install_directory, Path("install"))
-        self.assertEqual(config.backup_directory, Path("backup"))
-        self.assertEqual(config.default_target_directory, Path("~").expanduser())
+        self.assertEqual(config.workspace.render_directory, Path("render"))
+        self.assertEqual(config.workspace.install_directory, Path("install"))
+        self.assertEqual(config.workspace.backup_directory, Path("backup"))
+        self.assertEqual(config.workspace.default_target_directory, Path("~").expanduser())
         self.assertEqual(config.packages, {})
 
     def test_workspace_config_from_dict(self) -> None:
@@ -163,15 +165,17 @@ class TestConfigClasses(unittest.TestCase):
              }
         }
         config = WorkspaceConfig.from_dict(data)
-        self.assertEqual(config.render_directory, Path("custom_render"))
-        self.assertEqual(config.install_directory, Path("custom_install"))
-        self.assertEqual(config.backup_directory, Path("custom_backup"))
-        self.assertEqual(config.default_target_directory, Path("/etc"))
+        self.assertEqual(config.workspace.render_directory, Path("custom_render"))
+        self.assertEqual(config.workspace.install_directory, Path("custom_install"))
+        self.assertEqual(config.workspace.backup_directory, Path("custom_backup"))
+        self.assertEqual(config.workspace.default_target_directory, Path("/etc"))
         self.assertEqual(config.packages, {"shell": True, "nvim": True, "emacs": False})
 
     def test_workspace_config_validation(self) -> None:
         with self.assertRaises(ValueError):
-            WorkspaceConfig(render_directory=Path("")).validate()
+            WorkspaceConfig(workspace=WorkspaceSectionConfig(render_directory=Path(""))).validate()
+        with self.assertRaises(TypeError):
+            WorkspaceConfig(workspace="not_a_workspace_config").validate() # type: ignore
         with self.assertRaises(TypeError):
             WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
 
@@ -751,9 +755,11 @@ class TestConfigClasses(unittest.TestCase):
 
             config = WorkspaceConfig(
                 drift_root_path=root,
-                source_directory=Path("src"),
-                render_directory=Path("render"),
-                install_directory=Path("install"),
+                workspace=WorkspaceSectionConfig(
+                    source_directory=Path("src"),
+                    render_directory=Path("render"),
+                    install_directory=Path("install"),
+                ),
                 packages_enable={"pkg_a": True, "pkg_b": True, "pkg_c": False},
                 packages_enable_default=False
             )
@@ -774,11 +780,11 @@ class TestConfigClasses(unittest.TestCase):
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
         # Using an absolute directory is valid
-        WorkspaceConfig(default_target_directory=Path("/absolute/path")).validate()
+        WorkspaceConfig(workspace=WorkspaceSectionConfig(default_target_directory=Path("/absolute/path"))).validate()
         
         # Using a relative directory raises ValueError
         with self.assertRaises(ValueError) as ctx:
-            WorkspaceConfig(default_target_directory=Path("relative/path")).validate()
+            WorkspaceConfig(workspace=WorkspaceSectionConfig(default_target_directory=Path("relative/path"))).validate()
         self.assertIn("default_target_directory must be an absolute path", str(ctx.exception))
 
     def test_unknown_option_raises_config_error(self) -> None:
@@ -868,7 +874,7 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(
             drift_root_path=Path("/test"),
-            default_install_method="stow",
+            workspace=WorkspaceSectionConfig(default_install_method="stow"),
         )
         pkg_config = PackageConfig(name="test_pkg", install_method="stow")
 
@@ -883,7 +889,7 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
             drift_root_path=Path("/test"),
-            default_target_directory=Path("/default/target"),
+            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
         )
         home = Path.home()
 
@@ -910,7 +916,7 @@ class TestConfigClasses(unittest.TestCase):
         """Verifies that forward slashes '/' and mixed slashes in target_directory_windows are supported and parsed correctly."""
         ws_config = WorkspaceConfig(
             drift_root_path=Path("/test"),
-            default_target_directory=Path("/default/target"),
+            workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
         )
         home = Path.home()
 
@@ -987,7 +993,7 @@ class TestConfigLoaders(unittest.TestCase):
             DEFAULT = false
             """, encoding="utf-8")
         config = load_workspace_config(self.drift_root)
-        self.assertEqual(config.render_directory, Path("sandbox"))
+        self.assertEqual(config.workspace.render_directory, Path("sandbox"))
         # Verify absolute drift_root_path computation
         self.assertEqual(config.drift_root_path, self.drift_root)
 
@@ -1175,8 +1181,8 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
 
         config = load_workspace_config(self.drift_root)
-        self.assertEqual(config.render_directory, Path("my_render"))
-        self.assertEqual(config.install_directory, Path("overridden_install"))
+        self.assertEqual(config.workspace.render_directory, Path("my_render"))
+        self.assertEqual(config.workspace.install_directory, Path("overridden_install"))
 
     def test_package_local_config_merge_without_workspace(self) -> None:
         pkg_dir = self.drift_root / "my_pkg_merge"
@@ -1380,8 +1386,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         config = load_workspace_config(Path(self.temp_dir.name))
 
         self.assertEqual(config.drift_root_path, Path(self.temp_dir.name).resolve())
-        self.assertEqual(config.render_directory, Path("templated_render"))
-        self.assertEqual(config.install_directory, Path("templated_install"))
+        self.assertEqual(config.workspace.render_directory, Path("templated_render"))
+        self.assertEqual(config.workspace.install_directory, Path("templated_install"))
 
     def test_meta_rendering_drift_envst_toml_missing_var_raises_config_error(self) -> None:
         from drift.workspace_config import load_workspace_config
@@ -1412,9 +1418,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             
             config = WorkspaceConfig(
                 drift_root_path=Path(root_path),
-                source_directory=Path("src"),
-                render_directory=Path("render"),
-                install_directory=Path("install")
+                workspace=WorkspaceSectionConfig(
+                    source_directory=Path("src"),
+                    render_directory=Path("render"),
+                    install_directory=Path("install"),
+                ),
             )
 
             # Test source dir discovery
@@ -1450,9 +1458,12 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def test_package_config_load_unload_package_envs(self) -> None:
         """Verifies PackageConfig.load_package_envs and unload_package_envs."""
         from drift.package_config import PackageConfig
-        from drift.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
-        config = WorkspaceConfig(drift_root_path=Path("/dummy/root"), default_target_directory=Path("/global/target"))
+        config = WorkspaceConfig(
+            drift_root_path=Path("/dummy/root"),
+            workspace=WorkspaceSectionConfig(default_target_directory=Path("/global/target")),
+        )
         pkg = PackageConfig(
             name="my_pkg",
             target_directory=Path("/custom/target"),
@@ -1496,14 +1507,16 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def test_package_envs_resolution_with_custom_workspace_target_and_install_method(self) -> None:
         """Verifies environment variable resolution when workspace target != '~' and package has/has not explicit target."""
         from drift.package_config import PackageConfig
-        from drift.workspace_config import WorkspaceConfig
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Workspace with non-default target directory != '~' and non-default install method
         custom_global_target = Path("/opt/custom_drift_target")
         workspace_config = WorkspaceConfig(
             drift_root_path=Path("/dummy/root"),
-            default_target_directory=custom_global_target,
-            default_install_method="copy"
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=custom_global_target,
+                default_install_method="copy",
+            ),
         )
 
         # 1. Package WITHOUT explicit target_directory and WITHOUT explicit install_method
@@ -1700,34 +1713,34 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         update_initial_env()
 
 
-class TestDriftSettings(unittest.TestCase):
-    """Tests for DriftSettings and [settings] in drift.toml."""
+class TestSettingsConfig(unittest.TestCase):
+    """Tests for SettingsConfig and [settings] in drift.toml."""
 
-    def test_drift_settings_defaults(self) -> None:
-        from drift.workspace_config import DriftSettings
-        settings = DriftSettings()
+    def test_settings_config_defaults(self) -> None:
+        from drift.workspace_config import SettingsConfig
+        settings = SettingsConfig()
         self.assertFalse(settings.probe_wan_ip)
 
-    def test_drift_settings_from_dict(self) -> None:
-        from drift.workspace_config import DriftSettings
-        s1 = DriftSettings.from_dict({"probe_wan_ip": True})
+    def test_settings_config_from_dict(self) -> None:
+        from drift.workspace_config import SettingsConfig
+        s1 = SettingsConfig.from_dict({"probe_wan_ip": True})
         self.assertTrue(s1.probe_wan_ip)
 
-        s2 = DriftSettings.from_dict({"probe_network_ip": True})
+        s2 = SettingsConfig.from_dict({"probe_network_ip": True})
         self.assertTrue(s2.probe_wan_ip)
 
-        s3 = DriftSettings.from_dict({})
+        s3 = SettingsConfig.from_dict({})
         self.assertFalse(s3.probe_wan_ip)
 
-    def test_drift_settings_validation(self) -> None:
-        from drift.workspace_config import DriftSettings
+    def test_settings_config_validation(self) -> None:
+        from drift.workspace_config import SettingsConfig
         from drift.exceptions import ConfigError
 
         with self.assertRaises(ConfigError):
-            DriftSettings.from_dict({"unknown_setting": True})
+            SettingsConfig.from_dict({"unknown_setting": True})
 
         with self.assertRaises(TypeError):
-            DriftSettings.from_dict({"probe_wan_ip": "not_a_bool"})
+            SettingsConfig.from_dict({"probe_wan_ip": "not_a_bool"})
 
     def test_workspace_config_with_settings(self) -> None:
         toml_content = """
@@ -1748,6 +1761,49 @@ class TestDriftSettings(unittest.TestCase):
         data = parse_toml(toml_content)
         ws_cfg = WorkspaceConfig.from_dict(data)
         self.assertTrue(ws_cfg.settings.probe_wan_ip)
+
+
+class TestWorkspaceSectionConfig(unittest.TestCase):
+    """Tests for WorkspaceSectionConfig and [workspace] in drift.toml."""
+
+    def test_workspace_section_defaults(self) -> None:
+        ws_sec = WorkspaceSectionConfig()
+        self.assertEqual(ws_sec.source_directory, Path("src"))
+        self.assertEqual(ws_sec.render_directory, Path("render"))
+        self.assertEqual(ws_sec.install_directory, Path("install"))
+        self.assertEqual(ws_sec.backup_directory, Path("backup"))
+        self.assertEqual(ws_sec.default_target_directory, Path("~").expanduser())
+        self.assertEqual(ws_sec.default_install_method, "stow")
+        self.assertIsNone(ws_sec.hook_file)
+
+    def test_workspace_section_from_dict(self) -> None:
+        data = {
+            "source_directory": "custom_src",
+            "render_directory": "custom_render",
+            "install_directory": "custom_install",
+            "backup_directory": "custom_backup",
+            "default_target_directory": "/tmp/custom_target",
+            "default_install_method": "copy",
+            "hook_file": "custom_hook.py",
+        }
+        ws_sec = WorkspaceSectionConfig.from_dict(data)
+        self.assertEqual(ws_sec.source_directory, Path("custom_src"))
+        self.assertEqual(ws_sec.render_directory, Path("custom_render"))
+        self.assertEqual(ws_sec.install_directory, Path("custom_install"))
+        self.assertEqual(ws_sec.backup_directory, Path("custom_backup"))
+        self.assertEqual(ws_sec.default_target_directory, Path("/tmp/custom_target"))
+        self.assertEqual(ws_sec.default_install_method, "copy")
+        self.assertEqual(ws_sec.hook_file, Path("custom_hook.py"))
+
+    def test_workspace_section_validation(self) -> None:
+        with self.assertRaises(TypeError):
+            WorkspaceSectionConfig(source_directory=123).validate()  # type: ignore
+        with self.assertRaises(ValueError):
+            WorkspaceSectionConfig(source_directory=Path("")).validate()
+        with self.assertRaises(ValueError):
+            WorkspaceSectionConfig(default_target_directory=Path("relative/path")).validate()
+        with self.assertRaises(ValueError):
+            WorkspaceSectionConfig(default_install_method="invalid_method").validate()
 
     def test_get_host_ip_addresses_no_wan_activity_by_default(self) -> None:
         from drift.host_facts import get_host_ip_addresses
