@@ -323,6 +323,10 @@ def build_completion_schema() -> CompletionSchema:
                         description="Forcefully deploy and bypass system drift sentinel safeguards"
                     ),
                     OptionSpec(
+                        flags=["--redeploy"],
+                        description="Force full redeployment of all packages, bypassing stage change skipping"
+                    ),
+                    OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"

@@ -333,7 +333,8 @@ def execute_deploy(
     package_names: Sequence[str] = (),
     force: bool = False,
     json_mode: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    redeploy: bool = False
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..deploy_repo import run_primitive_deploy_pipeline_with_error_handling
@@ -346,6 +347,7 @@ def execute_deploy(
         packages_to_deploy=package_names,
         force=force,
         flags=flags,
+        redeploy=redeploy,
     )
     if json_mode:
         print(res.to_json())

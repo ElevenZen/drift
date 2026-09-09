@@ -1103,6 +1103,54 @@ ALL_PROXY = "${SOCKS_PROXY}"
             PackageConfig.from_dict(pkg_dict_dir_ref, package_name="my_pkg", workspace_config=None)
         self.assertIn("drift_package_source_dir", str(ctx.exception))
 
+    def test_package_config_fallback_references_drift_package_source_dir(self) -> None:
+        """Verifies that [env.fallback] can reference ${drift_package_source_dir} and respect precedence."""
+        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.package_config import PackageConfig
+        from drift.render_engine_config import RenderEngineRegistry
+
+        ws = WorkspaceConfig(
+            drift_root_path=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                source_directory=Path("src"),
+                render_directory=Path("render"),
+                install_directory=Path("install"),
+                backup_directory=Path("backup"),
+                default_target_directory=Path("/target"),
+                default_install_method="stow",
+            ),
+            packages_enable={},
+            packages_enable_default=True,
+            render_engine_configs=RenderEngineRegistry(),
+            env={},
+        )
+
+        pkg_dict = {
+            "package": {
+                "name": "pkg_fallback_test",
+                "target_directory": "${FALLBACK_SRC_DIR}/subtarget",
+            },
+            "env": {
+                "fallback": {
+                    "FALLBACK_SRC_DIR": "${drift_package_source_dir}",
+                    "EXTERNAL_VAR": "${drift_package_source_dir}/fallback_ext",
+                }
+            }
+        }
+
+        # 1. When EXTERNAL_VAR is unset in os.environ, fallback takes effect
+        pkg_cfg = PackageConfig.from_dict(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
+        expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
+        self.assertEqual(pkg_cfg.env_fallback["FALLBACK_SRC_DIR"], expected_src)
+        self.assertEqual(pkg_cfg.env_fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
+        self.assertEqual(str(pkg_cfg.target_directory), f"{expected_src}/subtarget")
+
+        # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
+        with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
+            with pkg_cfg.package_envs(ws):
+                self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
+                self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
+
 
 if __name__ == "__main__":
     unittest.main()

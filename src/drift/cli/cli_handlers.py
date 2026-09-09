@@ -183,13 +183,14 @@ def handle_deploy(
     ctx: Any,
     packages: Sequence[str] = (),
     force: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    redeploy: bool = False
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_deploy(drift_root, packages, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_deploy(drift_root, packages, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, redeploy=redeploy)
 
 
 def handle_health(

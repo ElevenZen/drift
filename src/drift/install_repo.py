@@ -896,18 +896,26 @@ def run_primitive_5_install_deployment(
     force: bool = False,
     package_changes: Sequence[PackageStageChanges] = (),
     flags: Optional[HookExecFlags] = None,
+    redeploy: bool = True,
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
-        resolve_symlinks: Whether symlinks should be resolved during deployment.
+        resolve_symlinks: Controls symlink traversal and backup resolution during collision auditing:
+            - When True (default): Follows and resolves symlinks during target directory diffing
+              and recursively backs up the underlying physical contents of colliding symlinks
+              before replacing them.
+            - When False: Treats symlinks strictly as symlink pointers without following targets.
         force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
             in the state database, allowing deployment even if a previous operation failed midway.
             Note: Does NOT bypass 'enable_install = false' package configurations.
         package_changes: Optional pre-calculated stage changes per package.
         flags: Optional HookExecFlags controlling hook execution options.
+        redeploy: Governs behavior for packages without staging changes info (package_changes=None):
+            - If True (default for standalone apply): Performs full deployment for the package.
+            - If False (pipeline mode): Skips the package when no staging changes info is present.
 
     Returns:
         InstallDeploymentResult with detailed per-package deployment results.
@@ -945,6 +953,11 @@ def run_primitive_5_install_deployment(
             pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
         else:
             pkg_change = None
+
+        if pkg_change is None and not redeploy:
+            logger.info(f"Skipping package '{pkg}' during deployment (no stage changes).")
+            continue
+
         pkg_res = deploy_one_package_with_error_wrapping(
             workspace_config=workspace_config,
             state_registry=state_registry,

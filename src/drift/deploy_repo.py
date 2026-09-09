@@ -105,6 +105,7 @@ def execute_sequential_compile_and_apply(
     target_pkgs: List[str],
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
+    redeploy: bool = False,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
@@ -156,17 +157,28 @@ def execute_sequential_compile_and_apply(
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
 
+    changed_pkgs = [c.package_name for c in package_changes]
+    if redeploy:
+        pkgs_to_install = target_pkgs
+    elif changed_pkgs:
+        pkgs_to_install = changed_pkgs
+    else:
+        logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
+        return [], completed_steps
+
     # 4. Physical Deployment of configurations to host system target paths
     failed_step = "Step 4 (Physical Deploy/Install)"
+    pkgs_install_label = ", ".join(pkgs_to_install)
     try:
-        logger.info("   [4/5] Deploying and copying/linking configurations to active host paths ...")
+        logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
         install_res = run_primitive_5_install_deployment(
             workspace_config,
-            packages_to_redeploy=target_pkgs,
+            packages_to_redeploy=pkgs_to_install,
             resolve_symlinks=True,
             force=force,
             package_changes=package_changes,
             flags=hook_flags,
+            redeploy=redeploy,
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except HookExecutionError as e:
@@ -174,8 +186,8 @@ def execute_sequential_compile_and_apply(
             try:
                 run_primitive_6_commit_install_repo(
                     workspace_config,
-                    commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_label}",
-                    target_pkgs=target_pkgs
+                    commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+                    target_pkgs=pkgs_to_install
                 )
             except Exception as commit_err:
                 logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
@@ -193,8 +205,8 @@ def execute_sequential_compile_and_apply(
         logger.info("   [5/5] Committing deployment changes in install/ repository ...")
         run_primitive_6_commit_install_repo(
             workspace_config,
-            commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_label}",
-            target_pkgs=target_pkgs
+            commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+            target_pkgs=pkgs_to_install
         )
         completed_steps.append(CompletedStep(5, "install_commit"))
     except Exception as e:
@@ -202,7 +214,7 @@ def execute_sequential_compile_and_apply(
         msg = (
             f"The deployment succeeded on your host, but committing to the state database failed.\n"
             f"👉 Please resolve the Git state manually by running:\n"
-            f"    drift install-commit -m \"Deploy Install: Automatically commit deployed changes for {pkgs_label}\""
+            f"    drift install-commit -m \"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}\""
         )
         print(msg, file=sys.stderr)
         raise RuntimeError(f"{failed_step} failed.") from e
@@ -215,6 +227,7 @@ def run_primitive_deploy_pipeline(
     packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
+    redeploy: bool = False,
 ) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply.
 
@@ -226,6 +239,7 @@ def run_primitive_deploy_pipeline(
             (install deployment) to bypass midway failed state checks and uncommitted modification safeguards.
             Note: Does NOT bypass 'enable_install = false' package configurations.
         flags: Optional HookExecFlags controlling hook execution options.
+        redeploy: If True, forces full redeployment of all requested packages regardless of staging delta.
 
     Returns:
         DeployResult containing detailed status and deployed packages.
@@ -252,7 +266,7 @@ def run_primitive_deploy_pipeline(
 
     # Stage 2: Deploy Pipeline Execution
     deployed_packages, completed_steps = execute_sequential_compile_and_apply(
-        workspace_config, target_pkgs, force=force, flags=flags
+        workspace_config, target_pkgs, force=force, flags=flags, redeploy=redeploy
     )
 
     # Stage 3: Call garbage collection on global deploy
@@ -263,7 +277,10 @@ def run_primitive_deploy_pipeline(
             workspace_config, dry_run=False, flags=flags
         )
 
-    logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(target_pkgs)}")
+    if deployed_packages:
+        logger.info(f"✨ Successfully completed deployment for package(s): {', '.join(p.package for p in deployed_packages)}")
+    else:
+        logger.info("✨ Deployment completed: all packages are already up-to-date (no changes detected).")
 
     return DeployResult(
         command="deploy",
@@ -281,6 +298,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
     packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
+    redeploy: bool = False,
 ) -> DeployResult:
     """Executes the deployment pipeline, catching exceptions and returning a structured DeployResult.
 
@@ -299,6 +317,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             packages_to_deploy=packages_to_deploy,
             force=force,
             flags=flags,
+            redeploy=redeploy,
         )
     except Exception as e:
         err_str = str(e)

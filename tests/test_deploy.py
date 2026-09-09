@@ -322,6 +322,61 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("Safety Abort", str(ctx2.exception))
         self.assertIn("drift rollback pkg_a", str(ctx2.exception))
 
+    def test_deploy_pipeline_skips_unchanged_packages(self) -> None:
+        """Verifies that packages with no stage changes are skipped during physical deployment."""
+        # 1. Create a second package pkg_b
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir()
+        (pkg_b_dir / "drift_package.toml").write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("pkg_b initial content", encoding="utf-8")
+
+        # Initial deploy of both packages
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 2)
+
+        # 2. Modify only pkg_a
+        (self.pkg_dir / "file.txt").write_text("Hello updated source config!", encoding="utf-8")
+
+        # Deploy again
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
+        self.assertEqual(res2.status, "SUCCESS")
+        deployed_names = [p.package for p in res2.deployed_packages]
+        self.assertEqual(deployed_names, ["pkg_a"])
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(), "Hello updated source config!")
+
+    def test_deploy_pipeline_skips_all_when_no_changes(self) -> None:
+        """Verifies that when zero packages have stage changes, physical install and commit steps are skipped."""
+        # 1. Initial deploy
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 1)
+
+        # 2. Second deploy with no changes
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.deployed_packages, [])
+
+    def test_deploy_pipeline_with_redeploy_flag(self) -> None:
+        """Verifies that passing redeploy=True forces redeployment even when zero stage changes exist."""
+        # 1. Initial deploy
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+
+        # 2. Second deploy with redeploy=True
+        res2 = run_primitive_deploy_pipeline(
+            self.workspace_config, packages_to_deploy=["pkg_a"], redeploy=True
+        )
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(len(res2.deployed_packages), 1)
+        self.assertEqual(res2.deployed_packages[0].package, "pkg_a")
+
 
 if __name__ == "__main__":
     unittest.main()
+
