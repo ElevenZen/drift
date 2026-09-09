@@ -4,7 +4,7 @@ import datetime
 import shutil
 import logging
 from pathlib import Path
-from typing import List, Union, Optional, Sequence, Tuple
+from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
 from dataclasses import dataclass, field
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
@@ -32,11 +32,62 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PackageStageChanges:
-    """Represents staging changes for a single package."""
+    """Represents comprehensive staging changes for a single package."""
     package_name: str
-    added_files: List[Path] = field(default_factory=list)
-    modified_files: List[Path] = field(default_factory=list)
-    deleted_files: List[Path] = field(default_factory=list)
+    deployable_changes: FolderDiff = field(default_factory=FolderDiff)
+    physical_changes: FolderDiff = field(default_factory=FolderDiff)
+
+    def __init__(
+        self,
+        package_name: str,
+        deployable_changes: Optional[FolderDiff] = None,
+        physical_changes: Optional[FolderDiff] = None,
+        added_files: Optional[Sequence[Path]] = None,
+        modified_files: Optional[Sequence[Path]] = None,
+        deleted_files: Optional[Sequence[Path]] = None,
+    ) -> None:
+        self.package_name = package_name
+        if deployable_changes is not None:
+            self.deployable_changes = deployable_changes
+        else:
+            self.deployable_changes = FolderDiff(
+                added=list(added_files) if added_files else [],
+                modified=list(modified_files) if modified_files else [],
+                deleted=list(deleted_files) if deleted_files else [],
+            )
+        if physical_changes is not None:
+            self.physical_changes = physical_changes
+        else:
+            self.physical_changes = self.deployable_changes
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if any physical file (payload, config, hooks) was added, modified, or deleted."""
+        d = self.physical_changes
+        return bool(d.added or d.modified or d.deleted)
+
+    @property
+    def has_deployable_changes(self) -> bool:
+        """Returns True if any deployable payload file was added, modified, or deleted."""
+        d = self.deployable_changes
+        return bool(d.added or d.modified or d.deleted)
+
+    @property
+    def has_metadata_or_hook_changes(self) -> bool:
+        """Returns True if hooks, .drift_ignore, or drift_package.toml changed without deployable payload changes."""
+        return self.has_changes and not self.has_deployable_changes
+
+    @property
+    def added_files(self) -> List[Path]:
+        return self.deployable_changes.added
+
+    @property
+    def modified_files(self) -> List[Path]:
+        return self.deployable_changes.modified
+
+    @property
+    def deleted_files(self) -> List[Path]:
+        return self.deployable_changes.deleted
 
 
 def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
@@ -54,13 +105,12 @@ def compute_package_stage_diff(
     pkg: str,
     install_base: Path,
     render_base: Path,
-) -> Tuple[PackageStageChanges, FolderDiff, DriftIgnore]:
+) -> Tuple[PackageStageChanges, DriftIgnore]:
     """Computes deployable and physical file changes between render/ and install/ for a single package.
 
     Returns:
-        Tuple of (stage_changes, all_diff, ignore_handler):
-        - stage_changes: PackageStageChanges containing deployable added/modified/deleted files.
-        - all_diff: FolderDiff containing all physical differences (including hooks and non-ignored files).
+        Tuple of (stage_changes, ignore_handler):
+        - stage_changes: PackageStageChanges containing both deployable and physical changes.
         - ignore_handler: The DriftIgnore instance for the package.
     """
     install_pkg_dir = install_base / pkg
@@ -78,12 +128,6 @@ def compute_package_stage_diff(
         ignore_handler=ignore_handler,
         resolve_symlinks=False
     )
-    stage_changes = PackageStageChanges(
-        package_name=pkg,
-        added_files=list(deploy_diff.added),
-        modified_files=list(deploy_diff.modified),
-        deleted_files=list(deploy_diff.deleted),
-    )
 
     # 2. Compute all physical file changes without ignore_handler to stage everything into install/
     all_diff = compare_folders(
@@ -95,7 +139,13 @@ def compute_package_stage_diff(
     # Exclude MANAGED_CONFIG_FILES from deleted list as they are managed/generated in install/
     all_diff.deleted = [p for p in all_diff.deleted if p.name not in MANAGED_CONFIG_FILES]
 
-    return stage_changes, all_diff, ignore_handler
+    stage_changes = PackageStageChanges(
+        package_name=pkg,
+        deployable_changes=deploy_diff,
+        physical_changes=all_diff,
+    )
+
+    return stage_changes, ignore_handler
 
 
 def apply_package_stage_changes(
@@ -103,13 +153,14 @@ def apply_package_stage_changes(
     install_base: Path,
     render_base: Path,
     backup_base: Path,
-    all_diff: FolderDiff,
+    stage_changes: PackageStageChanges,
     ignore_handler: DriftIgnore,
 ) -> None:
     """Applies calculated physical deletions, additions, and modifications for a single package into install/."""
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
     backup_dir = backup_base / pkg / "deleted_files"
+    all_diff = stage_changes.physical_changes
 
     # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)
     for rel_file in all_diff.deleted:
@@ -201,7 +252,7 @@ def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Union[str, Sequence[str]] = (),
     force: bool = False
-) -> List[PackageStageChanges]:
+) -> Dict[str, PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
     Args:
@@ -212,7 +263,7 @@ def run_primitive_4_stage_render_to_install(
             Note: Does NOT bypass 'enable_install = false' package configurations.
 
     Returns:
-        A list of PackageStageChanges objects representing package changes.
+        A dictionary mapping package name to PackageStageChanges objects for all packages with changes.
     """
     if isinstance(target_pkgs, str):
         target_pkgs_seq: Sequence[str] = [target_pkgs]
@@ -222,10 +273,10 @@ def run_primitive_4_stage_render_to_install(
     # Load active packages from render directory
     active_packages = workspace_config.get_rendered_packages(target_pkgs=target_pkgs_seq)
 
-    # If active_packages is empty, we should just return empty lists and not proceed further.
+    # If active_packages is empty, we should just return empty dict and not proceed further.
     if not active_packages:
         logger.info("No active packages selected for staging. Skipping.")
-        return []
+        return {}
 
     render_base = workspace_config.render_path
     install_base = workspace_config.install_path
@@ -271,18 +322,18 @@ def run_primitive_4_stage_render_to_install(
     # 3. Compute stage diffs and deployable changes for all packages
     computed_diffs = {}
     for pkg in pkg_metadata.keys():
-        stage_changes, all_diff, ignore_handler = compute_package_stage_diff(
+        stage_changes, ignore_handler = compute_package_stage_diff(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
         )
-        computed_diffs[pkg] = (stage_changes, all_diff, ignore_handler)
+        computed_diffs[pkg] = (stage_changes, ignore_handler)
 
     # Identify packages that have physical stage changes
     packages_to_stage = {
-        pkg: (changes, all_diff, ignore_handler)
-        for pkg, (changes, all_diff, ignore_handler) in computed_diffs.items()
-        if all_diff.added or all_diff.modified or all_diff.deleted
+        pkg: (changes, ignore_handler)
+        for pkg, (changes, ignore_handler) in computed_diffs.items()
+        if changes.has_changes
     }
 
     # 4. Check sudo privilege ONLY if any package with actual changes requires sudo
@@ -297,13 +348,13 @@ def run_primitive_4_stage_render_to_install(
     state_registry.save()
 
     # 6. Apply stage changes to install/ directory for each package with changes
-    for pkg, (changes, all_diff, ignore_handler) in packages_to_stage.items():
+    for pkg, (changes, ignore_handler) in packages_to_stage.items():
         apply_package_stage_changes(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
             backup_base=backup_base,
-            all_diff=all_diff,
+            stage_changes=changes,
             ignore_handler=ignore_handler,
         )
 
@@ -312,20 +363,20 @@ def run_primitive_4_stage_render_to_install(
         state_registry.set_package_state(pkg, "staged")
     state_registry.save()
 
-    pkg_changes_with_actual_changes = [
-        changes for changes, _, _ in computed_diffs.values()
-        if changes.added_files or changes.modified_files or changes.deleted_files
-    ]
+    changed_package_map = {
+        pkg: changes for pkg, (changes, _) in computed_diffs.items()
+        if changes.has_changes
+    }
 
-    if pkg_changes_with_actual_changes:
+    if changed_package_map:
         logger.info("✨ Staging completed. Summary of changes:")
-        for pkg_change in pkg_changes_with_actual_changes:
+        for pkg_change in changed_package_map.values():
+            extra = " (metadata/hooks modified)" if pkg_change.has_metadata_or_hook_changes else ""
             logger.info(f"   Package '{pkg_change.package_name}': "
                         f"+{len(pkg_change.added_files)}, "
                         f"~{len(pkg_change.modified_files)}, "
-                        f"-{len(pkg_change.deleted_files)}")
+                        f"-{len(pkg_change.deleted_files)}{extra}")
     else:
         logger.info("✨ Staging completed. No changes detected.")
 
-    # Return only the packages that have actual changes
-    return pkg_changes_with_actual_changes
+    return changed_package_map

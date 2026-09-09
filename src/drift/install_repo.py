@@ -9,7 +9,7 @@ import subprocess
 import datetime
 import shlex
 from pathlib import Path
-from typing import List, Optional, Union, Tuple, Set, Sequence
+from typing import List, Optional, Union, Tuple, Set, Sequence, Mapping
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_config_for_install
@@ -894,7 +894,7 @@ def run_primitive_5_install_deployment(
     packages_to_redeploy: Sequence[str] = (),
     resolve_symlinks: bool = True,
     force: bool = False,
-    package_changes: Sequence[PackageStageChanges] = (),
+    package_changes: Optional[Mapping[str, PackageStageChanges]] = None,
     flags: Optional[HookExecFlags] = None,
     redeploy: bool = True,
 ) -> InstallDeploymentResult:
@@ -911,7 +911,7 @@ def run_primitive_5_install_deployment(
         force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
             in the state database, allowing deployment even if a previous operation failed midway.
             Note: Does NOT bypass 'enable_install = false' package configurations.
-        package_changes: Optional pre-calculated stage changes per package.
+        package_changes: Optional pre-calculated stage changes mapping keyed by package name.
         flags: Optional HookExecFlags controlling hook execution options.
         redeploy: Governs behavior for packages without staging changes info (package_changes=None):
             - If True (default for standalone apply): Performs full deployment for the package.
@@ -946,13 +946,12 @@ def run_primitive_5_install_deployment(
             if metadata.enable_install:
                 metadata.hooks.check_hook_files(install_base / pkg)
     
+    changes_map = package_changes if package_changes is not None else {}
+
     results: List[PackageInstallResult] = []
     for pkg in discovered_packages:
         # find corresponding PackageStageChanges for this package if provided
-        if package_changes:
-            pkg_change = next((c for c in package_changes if c.package_name == pkg), None)
-        else:
-            pkg_change = None
+        pkg_change = changes_map.get(pkg)
 
         if pkg_change is None and not redeploy:
             logger.info(f"Skipping package '{pkg}' during deployment (no stage changes).")

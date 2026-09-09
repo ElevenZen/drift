@@ -376,6 +376,73 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(len(res2.deployed_packages), 1)
         self.assertEqual(res2.deployed_packages[0].package, "pkg_a")
 
+    def test_deploy_pipeline_redeploys_on_hook_modification(self) -> None:
+        """Verifies that modifying a lifecycle hook script triggers redeployment even if deployable files are unchanged."""
+        # 1. Setup hook script and configure it
+        hook_file = self.pkg_dir / "post_install.sh"
+        marker_file = self.drift_root / "hook_executed.txt"
+        hook_file.write_text(f"#!/bin/sh\necho 'v1' > '{marker_file}'\n", encoding="utf-8")
+        hook_file.chmod(0o755)
+
+        (self.pkg_dir / "drift_package.toml").write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        post_install = "post_install.sh"
+        post_update = "post_install.sh"
+        """, encoding="utf-8")
+
+        # Initial deploy: executes v1
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 1)
+        self.assertEqual(marker_file.read_text().strip(), "v1")
+
+        # Second deploy with no modifications: skipped
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.deployed_packages, [])
+
+        # 2. Modify ONLY the hook script (deployable payload file.txt is untouched)
+        hook_file.write_text(f"#!/bin/sh\necho 'v2 updated' > '{marker_file}'\n", encoding="utf-8")
+
+        # Third deploy: must NOT be skipped, must re-execute deployment with updated hook
+        res3 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res3.status, "SUCCESS")
+        self.assertEqual(len(res3.deployed_packages), 1)
+        self.assertEqual(res3.deployed_packages[0].package, "pkg_a")
+        self.assertEqual(marker_file.read_text().strip(), "v2 updated")
+
+    def test_deploy_pipeline_redeploys_on_config_modification(self) -> None:
+        """Verifies that modifying drift_package.toml (e.g. adding a hook or changing settings) triggers redeployment."""
+        # 1. Initial deploy without hooks
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 1)
+
+        # Second deploy with no modifications: skipped
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.deployed_packages, [])
+
+        # 2. Modify drift_package.toml (payload untouched)
+        (self.pkg_dir / "drift_package.toml").write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["conf.d"]
+        """, encoding="utf-8")
+
+        # Third deploy: must NOT be skipped
+        res3 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res3.status, "SUCCESS")
+        self.assertEqual(len(res3.deployed_packages), 1)
+        self.assertEqual(res3.deployed_packages[0].package, "pkg_a")
+
 
 if __name__ == "__main__":
     unittest.main()

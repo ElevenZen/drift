@@ -157,7 +157,7 @@ def execute_sequential_compile_and_apply(
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
 
-    changed_pkgs = [c.package_name for c in package_changes]
+    changed_pkgs = [pkg for pkg, change in package_changes.items() if change.has_changes]
     if redeploy:
         pkgs_to_install = target_pkgs
     elif changed_pkgs:

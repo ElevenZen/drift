@@ -80,14 +80,14 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
     workspace_config = load_workspace_config_default(drift_root)
     changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=package_names, force=force)
     if json_mode:
-        pkg_names = [c.package_name for c in changes]
+        pkg_names = list(changes.keys())
         print(StageResult(packages_changed=pkg_names).to_json())
         return
 
     if not changes:
         logger.info("No changes staged. All files are up-to-date.")
     else:
-        for pkg_change in changes:
+        for pkg_change in changes.values():
             logger.info(f"Package '{pkg_change.package_name}' staged changes:")
             for file in pkg_change.added_files:
                 logger.info(f"  [+] {file.as_posix()}")
@@ -95,6 +95,8 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
                 logger.info(f"  [*] {file.as_posix()}")
             for file in pkg_change.deleted_files:
                 logger.info(f"  [-] {file.as_posix()}")
+            if pkg_change.has_metadata_or_hook_changes:
+                logger.info("  [*] (package config or lifecycle hooks)")
 
 
 def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
@@ -109,7 +111,6 @@ def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bo
         packages_to_redeploy=package_names,
         resolve_symlinks=True,
         force=force,
-        package_changes=(),
         flags=flags,
     )
     if json_mode:

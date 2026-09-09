@@ -149,7 +149,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])})
 
         # Verify symlink is created
         target_file = os.path.join(self.system_target_dir, ".bashrc")
@@ -188,7 +188,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, added_files=[Path("dot-bashrc")])})
 
         # Collision file should be backed up under backup/pkg_stow/overwritten/dot-bashrc
         backup_file = os.path.join(self.backup_dir, pkg, "overwritten", "dot-bashrc")
@@ -239,7 +239,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run first-time deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("test.txt")])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, added_files=[Path("test.txt")])})
 
         # Target file is copied and pre-existing file backed up
         self.assertTrue(os.path.isfile(target_file))
@@ -271,7 +271,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run update deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=[PackageStageChanges(package_name=pkg, modified_files=[Path("test.txt")])])
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, modified_files=[Path("test.txt")])})
 
         # Target file should be directly overwritten
         with open(target_file, "r", encoding="utf-8") as f:
@@ -605,7 +605,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(
                 self.workspace_config,
                 [pkg],
-                package_changes=()
+                package_changes={}
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
@@ -643,7 +643,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            package_changes=[PackageStageChanges(package_name=pkg, added_files=[Path("nested_app/config.json")])]
+            package_changes={pkg: PackageStageChanges(package_name=pkg, added_files=[Path("nested_app/config.json")])}
         )
 
         # 1. Parent symlink should be removed and rebuilt as a physical directory
@@ -1399,7 +1399,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Execute partial deployment modifying file_a.txt
         from drift.stage_repo import PackageStageChanges
-        changes = [PackageStageChanges(package_name=pkg, modified_files=[Path("file_a.txt")])]
+        changes = {pkg: PackageStageChanges(package_name=pkg, modified_files=[Path("file_a.txt")])}
         res = run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=changes)
         self.assertEqual(res.status, "SUCCESS")
 
