@@ -156,7 +156,7 @@ def handle_add(
 
 def handle_adopt(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
@@ -165,11 +165,12 @@ def handle_adopt(
 ) -> None:
     """Adopt active system drifts and incorporate them back into source templates."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
         execute_adopt(
             drift_root=drift_root,
-            package_names=packages,
+            package_names=pkgs,
             interactive=interactive,
             accept_conflicts=accept_conflicts,
             force=force,
@@ -181,35 +182,37 @@ def handle_adopt(
 
 def handle_deploy(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False,
     redeploy: bool = False
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_deploy(drift_root, packages, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, redeploy=redeploy)
+        execute_deploy(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, redeploy=redeploy)
 
 
 def handle_health(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     timeout: Optional[int] = None,
     verbose: bool = False,
     from_stage: str = "install"
 ) -> None:
     """Run runtime health check probes on packages."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_health(drift_root, packages, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout, from_stage=from_stage)
+        execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout, from_stage=from_stage)
 
 
 def handle_uninstall(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
@@ -217,38 +220,41 @@ def handle_uninstall(
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, packages, force=force, dry_run=dry_run, detach=detach, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_uninstall(drift_root, pkgs, force=force, dry_run=dry_run, detach=detach, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
 
 def handle_rollback(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False
 ) -> None:
     """Rollback failed deployments and restore systems to the last committed clean state."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_rollback(drift_root, packages, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_rollback(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
 
 def handle_status(
     ctx: Any,
-    packages: Sequence[str] = ()
+    packages: Optional[Sequence[str]] = None
 ) -> None:
     """Audit and aggregate configuration status across active packages."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_status(drift_root, packages, json_mode=cli_ctx.json_mode)
+        execute_status(drift_root, pkgs, json_mode=cli_ctx.json_mode)
 
 
 def handle_diff(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     template: bool = False,
     system: bool = False,
     side_by_side: bool = False,
@@ -256,6 +262,7 @@ def handle_diff(
 ) -> None:
     """Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
         diff_type = DiffType.PENDING
@@ -263,7 +270,7 @@ def handle_diff(
             diff_type = DiffType.TEMPLATE
         elif system:
             diff_type = DiffType.SYSTEM
-        execute_diff(drift_root, packages, diff_type=diff_type, side_by_side=side_by_side, stat=stat, json_mode=cli_ctx.json_mode)
+        execute_diff(drift_root, pkgs, diff_type=diff_type, side_by_side=side_by_side, stat=stat, json_mode=cli_ctx.json_mode)
 
 
 def handle_gc(
@@ -312,16 +319,17 @@ def handle_complete(
 
 def handle_reverse_sync(
     ctx: Any,
-    packages: Sequence[str] = ()
+    packages: Optional[Sequence[str]] = None
 ) -> None:
     """(Low-Level) Synchronize changes from host system back to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_reverse_sync(drift_root, packages, json_mode=cli_ctx.json_mode)
+        execute_reverse_sync(drift_root, pkgs, json_mode=cli_ctx.json_mode)
         if not cli_ctx.json_mode:
-            if packages:
-                pkgs_str = ", ".join(packages)
+            if pkgs:
+                pkgs_str = ", ".join(pkgs)
                 cli_ctx.print_message(f"[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced package(s) '{pkgs_str}'![/bold green]", f"✨ Successfully reverse-synced package(s) '{pkgs_str}'!")
             else:
                 cli_ctx.print_message("[bold yellow]✨[/bold yellow] [bold green]Successfully reverse-synced all enabled packages![/bold green]", "✨ Successfully reverse-synced all enabled packages!")
@@ -329,17 +337,18 @@ def handle_reverse_sync(
 
 def handle_render(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     no_hooks: bool = False
 ) -> None:
     """(Low-Level) Render templates of a package or all enabled packages."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_render(drift_root, packages, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_render(drift_root, pkgs, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
         if not cli_ctx.json_mode:
-            if packages:
-                pkgs_str = ", ".join(packages)
+            if pkgs:
+                pkgs_str = ", ".join(pkgs)
                 cli_ctx.print_message(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package(s) '{pkgs_str}'![/bold green]", f"✨ Successfully rendered package(s) '{pkgs_str}'!")
             else:
                 cli_ctx.print_message("[bold yellow]✨[/bold yellow] [bold green]Successfully rendered all enabled packages![/bold green]", "✨ Successfully rendered all enabled packages!")
@@ -348,50 +357,54 @@ def handle_render(
 def handle_render_commit(
     ctx: Any,
     message: str = "",
-    packages: Sequence[str] = ()
+    packages: Optional[Sequence[str]] = None
 ) -> None:
     """(Low-Level) Stage and commit compiled render sandbox changes."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_render_commit(drift_root, message, packages)
+        execute_render_commit(drift_root, message, pkgs)
 
 
 def handle_stage(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     force: bool = False
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_stage(drift_root, packages, force=force, json_mode=cli_ctx.json_mode)
+        execute_stage(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode)
 
 
 def handle_apply(
     ctx: Any,
-    packages: Sequence[str] = (),
+    packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False
 ) -> None:
     """(Low-Level) Apply configurations from state database to active host system."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_apply(drift_root, packages, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_apply(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
 
 def handle_install_commit(
     ctx: Any,
     message: str = "",
-    packages: Sequence[str] = ()
+    packages: Optional[Sequence[str]] = None
 ) -> None:
     """(Low-Level) Stage and commit install state directory changes."""
     cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
     with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich):
         drift_root = cli_ctx.get_drift_root()
-        execute_install_commit(drift_root, message, packages)
+        execute_install_commit(drift_root, message, pkgs)
 
 
 def handle_hook(
