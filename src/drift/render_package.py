@@ -7,7 +7,7 @@ import shutil
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Tuple, Optional, TYPE_CHECKING
+from typing import List, Tuple, Optional, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig, RenderEngineConfig
@@ -298,7 +298,7 @@ def render_package(
 
 def run_primitive_2_render_packages(
     workspace_config: WorkspaceConfig,
-    target_pkgs: Optional[List[str]] = None,
+    target_pkgs: Sequence[str] = (),
     flags: Optional[HookExecFlags] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
@@ -356,7 +356,7 @@ def run_primitive_2_render_packages(
 def run_primitive_3_commit_render_repo(
     workspace_config: WorkspaceConfig,
     commit_message: str,
-    target_pkgs: Optional[List[str]] = None
+    target_pkgs: Sequence[str] = ()
 ) -> None:
     """Stages and commits changes inside the render sandbox Git repository (Primitive 3).
 

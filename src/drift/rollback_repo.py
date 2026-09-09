@@ -3,7 +3,7 @@
 import logging
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .result_models import RollbackResult
@@ -35,7 +35,7 @@ def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
 def rollback_uninstalled_first_time_package(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    deployed_files: Optional[List[Path]] = None,
+    deployed_files: Sequence[Path] = (),
     flags: Optional[HookExecFlags] = None,
 ) -> None:
     """Cleans up host system files, restores overwritten backups, and removes directory for a first-time package that failed."""
@@ -54,7 +54,7 @@ def rollback_uninstalled_first_time_package(
 
 def run_primitive_8_rollback_recovery(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> RollbackResult:
@@ -81,7 +81,7 @@ def run_primitive_8_rollback_recovery(
         return RollbackResult(
             command="rollback",
             status="SUCCESS",
-            target_packages=package_names or [],
+            target_packages=list(package_names),
             restored_packages=[]
         )
 
@@ -105,7 +105,7 @@ def run_primitive_8_rollback_recovery(
             return RollbackResult(
                 command="rollback",
                 status="SUCCESS",
-                target_packages=package_names or list(discovered),
+                target_packages=list(package_names) or list(discovered),
                 restored_packages=[]
             )
 
@@ -158,6 +158,6 @@ def run_primitive_8_rollback_recovery(
     return RollbackResult(
         command="rollback",
         status="SUCCESS",
-        target_packages=package_names or list(discovered),
+        target_packages=list(package_names) or list(discovered),
         restored_packages=sorted(list(packages_to_rollback))
     )

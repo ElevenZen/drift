@@ -12,10 +12,11 @@ def cli_error_boundary(json_mode: bool = False, use_rich: bool = False):
     try:
         yield
     except SystemExit as se:
-        code = se.code if se.code is not None else ExitCode.SUCCESS
         if use_rich:
             import typer
-            raise typer.Exit(code=code)
+            int_code = se.code if isinstance(se.code, int) else (ExitCode.SUCCESS if se.code is None else ExitCode.GENERAL_ERROR)
+            raise typer.Exit(code=int_code)
+        code = se.code if se.code is not None else ExitCode.SUCCESS
         sys.exit(code)
     except DriftError as de:
         if not json_mode:

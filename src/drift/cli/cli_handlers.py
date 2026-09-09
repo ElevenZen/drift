@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Optional, List, Any, Dict, Callable
+from typing import Optional, List, Any, Dict, Callable, Sequence
 
 from .actions import (
     get_drift_root,
@@ -156,7 +156,7 @@ def handle_add(
 
 def handle_adopt(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
@@ -169,7 +169,7 @@ def handle_adopt(
         drift_root = cli_ctx.get_drift_root()
         execute_adopt(
             drift_root=drift_root,
-            package_names=packages or [],
+            package_names=packages,
             interactive=interactive,
             accept_conflicts=accept_conflicts,
             force=force,
@@ -181,7 +181,7 @@ def handle_adopt(
 
 def handle_deploy(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     force: bool = False,
     no_hooks: bool = False
 ) -> None:
@@ -194,7 +194,7 @@ def handle_deploy(
 
 def handle_health(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     timeout: Optional[int] = None,
     verbose: bool = False,
     from_stage: str = "install"
@@ -208,7 +208,7 @@ def handle_health(
 
 def handle_uninstall(
     ctx: Any,
-    packages: List[str],
+    packages: Sequence[str] = (),
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
@@ -223,7 +223,7 @@ def handle_uninstall(
 
 def handle_rollback(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     force: bool = False,
     no_hooks: bool = False
 ) -> None:
@@ -236,7 +236,7 @@ def handle_rollback(
 
 def handle_status(
     ctx: Any,
-    packages: Optional[List[str]] = None
+    packages: Sequence[str] = ()
 ) -> None:
     """Audit and aggregate configuration status across active packages."""
     cli_ctx = _extract_cli_context(ctx)
@@ -247,7 +247,7 @@ def handle_status(
 
 def handle_diff(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     template: bool = False,
     system: bool = False,
     side_by_side: bool = False,
@@ -311,7 +311,7 @@ def handle_complete(
 
 def handle_reverse_sync(
     ctx: Any,
-    packages: Optional[List[str]] = None
+    packages: Sequence[str] = ()
 ) -> None:
     """(Low-Level) Synchronize changes from host system back to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
@@ -328,7 +328,7 @@ def handle_reverse_sync(
 
 def handle_render(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     no_hooks: bool = False
 ) -> None:
     """(Low-Level) Render templates of a package or all enabled packages."""
@@ -347,7 +347,7 @@ def handle_render(
 def handle_render_commit(
     ctx: Any,
     message: str = "",
-    packages: Optional[List[str]] = None
+    packages: Sequence[str] = ()
 ) -> None:
     """(Low-Level) Stage and commit compiled render sandbox changes."""
     cli_ctx = _extract_cli_context(ctx)
@@ -358,7 +358,7 @@ def handle_render_commit(
 
 def handle_stage(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     force: bool = False
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
@@ -370,7 +370,7 @@ def handle_stage(
 
 def handle_apply(
     ctx: Any,
-    packages: Optional[List[str]] = None,
+    packages: Sequence[str] = (),
     force: bool = False,
     no_hooks: bool = False
 ) -> None:
@@ -384,7 +384,7 @@ def handle_apply(
 def handle_install_commit(
     ctx: Any,
     message: str = "",
-    packages: Optional[List[str]] = None
+    packages: Sequence[str] = ()
 ) -> None:
     """(Low-Level) Stage and commit install state directory changes."""
     cli_ctx = _extract_cli_context(ctx)

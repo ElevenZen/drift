@@ -49,7 +49,7 @@ class TestCaseUtilityMixin:
     """Mixin for unittest.TestCase classes providing shared assertion helpers."""
 
     def assertIn_stripped(self, expected: str, actual: str) -> None:
-        assert_in_stripped(expected, actual, test_case=self)
+        assert_in_stripped(expected, actual, test_case=self if isinstance(self, unittest.TestCase) else None)
 
 
 class TestTestUtils(TestCaseUtilityMixin, unittest.TestCase):

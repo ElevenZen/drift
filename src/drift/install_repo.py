@@ -9,7 +9,7 @@ import subprocess
 import datetime
 import shlex
 from pathlib import Path
-from typing import List, Optional, Union, Tuple, Set
+from typing import List, Optional, Union, Tuple, Set, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_config_for_install
@@ -891,17 +891,17 @@ def deploy_one_package_with_error_wrapping(
 
 def run_primitive_5_install_deployment(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: Optional[List[str]] = None,
+    packages_to_redeploy: Sequence[str] = (),
     resolve_symlinks: bool = True,
     force: bool = False,
-    package_changes: Optional[List[PackageStageChanges]] = None,
+    package_changes: Sequence[PackageStageChanges] = (),
     flags: Optional[HookExecFlags] = None,
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
-        packages_to_redeploy: Specific package name(s) to deploy, or None for all installed packages.
+        packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
         resolve_symlinks: Whether symlinks should be resolved during deployment.
         force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
             in the state database, allowing deployment even if a previous operation failed midway.
@@ -965,7 +965,7 @@ def run_primitive_5_install_deployment(
 def run_primitive_6_commit_install_repo(
     workspace_config: WorkspaceConfig,
     commit_message: str,
-    target_pkgs: Optional[List[str]] = None
+    target_pkgs: Sequence[str] = ()
 ) -> None:
     """Stages and commits changes inside the install/ state Git repository (Primitive 6).
 

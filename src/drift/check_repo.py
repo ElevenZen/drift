@@ -4,7 +4,7 @@ import logging
 from enum import Enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Set
+from typing import TYPE_CHECKING, List, Optional, Set, Sequence
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
@@ -81,7 +81,7 @@ class WorkspaceHealthReport:
 
     def to_repair_result(
         self,
-        actions: Optional[List[str]] = None,
+        actions: Sequence[str] = (),
         dry_run: bool = False
     ):
         """Converts this health report and any performed repair actions into a RepairResult object."""
@@ -99,7 +99,7 @@ class WorkspaceHealthReport:
         return RepairResult(
             overall_health=self.overall_status.value,
             dry_run=dry_run,
-            actions_performed=actions or [],
+            actions_performed=list(actions),
             checks=checks_list
         )
 

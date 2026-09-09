@@ -4,7 +4,7 @@ import datetime
 import shutil
 import logging
 from pathlib import Path
-from typing import List, Union, Optional
+from typing import List, Union, Optional, Sequence
 from dataclasses import dataclass, field
 
 from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
@@ -180,14 +180,14 @@ def copy_ignore_and_config_files(
 
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
-    target_pkgs: Optional[Union[str, List[str]]] = None,
+    target_pkgs: Union[str, Sequence[str]] = (),
     force: bool = False
 ) -> List[PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
     Args:
         workspace_config: The workspace configuration instance.
-        target_pkgs: Specific package name(s) to stage, or None for all active packages.
+        target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
         force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
             and ignores uncommitted local modifications in the install/ directory.
             Note: Does NOT bypass 'enable_install = false' package configurations.
@@ -196,10 +196,12 @@ def run_primitive_4_stage_render_to_install(
         A list of PackageStageChanges objects representing package changes.
     """
     if isinstance(target_pkgs, str):
-        target_pkgs = [target_pkgs]
+        target_pkgs_seq: Sequence[str] = [target_pkgs]
+    else:
+        target_pkgs_seq = target_pkgs if target_pkgs else ()
 
     # Load active packages from render directory
-    active_packages = workspace_config.get_rendered_packages(target_pkgs=target_pkgs)
+    active_packages = workspace_config.get_rendered_packages(target_pkgs=target_pkgs_seq)
 
     # If active_packages is empty, we should just return empty lists and not proceed further.
     if not active_packages:

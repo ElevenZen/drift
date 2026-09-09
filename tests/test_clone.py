@@ -164,6 +164,8 @@ class TestWorkspaceClone(unittest.TestCase):
             target_dir=dest_path
         )
         self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.error_message)
+        assert res.error_message is not None
         self.assertIn("already exists and is not empty", res.error_message)
 
     def test_clone_with_no_repair(self):

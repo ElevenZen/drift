@@ -116,7 +116,7 @@ def update_env_dict(
 
 def restore_env_dict(
     target: MutableMapping[str, str],
-    original_envs: Optional[Mapping[str, Optional[str]]],
+    original_envs: Mapping[str, Optional[str]] = {},
 ) -> None:
     """Restores original values in target mapping from a snapshot dictionary.
 
@@ -149,7 +149,7 @@ def load_env_settings(
     Args:
         envs: A mapping or sequence of (key, value) pairs.
         overwrite: If True, overwrite existing keys in os.environ (unless in env_keep).
-                   If False, do not overwrite any keys already in os.environ.
+                    If False, do not overwrite any keys already in os.environ.
         env_keep: Optional set or sequence of keys that must NOT be overwritten.
 
     Returns:
@@ -160,7 +160,7 @@ def load_env_settings(
     return saved
 
 
-def unload_env_settings(original_envs: Optional[Mapping[str, Optional[str]]]) -> None:
+def unload_env_settings(original_envs: Mapping[str, Optional[str]] = {}) -> None:
     """Restores the original environment values using the snapshot returned by load_env_settings."""
     restore_env_dict(os.environ, original_envs)
 

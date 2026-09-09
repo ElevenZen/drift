@@ -102,7 +102,7 @@ def run_pending_delta_diff(
 
 def run_primitive_diff(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     diff_type: DiffType = DiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False

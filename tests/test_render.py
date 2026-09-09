@@ -326,10 +326,12 @@ class TestDependencyResolver(unittest.TestCase):
         # Match by intermediate segment
         engine1 = registry.find_engine_for_file("mustache.envst.json")
         self.assertIsNotNone(engine1)
+        assert engine1 is not None
         self.assertEqual(engine1.name, "envsubst")
         # Match by terminal suffix
         engine2 = registry.find_engine_for_file("mustache.mustache")
         self.assertIsNotNone(engine2)
+        assert engine2 is not None
         self.assertEqual(engine2.name, "mustache")
         # No match
         self.assertIsNone(registry.find_engine_for_file("static.json"))

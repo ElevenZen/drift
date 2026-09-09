@@ -536,16 +536,16 @@ echo "VALUE=$DYNAMIC_VAL"
         from drift.package_config import PackageConfig, PackageHooks
         from drift.lifecycle_hooks import HookExecFlags
         hooks = PackageHooks(
-            probe="scripts/probe.sh",
-            pre_source="scripts/pre_source.sh",
-            post_render="scripts/post_render.sh",
-            pre_install="scripts/pre_install.sh",
-            post_install="scripts/post_install.sh",
-            pre_update="scripts/pre_update.sh",
-            post_update="scripts/post_update.sh",
-            pre_uninstall="scripts/pre_uninstall.sh",
-            post_uninstall="scripts/post_uninstall.sh",
-            health="scripts/health.sh"
+            probe=Path("scripts/probe.sh"),
+            pre_source=Path("scripts/pre_source.sh"),
+            post_render=Path("scripts/post_render.sh"),
+            pre_install=Path("scripts/pre_install.sh"),
+            post_install=Path("scripts/post_install.sh"),
+            pre_update=Path("scripts/pre_update.sh"),
+            post_update=Path("scripts/post_update.sh"),
+            pre_uninstall=Path("scripts/pre_uninstall.sh"),
+            post_uninstall=Path("scripts/post_uninstall.sh"),
+            health=Path("scripts/health.sh")
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
@@ -727,9 +727,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         from drift.lifecycle_hooks import HookExecFlags
 
         hooks = PackageHooks(
-            pre_install="scripts/pre_install.sh",
-            pre_update="scripts/pre_update.sh",
-            post_uninstall="scripts/post_uninstall.sh",
+            pre_install=Path("scripts/pre_install.sh"),
+            pre_update=Path("scripts/pre_update.sh"),
+            post_uninstall=Path("scripts/post_uninstall.sh"),
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
         install_dir = self.drift_root / "install" / "pkg_hook"
@@ -845,13 +845,13 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertTrue(h_list.should_rollback_on_failure("post_install"))
         self.assertFalse(h_list.should_rollback_on_failure("post_update"))
 
-        # 4. Invalid hook name in list raises ValueError
-        with self.assertRaises(ValueError):
+        # 4. Invalid hook name in list raises ConfigError
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"rollback_on_failure": ["invalid_hook_name"]})
 
-        # Non-installation lifecycle hooks (probe, post_render, health, uninstall) raise ValueError
+        # Non-installation lifecycle hooks (probe, post_render, health, uninstall) raise ConfigError
         for non_install_hook in ("probe", "pre_source", "post_render", "pre_uninstall", "post_uninstall", "health"):
-            with self.assertRaises(ValueError):
+            with self.assertRaises(ConfigError):
                 PackageHooks.from_dict({"rollback_on_failure": [non_install_hook]})
 
         # Non-installation hooks always return False for should_rollback_on_failure
@@ -859,8 +859,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertFalse(h_default.should_rollback_on_failure("post_render"))
         self.assertFalse(h_default.should_rollback_on_failure("health"))
 
-        # 5. Invalid type raises TypeError
-        with self.assertRaises(TypeError):
+        # 5. Invalid type raises ConfigError
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"rollback_on_failure": 123})
 
     def test_execute_hook_script_raises_hook_execution_error_with_rollback_flag(self) -> None:

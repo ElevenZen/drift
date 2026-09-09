@@ -129,8 +129,8 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         self.assertEqual(os.environ["TEST_RESTORE"], "before_load")
         self.assertNotIn("TEST_POP", os.environ)
 
-        # Unloading None or empty dict is a no-op
-        unload_env_settings(None)
+        # Unloading empty dict is a no-op
+        unload_env_settings()
         unload_env_settings({})
 
     def test_load_env_settings_logs_only_new_or_overwritten(self) -> None:

@@ -35,7 +35,7 @@ class TestResultModels(unittest.TestCase):
 
     def test_serialization_primitives(self) -> None:
         ops = FileOperations(
-            added=[Path("/tmp/a"), Path("/tmp/b")],
+            added=["/tmp/a", "/tmp/b"],
             modified=[],
             deleted=[]
         )

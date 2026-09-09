@@ -107,7 +107,7 @@ class FishGenerator:
             '        command ls -1 "$root/src" 2>/dev/null',
             "    else",
             '        while test "$root" != "/" -a "$root" != "."',
-            '            if test -d "$root/src" -a \( -f "$root/config/drift_workspace.toml" -o -d "$root/render" \)',
+            r'            if test -d "$root/src" -a \( -f "$root/config/drift_workspace.toml" -o -d "$root/render" \)',
             '                command ls -1 "$root/src" 2>/dev/null',
             "                break",
             "            end",

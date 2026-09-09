@@ -34,6 +34,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"drift_os": "windows"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Host OS 'windows' not in required list", reason)
 
     def test_arch_requirement_matching(self) -> None:
@@ -46,6 +48,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"drift_arch": "armv7l"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Host architecture 'armv7l' not in required list", reason)
 
     def test_distro_requirement_matching(self) -> None:
@@ -58,6 +62,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"drift_distro": "fedora"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Linux distribution 'fedora' not in required list", reason)
 
     def test_binaries_requirement_matching(self) -> None:
@@ -65,6 +71,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch("shutil.which", side_effect=lambda b: "/usr/bin/" + b if b == "git" else None):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Required binary 'nonexistent_binary_xyz_123' not found in PATH", reason)
 
         with patch("shutil.which", return_value="/usr/bin/tool"):
@@ -82,6 +90,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"WAYLAND_DISPLAY": "", "XDG_RUNTIME_DIR": "/run/user/1000"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Required environment variable 'WAYLAND_DISPLAY' is unset or empty", reason)
 
     def test_match_ip_address_function(self) -> None:
@@ -136,6 +146,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"drift_ip_addresses": "172.16.0.1;10.0.0.1"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("Host IP addresses", reason)
             self.assertIn("192.168.1.50", reason)
 
@@ -154,6 +166,8 @@ class TestPackageRequirements(unittest.TestCase):
         with patch.dict(os.environ, {"drift_ip_addresses": "172.16.0.1"}):
             is_met, reason = req.check_requirements()
             self.assertFalse(is_met)
+            self.assertIsNotNone(reason)
+            assert reason is not None
             self.assertIn("192.168.1.0/24", reason)
 
     def test_ip_wildcard_requirement_matching(self) -> None:
@@ -231,6 +245,8 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         with patch.dict(os.environ, {"drift_os": "linux"}):
             res = render_package(self.workspace_config, pkg_dir)
             self.assertEqual(res.status, "SKIPPED")
+            self.assertIsNotNone(res.skip_reason)
+            assert res.skip_reason is not None
             self.assertIn("Host OS 'linux' not in required list", res.skip_reason)
             # Ensure render directory was not populated with config.txt
             render_dest = self.drift_root / "render" / "sway_pkg" / "config.txt"
@@ -282,6 +298,8 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
             self.workspace_config, pkg_dir, flags=HookExecFlags(streaming=False)
         )
         self.assertEqual(res.status, "SKIPPED")
+        self.assertIsNotNone(res.skip_reason)
+        assert res.skip_reason is not None
         self.assertIn("Probe hook failed", res.skip_reason)
         self.assertIn("Wayland session not found", res.skip_reason)
 
@@ -373,6 +391,8 @@ fi
         with patch.dict(os.environ, {"drift_ip_addresses": "10.0.0.5;172.16.0.1"}):
             res = render_package(self.workspace_config, pkg_dir)
             self.assertEqual(res.status, "SKIPPED")
+            self.assertIsNotNone(res.skip_reason)
+            assert res.skip_reason is not None
             self.assertIn("192.168.1.0/24", res.skip_reason)
             self.assertFalse((self.drift_root / "render" / "lan_pkg" / "lan_app.conf").exists())
 

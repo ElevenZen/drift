@@ -70,7 +70,7 @@ All completion metadata, hints, and structural relationships are encapsulated in
 ```python
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Sequence
 
 class SourceType(Enum):
     NONE = auto()             # No completion / free text
@@ -94,7 +94,7 @@ class OptionSpec:
     type: Optional[Any] = None
     required: bool = False
     action: Optional[str] = None
-    choices: Optional[List[Choice]] = None
+    choices: List[Choice] = field(default_factory=list) # Predefined allowed values for this option
     is_directory: bool = False
     is_file: bool = False
     mutex_group: Optional[str] = None
@@ -104,7 +104,7 @@ class PositionalSpec:
     name: str                 # e.g. "package", "hook_name", "paths"
     description: str          # Argument description hint
     source_type: SourceType = SourceType.NONE
-    choices: Optional[List[Choice]] = None
+    choices: List[Choice] = field(default_factory=list) # Choices when source_type == FIXED_CHOICES
     nargs: Optional[str] = None
     default: Any = None
     repeatable: bool = False  # True for `packages...` or `paths...`

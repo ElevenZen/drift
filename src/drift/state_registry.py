@@ -2,8 +2,9 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Mapping
 from .toml_utils import parse_toml
+from .exceptions import ConfigError
 
 
 @dataclass
@@ -18,8 +19,10 @@ class PackageState:
 class StateRegistry:
     """Manages reading, updating, and saving install/state.toml with timestamps and metadata."""
 
-    def __init__(self, packages: Dict[str, PackageState], state_file: Optional[Path] = None):
-        self.packages = packages
+    def __init__(self, packages: Mapping[str, PackageState] = {}, state_file: Optional[Path] = None):
+        if not isinstance(packages, (dict, Mapping)):
+            raise ConfigError(f"packages must be a Mapping, got {type(packages).__name__}")
+        self.packages = dict(packages)
         self.state_file = state_file
 
     def get_package_state(self, pkg: str) -> Optional[str]:

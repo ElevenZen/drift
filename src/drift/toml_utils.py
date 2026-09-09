@@ -2,9 +2,10 @@ import re
 from typing import Any, List
 
 try:
-    import tomllib
+    import tomllib  # type: ignore[import-not-found, unused-ignore] # pyright: ignore[reportMissingImports]
     HAS_TOMLLIB = True
 except ImportError:
+    tomllib = None  # type: ignore[assignment]
     HAS_TOMLLIB = False
 
 
@@ -173,7 +174,7 @@ def parse_toml(content: str) -> dict:
     Uses the native `tomllib` on Python 3.11+, and falls back to a custom,
     fully compatible fallback parser on older Python versions.
     """
-    if HAS_TOMLLIB:
+    if HAS_TOMLLIB and tomllib is not None:
         return tomllib.loads(content)
     return _parse_toml_fallback(content)
 

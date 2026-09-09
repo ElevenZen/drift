@@ -4,7 +4,7 @@ import os
 import logging
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 from .file_utils import run_command
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 def commit_repo_changes(
     repo_path: Path,
     commit_message: str,
-    target_pkgs: Optional[List[str]] = None,
+    target_pkgs: Sequence[str] = (),
     repo_name: str = "repository"
 ) -> bool:
     """

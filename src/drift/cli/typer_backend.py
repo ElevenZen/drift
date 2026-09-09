@@ -1,5 +1,5 @@
 import inspect
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Sequence
 import typer
 
 from .schema import (
@@ -156,7 +156,7 @@ def _create_typer_callback_wrapper(global_options: List[OptionSpec], callback_fu
     # Attach synthetic signature and metadata for Typer introspection
     wrapper.__name__ = callback_func.__name__
     wrapper.__doc__ = callback_func.__doc__
-    wrapper.__signature__ = inspect.Signature(params)
+    setattr(wrapper, "__signature__", inspect.Signature(params))
     wrapper.__annotations__ = annotations
     return wrapper
 
@@ -164,7 +164,7 @@ def _create_typer_callback_wrapper(global_options: List[OptionSpec], callback_fu
 def _create_typer_command_wrapper(
     cmd: CommandSpec,
     target_func: Any,
-    global_options: Optional[List[OptionSpec]] = None
+    global_options: Sequence[OptionSpec] = ()
 ) -> Any:
     """Builds a dynamic typed wrapper with typer.Argument and typer.Option defaults for a subcommand.
 
@@ -288,7 +288,7 @@ def _create_typer_command_wrapper(
     # -------------------------------------------------------------------------
     wrapper.__name__ = target_func.__name__
     wrapper.__doc__ = cmd.description
-    wrapper.__signature__ = inspect.Signature(params)
+    setattr(wrapper, "__signature__", inspect.Signature(params))
     wrapper.__annotations__ = annotations
     return wrapper
 

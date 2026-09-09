@@ -56,10 +56,10 @@ def run_primitive_9_purge_workspace_garbage(
     2. Removes package folders in render/ and install/ that lack a package config file.
     """
     # --- Part 1: Orphan Package Uninstallation ---
-    # We let run_primitive_7_uninstall_packages handle orphan identification if package_names is None
+    # We let run_primitive_7_uninstall_packages handle orphan identification if package_names is empty
     uninstalled_orphans = run_primitive_7_uninstall_packages(
         workspace_config, 
-        package_names=None, 
+        package_names=(), 
         force=True, 
         dry_run=dry_run,
         flags=flags,

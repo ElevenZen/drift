@@ -173,11 +173,11 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.packages, {"shell": True, "nvim": True, "emacs": False})
 
     def test_workspace_config_validation(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             WorkspaceConfig(workspace=WorkspaceSectionConfig(render_directory=Path(""))).validate()
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             WorkspaceConfig(workspace="not_a_workspace_config").validate() # type: ignore
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
 
     def test_workspace_config_missing_packages_enable_raises(self) -> None:
@@ -331,26 +331,26 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.hooks.timeout, DEFAULT_HOOK_TIMEOUT)
 
     def test_package_config_validation(self) -> None:
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="").validate()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", install_method="invalid").validate()
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", hooks=PackageHooks(timeout="not_an_int")).validate() # type: ignore
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", hooks=PackageHooks(timeout=0)).validate()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", hooks=PackageHooks(timeout=-10)).validate()
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             PackageConfig(name="foo", hooks=PackageHooks(pre_source=123)).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
         hooks = PackageHooks(
-            pre_source="scripts/gen.sh",
-            pre_install="scripts/pre.sh",
-            post_install="scripts/post.sh",
+            pre_source=Path("scripts/gen.sh"),
+            pre_install=Path("scripts/pre.sh"),
+            post_install=Path("scripts/post.sh"),
             timeout=30
         )
         config = PackageConfig(name="test_pkg", hooks=hooks)
@@ -359,7 +359,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIs(config.hooks.package_config, config)
 
         # Direct property modification on hooks
-        config.hooks.post_render = "scripts/render.sh"
+        config.hooks.post_render = Path("scripts/render.sh")
         self.assertEqual(config.hooks.post_render, Path("scripts/render.sh"))
 
     def test_package_hooks_from_dict_and_validation(self) -> None:
@@ -375,18 +375,18 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
         self.assertEqual(hooks.timeout, 60)
 
-        # 2. Non-string hook value raises TypeError
-        with self.assertRaises(TypeError):
+        # 2. Non-string hook value raises ConfigError
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"pre_source": 12345}, package_name="bad_pkg")
 
-        # 3. Non-dict Windows subtable raises TypeError
-        with self.assertRaises(TypeError):
+        # 3. Non-dict Windows subtable raises ConfigError
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"windows": "not_a_dict"}, package_name="bad_pkg")
 
-        # 4. Invalid timeout raises TypeError / ValueError
-        with self.assertRaises(TypeError):
+        # 4. Invalid timeout raises ConfigError
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"timeout": "abc"}, package_name="bad_pkg")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             PackageHooks.from_dict({"timeout": -10}, package_name="bad_pkg")
 
     def test_load_package_config_with_hooks_table(self) -> None:
@@ -502,13 +502,13 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_hooks_property_setters_with_disabled(self) -> None:
         """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
-        hooks = PackageHooks(post_install="scripts/post.sh")
+        hooks = PackageHooks(post_install=Path("scripts/post.sh"))
         self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
 
-        hooks.post_install = "disabled"
+        hooks.post_install = Path("disabled")
         self.assertIsNone(hooks.post_install)
 
-        hooks.pre_install = "disable"
+        hooks.pre_install = Path("disable")
         self.assertIsNone(hooks.pre_install)
 
     def test_build_hook_execution_command(self) -> None:
@@ -652,28 +652,28 @@ class TestConfigClasses(unittest.TestCase):
             (scripts_dir / "post_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
             hooks = PackageHooks(
-                pre_install="scripts/pre_install.sh",
-                post_install="scripts/post_install.sh"
+                pre_install=Path("scripts/pre_install.sh"),
+                post_install=Path("scripts/post_install.sh")
             )
             # 1. Valid hook files pass
             hooks.check_hook_files(base)
 
             # 2. Missing hook file raises FileNotFoundError
-            hooks.post_update = "scripts/missing.sh"
+            hooks.post_update = Path("scripts/missing.sh")
             with self.assertRaises(FileNotFoundError) as cm:
                 hooks.check_hook_files(base)
             self.assertIn("missing.sh", str(cm.exception))
 
             # 3. Hook path pointing to directory raises ValueError
             (scripts_dir / "dir_hook").mkdir()
-            hooks.post_update = "scripts/dir_hook"
+            hooks.post_update = Path("scripts/dir_hook")
             with self.assertRaises(ValueError) as cm:
                 hooks.check_hook_files(base)
             self.assertIn("not a regular file", str(cm.exception))
 
             # 4. Filtered hook_names ignores unrequested broken hooks
             (scripts_dir / "pre_uninstall.sh").write_text("#!/bin/bash\n", encoding="utf-8")
-            hooks.pre_uninstall = "scripts/pre_uninstall.sh"
+            hooks.pre_uninstall = Path("scripts/pre_uninstall.sh")
             # Checking only pre_uninstall passes even though post_update is broken
             hooks.check_hook_files(base, hook_names=["pre_uninstall"])
 
@@ -708,12 +708,13 @@ class TestConfigClasses(unittest.TestCase):
             pkg_c_dir.mkdir()
 
             config = WorkspaceConfig(
+                drift_root_path=root_path,
                 packages_enable={"pkg_a": True, "pkg_b": False},
                 packages_enable_default=False
             )
 
             # 1. No target_pkgs - should return only enabled discovered packages (pkg_a)
-            discovered = config.get_discovered_packages(root_path, target_pkgs=None)
+            discovered = config.get_discovered_packages(root_path)
             self.assertEqual(discovered, ["pkg_a"])
 
             # 2. Target packages explicitly specified (even disabled pkg_b is returned)
@@ -1313,11 +1314,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         )
         config.validate()
 
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             RenderEngineConfig(name="", input_file=Path("a"), suffix="b", render_command="c").validate()
 
         # Suffix cannot contain dots ('.')
-        with self.assertRaises(ValueError) as ctx:
+        with self.assertRaises(ConfigError) as ctx:
             RenderEngineConfig(
                 name="invalid_suffix",
                 input_file=Path("envsubst.bash"),
@@ -1385,7 +1386,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # Test mapping protocol: getitem, setitem, delitem, len, contains, iter, keys, values, items, get, repr, eq
         self.assertEqual(len(registry), 1)
-        self.assertIn("envst", registry)
+        self.assertTrue("envst" in registry)
+        self.assertFalse("nonexistent" in registry)
         self.assertEqual(registry["envst"], engine)
         self.assertEqual(registry.get("envst"), engine)
         self.assertIsNone(registry.get("missing"))
@@ -1404,7 +1406,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertIsNot(copied, registry)
 
         # Test __setitem__ type validation
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             registry["bad"] = "not_an_engine"  # type: ignore
 
         # Test __delitem__
@@ -1428,24 +1430,25 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             (p / "subdir").mkdir()
 
             # Static match
-            match = registry.find_source_file_for_rendered_names(p, ["plain.txt"])
+            match = cast(RenderSourceMatch, registry.find_source_file_for_rendered_names(p, ["plain.txt"]))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, p / "plain.txt")
             self.assertIsNone(match.engine)
 
             # Template match form 2
-            match_tmpl = registry.find_source_file_for_rendered_names(p, ["hello.txt"])
+            match_tmpl = cast(RenderSourceMatch, registry.find_source_file_for_rendered_names(p, ["hello.txt"]))
             self.assertIsNotNone(match_tmpl)
             self.assertEqual(match_tmpl.path, p / "hello.envst.txt")
             self.assertEqual(match_tmpl.engine, engine)
 
             # Conflict in source dir
-            conflict = registry.find_conflict_in_source_dir(p, Path("hello.txt"))
+            conflict = cast(RenderSourceMatch, registry.find_conflict_in_source_dir(p, Path("hello.txt")))
             self.assertIsNotNone(conflict)
             self.assertEqual(conflict.status, "match")
 
             # Blocking conflict (file blocking directory path)
-            block_conflict = registry.find_conflict_in_source_dir(p, Path("plain.txt/nested/file.txt"))
+            block_conflict = cast(RenderSourceMatch,
+                                  registry.find_conflict_in_source_dir(p, Path("plain.txt/nested/file.txt")))
             self.assertIsNotNone(block_conflict)
             self.assertEqual(block_conflict.status, "block")
 
@@ -1667,7 +1670,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(pkg_default.get_source_directory_to_render(base_dir), base_dir)
 
         # 2. Custom relative source_directory
-        pkg_custom = PackageConfig(name="custom_pkg", source_directory="dotfiles/config")
+        pkg_custom = PackageConfig(name="custom_pkg", source_directory=Path("dotfiles/config"))
         self.assertEqual(pkg_custom.source_directory, Path("dotfiles/config"))
         self.assertEqual(pkg_custom.get_source_directory_to_render(base_dir), base_dir / "dotfiles/config")
 
@@ -1682,16 +1685,16 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(pkg_from_dict.get_source_directory_to_render(base_dir), base_dir / "src_subfolder")
 
         # 4. Type validation error on from_dict
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             PackageConfig.from_dict({"package": {"source_directory": 123}}, package_name="bad_pkg")
 
         # 5. Absolute path rejected
         with self.assertRaises(ConfigError):
-            pkg_abs = PackageConfig(name="abs_pkg", source_directory="/absolute/path")
+            pkg_abs = PackageConfig(name="abs_pkg", source_directory=Path("/absolute/path"))
             pkg_abs.validate()
 
         # 6. Path traversal escaping package dir rejected
-        pkg_escape = PackageConfig(name="escape_pkg", source_directory="../other_pkg")
+        pkg_escape = PackageConfig(name="escape_pkg", source_directory=Path("../other_pkg"))
         with self.assertRaises(ConfigError):
             pkg_escape.get_source_directory_to_render(base_dir)
 
@@ -1831,7 +1834,7 @@ class TestSettingsConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"unknown_setting": True})
 
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"probe_wan_ip": "not_a_bool"})
 
     def test_workspace_config_with_settings(self) -> None:
@@ -1888,13 +1891,13 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
         self.assertEqual(ws_sec.hook_file, Path("custom_hook.py"))
 
     def test_workspace_section_validation(self) -> None:
-        with self.assertRaises(TypeError):
+        with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(source_directory=123).validate()  # type: ignore
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(source_directory=Path("")).validate()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(default_target_directory=Path("relative/path")).validate()
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(default_install_method="invalid_method").validate()
 
     def test_get_host_ip_addresses_no_wan_activity_by_default(self) -> None:

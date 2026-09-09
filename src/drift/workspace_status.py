@@ -4,7 +4,7 @@ import logging
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple, Union
+from typing import List, Optional, Dict, Tuple, Union, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .render_package import run_primitive_2_render_packages
@@ -161,7 +161,7 @@ def calculate_pending_delta(
 
 def run_primitive_status(
     workspace_config: WorkspaceConfig,
-    target_pkgs: Optional[List[str]] = None
+    target_pkgs: Sequence[str] = ()
 ) -> WorkspaceStatusResult:
     """
     Orchestrates auditing configuration status across active packages.

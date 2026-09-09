@@ -155,6 +155,8 @@ exit 0
 
         res = run_single_package_health_probe(self.workspace_config, pkg, custom_timeout=1)
         self.assertEqual(res.status, PackageHealthStatus.TIMEOUT)
+        self.assertIsNotNone(res.error_message)
+        assert res.error_message is not None
         self.assertIn("timed out", res.error_message.lower())
 
     def test_health_missing_hook_file(self):
@@ -441,6 +443,8 @@ exit 0
         self.assertEqual(res_src.status, PackageHealthStatus.HEALTHY)
         self.assertIn("SRC_OUTPUT_pkg_dual_stage", res_src.stdout)
         self.assertNotIn("INSTALL_STATIC_OUTPUT", res_src.stdout)
+        self.assertIsNotNone(res_src.hook_path)
+        assert res_src.hook_path is not None
         self.assertIn("/render/", res_src.hook_path)
 
     def test_package_stage_enum(self):

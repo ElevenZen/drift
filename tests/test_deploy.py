@@ -193,8 +193,8 @@ target_directory = "{self.system_target_dir}"
 
     @patch("drift.deploy_repo.run_primitive_9_purge_workspace_garbage")
     def test_global_deploy_calls_gc(self, mock_gc) -> None:
-        """Verifies that global deploy (packages_to_deploy=None) calls GC at the end."""
-        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=None)
+        """Verifies that global deploy (packages_to_deploy=()) calls GC at the end."""
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
         mock_gc.assert_called_once_with(self.workspace_config, dry_run=False, flags=None)
 
     def test_deploy_pipeline_checks_git_configs(self) -> None:

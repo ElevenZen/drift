@@ -55,14 +55,12 @@ def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
     """
     if val is None:
         return None
-    if isinstance(val, Path):
-        return val
-    if isinstance(val, str):
-        s = val.strip()
+    if isinstance(val, (str, Path)):
+        s = str(val).strip()
         if s == "" or s.lower() in ("disable", "disabled"):
             return None
-        return Path(s)
-    raise TypeError(f"Hook value must be a string or Path, got {type(val).__name__}")
+        return val if isinstance(val, Path) else Path(s)
+    raise ConfigError(f"Hook value must be a string or Path, got {type(val).__name__}")
 
 
 def match_ip_address(pattern: str, ip: str) -> bool:
@@ -183,13 +181,13 @@ class PackageRequirements:
                 for item in val:
                     if not isinstance(item, str):
                         name_str = f" for package '{package_name}'" if package_name else ""
-                        raise TypeError(f"Items in '{field_name}' must be strings{name_str}.")
+                        raise ConfigError(f"Items in '{field_name}' must be strings{name_str}.")
                     s = item.strip()
                     if s:
                         res.append(s)
                 return res
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise TypeError(f"'{field_name}' under requirements must be a string or list of strings{name_str}.")
+            raise ConfigError(f"'{field_name}' under requirements must be a string or list of strings{name_str}.")
 
         raw_ip = data.get("ip") or data.get("ips") or data.get("ip_addresses")
 
@@ -249,25 +247,25 @@ class PackageHooks:
             val = getattr(self, hook_name)
             if val is not None and not isinstance(val, Path):
                 name_str = f" for package '{package_name}'" if package_name else ""
-                raise TypeError(f"{hook_name} must be a Path{name_str}.")
+                raise ConfigError(f"{hook_name} must be a Path{name_str}.")
         if not isinstance(self.timeout, int):
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise TypeError(f"timeout must be an integer{name_str}.")
+            raise ConfigError(f"timeout must be an integer{name_str}.")
         if self.timeout <= 0:
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise ValueError(f"timeout must be a positive integer{name_str}.")
+            raise ConfigError(f"timeout must be a positive integer{name_str}.")
         if not isinstance(self.rollback_on_failure, bool):
             if isinstance(self.rollback_on_failure, (list, tuple, set)):
                 for h in self.rollback_on_failure:
                     if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
                         name_str = f" for package '{package_name}'" if package_name else ""
-                        raise ValueError(
+                        raise ConfigError(
                             f"Invalid hook name '{h}' in rollback_on_failure. "
                             f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
                         )
             else:
                 name_str = f" for package '{package_name}'" if package_name else ""
-                raise TypeError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
+                raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
     @classmethod
     def _validate_hook_dict(
@@ -294,18 +292,18 @@ class PackageHooks:
             val = hook_dict.get(hook_name)
             if val is not None and not isinstance(val, (str, Path)):
                 name_str = f" for package '{package_name}'" if package_name else ""
-                raise TypeError(f"{hook_name} must be a string{name_str}.")
+                raise ConfigError(f"{hook_name} must be a string{name_str}.")
 
         if "rollback_on_failure" in hook_dict:
             val = hook_dict["rollback_on_failure"]
             if not isinstance(val, bool) and not isinstance(val, (list, tuple, set)):
                 name_str = f" for package '{package_name}'" if package_name else ""
-                raise TypeError(f"'rollback_on_failure' must be a boolean or list of hook names{name_str}.")
+                raise ConfigError(f"'rollback_on_failure' must be a boolean or list of hook names{name_str}.")
             if isinstance(val, (list, tuple, set)):
                 for h in val:
                     if not isinstance(h, str) or h not in INSTALLATION_HOOK_NAMES:
                         name_str = f" for package '{package_name}'" if package_name else ""
-                        raise ValueError(
+                        raise ConfigError(
                             f"Invalid hook name '{h}' in 'rollback_on_failure'. "
                             f"Allowed installation hooks: {', '.join(INSTALLATION_HOOK_NAMES)}{name_str}."
                         )
@@ -316,7 +314,7 @@ class PackageHooks:
                 if val is not None:
                     if not isinstance(val, dict):
                         name_str = f" for package '{package_name}'" if package_name else ""
-                        raise TypeError(f"'{alias}' hooks sub-table must be a dictionary{name_str}.")
+                        raise ConfigError(f"'{alias}' hooks sub-table must be a dictionary{name_str}.")
                     cls._validate_hook_dict(val, package_name=package_name, is_subtable=True)
 
     @classmethod
@@ -358,10 +356,10 @@ class PackageHooks:
             raw_timeout = int(raw_timeout)
         if not isinstance(raw_timeout, int):
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise TypeError(f"timeout must be an integer{name_str}.")
+            raise ConfigError(f"timeout must be an integer{name_str}.")
         if raw_timeout <= 0:
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise ValueError(f"timeout must be a positive integer{name_str}.")
+            raise ConfigError(f"timeout must be a positive integer{name_str}.")
 
         raw_rollback = effective_hooks.get("rollback_on_failure")
         if raw_rollback is None:
@@ -372,7 +370,7 @@ class PackageHooks:
             resolved_rollback = [str(x).strip() for x in raw_rollback]
         else:
             name_str = f" for package '{package_name}'" if package_name else ""
-            raise TypeError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
+            raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
         hooks = cls(
             probe=normalize_hook_value(effective_hooks.get("probe")),
@@ -606,20 +604,20 @@ class PackageHooks:
     def check_hook_files(
         self,
         base_dir: Path,
-        hook_names: Optional[Sequence[str]] = None
+        hook_names: Sequence[str] = ()
     ) -> None:
         """Checks that configured lifecycle hook files exist in base_dir and are regular files.
 
         Args:
             base_dir: Directory containing package files (e.g. render/<pkg> or install/<pkg>).
-            hook_names: Optional sequence of hook names to check. If omitted, all LIFECYCLE_HOOK_NAMES are checked.
+            hook_names: Sequence of hook names to check. If empty/omitted, all LIFECYCLE_HOOK_NAMES are checked.
 
         Raises:
             FileNotFoundError: If a configured hook file does not exist.
             ValueError: If a configured hook path is not a regular file.
         """
         pkg_name = self._package_config.name if self._package_config else "unknown"
-        target_hooks = hook_names if hook_names is not None else LIFECYCLE_HOOK_NAMES
+        target_hooks = hook_names if hook_names else LIFECYCLE_HOOK_NAMES
         hook_rel_map = { hook_name: getattr(self, hook_name, None) for hook_name in target_hooks }
         hook_rel_map = { k: v for k, v in hook_rel_map.items() if v }
         for hook_name, hook_rel in hook_rel_map.items():
@@ -749,7 +747,7 @@ class PackageConfig:
     def check_hook_files(
         self,
         base_dir: Path,
-        hook_names: Optional[Sequence[str]] = None
+        hook_names: Sequence[str] = ()
     ) -> None:
         """Checks that configured lifecycle hook files exist in base_dir and are regular files."""
         self.hooks.check_hook_files(base_dir, hook_names=hook_names)
@@ -757,7 +755,7 @@ class PackageConfig:
     def __init__(
         self,
         name: str,
-        source_files: Optional[List[Path]] = None,
+        source_files: Sequence[Path] = (),
         source_directory: Optional[Union[str, Path]] = None,
         enable_render: bool = True,
         enable_install: bool = True,
@@ -765,14 +763,29 @@ class PackageConfig:
         target_directory: Optional[Path] = None,
         target_directory_windows: Optional[Path] = None,
         sudo: bool = False,
-        fully_controlled_dirs: Optional[List[Path]] = None,
+        fully_controlled_dirs: Sequence[Path] = (),
         hooks: Optional[PackageHooks] = None,
         requirements: Optional[PackageRequirements] = None,
-        env_override: Optional[Dict[str, str]] = None,
-        env_fallback: Optional[Dict[str, str]] = None,
+        env_override: Mapping[str, str] = {},
+        env_fallback: Mapping[str, str] = {},
     ) -> None:
+        if source_directory is not None and not isinstance(source_directory, (str, Path)):
+            raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
+        if target_directory is not None and not isinstance(target_directory, (str, Path)):
+            raise ConfigError(f"target_directory must be a Path or str, got {type(target_directory).__name__}")
+        if target_directory_windows is not None and not isinstance(target_directory_windows, (str, Path)):
+            raise ConfigError(f"target_directory_windows must be a Path or str, got {type(target_directory_windows).__name__}")
+        if hooks is not None and not isinstance(hooks, PackageHooks):
+            raise ConfigError(f"hooks must be a PackageHooks instance, got {type(hooks).__name__}")
+        if requirements is not None and not isinstance(requirements, PackageRequirements):
+            raise ConfigError(f"requirements must be a PackageRequirements instance, got {type(requirements).__name__}")
+        if not isinstance(env_override, (dict, Mapping)):
+            raise ConfigError(f"env_override must be a dictionary or Mapping, got {type(env_override).__name__}")
+        if not isinstance(env_fallback, (dict, Mapping)):
+            raise ConfigError(f"env_fallback must be a dictionary or Mapping, got {type(env_fallback).__name__}")
+
         self.name = name
-        self.source_files = source_files if source_files is not None else []
+        self.source_files = list(source_files) if source_files else []
         self.source_directory = Path(source_directory) if source_directory else Path(".")
         self.enable_render = enable_render
         self.enable_install = enable_install
@@ -780,51 +793,51 @@ class PackageConfig:
         self.target_directory = expand_user_and_env(target_directory) if target_directory else None
         self.target_directory_windows = expand_user_and_env(target_directory_windows) if target_directory_windows else None
         self.sudo = sudo
-        self.fully_controlled_dirs = fully_controlled_dirs if fully_controlled_dirs is not None else []
+        self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
         self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
         self.requirements = requirements if requirements is not None else PackageRequirements()
-        self.env_override: Dict[str, str] = {str(k): str(v) for k, v in env_override.items()} if env_override else {}
-        self.env_fallback: Dict[str, str] = {str(k): str(v) for k, v in env_fallback.items()} if env_fallback else {}
+        self.env_override = {str(k): str(v) for k, v in env_override.items()}
+        self.env_fallback = {str(k): str(v) for k, v in env_fallback.items()}
 
     def validate(self) -> None:
         """Validates configuration values."""
         if not self.name or not isinstance(self.name, str):
-            raise ValueError("Package config must have a non-empty 'name'.")
+            raise ConfigError("Package config must have a non-empty 'name'.")
         if not isinstance(self.source_files, list):
-            raise TypeError(f"source_files must be a list for package '{self.name}'.")
+            raise ConfigError(f"source_files must be a list for package '{self.name}'.")
         for file in self.source_files:
             if not isinstance(file, Path):
-                raise TypeError(f"source_files entries must be Path objects for package '{self.name}'.")
+                raise ConfigError(f"source_files entries must be Path objects for package '{self.name}'.")
         if self.install_method is not None and self.install_method not in ("stow", "copy"):
-            raise ValueError(
+            raise ConfigError(
                 f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
                 "Must be 'stow' or 'copy'."
             )
         if not isinstance(self.enable_render, bool):
-            raise TypeError(f"enable_render must be a boolean for package '{self.name}'.")
+            raise ConfigError(f"enable_render must be a boolean for package '{self.name}'.")
         if not isinstance(self.enable_install, bool):
-            raise TypeError(f"enable_install must be a boolean for package '{self.name}'.")
+            raise ConfigError(f"enable_install must be a boolean for package '{self.name}'.")
         if not isinstance(self.sudo, bool):
-            raise TypeError(f"sudo must be a boolean for package '{self.name}'.")
+            raise ConfigError(f"sudo must be a boolean for package '{self.name}'.")
         if not isinstance(self.fully_controlled_dirs, list):
-            raise TypeError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
+            raise ConfigError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
-                raise TypeError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
+                raise ConfigError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
         if not isinstance(self.source_directory, Path):
-            raise TypeError(f"source_directory must be a Path for package '{self.name}'.")
+            raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
         if self.source_directory.is_absolute():
             raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
         if not isinstance(self.hooks, PackageHooks):
-            raise TypeError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
+            raise ConfigError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
         self.hooks.validate(self.name)
         if not isinstance(self.requirements, PackageRequirements):
-            raise TypeError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
+            raise ConfigError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
         if not isinstance(self.env_override, dict):
-            raise TypeError(f"env_override must be a dictionary for package '{self.name}'.")
+            raise ConfigError(f"env_override must be a dictionary for package '{self.name}'.")
         if not isinstance(self.env_fallback, dict):
-            raise TypeError(f"env_fallback must be a dictionary for package '{self.name}'.")
+            raise ConfigError(f"env_fallback must be a dictionary for package '{self.name}'.")
 
     def evaluate_requirements(
         self,
@@ -959,7 +972,7 @@ class PackageConfig:
 
     def unload_package_envs(
         self,
-        original_envs: Optional[Mapping[str, Optional[str]]]
+        original_envs: Mapping[str, Optional[str]] = {}
     ) -> None:
         """Restores original environment variables using the snapshot returned by load_package_envs."""
         from .env_utils import unload_env_settings
@@ -983,10 +996,15 @@ class PackageConfig:
         cls,
         data: dict,
         package_name: str,
-        source_files: Optional[Sequence[Optional[Path]]] = None,
+        source_files: Sequence[Optional[Path]] = (),
         workspace_config: Optional[WorkspaceConfig] = None,
     ) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
+        if not package_name or not isinstance(package_name, str):
+            raise ConfigError("Package name must be provided when constructing PackageConfig.")
+        if not isinstance(data, dict):
+            raise ConfigError(f"Package configuration data must be a dictionary for package '{package_name}'.")
+
         # Error for unknown top-level sections
         known_top_sections = {"package", "hooks", "env", "requirements"}
         for key in data:
@@ -999,8 +1017,6 @@ class PackageConfig:
         env_data = data.get("env", {})
 
         name = package_name
-        if not name:
-            raise ValueError("Package name must be provided when constructing PackageConfig.")
 
         # Error for unknown package options
         known_package_keys = {
@@ -1048,7 +1064,7 @@ class PackageConfig:
         src_dir_val = package_data.get("source_directory")
         if src_dir_val is not None:
             if not isinstance(src_dir_val, (str, Path)):
-                raise TypeError(f"source_directory must be a string for package '{name}'.")
+                raise ConfigError(f"source_directory must be a string for package '{name}'.")
             source_dir = Path(str(src_dir_val).strip())
         else:
             source_dir = Path(".")

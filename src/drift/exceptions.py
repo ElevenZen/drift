@@ -8,7 +8,7 @@ class DriftError(Exception):
     exit_code: int = ExitCode.GENERAL_ERROR
 
 
-class ConfigError(DriftError, ValueError):
+class ConfigError(DriftError, ValueError, TypeError):
     """Raised when configuration files (drift_workspace.toml, drift_workspace.local.toml, drift_package.toml, secrets.env) are invalid, missing, or corrupt."""
     exit_code: int = ExitCode.CONFIG_ERROR
 

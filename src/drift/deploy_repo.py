@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import logging
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .git_utils import get_git_status_porcelain, check_repo_can_commit
@@ -212,7 +212,7 @@ def execute_sequential_compile_and_apply(
 
 def run_primitive_deploy_pipeline(
     workspace_config: WorkspaceConfig,
-    packages_to_deploy: Optional[List[str]] = None,
+    packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> DeployResult:
@@ -220,7 +220,7 @@ def run_primitive_deploy_pipeline(
 
     Args:
         workspace_config: The workspace configuration instance.
-        packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
+        packages_to_deploy: Specific package name(s) to deploy, or empty/omitted for all active packages.
         force: If True, bypasses the Sentinel Drift check (allowing deployment even if uncommitted
             drifts exist in install/) and passes force to Primitive 4 (staging) and Primitive 5
             (install deployment) to bypass midway failed state checks and uncommitted modification safeguards.
@@ -242,7 +242,7 @@ def run_primitive_deploy_pipeline(
         return DeployResult(
             command="deploy",
             status="SUCCESS",
-            is_global_deploy=(packages_to_deploy is None),
+            is_global_deploy=(not packages_to_deploy),
             target_packages=[],
             deployed_packages=[]
         )
@@ -268,7 +268,7 @@ def run_primitive_deploy_pipeline(
     return DeployResult(
         command="deploy",
         status="SUCCESS",
-        is_global_deploy=(packages_to_deploy is None),
+        is_global_deploy=(not packages_to_deploy),
         target_packages=target_pkgs,
         deployed_packages=deployed_packages,
         gc=gc_res,
@@ -278,7 +278,7 @@ def run_primitive_deploy_pipeline(
 
 def run_primitive_deploy_pipeline_with_error_handling(
     workspace_config: WorkspaceConfig,
-    packages_to_deploy: Optional[List[str]] = None,
+    packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> DeployResult:
@@ -309,7 +309,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             rec_cmd = "drift adopt"
         elif requires_rollback:
             next_action = NextActionType.ROLLBACK
-            rec_cmd = f"drift rollback {' '.join(packages_to_deploy or [])}"
+            rec_cmd = f"drift rollback {' '.join(packages_to_deploy)}"
         else:
             next_action = NextActionType.FIX_TEMPLATE
             rec_cmd = "drift deploy"
@@ -328,7 +328,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             command="deploy",
             status="ABORTED_DRIFT" if is_drift else "FAILED",
             is_global_deploy=(packages_to_deploy is None),
-            target_packages=packages_to_deploy or [],
+            target_packages=list(packages_to_deploy),
             failure=fail
         )
 

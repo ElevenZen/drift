@@ -3,7 +3,7 @@
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Callable, Tuple
+from typing import TYPE_CHECKING, List, Optional, Callable, Tuple, Sequence
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
@@ -372,7 +372,7 @@ def repair_drift_workspace(
 
 def build_repair_result(
     report: "WorkspaceHealthReport",
-    actions: Optional[List[str]] = None,
+    actions: Sequence[str] = (),
     dry_run: bool = False
 ):
     """Converts a WorkspaceHealthReport and performed actions into a RepairResult object."""

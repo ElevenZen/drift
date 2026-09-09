@@ -30,7 +30,7 @@ class OptionSpec:
     type: Optional[Any] = None            # Type converter (e.g. int)
     required: bool = False                # Whether this option flag is required
     action: Optional[str] = None          # Custom argparse action (e.g. "store_true")
-    choices: Optional[List[Choice]] = None # Predefined allowed values for this option
+    choices: List[Choice] = field(default_factory=list) # Predefined allowed values for this option
     is_directory: bool = False            # Whether the argument completes directories
     is_file: bool = False                 # Whether the argument completes files
     mutex_group: Optional[str] = None     # Name of mutually exclusive group if applicable
@@ -42,7 +42,7 @@ class PositionalSpec:
     name: str                             # e.g., "package", "hook_name", "paths"
     description: str                      # Help / hint text for interactive menus and help output
     source_type: SourceType = SourceType.NONE
-    choices: Optional[List[Choice]] = None # Choices when source_type == FIXED_CHOICES
+    choices: List[Choice] = field(default_factory=list) # Choices when source_type == FIXED_CHOICES
     nargs: Optional[str] = None           # Explicit nargs override (e.g. "?", "*", "+")
     default: Any = None                   # Default value if optional
     repeatable: bool = False              # True if accepts 1 or more / 0 or more arguments

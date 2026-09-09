@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .render_engine_config import RenderEngineRegistry
@@ -863,7 +863,7 @@ def adopt_one_package_drifts(
 
 def run_primitive_adopt_drifts(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
@@ -874,7 +874,7 @@ def run_primitive_adopt_drifts(
 
     Args:
         workspace_config: The workspace configuration instance.
-        package_names: Specific package name(s) to adopt, or None to discover all drifted packages.
+        package_names: Specific package name(s) to adopt, or empty/omitted to discover all drifted packages.
         interactive: If True, interactively prompts for conflict resolution.
         accept_conflicts: If True, writes Git conflict merge markers directly into source template files.
         force: If True, bypasses the Git cleanliness safeguard on package source directories (src/<pkg>/),

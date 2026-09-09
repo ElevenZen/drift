@@ -2,7 +2,7 @@
 
 import logging
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .constants import MANAGED_CONFIG_FILES
@@ -313,7 +313,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
 
 def run_primitive_1_reverse_sync(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None
+    package_names: Sequence[str] = ()
 ) -> ReverseSyncResult:
     """Unconditionally pulls configuration state from host system back to the install/ repository (Primitive 1)."""
     install_base = workspace_config.install_path

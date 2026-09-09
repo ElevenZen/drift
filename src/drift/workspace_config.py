@@ -7,7 +7,7 @@ import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Iterator, Union, Any
+from typing import Dict, List, Optional, Tuple, Iterator, Union, Any, Sequence, Mapping
 
 from .constants import (
         CONFIG_DIR_NAME,
@@ -53,7 +53,7 @@ class SettingsConfig:
     def validate(self) -> None:
         """Validates settings types."""
         if not isinstance(self.probe_wan_ip, bool):
-            raise TypeError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
+            raise ConfigError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
 
     @classmethod
     def from_dict(cls, data: Any) -> "SettingsConfig":
@@ -74,7 +74,7 @@ class SettingsConfig:
             raw_val = data.get("probe_internet_ip", False)
 
         if not isinstance(raw_val, bool):
-            raise TypeError("probe_wan_ip under [settings] must be a boolean.")
+            raise ConfigError("probe_wan_ip under [settings] must be a boolean.")
 
         settings = cls(probe_wan_ip=bool(raw_val))
         settings.validate()
@@ -104,6 +104,20 @@ class WorkspaceSectionConfig:
         default_install_method: str = "stow",
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
+        if not isinstance(source_directory, (str, Path)):
+            raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
+        if not isinstance(render_directory, (str, Path)):
+            raise ConfigError(f"render_directory must be a Path or str, got {type(render_directory).__name__}")
+        if not isinstance(install_directory, (str, Path)):
+            raise ConfigError(f"install_directory must be a Path or str, got {type(install_directory).__name__}")
+        if not isinstance(backup_directory, (str, Path)):
+            raise ConfigError(f"backup_directory must be a Path or str, got {type(backup_directory).__name__}")
+        if not isinstance(default_target_directory, (str, Path)):
+            raise ConfigError(f"default_target_directory must be a Path or str, got {type(default_target_directory).__name__}")
+        if not isinstance(default_install_method, str):
+            raise ConfigError(f"default_install_method must be a string, got {type(default_install_method).__name__}")
+        if hook_file is not None and not isinstance(hook_file, (str, Path)):
+            raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
         self.source_directory = Path(source_directory)
         self.render_directory = Path(render_directory)
         self.install_directory = Path(install_directory)
@@ -115,19 +129,19 @@ class WorkspaceSectionConfig:
     def validate(self) -> None:
         """Validates [workspace] section configuration values."""
         if not isinstance(self.source_directory, Path) or str(self.source_directory) == ".":
-            raise ValueError("source_directory must be a non-empty path.")
+            raise ConfigError("source_directory must be a non-empty path.")
         if not isinstance(self.render_directory, Path) or str(self.render_directory) == ".":
-            raise ValueError("render_directory must be a non-empty path.")
+            raise ConfigError("render_directory must be a non-empty path.")
         if not isinstance(self.install_directory, Path) or str(self.install_directory) == ".":
-            raise ValueError("install_directory must be a non-empty path.")
+            raise ConfigError("install_directory must be a non-empty path.")
         if not isinstance(self.backup_directory, Path) or str(self.backup_directory) == ".":
-            raise ValueError("backup_directory must be a non-empty path.")
+            raise ConfigError("backup_directory must be a non-empty path.")
         if not isinstance(self.default_target_directory, Path) or str(self.default_target_directory) == ".":
-            raise ValueError("default_target_directory must be a non-empty path.")
+            raise ConfigError("default_target_directory must be a non-empty path.")
         if not self.default_target_directory.is_absolute():
-            raise ValueError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
+            raise ConfigError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
         if self.default_install_method not in ("stow", "copy"):
-            raise ValueError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
+            raise ConfigError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
 
     @classmethod
     def from_dict(cls, data: Any) -> "WorkspaceSectionConfig":
@@ -173,38 +187,51 @@ class WorkspaceConfig:
         self,
         drift_root_path: Union[Path, str] = Path("."),
         workspace: Optional[WorkspaceSectionConfig] = None,
-        packages_enable: Optional[Dict[str, bool]] = None,
+        packages_enable: Mapping[str, bool] = {},
         packages_enable_default: bool = False,
         render_engine_configs: Optional[RenderEngineRegistry] = None,
-        env: Optional[Dict[str, str]] = None,
+        env: Mapping[str, str] = {},
         settings: Optional[SettingsConfig] = None,
     ) -> None:
+        if not isinstance(drift_root_path, (str, Path)):
+            raise ConfigError(f"drift_root_path must be a Path or str, got {type(drift_root_path).__name__}")
+        if workspace is not None and not isinstance(workspace, WorkspaceSectionConfig):
+            raise ConfigError(f"workspace must be a WorkspaceSectionConfig instance, got {type(workspace).__name__}")
+        if settings is not None and not isinstance(settings, SettingsConfig):
+            raise ConfigError(f"settings must be a SettingsConfig instance, got {type(settings).__name__}")
+        if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
+            raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
+        if not isinstance(packages_enable, (dict, Mapping)):
+            raise ConfigError("packages_enable must be a dictionary.")
+        if not isinstance(env, (dict, Mapping)):
+            raise ConfigError("env must be a dictionary.")
+
         self.drift_root_path = Path(drift_root_path)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
-        self.packages_enable = packages_enable if packages_enable is not None else {}
+        self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
         self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
-        self.env = env if env is not None else {}
+        self.env = dict(env)
         self.settings = settings if settings is not None else SettingsConfig()
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
         if not isinstance(self.drift_root_path, Path):
-            raise TypeError("drift_root_path must be a Path object.")
+            raise ConfigError("drift_root_path must be a Path object.")
         if not isinstance(self.workspace, WorkspaceSectionConfig):
-            raise TypeError("workspace must be a WorkspaceSectionConfig instance.")
+            raise ConfigError("workspace must be a WorkspaceSectionConfig instance.")
         self.workspace.validate()
         if not isinstance(self.packages_enable, dict):
-            raise TypeError("packages_enable must be a dictionary.")
+            raise ConfigError("packages_enable must be a dictionary.")
         if not isinstance(self.packages_enable_default, bool):
-            raise TypeError("packages_enable_default must be a boolean.")
+            raise ConfigError("packages_enable_default must be a boolean.")
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
-            raise TypeError("render_engine_configs must be a RenderEngineRegistry instance.")
+            raise ConfigError("render_engine_configs must be a RenderEngineRegistry instance.")
         self.render_engine_configs.validate()
         if not isinstance(self.env, dict):
-            raise TypeError("env must be a dictionary.")
+            raise ConfigError("env must be a dictionary.")
         if not isinstance(self.settings, SettingsConfig):
-            raise TypeError("settings must be a SettingsConfig instance.")
+            raise ConfigError("settings must be a SettingsConfig instance.")
         self.settings.validate()
 
     @property
@@ -285,7 +312,7 @@ class WorkspaceConfig:
             return self.packages_enable[package_name]
         return self.packages_enable_default
 
-    def get_source_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
+    def get_source_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
         """
         Discovers and validates packages in the source directory (src/).
         Finds all package subdirectories in src/ (regardless of whether drift_package.toml is static,
@@ -294,7 +321,7 @@ class WorkspaceConfig:
         candidates = self.get_package_names_from_source_dir()
         return self.get_packages(candidates, target_pkgs, custom_dir=self.source_path)
 
-    def get_rendered_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
+    def get_rendered_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
         """
         Discovers and validates compiled packages in the render directory (render/).
         Packages in render/ are compiled and guaranteed to have a literal drift_package.toml.
@@ -302,7 +329,7 @@ class WorkspaceConfig:
         discovered = self.get_package_names_with_config_file_from_dir(self.render_path)
         return self.get_packages(discovered, target_pkgs, custom_dir=self.render_path)
 
-    def get_installed_packages(self, target_pkgs: Optional[List[str]] = None) -> List[str]:
+    def get_installed_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
         """
         Discovers and validates staged/installed packages in the install directory (install/).
         Packages in install/ are staged and guaranteed to have a literal drift_package.toml.
@@ -310,7 +337,7 @@ class WorkspaceConfig:
         discovered = self.get_package_names_with_config_file_from_dir(self.install_path)
         return self.get_packages(discovered, target_pkgs, custom_dir=self.install_path)
 
-    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Optional[List[str]] = None) -> List[str]:
+    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Sequence[str] = ()) -> List[str]:
         """
         Discovers packages in the given directory that contain a literal PACKAGE_CONFIG_FILE_NAME (drift_package.toml),
         filtering by target packages if provided.
@@ -318,8 +345,8 @@ class WorkspaceConfig:
         discovered = self.get_package_names_with_config_file_from_dir(custom_dir)
         return self.get_packages(discovered, target_pkgs, custom_dir)
 
-    def get_packages(self, discovered: List[str],
-                     target_pkgs: Optional[List[str]] = None,
+    def get_packages(self, discovered: Sequence[str],
+                     target_pkgs: Sequence[str] = (),
                      custom_dir: Optional[Path] = None) -> List[str]:
         """
         Get the list of packages to operate on based on discovered packages and target packages.
@@ -368,6 +395,9 @@ class WorkspaceConfig:
     @classmethod
     def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
+        if not isinstance(data, dict):
+            raise ConfigError("Workspace configuration data must be a dictionary.")
+
         # Error for unknown top-level sections
         known_top_sections = {"workspace", "packages", "render", "env", "settings"}
         for key in data:

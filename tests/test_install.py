@@ -323,7 +323,7 @@ class TestInstallRepo(unittest.TestCase):
         config = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            hooks=PackageHooks(post_install="on-install.sh")
+            hooks=PackageHooks(post_install=Path("on-install.sh"))
         )
         
         # Write dummy hook script so hook_path.exists() is True
@@ -376,7 +376,7 @@ class TestInstallRepo(unittest.TestCase):
         config_missing = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            hooks=PackageHooks(post_install="non_existent_script.sh")
+            hooks=PackageHooks(post_install=Path("non_existent_script.sh"))
         )
         with self.assertRaises(FileNotFoundError) as ctx:
             trigger_package_hook(
@@ -398,16 +398,16 @@ class TestInstallRepo(unittest.TestCase):
         os.makedirs(pkg_install_dir, exist_ok=True)
 
         all_hooks = PackageHooks(
-            probe="hook.sh",
-            pre_source="hook.sh",
-            pre_install="hook.sh",
-            post_install="hook.sh",
-            pre_update="hook.sh",
-            post_update="hook.sh",
-            pre_uninstall="hook.sh",
-            post_uninstall="hook.sh",
-            post_render="hook.sh",
-            health="hook.sh"
+            probe=Path("hook.sh"),
+            pre_source=Path("hook.sh"),
+            pre_install=Path("hook.sh"),
+            post_install=Path("hook.sh"),
+            pre_update=Path("hook.sh"),
+            post_update=Path("hook.sh"),
+            pre_uninstall=Path("hook.sh"),
+            post_uninstall=Path("hook.sh"),
+            post_render=Path("hook.sh"),
+            health=Path("hook.sh")
         )
         config_sudo = PackageConfig(
             name=pkg,
@@ -605,7 +605,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(
                 self.workspace_config,
                 [pkg],
-                package_changes=None
+                package_changes=()
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
@@ -1712,7 +1712,7 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / "sub_dir").mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "sub_dir" / "file.txt").write_text("file content", encoding="utf-8")
 
-        config = PackageConfig(name=pkg, install_method="copy", target_directory=str(self.system_target_dir))
+        config = PackageConfig(name=pkg, install_method="copy", target_directory=Path(self.system_target_dir))
 
         fake_drift_dest = self.drift_root / "fake_drift_dest"
         fake_drift_dest.mkdir(parents=True, exist_ok=True)
@@ -1754,7 +1754,7 @@ class TestInstallRepo(unittest.TestCase):
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
 
-        config = PackageConfig(name=pkg, install_method="stow", target_directory=str(self.system_target_dir))
+        config = PackageConfig(name=pkg, install_method="stow", target_directory=Path(self.system_target_dir))
 
         # Create valid relative symlink pointing into install_pkg_dir
         system_target = self.system_target_dir / "valid_file.txt"

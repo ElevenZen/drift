@@ -9,7 +9,7 @@ Note:
 import logging
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .state_registry import load_state_registry, save_state_registry, PackageState, StateRegistry
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 def filter_uninstallable_packages(
     workspace_config: WorkspaceConfig,
     registry: StateRegistry,
-    package_names: Optional[List[str]],
+    package_names: Sequence[str] = (),
     force: bool = False
 ) -> Tuple[Dict[str, PackageState], List[str]]:
     """
@@ -39,16 +39,18 @@ def filter_uninstallable_packages(
     """
     installed_packages = registry.packages
 
-    if package_names is None:
+    if not package_names:
         # If no packages specified, target all installed packages that are NOT enabled in config (orphans)
-        package_names = [pkg for pkg in installed_packages if not workspace_config.is_package_enabled(pkg)]
-        if not package_names:
+        target_names = [pkg for pkg in installed_packages if not workspace_config.is_package_enabled(pkg)]
+        if not target_names:
             return {}, []
+    else:
+        target_names = list(package_names)
 
     safe_map = {}
     rejected = []
 
-    for pkg in package_names:
+    for pkg in target_names:
         # Check active status FIRST for safeguard
         if workspace_config.is_package_enabled(pkg) and not force:
             rejected.append(pkg)
@@ -292,7 +294,7 @@ def uninstall_single_package(
 
 def run_primitive_7_uninstall_packages(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
@@ -302,7 +304,7 @@ def run_primitive_7_uninstall_packages(
 
     Args:
         workspace_config: The workspace configuration instance.
-        package_names: Specific package name(s) to uninstall, or None to uninstall all orphans.
+        package_names: Specific package name(s) to uninstall, or empty/omitted to uninstall all orphans.
         force: If True, bypasses the active package safeguard, allowing uninstallation of packages
             that are still active/enabled in the workspace configuration (drift_workspace.toml).
         dry_run: If True, simulates uninstallation without removing files from disk.

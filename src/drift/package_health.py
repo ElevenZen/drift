@@ -4,7 +4,7 @@ import logging
 import subprocess
 import time
 from pathlib import Path
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_config_for_install, load_package_config_from_source_dir
@@ -218,15 +218,15 @@ def run_single_package_health_probe(
 
 def run_primitive_health_checks(
     workspace_config: WorkspaceConfig,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     custom_timeout: Optional[int] = None,
     from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
     flags: Optional[HookExecFlags] = None,
 ) -> HealthResult:
     """Runs health check probes across specified or all packages from install or source directory."""
     stage = PackageStage.from_str(from_stage)
-    if package_names is not None and len(package_names) > 0:
-        targets = package_names
+    if package_names:
+        targets = list(package_names)
     else:
         if stage == PackageStage.SOURCE:
             targets = workspace_config.get_source_packages()

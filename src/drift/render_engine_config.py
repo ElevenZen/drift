@@ -1,10 +1,10 @@
 """Render engine configuration model, registry collection, and source matching."""
 
 import logging
-from collections.abc import MutableMapping, Iterator
+from collections.abc import MutableMapping, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Mapping
 
 from .constants import INTERNAL_RENDER_COMMAND
 from .exceptions import ConfigError
@@ -32,16 +32,16 @@ class RenderEngineConfig:
     def validate(self) -> None:
         """Validates render engine configuration values."""
         if not self.name or not isinstance(self.name, str):
-            raise ValueError("Render engine must have a non-empty 'name'.")
+            raise ConfigError("Render engine must have a non-empty 'name'.")
         if not self.suffix or not isinstance(self.suffix, str):
-            raise ValueError("suffix must be a non-empty string.")
+            raise ConfigError("suffix must be a non-empty string.")
         if "." in self.suffix:
-            raise ValueError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
+            raise ConfigError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
         if not self.render_command or not isinstance(self.render_command, str):
-            raise ValueError("render_command must be a non-empty string.")
+            raise ConfigError("render_command must be a non-empty string.")
         if not self.is_internal:
             if not isinstance(self.input_file, Path) or str(self.input_file) in ("", "."):
-                raise ValueError("input_file must be a non-empty Path.")
+                raise ConfigError("input_file must be a non-empty Path.")
 
     @property
     def is_disabled(self) -> bool:
@@ -73,8 +73,8 @@ class RenderSourceMatch:
     status: str = "match"  # "match" or "block"
 
 
-class RenderEngineRegistry(MutableMapping):
-    """Registry and query manager for workspace render engines.
+class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
+    """First-class collection registry managing multiple named RenderEngineConfig objects.
 
     Uses composition (has-a Dict[str, RenderEngineConfig]) and implements MutableMapping
     to provide full dictionary ergonomics with strict validation, template resolution,
@@ -83,18 +83,17 @@ class RenderEngineRegistry(MutableMapping):
 
     def __init__(
         self,
-        engines: Optional[Union[Dict[str, RenderEngineConfig], "RenderEngineRegistry"]] = None,
+        engines: Mapping[str, RenderEngineConfig] = {},
         **kwargs: RenderEngineConfig
     ) -> None:
+        if engines and not isinstance(engines, (RenderEngineRegistry, dict, Mapping)):
+            raise ConfigError(f"engines must be a Mapping, got {type(engines).__name__}")
         self._engines: Dict[str, RenderEngineConfig] = {}
-        if engines is not None:
+        if engines:
             if isinstance(engines, RenderEngineRegistry):
                 self._engines.update(engines._engines)
-            elif isinstance(engines, dict):
-                for k, v in engines.items():
-                    self[k] = v
             else:
-                for k, v in dict(engines).items():
+                for k, v in engines.items():
                     self[k] = v
         if kwargs:
             for k, v in kwargs.items():
@@ -105,7 +104,7 @@ class RenderEngineRegistry(MutableMapping):
 
     def __setitem__(self, key: str, value: RenderEngineConfig) -> None:
         if not isinstance(value, RenderEngineConfig):
-            raise TypeError(
+            raise ConfigError(
                 f"render engine value for '{key}' must be a RenderEngineConfig instance, got {type(value).__name__}."
             )
         self._engines[key] = value
@@ -139,7 +138,7 @@ class RenderEngineRegistry(MutableMapping):
         """Validates all contained RenderEngineConfig instances."""
         for name, engine in self._engines.items():
             if not isinstance(engine, RenderEngineConfig):
-                raise TypeError(f"Render engine value for '{name}' must be a RenderEngineConfig instance.")
+                raise ConfigError(f"Render engine value for '{name}' must be a RenderEngineConfig instance.")
             engine.validate()
 
     @classmethod

@@ -3,7 +3,7 @@
 import sys
 import logging
 from pathlib import Path
-from typing import Optional, List, Union, Any
+from typing import Optional, List, Union, Any, Sequence
 
 from ..constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
 from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, CollisionError
@@ -56,7 +56,7 @@ def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = Fals
         print(SerializableModel().to_json())
 
 
-def execute_render(drift_root: Path, package_names: Optional[List[str]] = None, json_mode: bool = False, no_hooks: bool = False) -> None:
+def execute_render(drift_root: Path, package_names: Sequence[str] = (), json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
     from ..render_package import run_primitive_2_render_packages
     from ..lifecycle_hooks import HookExecFlags
@@ -72,7 +72,7 @@ def execute_render(drift_root: Path, package_names: Optional[List[str]] = None, 
         raise RuntimeError(res.error_message or "Template rendering failed.")
 
 
-def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False, json_mode: bool = False) -> None:
+def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..stage_repo import run_primitive_4_stage_render_to_install
     from ..result_models import StageResult
@@ -97,7 +97,7 @@ def execute_stage(drift_root: Path, package_names: Optional[List[str]] = None, f
                 logger.info(f"  [-] {file.as_posix()}")
 
 
-def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
+def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..install_repo import run_primitive_5_install_deployment
     from ..lifecycle_hooks import HookExecFlags
@@ -109,7 +109,7 @@ def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, f
         packages_to_redeploy=package_names,
         resolve_symlinks=True,
         force=force,
-        package_changes=None,
+        package_changes=(),
         flags=flags,
     )
     if json_mode:
@@ -118,7 +118,7 @@ def execute_apply(drift_root: Path, package_names: Optional[List[str]] = None, f
         raise RuntimeError(res.error_message or "Deployment installation failed.")
 
 
-def execute_render_commit(drift_root: Path, message: str, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
+def execute_render_commit(drift_root: Path, message: str, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
     """Core function to execute committing render repository changes, shared by both CLI backends."""
     from ..render_package import run_primitive_3_commit_render_repo
 
@@ -126,7 +126,7 @@ def execute_render_commit(drift_root: Path, message: str, package_names: Optiona
     run_primitive_3_commit_render_repo(workspace_config, commit_message=message, target_pkgs=package_names)
 
 
-def execute_install_commit(drift_root: Path, message: str, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
+def execute_install_commit(drift_root: Path, message: str, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
     """Core function to execute committing install repository changes, shared by both CLI backends."""
     from ..install_repo import run_primitive_6_commit_install_repo
 
@@ -134,7 +134,7 @@ def execute_install_commit(drift_root: Path, message: str, package_names: Option
     run_primitive_6_commit_install_repo(workspace_config, commit_message=message, target_pkgs=package_names)
 
 
-def execute_reverse_sync(drift_root: Path, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
+def execute_reverse_sync(drift_root: Path, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
     """Core function to execute reverse sync (System -> install/), shared by both CLI backends."""
     from ..reverse_sync import run_primitive_1_reverse_sync
 
@@ -171,7 +171,7 @@ def execute_new_package(
 
 def execute_uninstall(
     drift_root: Path,
-    package_names: List[str],
+    package_names: Sequence[str] = (),
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
@@ -198,7 +198,7 @@ def execute_uninstall(
         raise RuntimeError(res.error_message or "Package uninstallation failed.")
 
 
-def execute_status(drift_root: Path, package_names: Optional[List[str]] = None, json_mode: bool = False) -> None:
+def execute_status(drift_root: Path, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
     """Core function to audit workspace status, shared by both CLI backends."""
     from ..workspace_status import run_primitive_status
     
@@ -234,7 +234,7 @@ def execute_gc(drift_root: Path, dry_run: bool = False, json_mode: bool = False,
 
 def execute_adopt(
     drift_root: Path,
-    package_names: List[str],
+    package_names: Sequence[str] = (),
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
@@ -263,7 +263,7 @@ def execute_adopt(
 
 def execute_diff(
     drift_root: Path,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     diff_type: Union[DiffType, str] = DiffType.PENDING,
     side_by_side: bool = False,
     stat: bool = False,
@@ -307,7 +307,7 @@ def execute_add(
 
 def execute_rollback(
     drift_root: Path,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     force: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False
@@ -330,7 +330,7 @@ def execute_rollback(
 
 def execute_deploy(
     drift_root: Path,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     force: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False
@@ -391,7 +391,7 @@ def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = Fa
 
 def execute_health(
     drift_root: Path,
-    package_names: Optional[List[str]] = None,
+    package_names: Sequence[str] = (),
     json_mode: bool = False,
     verbose: bool = False,
     timeout: Optional[int] = None,

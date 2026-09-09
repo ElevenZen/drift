@@ -3,7 +3,7 @@
 import re
 import logging
 from pathlib import Path
-from typing import List, Optional, Protocol, runtime_checkable
+from typing import List, Optional, Protocol, runtime_checkable, Sequence
 
 from .constants import (
     MANAGED_CONFIG_FILES,
@@ -36,7 +36,7 @@ class IgnoreHandler(Protocol):
 class DriftIgnore(IgnoreHandler):
     """Handles parsing and match evaluation of drift ignore patterns."""
 
-    def __init__(self, patterns: Optional[List[str]] = None) -> None:
+    def __init__(self, patterns: Optional[Sequence[str]] = None) -> None:
         if patterns is None:
             self.patterns = list(DEFAULT_STOW_IGNORE_PATTERNS)
         else:
