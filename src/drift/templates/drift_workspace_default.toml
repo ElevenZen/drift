@@ -98,6 +98,6 @@ install_directory = "install"
 # Backup archive folder for collisions & deletions
 backup_directory = "backup"
 
-# Optional path to a dynamic Python workspace configuration hook.
-# Relative to workspace 'config/' directory or workspace root (defaults to "drift_workspace.py").
-# hook_file = "drift_workspace.py"
+# Optional dynamic Python workspace configuration hook file (relative to workspace root).
+# Defaults to "config/drift_workspace.py".
+# hook_file = "config/drift_workspace.py"

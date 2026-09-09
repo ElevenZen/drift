@@ -24,9 +24,9 @@ default_target_directory = "~"
 # Options: "stow" (symlinks) or "copy" (physical copies)
 default_install_method = "stow"
 
-# Optional path to a dynamic Python workspace configuration hook.
-# Relative to workspace 'config/' directory or workspace root (defaults to "drift_workspace.py").
-# hook_file = "drift_workspace.py"
+# Optional dynamic Python workspace configuration hook file (relative to workspace root).
+# Defaults to "config/drift_workspace.py".
+# hook_file = "config/drift_workspace.py"
 
 
 # ---------------------------------------------------------------------

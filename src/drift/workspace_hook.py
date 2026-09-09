@@ -82,19 +82,20 @@ def apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any]) -> Dict[
     workspace_section = config_dict.get("workspace", {})
     custom_hook = workspace_section.get("hook_file")
 
-    if custom_hook is not None:
-        custom_hook_path = Path(custom_hook)
-        hook_path = custom_hook_path if custom_hook_path.is_absolute() else (drift_root / custom_hook_path)
+    if custom_hook is None:
+        # Check standard default location (config/drift_workspace.py relative to workspace root)
+        hook_path = drift_root / DEFAULT_WORKSPACE_HOOK_FILE_NAME
+        if not hook_path.is_file():
+            return config_dict
+    else:
+        # If a custom hook file is specified, it must exist; otherwise, raise an error
+        hook_path = drift_root / Path(custom_hook)
         if not hook_path.is_file():
             raise ConfigError(
                 f"Configured workspace hook_file '{custom_hook}' not found at '{hook_path}'."
             )
-    else:
-        # Check standard default location (config/drift_workspace.py)
-        hook_path = drift_root / CONFIG_DIR_NAME / DEFAULT_WORKSPACE_HOOK_FILE_NAME
-        if not hook_path.is_file():
-            return config_dict
 
+    # hook_path is a valid file; execute the hook with context
     from .workspace_config import WorkspaceConfig
     context = WorkspaceHookContext(
         config=config_dict,
