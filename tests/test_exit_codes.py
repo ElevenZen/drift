@@ -177,6 +177,59 @@ target_directory = "{custom_target}"
         """Verifies that ExitCode.HOOK_SKIPPED is defined with value 7."""
         self.assertEqual(ExitCode.HOOK_SKIPPED, 7)
 
+    def test_cli_error_boundary_raw_errors_mode_reraises_drift_error(self) -> None:
+        with self.assertRaises(ConfigError) as cm:
+            with cli_error_boundary(raw_errors=True):
+                raise ConfigError("Raw config error")
+        self.assertEqual(str(cm.exception), "Raw config error")
+
+    def test_cli_error_boundary_raw_errors_mode_reraises_runtime_error(self) -> None:
+        with self.assertRaises(RuntimeError) as cm:
+            with cli_error_boundary(raw_errors=True):
+                raise RuntimeError("Raw runtime error")
+        self.assertEqual(str(cm.exception), "Raw runtime error")
+
+    def test_argparse_raw_errors_flag_reraises_exception(self) -> None:
+        # Pre-command flag
+        with self.assertRaises(ConfigError):
+            run_argparse_cli(["--raw-errors", "-C", str(self.drift_root), "--no-git-root", "render"])
+        # Post-command flag (movable global flag)
+        with self.assertRaises(ConfigError):
+            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render", "--raw-errors"])
+
+    def test_typer_raw_errors_flag_reraises_exception(self) -> None:
+        from drift.cli import main
+        # Pre-command flag
+        with self.assertRaises(ConfigError):
+            main(["--raw-errors", "-C", str(self.drift_root), "--no-git-root", "render"])
+        # Post-command flag (movable global flag)
+        with self.assertRaises(ConfigError):
+            main(["-C", str(self.drift_root), "--no-git-root", "render", "--raw-errors"])
+
+    def test_argparse_trace_flag_sets_debug_logging_and_reraises(self) -> None:
+        import logging
+        root_logger = logging.getLogger()
+        with self.assertRaises(ConfigError):
+            run_argparse_cli(["--trace", "-C", str(self.drift_root), "--no-git-root", "render"])
+        self.assertEqual(root_logger.level, logging.DEBUG)
+
+        with self.assertRaises(ConfigError):
+            run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render", "--trace"])
+        self.assertEqual(root_logger.level, logging.DEBUG)
+
+    def test_typer_trace_flag_sets_debug_logging_and_reraises(self) -> None:
+        import logging
+        from drift.cli import main
+        root_logger = logging.getLogger()
+        with self.assertRaises(ConfigError):
+            main(["--trace", "-C", str(self.drift_root), "--no-git-root", "render"])
+        self.assertEqual(root_logger.level, logging.DEBUG)
+
+        with self.assertRaises(ConfigError):
+            main(["-C", str(self.drift_root), "--no-git-root", "render", "--trace"])
+        self.assertEqual(root_logger.level, logging.DEBUG)
+
 
 if __name__ == "__main__":
     unittest.main()
+

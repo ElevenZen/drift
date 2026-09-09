@@ -173,12 +173,16 @@ GLOBAL_OPTIONS: List[OptionSpec] = [
     OptionSpec(["--no-git-root"], "Stop resolving git root of cwd or -C directory, using the literal path instead"),
     OptionSpec(["-v", "--verbose"], "Enable verbose (DEBUG) logging output"),
     OptionSpec(["--json"], "Output results in structured machine-readable JSON format"),
+    OptionSpec(["--raw-errors"], "Bypass CLI error boundary to print raw exceptions and full stack trace", dest="raw_errors"),
+    OptionSpec(["--trace"], "Enable trace/debug logging and bypass CLI error boundary for full stack traces", dest="trace"),
 ]
 
 MOVABLE_GLOBAL_FLAGS: List[str] = [
     "--json",
     "-v",
     "--verbose",
+    "--raw-errors",
+    "--trace",
 ]
 ```
 

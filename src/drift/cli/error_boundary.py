@@ -7,8 +7,16 @@ from ..constants import ExitCode
 
 
 @contextmanager
-def cli_error_boundary(json_mode: bool = False, use_rich: bool = False):
-    """Intercepts exceptions, formats user-facing error messages, and terminates with standard exit codes."""
+def cli_error_boundary(json_mode: bool = False, use_rich: bool = False, raw_errors: bool = False):
+    """Intercepts exceptions, formats user-facing error messages, and terminates with standard exit codes.
+
+    If raw_errors is True, exceptions (other than SystemExit) are re-raised without interception,
+    allowing the full Python traceback to be displayed.
+    """
+    if raw_errors:
+        yield
+        return
+
     try:
         yield
     except SystemExit as se:

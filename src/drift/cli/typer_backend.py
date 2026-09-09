@@ -273,6 +273,18 @@ def _create_typer_command_wrapper(
         if kwargs.get("json") and cli_ctx:
             cli_ctx.json_mode = True
 
+        # If --raw-errors was specified on the subcommand, update DriftCLIContext state
+        if kwargs.get("raw_errors") and cli_ctx:
+            cli_ctx.raw_errors = True
+
+        # If --trace was specified on the subcommand, enable debug logging and raw_errors
+        if kwargs.get("trace"):
+            if cli_ctx:
+                cli_ctx.raw_errors = True
+            from . import setup_logging
+            import logging
+            setup_logging(level=logging.DEBUG)
+
         # If -v/--verbose was specified on the subcommand, enable debug logging
         if kwargs.get("verbose"):
             from . import setup_logging
@@ -298,10 +310,12 @@ def main_callback(
     directory: Optional[str] = None,
     no_git_root: bool = False,
     verbose: bool = False,
-    json: bool = False
+    json: bool = False,
+    raw_errors: bool = False,
+    trace: bool = False,
 ) -> None:
     """Main CLI context initialization callback."""
-    if verbose:
+    if verbose or trace:
         from . import setup_logging
         import logging
         setup_logging(level=logging.DEBUG)
@@ -309,7 +323,8 @@ def main_callback(
         directory=directory,
         no_git_root=no_git_root,
         json_mode=json,
-        use_rich=True
+        use_rich=True,
+        raw_errors=raw_errors or trace,
     )
 
 

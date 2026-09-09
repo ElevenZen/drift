@@ -331,6 +331,15 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 
 Drift's actions are cleanly categorized into **High-Level User Commands** (frequently used workflows) and **Low-Level Control Commands** (under-the-hood troubleshooting & continuous integration). All commands support `--json` for machine-readable automation.
 
+### 🌐 Global & Movable Options
+Global options can be specified before or after subcommands (e.g. `drift -v deploy` or `drift deploy -v`):
+*   `-C, --directory <DIR>`: Run as if drift was started in `<DIR>` instead of the current working directory.
+*   `--no-git-root`: Bypass searching for parent repository git root; treat current or `-C` directory as the literal workspace root.
+*   `-v, --verbose`: Enable verbose (DEBUG) logging output.
+*   `--json`: Output results in structured machine-readable JSON format using typed result models.
+*   `--raw-errors`: Bypass CLI error boundary to print raw exceptions and full Python stack traces without verbose log output.
+*   `--trace`: Full diagnostic tracing: enables verbose/debug logging output *and* prints raw Python stack traces on exceptions.
+
 ### 🚀 High-Level User Commands (Frequently Used)
 
 | Command | Description |
@@ -340,7 +349,7 @@ Drift's actions are cleanly categorized into **High-Level User Commands** (frequ
 | `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
 | `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
-| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts. |
+| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `--redeploy`, `--no-hooks`). |
 | `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
 | `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
@@ -469,6 +478,26 @@ Drift executes all lifecycle hooks with predictable working directories and auto
   drift hook <pkg> <hook> --from src -v
   ```
   This allows you to edit hook scripts in `src/<pkg>/` and test them immediately with full environment variable and host fact injection without triggering repeated deployment passes.
+
+### 7. Forcing Full Redeployment (`--redeploy`)
+* **Q**: Why was package deployment skipped, and how do I force redeployment of all packages and lifecycle hooks?
+* **A**: Drift optimizes deploy cycles by inspecting staging outputs (`installed_files`, hook scripts, and `drift_package.toml`). If a package has no stage changes, Drift skips deploying it. To force a full redeployment of all packages and execute their lifecycle hooks regardless of changes, pass **`--redeploy`**:
+  ```bash
+  drift deploy --redeploy
+  ```
+
+### 8. Inspecting Full Exception Stack Traces (`--trace` vs `--raw-errors`)
+* **Q**: How do I see raw Python tracebacks and full stack traces when troubleshooting an error?
+* **A**: Use **`--trace`** for full diagnostic mode (debug logs + stack traces) or **`--raw-errors`** to only unmask exceptions without debug log output:
+  ```bash
+  # Full debug logs + unmasked traceback on error:
+  drift --trace deploy
+  # Or as a movable flag after the subcommand:
+  drift deploy --trace
+
+  # Raw exception traceback only (standard logging):
+  drift deploy --raw-errors
+  ```
 
 👉 Run `drift help faq` for more tips and topic manuals.
 

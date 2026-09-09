@@ -124,7 +124,11 @@ def run_argparse_cli(argv=None) -> None:
     parser = make_parser()
     args = parser.parse_args(argv)
 
-    if args.verbose:
+    is_verbose = getattr(args, "verbose", False)
+    is_trace = getattr(args, "trace", False)
+    raw_errors = getattr(args, "raw_errors", False) or is_trace
+
+    if is_verbose or is_trace:
         from . import setup_logging
         import logging
         setup_logging(level=logging.DEBUG)
@@ -143,9 +147,10 @@ def run_argparse_cli(argv=None) -> None:
         directory=getattr(args, "directory", None),
         no_git_root=getattr(args, "no_git_root", False),
         json_mode=getattr(args, "json", False),
-        use_rich=False
+        use_rich=False,
+        raw_errors=raw_errors,
     )
 
-    global_keys = {"command", "no_git_root", "verbose", "json", "directory"}
+    global_keys = {"command", "no_git_root", "verbose", "json", "directory", "raw_errors", "trace"}
     kwargs = {k: v for k, v in vars(args).items() if k not in global_keys}
     handler(cli_ctx, **kwargs)

@@ -15,7 +15,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`add`** | `drift add <pkg> <paths...> [--dry-run] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`deploy`** | `drift deploy [packages...] [-f] [--redeploy] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
 | **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [--dry-run] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [--dry-run] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
@@ -41,6 +41,8 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 *   `--no-git-root`: Bypass searching for parent repository git root; treat the current or `-C` directory as the literal workspace root.
 *   `-v, --verbose`: Enable verbose (DEBUG) logging output. (*Movable: can be specified before or after subcommands*).
 *   `--json`: Output results in structured machine-readable JSON format using typed result models. (*Movable: can be specified before or after subcommands*).
+*   `--raw-errors`: Bypass CLI error boundary to print raw exceptions and full Python stack trace without changing the logging level. (*Movable: can be specified before or after subcommands*).
+*   `--trace`: Full diagnostic tracing: enables verbose/debug logging output *and* bypasses the CLI error boundary to print full Python stack traces on exceptions. (*Movable: can be specified before or after subcommands*).
 
 ---
 
@@ -122,12 +124,13 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [--no-hooks] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [--redeploy] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 *   **Command Options**:
     - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active packages.
     - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`deploying` in `install/state.toml`), and bypasses uncommitted modifications safeguards in `install/`. *(Note: Does **not** bypass `enable_install = false`).*
+    - `--redeploy`: Force full redeployment of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `--redeploy` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
 
@@ -326,7 +329,7 @@ graph TD
 
 ### 1. Pure Declarative Schema (`src/drift/cli/schema.py`)
 - Defines data models: `OptionSpec`, `PositionalSpec`, `CommandSpec`, `CompletionSchema`, and choice registries (`LIFECYCLE_HOOKS`, `HELP_TOPICS`, `SHELLS`, etc.).
-- Defines `MOVABLE_GLOBAL_FLAGS = ["--json", "-v", "--verbose"]` enabling global flags to appear before or after subcommands.
+- Defines `MOVABLE_GLOBAL_FLAGS = ["--json", "-v", "--verbose", "--raw-errors", "--trace"]` enabling global flags to appear before or after subcommands.
 - Contains zero framework dependencies (`argparse` or `typer`), acting as pure metadata.
 
 ### 2. Argparse Parser Generator (`src/drift/cli/argparse_backend.py`)

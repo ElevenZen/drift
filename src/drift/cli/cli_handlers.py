@@ -38,12 +38,14 @@ class DriftCLIContext:
         directory: Optional[str] = None,
         no_git_root: bool = False,
         json_mode: bool = False,
-        use_rich: bool = True
+        use_rich: bool = True,
+        raw_errors: bool = False,
     ) -> None:
         self.directory: Optional[str] = directory
         self.no_git_root: bool = no_git_root
         self.json_mode: bool = json_mode
         self.use_rich: bool = use_rich
+        self.raw_errors: bool = raw_errors
 
     def get_drift_root(self) -> Path:
         """Resolves the absolute path to the drift root repository."""
@@ -90,7 +92,7 @@ def handle_clone(
 ) -> None:
     """Clone a Git repository and automatically bootstrap/repair the Drift workspace."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         target_dir = Path(destination).resolve() if destination else None
         execute_clone(
             git_url=git_url,
@@ -108,7 +110,7 @@ def handle_init(
 ) -> None:
     """Initialize a new drift workspace."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = Path(cli_ctx.directory).resolve() if cli_ctx.directory else Path.cwd().resolve()
         execute_init(drift_root, force=force, no_git_root=cli_ctx.no_git_root, json_mode=cli_ctx.json_mode)
         if not cli_ctx.json_mode:
@@ -128,7 +130,7 @@ def handle_new(
 ) -> None:
     """Scaffold a new package directory and drift_package.toml."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_new_package(
             drift_root,
@@ -149,7 +151,7 @@ def handle_add(
 ) -> None:
     """Import files or folders from the system into a package (with dot-prefix translation)."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
@@ -166,7 +168,7 @@ def handle_adopt(
     """Adopt active system drifts and incorporate them back into source templates."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_adopt(
             drift_root=drift_root,
@@ -190,7 +192,7 @@ def handle_deploy(
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_deploy(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, redeploy=redeploy)
 
@@ -205,7 +207,7 @@ def handle_health(
     """Run runtime health check probes on packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout, from_stage=from_stage)
 
@@ -221,7 +223,7 @@ def handle_uninstall(
     """Uninstall a package from the system and restore any backups."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_uninstall(drift_root, pkgs, force=force, dry_run=dry_run, detach=detach, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
@@ -235,7 +237,7 @@ def handle_rollback(
     """Rollback failed deployments and restore systems to the last committed clean state."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_rollback(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
@@ -247,7 +249,7 @@ def handle_status(
     """Audit and aggregate configuration status across active packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_status(drift_root, pkgs, json_mode=cli_ctx.json_mode)
 
@@ -263,7 +265,7 @@ def handle_diff(
     """Visualize changes between configuration layers (Default: Pending Delta / Diff Δ)."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         diff_type = DiffType.PENDING
         if template:
@@ -280,7 +282,7 @@ def handle_gc(
 ) -> None:
     """Identify and uninstall orphan packages (present in state but disabled in config)."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_gc(drift_root, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
@@ -291,7 +293,7 @@ def handle_repair(
 ) -> None:
     """Repair missing, damaged, or partially-initialized components in the drift workspace."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_repair(drift_root, dry_run=dry_run, json_mode=cli_ctx.json_mode)
 
@@ -302,7 +304,7 @@ def handle_help(
 ) -> None:
     """Show overall model of drift and its detailed manual pages."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         execute_help(topic)
 
 
@@ -313,7 +315,7 @@ def handle_complete(
 ) -> None:
     """Generate or install interactive shell tab-completion scripts for bash, zsh, or fish."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         execute_complete(shell=shell, install=install, json_mode=cli_ctx.json_mode)
 
 
@@ -324,7 +326,7 @@ def handle_reverse_sync(
     """(Low-Level) Synchronize changes from host system back to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_reverse_sync(drift_root, pkgs, json_mode=cli_ctx.json_mode)
         if not cli_ctx.json_mode:
@@ -343,7 +345,7 @@ def handle_render(
     """(Low-Level) Render templates of a package or all enabled packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_render(drift_root, pkgs, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
         if not cli_ctx.json_mode:
@@ -362,7 +364,7 @@ def handle_render_commit(
     """(Low-Level) Stage and commit compiled render sandbox changes."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_render_commit(drift_root, message, pkgs)
 
@@ -375,7 +377,7 @@ def handle_stage(
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_stage(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode)
 
@@ -389,7 +391,7 @@ def handle_apply(
     """(Low-Level) Apply configurations from state database to active host system."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_apply(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
 
@@ -402,7 +404,7 @@ def handle_install_commit(
     """(Low-Level) Stage and commit install state directory changes."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=False, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_install_commit(drift_root, message, pkgs)
 
@@ -415,7 +417,7 @@ def handle_hook(
 ) -> None:
     """(Low-Level) Trigger a specific lifecycle hook script for a single package."""
     cli_ctx = _extract_cli_context(ctx)
-    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich):
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
         execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode, from_stage=from_stage)
 

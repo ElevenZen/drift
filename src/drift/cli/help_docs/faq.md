@@ -99,5 +99,35 @@ drift hook <pkg> <hook> --from src -v
 
 ---
 
+### Q10: Why did `drift deploy` skip deploying a package, and how do I force redeployment?
+**Situation**: You ran `drift deploy`, but the deployment output says `⏭️  Skipping deploy for unchanged package` and skips executing lifecycle hooks or file copies.  
+**Solution**: Pass **`--redeploy`** to bypass stage change skipping:
+```bash
+drift deploy --redeploy
+# Or for a specific package:
+drift deploy <pkg> --redeploy
+```
+*   **Why**: Drift optimizes deploy cycles by analyzing whether staging produced any modifications in `installed_files`, hook scripts, or `drift_package.toml`. If stage outputs are unchanged, deployment is safely skipped.
+*   **When to use `--redeploy`**: Use `--redeploy` when you need to re-execute deployment lifecycle hooks (`pre/post_install` or `pre/post_update`) or re-apply physical host files even when template outputs haven't changed.
+
+---
+
+### Q11: How do I view full Python tracebacks and error details when diagnosing exceptions?
+**Situation**: An exception or unexpected error occurred, but Drift's CLI error boundary printed a concise single-line error message instead of the full Python stack trace.  
+**Solution**: Use **`--trace`** for full diagnostic mode (debug logging + stack traces) or **`--raw-errors`** to only unmask raw exceptions without verbose log output:
+```bash
+# Full diagnostic mode (enables debug logging and dumps full stack trace on failure):
+drift --trace deploy
+# Or as a movable global flag:
+drift deploy --trace
+
+# Raw exception traceback only (standard logging level):
+drift deploy --raw-errors
+```
+*   `--trace`: Sets the logging level to `DEBUG` and bypasses the CLI error boundary, making it the ideal single flag for comprehensive troubleshooting.
+*   `--raw-errors`: Bypasses the CLI error boundary without altering the log level, ideal for automated test assertions or clean stack trace inspection.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.

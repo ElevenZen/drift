@@ -136,6 +136,16 @@ GLOBAL_OPTIONS: List[OptionSpec] = [
         flags=["--json"],
         description="Output results in structured machine-readable JSON format"
     ),
+    OptionSpec(
+        flags=["--raw-errors"],
+        dest="raw_errors",
+        description="Bypass CLI error boundary to print raw exceptions and full stack trace"
+    ),
+    OptionSpec(
+        flags=["--trace"],
+        dest="trace",
+        description="Enable trace/debug logging and bypass CLI error boundary for full stack traces"
+    ),
 ]
 
 # =============================================================================
@@ -148,6 +158,8 @@ MOVABLE_GLOBAL_FLAGS: List[str] = [
     "--json",
     "-v",
     "--verbose",
+    "--raw-errors",
+    "--trace",
 ]
 
 
