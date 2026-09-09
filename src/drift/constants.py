@@ -22,6 +22,9 @@ MANAGED_CONFIG_FILES = (PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, STOW_L
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 
+DEFAULT_WORKSPACE_HOOK_FILE_NAME = "drift_workspace.py"
+WORKSPACE_HOOK_FUNCTION_NAME = "configure_workspace"
+
 from enum import Enum, IntEnum
 from typing import Union
 

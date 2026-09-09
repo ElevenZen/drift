@@ -149,6 +149,7 @@ class WorkspaceConfig:
     render_engine_configs: Dict[str, RenderEngineConfig] = field(default_factory=dict)
     env: Dict[str, str] = field(default_factory=dict)
     settings: DriftSettings = field(default_factory=DriftSettings)
+    hook_file: Optional[Path] = None
 
     def __init__(
         self,
@@ -165,6 +166,7 @@ class WorkspaceConfig:
         env: Optional[Dict[str, str]] = None,
         settings: Optional[DriftSettings] = None,
         render_engine_config: Optional[Dict[str, RenderEngineConfig]] = None,
+        hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
         self.drift_root_path = Path(drift_root_path)
         self.source_directory = Path(source_directory)
@@ -183,6 +185,7 @@ class WorkspaceConfig:
             self.render_engine_configs = {}
         self.env = env if env is not None else {}
         self.settings = settings if settings is not None else DriftSettings()
+        self.hook_file = Path(hook_file) if hook_file is not None else None
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -476,7 +479,8 @@ class WorkspaceConfig:
             "install_directory",
             "backup_directory",
             "default_target_directory",
-            "default_install_method"
+            "default_install_method",
+            "hook_file",
         }
         for key in workspace_data:
             if key not in known_workspace_keys:
@@ -548,6 +552,7 @@ class WorkspaceConfig:
             render_engine_configs=render_engine_configs,
             env=env,
             settings=settings,
+            hook_file=workspace_data.get("hook_file"),
         )
         config.validate()
         return config
@@ -618,6 +623,10 @@ def load_workspace_config(drift_root_path: Path) -> WorkspaceConfig:
     if isinstance(settings_dict, dict) and (
             settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
         inject_system_facts(probe_wan_ip=True)
+
+    # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
+    from .workspace_hook import apply_workspace_hook
+    combined_dict = apply_workspace_hook(drift_root_path, combined_dict)
 
     # 1. Resolve inter-variable dependencies within [env] using topological sorting
     env_dict = combined_dict.get("env", {})
