@@ -761,11 +761,17 @@ def deploy_one_package(
     package_changes: Optional[PackageStageChanges] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
-    """Core function to deploy a single package configuration."""
+    """
+    Core function to deploy a single package configuration.
+    force flag skips the enable_install check and allows deployment even if enable_install is False.
+    force flag skips the check for current state being 'staging' or 'deploying', allowing deployment even if previous operation failed midway.
+    """
+
     install_base = workspace_config.install_path
     hook_flags = HookExecFlags.resolve(flags)
     
     metadata = load_config_for_install(install_base, pkg)
+    # TODO: it's a strange design to let force bypass 'enable_install' field, maybe remove this force bypass.
     if not (force or metadata.enable_install):
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return PackageInstallResult(
