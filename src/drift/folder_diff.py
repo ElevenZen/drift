@@ -49,7 +49,7 @@ def compare_folders(
     """
     Recursively compares src_dir against dst_dir. 
     Returns a FolderDiff of relative paths for added, modified, and deleted files/symlinks/directories.
-    The ignore_handler is applied on files from src_dir.
+    The ignore_handler is applied on files from src_dir, and is also applied to dst_dir when recording deleted files.
 
     Natively supports single-file comparison: if src_dir is a file or symlink,
     it is compared against dst_dir and returned as Path("") in the FolderDiff.
@@ -106,6 +106,13 @@ def compare_folders(
 
     def add_children_as_deleted(p_dst: Path, rel: Path, visited: set):
         """rel is relative to src_dir."""
+        repo_rel = rel
+        if translate_mode == "reverse":
+            repo_rel = translate_dot_prefixes_reverse(rel)
+
+        if ignore_handler and ignore_handler.match_path(repo_rel):
+            return
+
         if p_dst.is_symlink():
             if not resolve_symlinks:
                 diff.deleted.append(rel)
