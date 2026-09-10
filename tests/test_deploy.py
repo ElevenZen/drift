@@ -469,6 +469,27 @@ target_directory = "{self.system_target_dir}"
         res_force = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
         self.assertEqual(res_force.status, "SUCCESS")
 
+    def test_deploy_pipeline_skipped_packages_retain_installed_state(self) -> None:
+        """Verifies that packages skipped due to no physical changes retain 'installed' state in state.toml."""
+        from drift.state_registry import load_state_registry
+
+        # 1. Initial deployment
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 1)
+
+        reg1 = load_state_registry(self.state_file)
+        self.assertEqual(reg1.get_package_state("pkg_a"), "installed")
+
+        # 2. Second deploy with no modifications (skipped)
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.deployed_packages, [])
+
+        # 3. State in state.toml should still be "installed", not stuck in "staged"
+        reg2 = load_state_registry(self.state_file)
+        self.assertEqual(reg2.get_package_state("pkg_a"), "installed")
+
 
 if __name__ == "__main__":
     unittest.main()

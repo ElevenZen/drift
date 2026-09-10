@@ -1017,6 +1017,42 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(stage_pkg.deployable_changes.modified, [Path("config.json")])
         self.assertEqual(stage_pkg.non_deployable_changes.modified, [Path("post.sh")])
 
+    def test_stage_unchanged_package_retains_installed_state(self) -> None:
+        """Verifies that packages with no physical changes keep their existing state in state.toml."""
+        from drift.state_registry import load_state_registry, save_state_registry
+
+        pkg_a = "pkg_a"
+        state_file = self.install_dir / "state.toml"
+
+        # 1. First stage to establish baseline in install/
+        changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_a])
+        self.assertIn(pkg_a, changes1)
+
+        # 2. Simulate post-deployment state ("installed")
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg_a, "installed")
+        save_state_registry(registry)
+
+        # 3. Re-run stage when no physical changes exist
+        changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_a])
+        self.assertEqual(changes2, {})
+
+        # 4. Verify state in state.toml remains "installed" and is NOT set to "staged"
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_state(pkg_a), "installed")
+
+        # 5. Now modify render/pkg_a/file.txt and re-run stage
+        pkg_a_render = self.render_dir / pkg_a
+        (pkg_a_render / "new_file.txt").write_text("New content", encoding="utf-8")
+
+        changes3 = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_a])
+        self.assertIn(pkg_a, changes3)
+        self.assertTrue(changes3[pkg_a].has_changes)
+
+        # 6. Verify state in state.toml is updated to "staged"
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_state(pkg_a), "staged")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,47 @@
-"""Feature implementation for staging render sandbox into install state database using pathlib."""
+"""Primitive 4: Sandbox Staging (render/ -> install/ state database).
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 5: Primitive Entry Point
+    run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force)
+        1. Package Discovery & Config Validation:
+            workspace_config.get_rendered_packages
+            load_package_config_from_render_dir
+        2. Transaction Safety & Sentinel Checks:
+            state_registry.get_midway_packages
+            ensure_install_pkg_dir_clean [Layer 1]
+        3. Diff & Change Classification:
+            compute_package_stage_diff(pkg, install_base, render_base) [Layer 2]
+                compare_folders (deployable diff with DriftIgnore)
+                compare_folders (physical diff without DriftIgnore)
+        4. Staging Transaction Execution (if packages have physical changes):
+            stage_modified_packages(packages_to_stage, pkg_metadata, ...) [Layer 4]
+                check_sudo_privilege (if sudo required)
+                state_registry.set_package_state("staging") & save
+                apply_package_stage_changes(pkg, ...) [Layer 3]
+                    backup_and_delete_one_file (deletions with backup)
+                    atomic_copy_file / copy_file_mode_with_sudo (additions & modifications)
+                    copy_ignore_and_config_files(render_dir, install_dir, ...) [Layer 1]
+                state_registry.set_package_state("staged") & save
+        5. Return Summary Map of Changed Packages
+
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Pre-flight Verification & File Operations
+        ensure_install_pkg_dir_clean
+        copy_ignore_and_config_files
+    Layer 2: Diff Computation & Classification
+        compute_package_stage_diff
+    Layer 3: Single Package Physical Staging
+        apply_package_stage_changes
+    Layer 4: Staging Transaction & State Management
+        stage_modified_packages
+    Layer 5: Public Primitive Entry Point
+        run_primitive_4_stage_render_to_install
+===============================================================================
+"""
 
 import datetime
 import shutil
@@ -25,12 +68,12 @@ from .file_utils import (
     backup_and_delete_one_file,
     remove_file_or_dir,
     atomic_copy_file,
-    copy_file_mode_with_sudo
+    copy_file_mode_with_sudo,
 )
 from .folder_diff import compare_folders, FolderDiff
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
-from .state_registry import load_state_registry, save_state_registry
+from .state_registry import load_state_registry, save_state_registry, StateRegistry
 from .exceptions import DriftDetectedError
 
 logger = logging.getLogger(__name__)
@@ -91,7 +134,12 @@ class PackageStageChanges:
 
 
 
+# =====================================================================
+# Layer 1: Pre-flight Verification & File Operations
+# =====================================================================
+
 def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
+    """Verifies that the package directory in install/ has no uncommitted local git changes."""
     install_pkg_dir = install_base / pkg
     if not install_pkg_dir.is_dir():
         return
@@ -101,6 +149,36 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
             "Please commit or stash your changes before staging, or use --force flag to bypass this check."
         )
 
+
+def copy_ignore_and_config_files(
+    render_pkg_dir: Path,
+    install_pkg_dir: Path,
+    ignore_handler: DriftIgnore,
+) -> None:
+    """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
+    # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
+    render_ignore = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
+    if render_ignore.is_file():
+        install_ignore = install_pkg_dir / DRIFT_IGNORE_FILE_NAME
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        atomic_copy_file(render_ignore, install_ignore)
+
+    # 2. Create physical .stow-local-ignore
+    ignore_handler.create_stow_ignore_file(install_pkg_dir)
+
+    # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
+    render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
+    if not render_config.is_file():
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")
+
+    install_config = install_pkg_dir / PACKAGE_CONFIG_FILE_NAME
+    install_pkg_dir.mkdir(parents=True, exist_ok=True)
+    atomic_copy_file(render_config, install_config)
+
+
+# =====================================================================
+# Layer 2: Diff Computation & Classification
+# =====================================================================
 
 def compute_package_stage_diff(
     pkg: str,
@@ -127,7 +205,7 @@ def compute_package_stage_diff(
         src_dir=render_pkg_dir,
         dst_dir=install_pkg_dir,
         ignore_handler=ignore_handler,
-        resolve_symlinks=False
+        resolve_symlinks=False,
     )
 
     # 2. Compute all physical file changes without ignore_handler to stage everything into install/
@@ -135,7 +213,7 @@ def compute_package_stage_diff(
         src_dir=render_pkg_dir,
         dst_dir=install_pkg_dir,
         ignore_handler=None,
-        resolve_symlinks=False
+        resolve_symlinks=False,
     )
     # Exclude MANAGED_CONFIG_FILES from deleted list as they are managed/generated in install/
     all_diff.deleted = [p for p in all_diff.deleted if p.name not in MANAGED_CONFIG_FILES]
@@ -148,6 +226,10 @@ def compute_package_stage_diff(
 
     return stage_changes, ignore_handler
 
+
+# =====================================================================
+# Layer 3: Single Package Physical Staging
+# =====================================================================
 
 def apply_package_stage_changes(
     pkg: str,
@@ -219,40 +301,63 @@ def apply_package_stage_changes(
     copy_ignore_and_config_files(
         render_pkg_dir=render_pkg_dir,
         install_pkg_dir=install_pkg_dir,
-        ignore_handler=ignore_handler
+        ignore_handler=ignore_handler,
     )
 
 
-def copy_ignore_and_config_files(
-    render_pkg_dir: Path,
-    install_pkg_dir: Path,
-    ignore_handler: DriftIgnore
+# =====================================================================
+# Layer 4: Staging Transaction & State Management
+# =====================================================================
+
+def stage_modified_packages(
+    packages_to_stage: Mapping[str, Tuple[PackageStageChanges, DriftIgnore]],
+    pkg_metadata: Mapping[str, PackageConfig],
+    install_base: Path,
+    render_base: Path,
+    backup_base: Path,
+    state_registry: StateRegistry,
 ) -> None:
-    """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
-    # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
-    render_ignore = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
-    if render_ignore.is_file():
-        install_ignore = install_pkg_dir / DRIFT_IGNORE_FILE_NAME
-        install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(render_ignore, install_ignore)
+    """Applies physical changes and manages staging state transitions for packages with changes."""
+    if not packages_to_stage:
+        return
 
-    # 2. Create physical .stow-local-ignore
-    ignore_handler.create_stow_ignore_file(install_pkg_dir)
+    # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
+    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage.keys())
+    if needs_sudo:
+        from .file_utils import check_sudo_privilege
+        check_sudo_privilege(True)
 
-    # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
-    render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-    if not render_config.is_file():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")
-        
-    install_config = install_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-    install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    atomic_copy_file(render_config, install_config)
+    # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
+    for pkg in packages_to_stage.keys():
+        metadata = pkg_metadata[pkg]
+        state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
+    state_registry.save()
 
+    # 3. Apply stage changes to install/ directory for each package with changes
+    for pkg, (changes, ignore_handler) in packages_to_stage.items():
+        apply_package_stage_changes(
+            pkg=pkg,
+            install_base=install_base,
+            render_base=render_base,
+            backup_base=backup_base,
+            stage_changes=changes,
+            ignore_handler=ignore_handler,
+        )
+
+    # 4. Set state of packages with changes to "staged" after successful staging
+    for pkg in packages_to_stage.keys():
+        state_registry.set_package_state(pkg, "staged")
+    state_registry.save()
+
+
+# =====================================================================
+# Layer 5: Public Primitive Entry Point
+# =====================================================================
 
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Union[str, Sequence[str]] = (),
-    force: bool = False
+    force: bool = False,
 ) -> Dict[str, PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
@@ -339,38 +444,24 @@ def run_primitive_4_stage_render_to_install(
         if changes.has_changes
     }
 
-    # 4. Check sudo privilege ONLY if any package with actual changes requires sudo
-    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage.keys())
-    if needs_sudo:
-        from .file_utils import check_sudo_privilege
-        check_sudo_privilege(True)
-
-    # 5. Set state of packages to "staging" before staging to prevent partial staging issues
-    for pkg, metadata in pkg_metadata.items():
-        state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
-    state_registry.save()
-
-    # 6. Apply stage changes to install/ directory for each package with changes
-    for pkg, (changes, ignore_handler) in packages_to_stage.items():
-        apply_package_stage_changes(
-            pkg=pkg,
+    # 4. Apply physical changes and state transitions for modified packages
+    if packages_to_stage:
+        stage_modified_packages(
+            packages_to_stage=packages_to_stage,
+            pkg_metadata=pkg_metadata,
             install_base=install_base,
             render_base=render_base,
             backup_base=backup_base,
-            stage_changes=changes,
-            ignore_handler=ignore_handler,
+            state_registry=state_registry,
         )
 
-    # 7. Set state of packages to "staged" after successful staging
-    for pkg in pkg_metadata.keys():
-        state_registry.set_package_state(pkg, "staged")
-    state_registry.save()
-
+    # 5. Prepare a dictionary of packages that had actual changes for return value
     changed_package_map = {
         pkg: changes for pkg, (changes, _) in computed_diffs.items()
         if changes.has_changes
     }
 
+    # 6. Prepare summary of changes for logging
     if changed_package_map:
         logger.info("✨ Staging completed. Summary of changes:")
         for pkg_change in changed_package_map.values():
