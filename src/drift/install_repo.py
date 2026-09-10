@@ -533,11 +533,11 @@ def run_incremental_file_delivery(
     Handles incremental deployment applying Stage Changes additions, modifications, and deletions.
     """
     # A. Process Deletions on active host system
-    for rel_file in package_changes.deleted_files:
+    for rel_file in package_changes.deployable_changes.deleted:
         delete_single_system_file_or_dir(rel_file, target_dir, metadata.sudo)
 
     # B. Process Additions and Modifications
-    for rel_file in package_changes.added_files + package_changes.modified_files:
+    for rel_file in package_changes.deployable_changes.added + package_changes.deployable_changes.modified:
         if not install_pkg_dir.joinpath(rel_file).exists():
             logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' does not exist in install package directory.")
             continue
@@ -581,9 +581,9 @@ def sync_deployed_files_manifest(
     else:
         new_deployed = set(state_registry.get_package_deployed_files(pkg))
         if package_changes:
-            for rel in package_changes.deleted_files:
+            for rel in package_changes.deployable_changes.deleted:
                 new_deployed.discard(rel)
-            for rel in package_changes.added_files:
+            for rel in package_changes.deployable_changes.added:
                 new_deployed.add(rel)
         state_registry.set_package_deployed_files(pkg, sorted(list(new_deployed)))
 
@@ -741,9 +741,9 @@ def deploy_one_package_impl(
 
     ops = FileOperations()
     if package_changes is not None:
-        ops.added = [str(p) for p in package_changes.added_files]
-        ops.modified = [str(p) for p in package_changes.modified_files]
-        ops.deleted = [str(p) for p in package_changes.deleted_files]
+        ops.added = [str(p) for p in package_changes.deployable_changes.added]
+        ops.modified = [str(p) for p in package_changes.deployable_changes.modified]
+        ops.deleted = [str(p) for p in package_changes.deployable_changes.deleted]
     else:
         ops.added = [str(p) for p in current_files]
 

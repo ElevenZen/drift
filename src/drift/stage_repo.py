@@ -48,23 +48,10 @@ class PackageStageChanges:
         package_name: str,
         deployable_changes: Optional[FolderDiff] = None,
         physical_changes: Optional[FolderDiff] = None,
-        added_files: Optional[Sequence[Path]] = None,
-        modified_files: Optional[Sequence[Path]] = None,
-        deleted_files: Optional[Sequence[Path]] = None,
     ) -> None:
         self.package_name = package_name
-        if deployable_changes is not None:
-            self.deployable_changes = deployable_changes
-        else:
-            self.deployable_changes = FolderDiff(
-                added=list(added_files) if added_files else [],
-                modified=list(modified_files) if modified_files else [],
-                deleted=list(deleted_files) if deleted_files else [],
-            )
-        if physical_changes is not None:
-            self.physical_changes = physical_changes
-        else:
-            self.physical_changes = self.deployable_changes
+        self.deployable_changes = deployable_changes if deployable_changes is not None else FolderDiff()
+        self.physical_changes = physical_changes if physical_changes is not None else self.deployable_changes
 
     @property
     def has_changes(self) -> bool:
@@ -83,17 +70,6 @@ class PackageStageChanges:
         """Returns True if hooks, .drift_ignore, or drift_package.toml changed without deployable payload changes."""
         return self.has_changes and not self.has_deployable_changes
 
-    @property
-    def added_files(self) -> List[Path]:
-        return self.deployable_changes.added
-
-    @property
-    def modified_files(self) -> List[Path]:
-        return self.deployable_changes.modified
-
-    @property
-    def deleted_files(self) -> List[Path]:
-        return self.deployable_changes.deleted
 
 
 def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
@@ -379,11 +355,12 @@ def run_primitive_4_stage_render_to_install(
     if changed_package_map:
         logger.info("✨ Staging completed. Summary of changes:")
         for pkg_change in changed_package_map.values():
+            # TODO: do we have a better way to show there are extra changes that are not deployable? Maybe a separate summary section for metadata/hook changes?
             extra = " (metadata/hooks modified)" if pkg_change.has_metadata_or_hook_changes else ""
             logger.info(f"   Package '{pkg_change.package_name}': "
-                        f"+{len(pkg_change.added_files)}, "
-                        f"~{len(pkg_change.modified_files)}, "
-                        f"-{len(pkg_change.deleted_files)}{extra}")
+                        f"+{len(pkg_change.deployable_changes.added)}, "
+                        f"~{len(pkg_change.deployable_changes.modified)}, "
+                        f"-{len(pkg_change.deployable_changes.deleted)}{extra}")
     else:
         logger.info("✨ Staging completed. No changes detected.")
 

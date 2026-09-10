@@ -906,7 +906,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
-        1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `added_files`, `modified_files`, `deleted_files`) for the function return value and downstream physical deployment.
+        1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
         2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>` where they can be executed by Drift during installation.
         3. *Stow Ignore Generation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore` and package config file so GNU Stow never symlinks ignored files, hooks, or configurations to the active host.
     - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
@@ -924,7 +924,7 @@ For each redeployable package:
         1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
         2.  *High-Level Delivery*: Invokes copying commands (using `rsync` if available, otherwise `cp -R`) or links packages via GNU Stow (stow version must be >= 2.4.1; falls back to manual file-by-file linking on older versions).
     - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
-        1.  Deletes files listed in `package_changes.deleted_files`.
+        1.  Deletes files listed in `package_changes.deployable_changes.deleted`.
         2.  Deploys individual files manually using precise symlink creation or copy operations.
 *   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
