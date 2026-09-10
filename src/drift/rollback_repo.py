@@ -46,7 +46,7 @@ from typing import List, Optional, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .result_models import RollbackResult
-from .state_registry import load_state_registry, save_state_registry, StateRegistry
+from .state_registry import load_state_registry, StateRegistry
 from .install_repo import run_primitive_5_install_deployment
 from .uninstall_repo import run_primitive_7_uninstall_packages
 from .lifecycle_hooks import HookExecFlags
@@ -82,12 +82,12 @@ def validate_rollback_packages(
 ) -> List[str]:
     """Validates that discovered packages are in a failed midway state, or returns all if force is True."""
     if force:
-        return sorted(list(set(discovered_packages)))
+        return sorted(set(discovered_packages))
 
     midway_pkgs = state_registry.get_midway_packages(discovered_packages)
     packages_to_rollback = {pkg for pkg, _ in midway_pkgs}
     packages_state_wrong = set(discovered_packages) - packages_to_rollback
-    if len(packages_state_wrong) > 0:
+    if packages_state_wrong:
         raise RuntimeError(
             "The following packages are not in a failed midway/conflict state ('staging' or 'deploying'): "
             f"[{','.join(sorted(packages_state_wrong))}]. "
@@ -95,7 +95,7 @@ def validate_rollback_packages(
             "all configuration files on your system, destroying any local drift. "
             "Use --force to override and rollback anyway."
         )
-    return sorted(list(packages_to_rollback))
+    return sorted(packages_to_rollback)
 
 
 # =====================================================================
@@ -108,6 +108,7 @@ def rollback_redeploy_committed_package(
     flags: Optional[HookExecFlags] = None,
 ) -> None:
     """Executes full package redeployment fallback to restore system files for a single committed package."""
+    logger.info(f"Rollback redeployment for committed package '{pkg}'")
     install_res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=[pkg],
@@ -125,6 +126,7 @@ def rollback_uninstalled_first_time_package(
     flags: Optional[HookExecFlags] = None,
 ) -> None:
     """Cleans up host system files, restores overwritten backups, and removes directory for a first-time package that failed."""
+    logger.info(f"Rollback uninstallation for first-time package '{pkg}'")
     uninst_res = run_primitive_7_uninstall_packages(
         workspace_config=workspace_config,
         package_names=[pkg],
@@ -165,7 +167,7 @@ def run_primitive_8_rollback_recovery(
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = sorted(list(set(workspace_config.get_installed_packages(target_pkgs=package_names))))
+    discovered = sorted(set(workspace_config.get_installed_packages(target_pkgs=package_names)))
     if not discovered:
         logger.info("✨ No active packages found to rollback.")
         return RollbackResult(
@@ -181,14 +183,6 @@ def run_primitive_8_rollback_recovery(
         discovered_packages=discovered,
         force=force,
     )
-    if not packages_to_rollback:
-        logger.info("✨ No packages in a failed midway/conflict state to rollback.")
-        return RollbackResult(
-            command="rollback",
-            status="SUCCESS",
-            target_packages=list(package_names) or list(discovered),
-            restored_packages=[]
-        )
 
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
 
@@ -197,7 +191,7 @@ def run_primitive_8_rollback_recovery(
     packages_to_uninstall: List[str] = []
 
     # 3. Classify packages into previously committed (redeployable) vs first-time (uninstallable)
-    for pkg in sorted(packages_to_rollback):
+    for pkg in packages_to_rollback:
         if is_package_committed_in_install_head(install_base, pkg):
             packages_to_redeploy.append(pkg)
             reset_install_package_to_head(install_base, pkg)
@@ -208,14 +202,12 @@ def run_primitive_8_rollback_recovery(
     if packages_to_redeploy:
         logger.info(f"Executing Full Package Redeploy to restore system files for: {packages_to_redeploy}")
         for pkg in packages_to_redeploy:
-            logger.info(f"Rollback redeployment for committed package '{pkg}'")
             rollback_redeploy_committed_package(workspace_config, pkg, flags=flags)
 
     # 5. Clean up host system files and directories for first-time packages that failed (isolated per package)
     if packages_to_uninstall:
         logger.info(f"Executing uninstallation rollback for first-time package(s): {packages_to_uninstall}")
         for pkg in packages_to_uninstall:
-            logger.info(f"Rollback uninstallation for first-time package '{pkg}'")
             rollback_uninstalled_first_time_package(workspace_config, pkg, flags=flags)
 
     # 6. Restore the state registry entries
@@ -239,6 +231,6 @@ def run_primitive_8_rollback_recovery(
     return RollbackResult(
         command="rollback",
         status="SUCCESS",
-        target_packages=list(package_names) or list(discovered),
-        restored_packages=sorted(list(packages_to_rollback))
+        target_packages=list(package_names) or discovered,
+        restored_packages=packages_to_rollback
     )
