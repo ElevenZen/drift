@@ -19,6 +19,7 @@ from .constants import (
     get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
+    get_default_internal_gitignore_content,
 )
 from .ignore import get_default_install_stow_ignore_content
 from .check_repo import check_existing_workspace_status, ComponentStatus
@@ -89,6 +90,15 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     git_init_repo(render_dir, "render")
     git_init_repo(install_dir, "install")
+
+    # Generate .gitignore at root of render/ and install/
+    render_gitignore = render_dir / ".gitignore"
+    if not render_gitignore.exists() or force:
+        render_gitignore.write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+
+    install_gitignore = install_dir / ".gitignore"
+    if not install_gitignore.exists() or force:
+        install_gitignore.write_text(get_default_internal_gitignore_content(), encoding="utf-8")
 
     # Generate extra .stow-local-ignore at root of install/
     stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME

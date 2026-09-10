@@ -27,22 +27,19 @@ logger = logging.getLogger(__name__)
 def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     """Scans the install/ repository status to identify which packages have uncommitted drifts."""
     lines = get_git_status_porcelain(workspace_config.install_path)
-    drifted = set()
+    changed_names = set()
     for line in lines:
         if len(line) < 4:
             continue
         path_str = line[3:].strip()
         parts = Path(path_str).parts
-        if not parts:
-            continue
-        pkg_name = parts[0]
-        # Ignore standard state metadata in install/ (state.toml, .stow-local-ignore) as they are not user packages
-        if pkg_name in ["state.toml", ".stow-local-ignore"]:
-            continue
-        src_pkg_dir = workspace_config.source_path / pkg_name
-        if not src_pkg_dir.is_dir():
-            continue
-        drifted.add(pkg_name)
+        if parts:
+            changed_names.add(parts[0])
+
+    installed_packages = set(workspace_config.get_package_names_from_dir(workspace_config.install_path))
+    source_packages = set(workspace_config.get_package_names_from_source_dir())
+
+    drifted = (changed_names & installed_packages) & source_packages
     return sorted(list(drifted))
 
 

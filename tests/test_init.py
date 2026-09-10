@@ -54,9 +54,25 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("render/", content)
         self.assertIn("install/", content)
 
-        # Check render and install sub-repos exist with .git
+        # Check render and install sub-repos exist with .git and .gitignore
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "render", ".git")))
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "install", ".git")))
+
+        render_gitignore = os.path.join(self.drift_root, "render", ".gitignore")
+        install_gitignore = os.path.join(self.drift_root, "install", ".gitignore")
+        self.assertTrue(os.path.isfile(render_gitignore))
+        self.assertTrue(os.path.isfile(install_gitignore))
+
+        with open(render_gitignore, "r", encoding="utf-8") as f:
+            render_gi_content = f.read()
+        self.assertIn("*.swp", render_gi_content)
+        self.assertIn(".DS_Store", render_gi_content)
+
+        # Verify git check-ignore respects the internal .gitignore
+        res_render = subprocess.run(["git", "check-ignore", "test.swp"], cwd=str(self.drift_root / "render"), capture_output=True, text=True)
+        self.assertEqual(res_render.returncode, 0)
+        res_install = subprocess.run(["git", "check-ignore", "#autosave#"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
+        self.assertEqual(res_install.returncode, 0)
 
         # Check `.stow-local-ignore` inside install/
         stow_ignore = os.path.join(self.drift_root, "install", STOW_LOCAL_IGNORE_FILE_NAME)

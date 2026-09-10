@@ -16,6 +16,7 @@ from .constants import (
         LEGACY_WORKSPACE_CONFIG_FILE_NAMES,
         PACKAGE_CONFIG_FILE_NAME,
         SECRETS_ENV_FILE_NAME,
+        FORBIDDEN_PACKAGE_NAMES,
         INITIAL_ENV,
         SYSTEM_FACT_KEYS,
         inject_system_facts,
@@ -283,9 +284,21 @@ class WorkspaceConfig:
         if not custom_dir.exists() or not custom_dir.is_dir():
             return []
 
-        packages = [d.name for d in custom_dir.iterdir()
-                    if d.is_dir() and d.name != '.git']
-        return sorted(packages)
+        # Step 1: Find all subdirectories that are not hidden (.git, .cache, etc.)
+        subdirs = {
+            d.name for d in custom_dir.iterdir()
+            if d.is_dir() and not d.name.startswith(".")
+        }
+
+        # Step 2: Check for forbidden directory names and warn
+        forbidden_set = set(FORBIDDEN_PACKAGE_NAMES)
+        forbidden_found = subdirs & forbidden_set
+        if forbidden_found:
+            for name in sorted(forbidden_found):
+                logger.warning(f"⚠️  Ignoring directory with reserved package name '{name}' in '{custom_dir.name}/'.")
+
+        valid_packages = subdirs - forbidden_set
+        return sorted(list(valid_packages))
 
     @classmethod
     def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:

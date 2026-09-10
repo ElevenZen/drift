@@ -427,6 +427,66 @@ def check_install_stow_ignore(
     )
 
 
+def check_render_gitignore(
+    drift_root: Path,
+    workspace_config: Optional["WorkspaceConfig"] = None,
+) -> CheckResult:
+    """Checks render/.gitignore configuration."""
+    render_dir = workspace_config.render_path if workspace_config is not None else (drift_root / "render")
+    if not render_dir.exists() or not render_dir.is_dir():
+        return CheckResult(
+            name="Render .gitignore",
+            status=ComponentStatus.NOT_FOUND,
+            details="'render/' directory does not exist.",
+            fix_hint="Initialize 'render/' repository first"
+        )
+
+    render_gitignore = render_dir / ".gitignore"
+    if not render_gitignore.exists():
+        return CheckResult(
+            name="Render .gitignore",
+            status=ComponentStatus.NOT_FOUND,
+            details="'render/.gitignore' not found.",
+            fix_hint="Create 'render/.gitignore' with default ignore rules"
+        )
+
+    return CheckResult(
+        name="Render .gitignore",
+        status=ComponentStatus.GOOD,
+        details="'render/.gitignore' is present."
+    )
+
+
+def check_install_gitignore(
+    drift_root: Path,
+    workspace_config: Optional["WorkspaceConfig"] = None,
+) -> CheckResult:
+    """Checks install/.gitignore configuration."""
+    install_dir = workspace_config.install_path if workspace_config is not None else (drift_root / "install")
+    if not install_dir.exists() or not install_dir.is_dir():
+        return CheckResult(
+            name="Install .gitignore",
+            status=ComponentStatus.NOT_FOUND,
+            details="'install/' directory does not exist.",
+            fix_hint="Initialize 'install/' repository first"
+        )
+
+    install_gitignore = install_dir / ".gitignore"
+    if not install_gitignore.exists():
+        return CheckResult(
+            name="Install .gitignore",
+            status=ComponentStatus.NOT_FOUND,
+            details="'install/.gitignore' not found.",
+            fix_hint="Create 'install/.gitignore' with default ignore rules"
+        )
+
+    return CheckResult(
+        name="Install .gitignore",
+        status=ComponentStatus.GOOD,
+        details="'install/.gitignore' is present."
+    )
+
+
 def check_core_dirs(
     drift_root: Path,
     workspace_config: Optional["WorkspaceConfig"] = None,
@@ -572,6 +632,8 @@ def check_existing_workspace_status(
         check_state_registry(drift_root, workspace_config=ws_config),
         check_render_repo(drift_root, workspace_config=ws_config),
         check_install_repo(drift_root, workspace_config=ws_config),
+        check_render_gitignore(drift_root, workspace_config=ws_config),
+        check_install_gitignore(drift_root, workspace_config=ws_config),
         check_root_gitignore(drift_root),
         check_install_stow_ignore(drift_root, workspace_config=ws_config),
         check_core_dirs(drift_root, workspace_config=ws_config),

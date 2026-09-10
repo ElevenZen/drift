@@ -22,6 +22,7 @@ from .constants import (
     get_default_envsubst_content,
     get_default_mustache_content,
     get_default_jinja2_content,
+    get_default_internal_gitignore_content,
 )
 from .ignore import get_default_install_stow_ignore_content
 from .check_repo import (
@@ -30,6 +31,8 @@ from .check_repo import (
     check_root_gitignore,
     check_render_repo,
     check_install_repo,
+    check_render_gitignore,
+    check_install_gitignore,
     check_install_stow_ignore,
     check_state_registry,
     check_workspace_config,
@@ -135,6 +138,31 @@ def repair_install_repo(
             git_init_repo(install_dir, "install")
     else:
         actions.append(f"⚠️ Error in 'install/' Git repository: {install_res.details}. Manual resolution required.")
+
+    return actions
+
+
+def repair_internal_gitignores(
+    drift_root: Path,
+    dry_run: bool = False,
+    workspace_config: Optional["WorkspaceConfig"] = None,
+) -> List[str]:
+    """Repairs .gitignore files inside render/ and install/ internal repositories."""
+    actions: List[str] = []
+    render_dir = workspace_config.render_path if workspace_config is not None else (drift_root / "render")
+    install_dir = workspace_config.install_path if workspace_config is not None else (drift_root / "install")
+
+    render_check = check_render_gitignore(drift_root, workspace_config=workspace_config)
+    if render_check.status != ComponentStatus.GOOD and render_dir.exists() and render_dir.is_dir():
+        actions.append("Restored 'render/.gitignore'.")
+        if not dry_run:
+            (render_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+
+    install_check = check_install_gitignore(drift_root, workspace_config=workspace_config)
+    if install_check.status != ComponentStatus.GOOD and install_dir.exists() and install_dir.is_dir():
+        actions.append("Restored 'install/.gitignore'.")
+        if not dry_run:
+            (install_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
 
     return actions
 
@@ -361,6 +389,7 @@ def repair_drift_workspace(
     actions.extend(repair_gitignore(drift_root, dry_run=dry_run))
     actions.extend(repair_render_repo(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_install_repo(drift_root, dry_run=dry_run, workspace_config=ws_config))
+    actions.extend(repair_internal_gitignores(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_install_stow_ignore(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_state_registry(drift_root, dry_run=dry_run, workspace_config=ws_config))
     actions.extend(repair_workspace_config(drift_root, dry_run=dry_run, workspace_config=ws_config))

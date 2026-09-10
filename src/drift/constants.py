@@ -26,6 +26,18 @@ DRIFT_GENERATED_FILES = (STOW_LOCAL_IGNORE_FILE_NAME,)
 MANAGED_CONFIG_FILES = (PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME,
                         *DRIFT_GENERATED_FILES,
                         *PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
+FORBIDDEN_PACKAGE_NAMES = (
+    CONFIG_DIR_NAME,
+    "install",
+    "render",
+    "src",
+    "backup",
+    STATE_REGISTRY_FILE_NAME,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    ".git",
+    ".gitignore",
+)
 MIDWAY_TRANSACTION_STATES = ("staging", "deploying")
 
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
@@ -284,6 +296,31 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^/LICENSE.*\n"
     "^/COPYING.*\n"
 )
+
+DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
+    "# =====================================================================\n"
+    "# .gitignore - Internal Repository Ignore Rules (render/ & install/)\n"
+    "# =====================================================================\n"
+    "# Editor temporary, auto-save, and lock files\n"
+    "*~\n"
+    r"\#*\#" "\n"
+    r".\#*" "\n"
+    "\n"
+    "# Vim / Neovim swap, undo, and backup files\n"
+    "*.swp\n"
+    "*.swo\n"
+    r".*.sw[a-p]" "\n"
+    "*.un~\n"
+    "\n"
+    "# OS metadata files\n"
+    ".DS_Store\n"
+    "Thumbs.db\n"
+)
+
+
+def get_default_internal_gitignore_content() -> str:
+    """Gets default .gitignore template content for internal repositories (render/ & install/)."""
+    return DEFAULT_INTERNAL_GITIGNORE_CONTENT
 
 
 def get_default_package_config_content(

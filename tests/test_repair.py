@@ -28,6 +28,8 @@ from drift.check_repo import (
     check_render_repo,
     check_install_repo,
     check_root_gitignore,
+    check_render_gitignore,
+    check_install_gitignore,
     check_install_stow_ignore,
     check_core_dirs,
     check_engine_inputs,
@@ -229,6 +231,27 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertIn("install/", content)
         self.assertIn("*.local.toml", content)
         self.assertIn("config/secrets.env", content)
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertTrue(report.is_healthy())
+
+    def test_repair_recovers_missing_internal_gitignores(self) -> None:
+        """Repair restores missing render/.gitignore and install/.gitignore."""
+        init_drift_workspace(self.drift_root)
+        (self.drift_root / "render" / ".gitignore").unlink()
+        (self.drift_root / "install" / ".gitignore").unlink()
+
+        res_render = check_render_gitignore(self.drift_root)
+        self.assertEqual(res_render.status, ComponentStatus.NOT_FOUND)
+        res_install = check_install_gitignore(self.drift_root)
+        self.assertEqual(res_install.status, ComponentStatus.NOT_FOUND)
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("render/.gitignore" in a for a in actions))
+        self.assertTrue(any("install/.gitignore" in a for a in actions))
+
+        self.assertTrue((self.drift_root / "render" / ".gitignore").is_file())
+        self.assertTrue((self.drift_root / "install" / ".gitignore").is_file())
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

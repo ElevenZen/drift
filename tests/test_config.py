@@ -1916,6 +1916,32 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             get_host_ip_addresses(probe_wan_ip=True)
             self.assertTrue(any(call[0][0][0] == "8.8.8.8" for call in mock_sock.connect.call_args_list))
 
+    def test_get_package_names_from_dir_filtering_and_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            base_dir = Path(td)
+            # Create valid packages
+            (base_dir / "zsh").mkdir()
+            (base_dir / "nvim").mkdir()
+
+            # Create hidden directory and files
+            (base_dir / ".git").mkdir()
+            (base_dir / ".hidden_pkg").mkdir()
+            (base_dir / ".gitignore").write_text("# ignore")
+            (base_dir / "state.toml").write_text("# state")
+
+            # Create reserved/forbidden directories
+            (base_dir / "config").mkdir()
+            (base_dir / "install").mkdir()
+
+            with patch("drift.workspace_config.logger.warning") as mock_warn:
+                packages = WorkspaceConfig.get_package_names_from_dir(base_dir)
+                self.assertEqual(packages, ["nvim", "zsh"])
+
+                # Check that warnings were emitted for forbidden folders
+                warn_calls = [call[0][0] for call in mock_warn.call_args_list]
+                self.assertTrue(any("config" in msg for msg in warn_calls))
+                self.assertTrue(any("install" in msg for msg in warn_calls))
+
 
 if __name__ == "__main__":
     unittest.main()
