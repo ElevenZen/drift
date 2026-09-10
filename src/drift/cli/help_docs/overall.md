@@ -10,21 +10,17 @@ audits active system drifts, and executes deployments using atomic, transactiona
 
 ## 🔄 The Drift Data-Flow Loop
 ```
-                     [ 1. DECLARATIVE SOURCE ]
-                     src/ & config/ (drift_workspace.toml)
-                                 │
-                                 ▼ (drift deploy)
-                    [ 2. SANDBOX RENDER ZONE ]
-                      render/ (Git sandbox compile base)
-                                 │
-                                 ▼ (Stage render to install)
-                    [ 3. LOCAL STATE DATABASE ]
-                      install/ (Git local state database)
-                                 ▲
-                        Diff     │ (drift status / drift diff -s)
-                       (Live)    ▼ (Symmetric path translation)
-                    [ 4. SYSTEM ACTIVE HOST ]
-                       ~/* or /etc/* (Active system configurations)
+[1. Declarative Source]      src/ & config/
+  │
+  ▼  drift deploy (compile)
+[2. Sandbox Render Zone]     render/ (isolated Git repo)
+  │
+  ▼  Stage delta (Diff Δ)
+[3. Local State Database]    install/ (tracking Git repo)
+  │ ▲
+  │ │  Reverse-sync (Diff B) / drift adopt
+  ▼ │  Apply (stow / copy)
+[4. Active Host System]      ~/* or /etc/*
 ```
 
 ## 🚀 High-Level User Commands (Frequently Used)

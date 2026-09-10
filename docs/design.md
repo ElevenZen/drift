@@ -44,21 +44,17 @@ By separating rendering from deployment and turning both folders into Git databa
 The architecture separates configurations into four distinct physical and logical tiers:
 
 ```
-                  [ 1. DECLARATIVE SOURCE ]
-                    src/ (Templates & Scripts)
-                               │
-                               ▼ (Stage 2: sandbox render)
-                  [ 2. SANDBOX RENDER ZONE ]
-                    render/ (Git repo tracking template-only history)
-                               │
-                      Diff A   ▼ (Stage 2: incremental staging)
-                      (Dry)   [ 3. LOCAL STATE DATABASE ]
-                    install/ (Git repo tracking live configuration state)
-                               ▲
-                      Diff B   │ (Stage 1: System -> install/ reverse-sync)
-                     (Live)    ▼ (Symlinks or Physical Copy)
-                  [ 4. SYSTEM ACTIVE CONFIGS ]
-                     ~/* or /etc/* (Active system configuration files)
+[1. Declarative Source]      src/ (Templates & Scripts)
+  │
+  ▼  Stage 2: Render (drift deploy)
+[2. Sandbox Render Zone]     render/ (isolated Git repo)
+  │
+  ▼  Stage 2: Staging (Diff Δ / Diff A)
+[3. Local State Database]    install/ (live tracking Git repo)
+  │ ▲
+  │ │  Stage 1: Reverse-sync (Diff B) / drift adopt
+  ▼ │  Stage 2: Apply (stow symlinks or physical copy)
+[4. Active Host System]      ~/* or /etc/*
 ```
 
 ### Tier Descriptions & Directory Structure
@@ -97,12 +93,16 @@ You decide to modify your global shell variables or edit a Neovim template.
     *   You run the deployment sequence. Since your live system hasn't drifted, Stage 1 completes with a "Clean Slate" status, and Stage 2 runs to instantly apply your new templates to the active environment.
 
 #### Workflow 2: Auditing GUI & Runtime System Drifts (The Drift Audit)
-A program (like qBittorrent or a terminal theme tool) has rewritten its configuration file in the background, or you modified a file in your home directory directly to test a setting.
-1.  **Audit Drift (`drift diff --system qbittorrent` / `-s`)**:
-    *   Pulls active system drift back into `install/` and shows you **Diff B**, displaying exactly what changes were introduced.
-2.  **Reconciliation**:
-    *   If you want to **Adopt** these changes: You run `drift adopt qbittorrent` to incorporate modifications from `install/` back to your declarative templates under `src/`.
-    *   If you want to **Dismiss / Overwrite** these changes: You run `drift deploy qbittorrent --force`. Stage 1 will detect the drift but `--force` bypasses the sentinel and overwrites the system with the declarative state.
+A GUI application (like qBittorrent, desktop theme manager, or IDE preferences) has rewritten its configuration file in the background, or you modified a file in your home directory directly.
+1.  **Detection & Sentinel Halt**:
+    *   Running `drift deploy` trips the Stage 1 Sentinel guard (exit code `3: DRIFT_DETECTED`) if uncommitted system changes exist.
+2.  **Audit & Inspection**:
+    *   **Status Overview**: Run `drift status` to inspect which package(s) have drifted (`[B] System: DRIFTED`).
+    *   **Terminal Diff**: Run `drift diff -s qbittorrent` to visualize Diff B changes.
+    *   **Visual Side-by-Side Diff**: Run `drift diff -s -y qbittorrent` to inspect changed file pairs side-by-side in your editor (`$VISUAL` / `$EDITOR`, such as Neovim, Vim, VS Code, or GNU Emacs).
+3.  **Reconciliation**:
+    *   **Adopt**: Run `drift adopt qbittorrent` (or `drift adopt qbittorrent -i`) to incorporate modifications from `install/` back to your declarative templates under `src/`.
+    *   **Dismiss / Overwrite**: Run `drift deploy qbittorrent --force`. Stage 1 detects the drift, but `--force` bypasses the sentinel and restores the system with clean files compiled from `src/`.
 
 #### Workflow 3: Full Recovery (The Rollback Loop)
 A deployment failed midway due to a permission error, or manual system edits corrupted a config directory.

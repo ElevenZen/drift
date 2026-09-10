@@ -156,14 +156,51 @@ Dotfile templating shouldn't put your live home directory at risk. Drift operate
 Because Tier 2 and Tier 3 are isolated Git repositories, Drift can diff, stage, and transactionalize your configurations before a single symlink is modified on your host.
 
 ### 🔄 2. Capture & Adopt GUI/System Tool Settings (Intelligent Reverse-Sync)
-Modern desktop environments, IDEs, and system utilities frequently write configuration modifications directly to your active files (e.g., when you adjust settings in a GUI panel, alter theme colors in a control center, or customize keybindings through a preferences UI). 
+Modern desktop environments, IDEs, and system utilities frequently write configuration modifications directly to your active files (e.g., when you adjust settings in a GUI preferences dialog, alter theme colors in a desktop control panel, or customize keybindings through an application UI).
 
 In traditional dotfile managers, **these GUI-driven updates are silently lost—either completely ignored or blindly wiped away and overwritten during your next template deployment pass**.
 
-Drift fundamentally resolves this mismatch by recognizing configuration as a **continuous, two-way loop**:
-*   **Active Host Monitoring**: Drift's **Reverse-Sync** automatically scans active host paths, detects these silent GUI-driven or system-tool updates, and mirrors them back into the `install/` state base.
-*   **Interactive Review & Adoption**: You can run a diff to inspect the changes written by your system's GUI utilities. If you want to keep them, run `drift adopt <pkg>` to extract the changes as a patch and cleanly backport them into your source templates under `src/`.
-*   **Safely Discard & Force-Restore**: If you want to reject the GUI changes and force-restore your original templated configs, simply run `drift deploy <pkg> --force`. Drift's engine will overwrite the active drift and restore your files exactly as defined in `src/`.
+Drift fundamentally resolves this mismatch by treating configuration as a **continuous, two-way loop with built-in safety sentinels**:
+
+```
+[Active Host System] (GUI tweaks / runtime edits)
+  └── [System Drift Detected] (e.g. drift deploy trips Sentinel guard)
+        │
+        ├── 1. Inspect Changes
+        │     ├── drift status          (overview: [B] System: DRIFTED)
+        │     └── drift diff -s [-y]    (line-by-line diff; -y for visual editor)
+        │
+        └── 2. Reconcile Decision
+              ├── Keep Changes:
+              │     └── drift adopt <pkg> [-i]      -> backports patch to src/
+              └── Discard Changes:
+                    └── drift deploy <pkg> --force  -> overwrites host from src/
+```
+
+#### 🛡️ The Real-World Workflow:
+1. **Trigger (Sentinel Alert or Background Tweaks)**:
+   - When you make changes through a GUI application, tweak tools, or edit files directly in `$HOME`, Drift automatically tracks these live adjustments.
+   - If you run `drift deploy`, Drift's **Stage 1 Sentinel Guard** audits host alignment. If uncommitted system modifications exist, deployment safely **halts immediately with exit code `3` (`DRIFT_DETECTED`)** to prevent accidental lost updates.
+
+2. **Audit & Inspection**:
+   - **High-Level Overview (`drift status`)**: Run `drift status` to see an overview of which package(s) have drifted on the host (`[B] System: DRIFTED`).
+   - **Terminal Diff (`drift diff -s`)**: Run `drift diff -s` (or `drift diff -s <pkg>`) to inspect exact line-by-line differences between the live host system and the state database.
+   - **Visual Side-by-Side Review (`drift diff -s -y`)**: Pass `-y` (or `--side-by-side`) to launch an interactive visual side-by-side session in your configured editor (`$VISUAL` / `$EDITOR`, such as Neovim, Vim, VS Code, or GNU Emacs) across multi-tab split viewports.
+
+3. **Reconciliation Decision**:
+   - **Option A: Adopt Changes into Templates (`drift adopt <pkg>`)**:
+     If you want to keep the GUI/system adjustments, run:
+     ```bash
+     drift adopt <pkg>               # Automatically backports patches to src/<pkg>/
+     drift adopt <pkg> --interactive # Interactively review each modified/added file
+     ```
+     Drift extracts the live edits as clean Git patches, translates dotfile prefixes, safely backports changes into your declarative templates in `src/`, and marks the state database as clean. You can then run `drift deploy` normally.
+   - **Option B: Discard & Force-Restore Templates (`drift deploy <pkg> --force`)**:
+     If you want to reject the GUI changes and restore the pristine templated configuration declared in `src/`, run:
+     ```bash
+     drift deploy <pkg> --force      # Bypasses Sentinel guard and overwrites host files
+     ```
+     Drift overrides the active drift and reinstalls clean files compiled from your source templates.
 
 ### 💻 3. Modular "Config-as-a-Package" (One Unified Repo from Servers to Laptops)
 Unlike monolithic dotfile managers that force you to deploy entire configurations wholesale or maintain separate git branches per machine, Drift structures every tool as an **independent, self-contained package** under `src/<pkg>/` (with its own `drift_package.toml`, target paths, deployment methods, and lifecycle hooks).
@@ -291,24 +328,20 @@ Sometimes, you want to stop managing a configuration through a dotfile manager b
 
 ## 🔄 The Drift Data-Flow Loop
 
-Rather than running isolated commands, Drift operates as a continuous, closed-loop state machine. 
+Rather than running isolated commands, Drift operates as a continuous, closed-loop state machine:
 
 ```
-                     [ 1. DECLARATIVE SOURCE ]
-                  src/ (Templates & drift_workspace.toml)
-                                 │
-                                 ▼ (drift deploy)
-                    [ 2. SANDBOX RENDER ZONE ]
-                      render/ (Git sandbox compile base)
-                                 │
-                                 ▼ (Stage render to install)
-                    [ 3. LOCAL STATE DATABASE ]
-                      install/ (Git local state database)
-                                 ▲
-                        Diff     │ (drift status / drift diff -s)
-                       (Live)    ▼ (Symmetric path translation)
-                     [ 4. SYSTEM ACTIVE HOST ]
-                        ~/* or /etc/* (Active system configurations)
+[1. Declarative Source]      src/ & config/
+  │
+  ▼  drift deploy (compile)
+[2. Sandbox Render Zone]     render/ (isolated Git repo)
+  │
+  ▼  Stage delta (Diff Δ)
+[3. Local State Database]    install/ (tracking Git repo)
+  │ ▲
+  │ │  Reverse-sync (Diff B) / drift adopt
+  ▼ │  Apply (stow / copy)
+[4. Active Host System]      ~/* or /etc/*
 ```
 
 ---
