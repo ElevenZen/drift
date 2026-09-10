@@ -61,15 +61,17 @@ def validate_render_template_args(
     engine_config: RenderEngineConfig,
     template_file_path: Path,
 ) -> None:
-    """Validates that the template file exists and engine command placeholders are present."""
+    """ Validates that the template file exists and engine command placeholders are present. """
+    if engine_config.is_internal:
+        return
+
     if not template_file_path.exists():
         raise FileNotFoundError(f"Template file not found: {template_file_path}")
 
-    if not engine_config.is_internal:
-        if "%i" not in engine_config.render_command:
-            raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%i' placeholder for input file.")
-        if "%s" not in engine_config.render_command:
-            raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
+    if "%i" not in engine_config.render_command:
+        raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%i' placeholder for input file.")
+    if "%s" not in engine_config.render_command:
+        raise ValueError(f"Render command for engine '{engine_config.name}' must contain '%s' placeholder for template file.")
 
 
 def resolve_render_input_file(
@@ -90,11 +92,12 @@ def resolve_render_input_file(
 
     config_path = engine_config_input_relative_to / engine_config.input_file
     if not config_path.exists():
-        if config_path.is_absolute():
-            raise FileNotFoundError(f"Input file specified in engine config does not exist: {engine_config.input_file}")
-        raise FileNotFoundError(
-            f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}"
+        msg = (
+            f"Input file specified in engine config does not exist: {engine_config.input_file}"
+            if config_path.is_absolute()
+            else f"Input file specified in engine config does not exist under '{CONFIG_DIR_NAME}' folder: {config_path}"
         )
+        raise FileNotFoundError(msg)
     return config_path
 
 
@@ -154,9 +157,11 @@ def render_template(
         engine_config_input_relative_to=drift_root / CONFIG_DIR_NAME,
         input_file_path_override=input_file_path,
     )
-    cmd: str = engine_config.render_command
-    cmd = cmd.replace("%i", str(resolved_input_file))
-    cmd = cmd.replace("%s", str(template_file_path))
+    cmd = (
+        engine_config.render_command
+        .replace("%i", str(resolved_input_file))
+        .replace("%s", str(template_file_path))
+    )
 
     try:
         result = run_command(cmd, shell=True, text=True)
