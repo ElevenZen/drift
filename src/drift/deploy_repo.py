@@ -15,6 +15,8 @@ from .install_repo import run_primitive_5_install_deployment, run_primitive_6_co
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from .lifecycle_hooks import HookExecFlags
 from .exceptions import HookExecutionError
+from .constants import STATE_REGISTRY_FILE_NAME
+from .state_registry import load_state_registry
 from .result_models import (
     NextActionType,
     CompletedStep,
@@ -33,10 +35,28 @@ def check_and_prevent_system_drifts(
     force: bool = False
 ) -> Tuple[List[str], List[str]]:
     """Stage 1: Safety Guard (Sentinel)
-    Runs a silent reverse-sync and checks if any targeted package has drifted.
-    If drift is detected and force is False, aborts execution instantly with instructions.
+    Runs pre-flight state checks and silent reverse-sync to verify if any targeted package has drifted.
+    If a midway state or drift is detected and force is False, aborts execution instantly with instructions.
     Returns (drifted_packages, drifted_files).
     """
+    # 0. Check if any targeted package is in a midway transaction state from a previous crash/failure
+    state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
+    if state_file.exists() and not force:
+        state_registry = load_state_registry(state_file)
+        midway_pkgs = state_registry.get_midway_packages(target_pkgs)
+
+        if midway_pkgs:
+            pkg_names = [p[0] for p in midway_pkgs]
+            pkg_cmd_str = shlex.join(pkg_names)
+            details = ", ".join(f"'{p}' ({st})" for p, st in midway_pkgs)
+            err_msg = (
+                f"❌ [DEPLOY ABORTED] Package(s) in midway transaction state: {details}!\n"
+                "A previous operation failed midway, leaving uncommitted state in the install repository.\n\n"
+                f"👉 Run 'drift rollback {pkg_cmd_str}' to safely restore your system to the last known good configuration.\n"
+                f"👉 Run 'drift deploy {pkg_cmd_str} --force' to bypass this safeguard and proceed anyway."
+            )
+            raise RuntimeError(err_msg)
+
     logger.info("🔍 [STAGE 1] Triggering silent reverse synchronization audit...")
     
     # We only reverse-sync packages that actually exist in install/, as first-time packages
@@ -88,14 +108,16 @@ def print_emergency_recovery_card(failed_step: str, error_msg: str, package_name
 The deployment has failed midway, leaving your host system in an inconsistent 
 and half-written state.
 
-👉 Please fix the error above and run: \033[1;32m'drift rollback {pkgs_str}'\033[0m
+👉 Step 1 (Recover State): Run \033[1;32m'drift rollback {pkgs_str}'\033[0m to restore
+   the state database, delete any half-written files, and execute a fallback
+   deployment to your last successfully committed configurations.
 
-This command will restore the state database, delete any half-written files, 
-and execute a full deployment fallback to restore your system to the last
-successfully committed configurations.
+👉 Step 2 (Fix & Retry): Inspect the error details above, resolve the underlying
+   issue in your source template or hook, then run 'drift deploy'.
 
-⚠️  \033[1;33mWARNING:\033[0m Do not run rollback under normal circumstances. It bypasses
-   system drift checking and will discard uncommitted local system adjustments.
+💡 \033[1;36mINFO:\033[0m Only run rollback when recovering from a failed deployment or
+   explicitly restoring previous state. Rollback bypasses system drift checking
+   and will discard uncommitted local system adjustments.
 ================================================================================
 """
     print(card, file=sys.stderr)
@@ -323,7 +345,8 @@ def run_primitive_deploy_pipeline_with_error_handling(
     except Exception as e:
         err_str = str(e)
         is_drift = "System drift detected" in err_str
-        requires_rollback = "Midway crash" in err_str
+        is_midway = "midway transaction state" in err_str or "Safety Abort: Package" in err_str
+        requires_rollback = "Midway crash" in err_str or is_midway
         if is_drift:
             next_action = NextActionType.ADOPT_OR_FORCE
             rec_cmd = "drift adopt"
@@ -335,8 +358,8 @@ def run_primitive_deploy_pipeline_with_error_handling(
             rec_cmd = "drift deploy"
 
         fail = DeployFailure(
-            step_index=0 if is_drift else 1,
-            step_name="sentinel_drift_check" if is_drift else "pipeline_execution",
+            step_index=0 if (is_drift or is_midway) else 1,
+            step_name="sentinel_drift_check" if (is_drift or is_midway) else "pipeline_execution",
             package=packages_to_deploy[0] if (packages_to_deploy and len(packages_to_deploy) == 1) else None,
             error_message=err_str,
             error_type=type(e).__name__,

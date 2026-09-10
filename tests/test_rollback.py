@@ -267,6 +267,21 @@ class TestRollback(unittest.TestCase):
         self.assertFalse(pkg_install.exists())
         self.assertNotIn(pkg_first, reloaded.packages)
 
+    def test_rollback_non_midway_package_raises_error_without_force(self) -> None:
+        """Verifies that rollback raises RuntimeError when package is not in midway state unless force=True."""
+        # pkg_a is currently in 'installed' state in setUp
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertIn("The following packages are not in a failed midway/conflict state", str(ctx.exception))
+        self.assertIn("pkg_a", str(ctx.exception))
+        self.assertIn("--force", str(ctx.exception))
+
+        # With force=True, it should proceed cleanly
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=True)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.restored_packages, ["pkg_a"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

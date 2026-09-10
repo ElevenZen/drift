@@ -99,6 +99,38 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIsNone(loaded.get_package_state("nvim"))
         loaded.save()
 
+    def test_state_registry_state_filtering(self) -> None:
+        """Verifies filter_by_states, get_midway_packages, and is_package_in_midway_state."""
+        registry = StateRegistry()
+        registry.set_package_state("pkg1", "staging")
+        registry.set_package_state("pkg2", "deploying")
+        registry.set_package_state("pkg3", "installed")
+        registry.set_package_state("pkg4", "staged")
+
+        # Test is_package_in_midway_state
+        self.assertTrue(registry.is_package_in_midway_state("pkg1"))
+        self.assertTrue(registry.is_package_in_midway_state("pkg2"))
+        self.assertFalse(registry.is_package_in_midway_state("pkg3"))
+        self.assertFalse(registry.is_package_in_midway_state("pkg4"))
+        self.assertFalse(registry.is_package_in_midway_state("non_existent"))
+
+        # Test filter_by_states with all packages
+        installed = registry.filter_by_states(["installed"])
+        self.assertEqual(installed, [("pkg3", "installed")])
+
+        # Test filter_by_states with package_names subset
+        staging = registry.filter_by_states(["staging"], package_names=["pkg1", "pkg3"])
+        self.assertEqual(staging, [("pkg1", "staging")])
+
+        # Test get_midway_packages with all packages
+        midway_all = registry.get_midway_packages()
+        self.assertEqual(midway_all, [("pkg1", "staging"), ("pkg2", "deploying")])
+
+        # Test get_midway_packages with package_names subset
+        midway_subset = registry.get_midway_packages(["pkg2", "pkg3"])
+        self.assertEqual(midway_subset, [("pkg2", "deploying")])
+
+
     def test_package_state_dataclass(self) -> None:
         """Verifies the PackageState dataclass attributes and defaults."""
         p_state = PackageState(state="installed", last_deployed="2026-08-17", install_method="copy", deployed_files=[Path("file1"), Path("file2")])

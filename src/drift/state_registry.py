@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, List, Mapping
+from typing import Dict, Optional, List, Mapping, Sequence, Tuple
 from .toml_utils import parse_toml
 from .exceptions import ConfigError
+from .constants import MIDWAY_TRANSACTION_STATES
+
 
 
 @dataclass
@@ -64,10 +66,50 @@ class StateRegistry:
             del self.packages[pkg]
 
     def has_deploying_package(self) -> bool:
-        for pkg_state in self.packages.values():
-            if pkg_state.state == "deploying":
-                return True
-        return False
+        return any(pkg_state.state == "deploying" for pkg_state in self.packages.values())
+
+    def filter_by_states(
+        self,
+        states: Sequence[str],
+        package_names: Optional[Sequence[str]] = None,
+    ) -> List[Tuple[str, str]]:
+        """Filters packages matching any of the specified states.
+
+        Args:
+            states: A sequence of state names to filter by.
+            package_names: Optional subset of package names to check. If None, checks all packages in registry.
+
+        Returns:
+            A list of (package_name, state) tuples for packages matching the states.
+        """
+        states_set = set(states)
+        target_names = package_names if package_names is not None else self.packages.keys()
+        all_packages: List[Tuple[str, str]] = [
+            (pkg, self.packages[pkg].state)
+            for pkg in target_names
+            if pkg in self.packages and self.packages[pkg].state is not None
+        ]
+        return list(filter(lambda item: item[1] in states_set, all_packages))
+
+    def get_midway_packages(
+        self,
+        package_names: Optional[Sequence[str]] = None,
+    ) -> List[Tuple[str, str]]:
+        """Finds packages currently in a midway transaction state ('staging' or 'deploying').
+
+        Args:
+            package_names: Optional subset of package names to check. If None, checks all packages in registry.
+
+        Returns:
+            A list of (package_name, state) tuples for packages in midway transaction states.
+        """
+        return self.filter_by_states(MIDWAY_TRANSACTION_STATES, package_names=package_names)
+
+    def is_package_in_midway_state(self, pkg: str) -> bool:
+        """Checks if a specific package is currently in a midway transaction state."""
+        state = self.get_package_state(pkg)
+        return state in MIDWAY_TRANSACTION_STATES if state is not None else False
+
 
     def save(self) -> None:
         """Saves this state registry to disk using its associated state_file."""

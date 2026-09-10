@@ -573,7 +573,7 @@ class TestStageRepo(unittest.TestCase):
             run_primitive_4_stage_render_to_install(self.workspace_config, [pkg])
         
         self.assertIn("Safety Abort", str(ctx.exception))
-        self.assertIn("currently in 'staging' state", str(ctx.exception))
+        self.assertIn("'pkg_a' (staging)", str(ctx.exception))
 
         # Attempt with force=True - should proceed (and succeed here)
         run_primitive_4_stage_render_to_install(self.workspace_config, [pkg], force=True)
@@ -783,8 +783,43 @@ class TestStageRepo(unittest.TestCase):
         # Staging should raise the mid-fail Safety Abort RuntimeError, NOT DriftDetectedError
         with self.assertRaises(RuntimeError) as ctx:
             run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
-        self.assertIn("Safety Abort: Package 'pkg_a' is currently in 'staging' state", str(ctx.exception))
+        self.assertIn("Safety Abort: Package(s) in midway transaction state:", str(ctx.exception))
+        self.assertIn("'pkg_a' (staging)", str(ctx.exception))
         self.assertIn("drift rollback pkg_a", str(ctx.exception))
+
+    def test_stage_checks_multiple_mid_fail_packages(self) -> None:
+        """Verifies that multiple midway packages are formatted cleanly in safety abort error."""
+        from drift.state_registry import load_state_registry, save_state_registry
+        import subprocess
+
+        pkg_c_src = self.source_dir / "pkg_c"
+        pkg_c_src.mkdir(parents=True, exist_ok=True)
+        (pkg_c_src / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_c"
+        enable_install = true
+        """, encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_c"] = True
+        render_package(self.workspace_config, self.pkg_a_src)
+        render_package(self.workspace_config, pkg_c_src)
+
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@drift.org"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+
+        state_file = self.install_dir / "state.toml"
+        reg = load_state_registry(state_file)
+        reg.set_package_state("pkg_a", "staging")
+        reg.set_package_state("pkg_c", "deploying")
+        save_state_registry(reg)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a", "pkg_c"])
+        err_msg = str(ctx.exception)
+        self.assertIn("Safety Abort: Package(s) in midway transaction state:", err_msg)
+        self.assertIn("drift rollback", err_msg)
+        self.assertIn("pkg_a", err_msg)
+        self.assertIn("pkg_c", err_msg)
 
     def test_load_package_config_from_render_dir_missing_raises_error(self) -> None:
         """Verifies that load_package_config_from_render_dir raises RuntimeError if drift_package.toml is missing."""

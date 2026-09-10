@@ -443,6 +443,32 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(len(res3.deployed_packages), 1)
         self.assertEqual(res3.deployed_packages[0].package, "pkg_a")
 
+    def test_deploy_aborts_on_midway_transaction_state(self) -> None:
+        """Verifies that Stage 1 Sentinel aborts when package is in midway transaction state and suggests rollback."""
+        from drift.state_registry import load_state_registry, save_state_registry
+
+        # 1. Initial deployment
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+
+        # 2. Simulate package in midway 'deploying' state
+        state_file = self.install_dir / "state.toml"
+        state_registry = load_state_registry(state_file)
+        state_registry.set_package_state("pkg_a", state="deploying")
+        save_state_registry(state_registry)
+
+        # 3. Deploy should abort and suggest drift rollback
+        with self.assertRaises(RuntimeError) as context:
+            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        err_msg = str(context.exception)
+        self.assertIn("Package(s) in midway transaction state", err_msg)
+        self.assertIn("drift rollback pkg_a", err_msg)
+
+        # 4. Deploy with --force should bypass the midway check
+        res_force = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
+        self.assertEqual(res_force.status, "SUCCESS")
+
 
 if __name__ == "__main__":
     unittest.main()

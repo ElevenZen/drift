@@ -13,7 +13,12 @@ from typing import List, Optional, Union, Tuple, Set, Sequence, Mapping
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig, load_config_for_install
-from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, STOW_LOCAL_IGNORE_FILE_NAME, LineEnding
+from .constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    MANAGED_CONFIG_FILES,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+    LineEnding,
+)
 from .exceptions import CollisionError, HookExecutionError
 from .ignore import DriftIgnore
 from .lifecycle_hooks import HookExecFlags
@@ -801,8 +806,8 @@ def deploy_one_package(
     ensure_directory_writable(target_dir, metadata.sudo)
     
     # Check if first time before setting state to deploying
-    current_state = state_registry.get_package_state(pkg)
-    if not force and current_state in ("staging", "deploying"):
+    if not force and state_registry.is_package_in_midway_state(pkg):
+        current_state = state_registry.get_package_state(pkg)
         raise RuntimeError(
             f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
             f"indicating a previous operation failed midway. "

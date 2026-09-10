@@ -89,9 +89,8 @@ def run_primitive_8_rollback_recovery(
     if force:
         packages_to_rollback = set(discovered)
     else:
-        packages_to_rollback = { pkg for pkg in discovered
-                                if state_registry.get_package_state(pkg)
-                                    in ["staging", "deploying"]}
+        midway_pkgs = state_registry.get_midway_packages(discovered)
+        packages_to_rollback = {pkg for pkg, _ in midway_pkgs}
         packages_state_wrong = set(discovered) - packages_to_rollback
         if len(packages_state_wrong) > 0:
             raise RuntimeError(

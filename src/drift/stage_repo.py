@@ -3,11 +3,17 @@
 import datetime
 import shutil
 import logging
+import shlex
 from pathlib import Path
 from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
 from dataclasses import dataclass, field
 
-from .constants import PACKAGE_CONFIG_FILE_NAME, MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME, STOW_LOCAL_IGNORE_FILE_NAME
+from .constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    MANAGED_CONFIG_FILES,
+    DRIFT_IGNORE_FILE_NAME,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+)
 from .workspace_config import WorkspaceConfig
 from .package_config import (
     load_package_config_rendered,
@@ -303,14 +309,16 @@ def run_primitive_4_stage_render_to_install(
     state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)
     if not force:
-        for pkg in pkg_metadata.keys():
-            current_state = state_registry.get_package_state(pkg)
-            if current_state in ("staging", "deploying"):
-                raise RuntimeError(
-                    f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
-                    f"indicating a previous operation failed midway. "
-                    f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
-                )
+        midway_pkgs = state_registry.get_midway_packages(list(pkg_metadata.keys()))
+        if midway_pkgs:
+            pkg_names = [pkg for pkg, _ in midway_pkgs]
+            pkg_cmd_str = shlex.join(pkg_names)
+            details = ", ".join(f"'{p}' ({st})" for p, st in midway_pkgs)
+            raise RuntimeError(
+                f"Safety Abort: Package(s) in midway transaction state: {details}, "
+                f"indicating a previous operation failed midway. "
+                f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying."
+            )
 
         # Check every package folder in install/ if it has uncommitted local modifications.
         # If so and the force flag is not present, raise a DriftDetectedError.
