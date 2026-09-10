@@ -43,8 +43,6 @@ Layers (ordered bottom-up by dependency):
 ===============================================================================
 """
 
-import datetime
-import shutil
 import logging
 import shlex
 from pathlib import Path
@@ -55,25 +53,23 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     MANAGED_CONFIG_FILES,
     DRIFT_IGNORE_FILE_NAME,
-    STOW_LOCAL_IGNORE_FILE_NAME,
 )
 from .workspace_config import WorkspaceConfig
 from .package_config import (
-    load_package_config_rendered,
     load_package_config_from_render_dir,
     PackageConfig,
 )
 from .file_utils import (
-    file_contents_differ,
     backup_and_delete_one_file,
     remove_file_or_dir,
     atomic_copy_file,
     copy_file_mode_with_sudo,
 )
+from . import file_utils
 from .folder_diff import compare_folders, FolderDiff
 from .ignore import DriftIgnore
 from .git_utils import has_uncommitted_modifications
-from .state_registry import load_state_registry, save_state_registry, StateRegistry
+from .state_registry import load_state_registry, StateRegistry
 from .exceptions import DriftDetectedError
 
 logger = logging.getLogger(__name__)
@@ -159,9 +155,7 @@ def copy_ignore_and_config_files(
     # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
     render_ignore = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
     if render_ignore.is_file():
-        install_ignore = install_pkg_dir / DRIFT_IGNORE_FILE_NAME
-        install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(render_ignore, install_ignore)
+        atomic_copy_file(render_ignore, install_pkg_dir / DRIFT_IGNORE_FILE_NAME)
 
     # 2. Create physical .stow-local-ignore
     ignore_handler.create_stow_ignore_file(install_pkg_dir)
@@ -171,9 +165,7 @@ def copy_ignore_and_config_files(
     if not render_config.is_file():
         raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")
 
-    install_config = install_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-    install_pkg_dir.mkdir(parents=True, exist_ok=True)
-    atomic_copy_file(render_config, install_config)
+    atomic_copy_file(render_config, install_pkg_dir / PACKAGE_CONFIG_FILE_NAME)
 
 
 # =====================================================================
@@ -280,7 +272,6 @@ def apply_package_stage_changes(
             dst.mkdir(parents=True, exist_ok=True)
             continue
         logger.info(f"📦 Adding: {pkg}/{rel_file}")
-        dst.parent.mkdir(parents=True, exist_ok=True)
         atomic_copy_file(src, dst)
 
     # C. Process Modifications
@@ -291,7 +282,6 @@ def apply_package_stage_changes(
             dst.mkdir(parents=True, exist_ok=True)
             continue
         logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
-        dst.parent.mkdir(parents=True, exist_ok=True)
         if all_diff.is_mode_only_change(rel_file, render_pkg_dir, install_pkg_dir):
             copy_file_mode_with_sudo(src, dst, sudo=False)
         else:
@@ -322,13 +312,12 @@ def stage_modified_packages(
         return
 
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
-    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage.keys())
+    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage)
     if needs_sudo:
-        from .file_utils import check_sudo_privilege
-        check_sudo_privilege(True)
+        file_utils.check_sudo_privilege(True)
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
-    for pkg in packages_to_stage.keys():
+    for pkg in packages_to_stage:
         metadata = pkg_metadata[pkg]
         state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
     state_registry.save()
@@ -345,7 +334,7 @@ def stage_modified_packages(
         )
 
     # 4. Set state of packages with changes to "staged" after successful staging
-    for pkg in packages_to_stage.keys():
+    for pkg in packages_to_stage:
         state_registry.set_package_state(pkg, "staged")
     state_registry.save()
 
@@ -455,11 +444,8 @@ def run_primitive_4_stage_render_to_install(
             state_registry=state_registry,
         )
 
-    # 5. Prepare a dictionary of packages that had actual changes for return value
-    changed_package_map = {
-        pkg: changes for pkg, (changes, _) in computed_diffs.items()
-        if changes.has_changes
-    }
+    # 5. Extract dictionary of changed packages for return value
+    changed_package_map = {pkg: changes for pkg, (changes, _) in packages_to_stage.items()}
 
     # 6. Prepare summary of changes for logging
     if changed_package_map:
