@@ -1,7 +1,74 @@
-"""Primitive 7 & Stage 1: Bidirectional Drift Adoption & Workspace Sync."""
+"""Primitive 7 & Stage 1: Bidirectional Drift Adoption & Workspace Sync.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 5: Primitive Entry Point
+    run_primitive_adopt_drifts(workspace_config, package_names, interactive, accept_conflicts, force, dry_run, flags)
+        1. Discover Drifted Packages:
+            get_drifted_packages [Layer 1]
+        2. Cleanliness Verification:
+            check_source_cleanliness [Layer 1]
+        3. Single-Package Processing:
+            adopt_one_package_drifts [Layer 4]
+        4. State Synchronization & Commit:
+            commit_repo_changes (for install/ repo)
+
+Layer 4: Single-Package Drift Adoption
+    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, dry_run, flags)
+        1. Pre-stage and Drift Discovery:
+            git add --all <pkg>
+            get_package_drifts [Layer 1]
+        2. Dry-Run Reporting (if dry_run=True):
+            dry_run_adopt [Layer 3]
+        3. Pre-Source Hook:
+            trigger_pre_source_hook
+        4. Process Drift Categories (Additions, Deletions, Renames, Modifications):
+            handle_single_addition [Layer 3]
+            handle_single_deletion [Layer 3]
+            handle_single_rename [Layer 3]
+            handle_single_modification [Layer 3]
+        5. Unstage Skipped Files:
+            git restore --staged -- <skipped>
+
+Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
+    handle_single_addition
+    handle_single_deletion
+    handle_single_rename -> handle_rename_non_interactive / handle_rename_interactive
+    handle_single_modification -> handle_modification_non_interactive / handle_modification_interactive
+
+Layer 2: Single-File Reconciliation Actions
+    adopt_addition
+    ignore_addition
+    adopt_deletion
+    adopt_modification
+    adopt_rename
+    fallback_over_render
+    fallback_conflict_editor
+    fallback_side_by_side
+
+Layer 1: Inspection & Git Patch Primitives
+    get_drifted_packages
+    check_source_cleanliness
+    get_package_drifts
+    generate_unified_patch
+    generate_adjusted_patch
+    check_patch_conflicts
+    apply_source_patch
+    test_file_conflict
+    resolve_source_file_path
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Inspection & Git Patch Primitives
+    Layer 2: Single-File Reconciliation Actions
+    Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
+    Layer 4: Single-Package Drift Adoption
+    Layer 5: Public Primitive Entry Point
+===============================================================================
+"""
 
 import logging
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,13 +76,11 @@ from typing import List, Optional, Tuple, Sequence
 
 from .workspace_config import WorkspaceConfig
 from .render_engine_config import RenderEngineRegistry
-from .constants import CONFIG_DIR_NAME
+from .constants import DRIFT_IGNORE_FILE_NAME
 from .result_models import AdoptResult, PackageAdoptResult
 from .git_utils import (
     get_git_status_porcelain,
     has_uncommitted_modifications,
-    is_git_tracked,
-    run_command
 )
 from .file_utils import remove_file_or_dir, atomic_copy_file
 from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
@@ -23,6 +88,10 @@ from .editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# Layer 1: Inspection & Git Patch Primitives
+# =====================================================================
 
 def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     """Scans the install/ repository status to identify which packages have uncommitted drifts."""
@@ -40,7 +109,7 @@ def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     source_packages = set(workspace_config.get_package_names_from_source_dir())
 
     drifted = (changed_names & installed_packages) & source_packages
-    return sorted(list(drifted))
+    return sorted(drifted)
 
 
 def check_source_cleanliness(workspace_config: WorkspaceConfig, pkg: str, force: bool) -> None:
@@ -117,102 +186,6 @@ def generate_unified_patch(install_base: Path,
         return ""
 
 
-def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
-    """Runs a dry-run of patch to determine if there are conflicts applying the patch to src_file."""
-    if not patch_content.strip():
-        return False
-    cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", str(src_file)]
-    try:
-        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
-        return False
-    except subprocess.CalledProcessError:
-        return True
-
-
-def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: bool = False) -> bool:
-    """Applies a patch to a source file, supporting merge markers if accept_conflicts is True."""
-    cmd = ["patch", "--no-backup-if-mismatch"]
-    if accept_conflicts:
-        cmd.append("--merge")
-    cmd.append(str(src_file))
-    
-    try:
-        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
-        # Clean up any rejected file if generated
-        rej_file = src_file.with_suffix(src_file.suffix + ".rej")
-        if rej_file.exists():
-            rej_file.unlink()
-        return True
-    except subprocess.CalledProcessError:
-        rej_file = src_file.with_suffix(src_file.suffix + ".rej")
-        if rej_file.exists():
-            rej_file.unlink()
-        return False
-
-
-def test_file_conflict(src_file: Path, install_file: Path, install_base: Path, pkg_rel_path: Path) -> bool:
-    """Evaluates patch conflicts for a single modified file."""
-    patch_content = generate_unified_patch(install_base, pkg_rel_path)
-    return check_patch_conflicts(src_file, patch_content)
-
-
-def resolve_source_file_path(
-    render_engines: RenderEngineRegistry,
-    src_dir_to_render: Path,
-    rel_path: Path
-) -> Optional[Path]:
-    """Resolves the physical file path inside src_dir_to_render using find_source_file_for_rendered_names."""
-    match_info = render_engines.find_source_file_for_rendered_names(
-        src_dir_to_render / rel_path.parent,
-        [rel_path.name]
-    )
-    if match_info:
-        return match_info.path
-    return None
-
-
-# --- Section F: Reconciling Sub-Actions ---
-
-def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
-    """Copies a wild host-side added file into the declarative source folder."""
-    dest = pkg_dir / rel_path
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    atomic_copy_file(install_pkg_dir / rel_path, dest)
-
-
-def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
-    """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
-    install_file = install_pkg_dir / rel_path
-    if install_file.exists() or install_file.is_symlink():
-        remove_file_or_dir(install_file)
-            
-    install_base = install_pkg_dir.parent
-    rel_install_base = Path(install_pkg_dir.name) / rel_path
-    subprocess.run(["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)], capture_output=True)
-
-    # Append pattern to .drift_ignore
-    ignore_file = pkg_dir / ".drift_ignore"
-    pattern = rel_path.as_posix()
-    content = f"\n{pattern}\n"
-    with open(ignore_file, "a", encoding="utf-8") as f:
-        f.write(content)
-
-
-def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path) -> None:
-    """Symmetrically deletes the corresponding file from declarative source folder."""
-    src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
-    if src_file and (src_file.exists() or src_file.is_symlink()):
-        remove_file_or_dir(src_file)
-
-
-def adopt_modification(src_file: Path, patch_content: str) -> bool:
-    """Directly applies clean patch or overwrites the modified configuration file."""
-    success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
-    if not success:
-        logger.error(f"Failed to apply patch to template file {src_file.name}. Please check manually.")
-    return success
-
-
 def generate_adjusted_patch(
     install_base: Path,
     pkg: str,
@@ -246,6 +219,107 @@ def generate_adjusted_patch(
             continue
         adjusted_lines.append(line)
     return "\n".join(adjusted_lines) + "\n"
+
+
+def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
+    """Runs a dry-run of patch to determine if there are conflicts applying the patch to src_file."""
+    if not patch_content.strip():
+        return False
+    cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", str(src_file)]
+    try:
+        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
+        return False
+    except subprocess.CalledProcessError:
+        return True
+
+
+def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: bool = False) -> bool:
+    """Applies a patch to a source file, supporting merge markers if accept_conflicts is True."""
+    cmd = ["patch", "--no-backup-if-mismatch"]
+    if accept_conflicts:
+        cmd.append("--merge")
+    cmd.append(str(src_file))
+    
+    try:
+        subprocess.run(cmd, input=patch_content, capture_output=True, text=True, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+    finally:
+        rej_file = src_file.with_suffix(src_file.suffix + ".rej")
+        if rej_file.exists():
+            rej_file.unlink()
+
+
+def test_file_conflict(src_file: Path, install_file: Path, install_base: Path, pkg_rel_path: Path) -> bool:
+    """Evaluates patch conflicts for a single modified file."""
+    patch_content = generate_unified_patch(install_base, pkg_rel_path)
+    return check_patch_conflicts(src_file, patch_content)
+
+
+def resolve_source_file_path(
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    rel_path: Path
+) -> Optional[Path]:
+    """Resolves the physical file path inside src_dir_to_render using find_source_file_for_rendered_names."""
+    match_info = render_engines.find_source_file_for_rendered_names(
+        src_dir_to_render / rel_path.parent,
+        [rel_path.name]
+    )
+    if match_info:
+        return match_info.path
+    return None
+
+
+# =====================================================================
+# Layer 2: Single-File Reconciliation Actions
+# =====================================================================
+
+def _sync_file_mode(src_file: Path, install_file: Path) -> None:
+    """Synchronizes file mode/permissions from install_file onto src_file."""
+    try:
+        src_file.chmod(install_file.stat().st_mode)
+    except Exception:
+        pass
+
+
+def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
+    """Copies a wild host-side added file into the declarative source folder."""
+    dest = pkg_dir / rel_path
+    atomic_copy_file(install_pkg_dir / rel_path, dest)
+
+
+def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
+    """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
+    install_file = install_pkg_dir / rel_path
+    if install_file.exists() or install_file.is_symlink():
+        remove_file_or_dir(install_file)
+            
+    install_base = install_pkg_dir.parent
+    rel_install_base = Path(install_pkg_dir.name) / rel_path
+    subprocess.run(["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)], capture_output=True)
+
+    # Append pattern to .drift_ignore
+    ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
+    pattern = rel_path.as_posix()
+    with ignore_file.open("a", encoding="utf-8") as f:
+        f.write(f"\n{pattern}\n")
+
+
+def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path) -> None:
+    """Symmetrically deletes the corresponding file from declarative source folder."""
+    src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
+    if src_file and (src_file.exists() or src_file.is_symlink()):
+        remove_file_or_dir(src_file)
+
+
+def adopt_modification(src_file: Path, patch_content: str) -> bool:
+    """Directly applies clean patch or overwrites the modified configuration file."""
+    success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
+    if not success:
+        logger.error(f"Failed to apply patch to template file {src_file.name}. Please check manually.")
+    return success
 
 
 def adopt_rename(
@@ -305,7 +379,9 @@ def fallback_side_by_side(src_file: Path, install_file: Path) -> bool:
         return False
 
 
-# --- The Dry-Run Engine ---
+# =====================================================================
+# Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
+# =====================================================================
 
 def dry_run_adopt(
     render_engines: RenderEngineRegistry,
@@ -358,8 +434,6 @@ def dry_run_adopt(
             else:
                 logger.info(f"       ~ {file} [Static Overwrite of: {src_file.name}]")
 
-
-# --- The Main Dispatcher ---
 
 def handle_single_addition(
     render_engines: RenderEngineRegistry,
@@ -606,10 +680,7 @@ def handle_modification_non_interactive(
             has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
             if has_content_hunks:
                 adopt_modification(src_file, patch_content)
-            try:
-                src_file.chmod(install_file.stat().st_mode)
-            except Exception:
-                pass
+            _sync_file_mode(src_file, install_file)
         else:
             atomic_copy_file(install_file, src_file)
         return True
@@ -617,10 +688,7 @@ def handle_modification_non_interactive(
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into file: '{src_file.name}'")
             apply_source_patch(src_file, patch_content, accept_conflicts=True)
-            try:
-                src_file.chmod(install_file.stat().st_mode)
-            except Exception:
-                pass
+            _sync_file_mode(src_file, install_file)
             return True
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto file '{src_file.name}'. Skipping.")
@@ -650,10 +718,7 @@ def handle_modification_interactive(
                 has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
                 if has_content_hunks:
                     adopt_modification(src_file, patch_content)
-                try:
-                    src_file.chmod(install_file.stat().st_mode)
-                except Exception:
-                    pass
+                _sync_file_mode(src_file, install_file)
                 return True
             elif choice == "2":
                 return True
@@ -742,6 +807,10 @@ def handle_single_modification(
             src_file, install_file, install_pkg_dir, rel_path, patch_content, is_templated, has_conflict
         )
 
+
+# =====================================================================
+# Layer 4: Single-Package Drift Adoption
+# =====================================================================
 
 def adopt_one_package_drifts(
     workspace_config: WorkspaceConfig,
@@ -857,6 +926,10 @@ def adopt_one_package_drifts(
         status="FAILED" if skipped_files else "SUCCESS",
     )
 
+
+# =====================================================================
+# Layer 5: Public Primitive Entry Point
+# =====================================================================
 
 def run_primitive_adopt_drifts(
     workspace_config: WorkspaceConfig,
