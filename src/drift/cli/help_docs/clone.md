@@ -29,10 +29,10 @@ drift clone https://github.com/username/dotfiles.git --json
 
 ### Case A: Cloning an Existing Drift Workspace
 When cloning an existing Drift repository:
-1. Drift runs `git clone` to fetch your declarative source repository.
+1. Drift runs `git clone` with real-time output streaming to fetch your declarative source repository (streaming is cleanly suppressed when `--json` is supplied to ensure valid JSON output).
 2. Drift automatically executes a non-destructive repair (`repair_drift_workspace`) to reconstruct runtime state databases that are intentionally omitted from version control:
-   - Initializes the isolated `render/` sandbox Git repository.
-   - Initializes the `install/` local state Git repository and `install/state.toml`.
+   - Initializes the isolated `render/` sandbox Git repository and `.gitignore`.
+   - Initializes the `install/` local state Git repository, `install/.gitignore`, and `install/state.toml`.
    - Restores `install/.stow-local-ignore` and root `.gitignore` isolation rules.
    - Generates local configuration templates (`config/drift_workspace.local.toml`, `config/secrets.env`).
 3. Drift outputs next-step guidance for configuring machine-specific overrides before deploying.

@@ -38,7 +38,7 @@ audits active system drifts, and executes deployments using atomic, transactiona
 *   `drift uninstall [pkgs]`  Removes stowed/copied mappings on host paths, restoring backups.
 *   `drift rollback [pkgs]`   Resets staging/deploy midway failures to restore a stable state.
 *   `drift status`            Audits and inspects current template, staging, and system-drift status.
-*   `drift diff`              Compares and visualizes template, deployment, or active system layers.
+*   `drift diff`              Compares and visualizes template, deployment, or active system layers (-y for visual diff).
 *   `drift gc`                Purges orphan packages and zombie database directories.
 *   `drift repair`            Audits and self-heals workspace structure and Git databases.
 *   `drift complete [shell]`  Generates or installs interactive shell tab-completions.

@@ -1,4 +1,4 @@
-"""Primitive 10: Change Visualization (Diff A, B, and Δ / Pending).
+"""Primitive 15: Change Visualization (Diff A, B, and Δ / Pending).
 
 ===============================================================================
 Architecture & Call Chain Overview

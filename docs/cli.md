@@ -119,7 +119,8 @@ Provides deep comparisons between configuration layers:
 *   **`drift diff [packages...] --template` (or `-t`, Diff A)**: Visualizes Template Evolution (`src/` vs `render/`).
 *   **`drift diff [packages...] --system` (or `-s`, Diff B)**: Visualizes Active System Drift (`System` vs `install/`).
 *   **`drift diff [packages...] --stat`**: Shows a concise diffstat summary of file change counts.
-*   **`drift diff [packages...] --side-by-side` (or `-y`)**: Displays side-by-side vertical terminal diff comparisons.
+*   **`drift diff [packages...] --side-by-side` (or `-y`)**: Launches an interactive visual diff session in your configured editor (`$VISUAL`, `$EDITOR`, Neovim `nvim -p -d`, Vim `vim -p -d`, VS Code `code --wait --diff`, or GNU Emacs `ediff`) comparing changed file pairs across multiple tabs/windows.
+*   **Diff Filtering**: Excludes internal synthetic artifacts (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`) while cleanly displaying user modifications to package metadata (`drift_package.toml`, `.drift_ignore`).
 *   **`--json`**: Returns a typed `DiffResult` containing per-package added, modified, and deleted files.
 
 ---
@@ -208,6 +209,7 @@ Audits and self-heals damaged, missing, or partially-initialized workspace compo
 ### L. Workspace Cloning & Bootstrapping: `drift clone <repository> [destination] [--branch] [--depth] [--json]`
 Clones a remote or local Git repository and immediately reconstructs and heals the workspace for deployment.
 *   **Command Signature**: `drift clone <repository> [destination] [--branch / -b <branch>] [--depth <depth>] [--no-repair] [--json]`
+*   **Real-Time Output Streaming**: Progress from `git clone` is streamed in real time to the terminal. When `--json` is active, streaming output is cleanly suppressed to guarantee pure, machine-readable JSON output.
 *   **Autonomous Bootstrap Healing**:
     - **Existing Drift Workspace**: Reconstructs untracked runtime databases (`render/` and `install/` Git repos, `state.toml`, `.gitignore`, `config/secrets.env`).
     - **Legacy Dotfiles Repository**: Migrates root dotfiles into `src/<pkg>/`, generates `drift_package.toml` with `stow` install method, and registers in `drift_workspace.toml`.

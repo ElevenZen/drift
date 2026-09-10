@@ -112,8 +112,9 @@ Drift strictly enforces that **only one `.drift_ignore` file** exists per packag
 *   Nested ignore files in subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore`) are prohibited to maintain a clear, single source of ignore truth.
 *   Managed metadata files (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`, `drift_package.local.toml`) are automatically protected and ignored from host linking.
 
-### 📝 Automated `.stow-local-ignore` Generation
-During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns together with `MANAGED_CONFIG_FILES` into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
+### 📝 Automated `.stow-local-ignore` & Sub-Repo `.gitignore` Generation
+*   **`.stow-local-ignore`**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns together with `MANAGED_CONFIG_FILES` into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
+*   **Sub-Repo `.gitignore`**: Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` databases to exclude synthetic files (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`: `*~`, `*#*#`, `*.swp`, `*.DS_Store`, etc.), keeping database Git repositories clean.
 
 ---
 

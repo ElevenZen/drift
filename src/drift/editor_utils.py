@@ -15,28 +15,29 @@ SUPPORTED_EDITORS = ("nvim", "vim", "code", "codium", "code-oss", "code-insiders
 
 def get_configured_editor() -> str:
     """
-    Returns the configured $EDITOR command string.
-    Raises RuntimeError if $EDITOR is unset or empty.
+    Returns the configured editor command string from $VISUAL or $EDITOR.
+    Checks $VISUAL first (for visual/full-screen editors), falling back to $EDITOR.
+    Raises RuntimeError if both are unset or empty.
     """
-    editor_env = os.environ.get("EDITOR", "").strip()
+    editor_env = os.environ.get("VISUAL", "").strip() or os.environ.get("EDITOR", "").strip()
     if not editor_env:
         raise RuntimeError(
-            "Environment variable $EDITOR is not set.\n"
-            "Please set $EDITOR (e.g. 'export EDITOR=nvim' or 'export EDITOR=code') to use editor features."
+            "Environment variable $VISUAL or $EDITOR is not set.\n"
+            "Please set $VISUAL or $EDITOR (e.g. 'export VISUAL=nvim' or 'export EDITOR=code') to use editor features."
         )
     return editor_env
 
 
 def parse_editor_command(editor_cmd: str) -> Tuple[List[str], str]:
     """
-    Parses the configured $EDITOR string into a list of command tokens and the editor base name.
+    Parses the configured $VISUAL / $EDITOR string into a list of command tokens and the editor base name.
     Uses shlex.split to properly parse quotes, spaces, and flags.
     """
     tokens = shlex.split(editor_cmd)
     if not tokens:
         raise RuntimeError(
-            "Environment variable $EDITOR is invalid or empty.\n"
-            "Please set $EDITOR (e.g. 'export EDITOR=nvim' or 'export EDITOR=code') to use editor features."
+            "Environment variable $VISUAL or $EDITOR is invalid or empty.\n"
+            "Please set $VISUAL or $EDITOR (e.g. 'export VISUAL=nvim' or 'export EDITOR=code') to use editor features."
         )
     editor_name = Path(tokens[0]).name.lower()
     return tokens, editor_name
@@ -44,9 +45,9 @@ def parse_editor_command(editor_cmd: str) -> Tuple[List[str], str]:
 
 def launch_single_file_editor(file_path: Path) -> None:
     """
-    Opens a single file in the configured $EDITOR.
+    Opens a single file in the configured editor ($VISUAL or $EDITOR).
     Supports nvim, vim, code / codium / code-oss / code-insiders (--wait), emacs, and generic executable editors.
-    Raises RuntimeError if $EDITOR is unset or invalid.
+    Raises RuntimeError if neither $VISUAL nor $EDITOR is set or invalid.
     """
     editor_cmd = get_configured_editor()
     tokens, editor_name = parse_editor_command(editor_cmd)

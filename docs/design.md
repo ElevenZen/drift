@@ -241,6 +241,27 @@ Audits and self-heals workspace structure, repositories, configuration templates
 2.  Rebuilds `.gitignore` and `install/.stow-local-ignore` isolation rules.
 3.  Generates default templates for `config/drift_workspace.local.toml` and `config/secrets.env` if missing.
 
+### Primitive 15: Change Visualization & Differential Inspection [High-level: `drift diff`]
+Compares configuration layers across templates, sandbox compilations, state databases, and active host files:
+1.  **Diff Vectors**:
+    *   **Diff Δ (Pending Delta, Default)**: Compares `render/` sandbox against `install/` state DB to show exactly what changes will be applied to the system.
+    *   **Diff A (Template Evolution, `-t` / `--template`)**: Compares `src/` declarations against compiled `render/` output.
+    *   **Diff B (Active System Drift, `-s` / `--system`)**: Compares active host files against `install/` state DB after reverse-sync.
+2.  **Five-Layer Architecture (`workspace_diff.py`)**:
+    *   **Layer 1 (Worklist Classification)**: `get_pending_delta_worklist` parses `install/state.toml` and compares rendered vs installed files.
+    *   **Layer 2 (Diff Pair Collectors)**: `collect_repo_diff_pairs` and `collect_pending_delta_pairs` extract side-by-side file pairs (generating synthetic empty temp files for added/deleted items).
+    *   **Layer 3 (Terminal Git Diff Runners)**: `run_repo_diff` and `run_pending_delta_diff` invoke `git diff --no-index` with `exclude_patterns = DEFAULT_DIFF_EXCLUDE_PATTERNS`.
+    *   **Layer 4 (Diff Strategy Dispatchers)**: `run_side_by_side_diff` and `run_terminal_diff` route execution based on `-y` / `--side-by-side`.
+    *   **Layer 5 (Primitive Entry Point)**: `run_primitive_diff` coordinates state synchronization and dispatches to visual or terminal mode.
+3.  **Interactive Side-by-Side Visual Diffing (`-y` / `--side-by-side`)**:
+    *   Automatically probes user environment (`$VISUAL`, `$EDITOR`, Neovim, Vim, VS Code, GNU Emacs).
+    *   Formulates editor-specific invocation flags (e.g. `nvim -p -d fileA fileB`, `vim -p -d fileA fileB`, `code --wait --diff fileA fileB`, `emacs -nw --eval '(ediff-files ...)'`) across multi-tab split viewports.
+4.  **Pathspec Exclusion Rules**:
+    *   Uses `DEFAULT_DIFF_EXCLUDE_PATTERNS` (`:(exclude)*<pattern>*`) to filter internal synthetic artifacts (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temp files (`TEMPORARY_FILE_PATTERNS`), while preserving user-authored package configuration modifications (`drift_package.toml`, `.drift_ignore`).
+
+### Primitive 16: Workspace Status Inspection [High-level: `drift status`]
+Aggregates and audits current workspace alignment across three distinct dimensions (Template Evolution `[A]`, Active System Drift `[B]`, and Staged Pending Delta `[Δ]`), providing instant health and drift visibility.
+
 ---
 
 ## 4. User-Facing Operations (CLI Overview)
@@ -687,6 +708,17 @@ Both `stow` and `copy` deployment strategies must natively respect ignore files 
     *   *Example*: `install/shell/dot-bashrc` translates to `~/.bashrc`.
     *   *Example*: `install/nvim/dot-config/nvim/` translates to `~/.config/nvim/`.
     *   This translation is enforced symmetrically across both `stow` and `copy` installation methods.
+
+3.  **Sub-Repository Isolation & Internal `.gitignore` Automation**:
+    *   To prevent internal synthetic artifacts and transient editor files from dirtying the database Git trees, Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` sub-repositories (`DEFAULT_SUBREPO_GITIGNORE_CONTENT`).
+    *   **Ignored Patterns**:
+        - Synthetic files: `.stow-local-ignore*`, `.gitignore*`
+        - Editor & OS temporary artifacts (`TEMPORARY_FILE_PATTERNS`): `*~`, `*#*#`, `*.#*`, `*.sw[a-p]`, `*.swp`, `*.swo`, `*.un~`, `*.DS_Store*`, `*Thumbs.db*`
+    *   This ensures that running `git status` inside `render/` or `install/` reports pure package deltas without clutter from editor swap files or Drift's internal lockfiles.
+
+4.  **Forbidden Package Names & Workspace Safety Guard**:
+    *   To protect the internal architecture and prevent package paths from colliding with internal Git databases or configuration tables, package names are strictly validated against `FORBIDDEN_PACKAGE_NAMES` (`.git`, `render`, `install`, `state`, `backup`, `config`, `src`).
+    *   Attempting to create, stage, or deploy a package matching a forbidden name triggers immediate validation aborts.
 
 ### B. Naming Convention for Templates (IDE & LSP Friendly)
 To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax highlighting, linting, autocomplete) for template files within editors (such as VSCode, Neovim, or Emacs), the system enforces a strict suffix naming convention:

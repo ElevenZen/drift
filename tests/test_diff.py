@@ -299,7 +299,7 @@ class TestDiff(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
                 run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
-            self.assertIn("Environment variable $EDITOR is not set", str(ctx.exception))
+            self.assertIn("Environment variable $VISUAL or $EDITOR is not set", str(ctx.exception))
 
 
     def test_diff_excludes_temporary_files_in_pending(self) -> None:

@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-666%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-670%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -19,7 +19,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
 * 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
-* 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
+* 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
 * 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, Fish, and Nushell** with rich inline documentation hints and dynamic workspace package discovery.
 * 📦 **Modular & Pluggable**: Pure standard-library core, customizable render engines with DAG dependency piping, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
@@ -379,7 +379,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
 | `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |
-| `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers. |
+| `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers (supports `-y` / `--side-by-side` editor diffing). |
 | `drift gc` | Purges orphan packages and zombie database directories in `render/` and `install/`. |
 | `drift repair` | Audits and self-heals workspace structure, repositories, config templates, and secrets. |
 | `drift complete [<shell>]` | Generates or installs native interactive shell tab-completion scripts (Bash, Zsh, Fish). |
@@ -535,6 +535,18 @@ Drift executes all lifecycle hooks with predictable working directories and auto
   # Then resume normal deployment:
   drift deploy
   ```
+
+### 10. Launching Visual Side-by-Side Diffs in Your Editor
+* **Q**: How do I review diffs side-by-side in my terminal editor or GUI editor (like Neovim, Vim, VS Code, or GNU Emacs)?
+* **A**: Pass **`-y`** or **`--side-by-side`** to `drift diff`:
+  ```bash
+  # Side-by-side visual diff of pending deployments:
+  drift diff -y
+
+  # Visual diff of active system drift:
+  drift diff -s -y nvim
+  ```
+  Drift automatically detects `$VISUAL` / `$EDITOR` (or finds `nvim`, `vim`, `code`, `emacs`) and opens changed file pairs in side-by-side split viewports across multiple tabs/windows.
 
 👉 Run `drift help faq` for more tips and topic manuals.
 

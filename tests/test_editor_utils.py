@@ -18,21 +18,28 @@ from drift.editor_utils import (
 class TestEditorUtils(unittest.TestCase):
 
     def test_get_configured_editor_success(self) -> None:
-        """Verifies get_configured_editor returns the EDITOR env var when set."""
-        with patch.dict(os.environ, {"EDITOR": "nvim -u NONE"}):
+        """Verifies get_configured_editor returns the EDITOR or VISUAL env var when set."""
+        with patch.dict(os.environ, {"EDITOR": "nvim -u NONE", "VISUAL": ""}, clear=True):
             self.assertEqual(get_configured_editor(), "nvim -u NONE")
 
+        with patch.dict(os.environ, {"VISUAL": "code --wait", "EDITOR": ""}, clear=True):
+            self.assertEqual(get_configured_editor(), "code --wait")
+
+        # VISUAL takes precedence over EDITOR
+        with patch.dict(os.environ, {"VISUAL": "nvim", "EDITOR": "vim"}, clear=True):
+            self.assertEqual(get_configured_editor(), "nvim")
+
     def test_get_configured_editor_unset_raises_error(self) -> None:
-        """Verifies get_configured_editor raises RuntimeError if EDITOR is unset or empty."""
+        """Verifies get_configured_editor raises RuntimeError if both VISUAL and EDITOR are unset or empty."""
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
                 get_configured_editor()
-            self.assertIn("Environment variable $EDITOR is not set", str(ctx.exception))
+            self.assertIn("Environment variable $VISUAL or $EDITOR is not set", str(ctx.exception))
 
-        with patch.dict(os.environ, {"EDITOR": "   "}):
+        with patch.dict(os.environ, {"VISUAL": "   ", "EDITOR": "   "}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
                 get_configured_editor()
-            self.assertIn("Environment variable $EDITOR is not set", str(ctx.exception))
+            self.assertIn("Environment variable $VISUAL or $EDITOR is not set", str(ctx.exception))
 
     def test_parse_editor_command_with_quotes_and_flags(self) -> None:
         """Verifies parse_editor_command uses shlex to parse quoted arguments and flags."""
@@ -52,7 +59,7 @@ class TestEditorUtils(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0)
         file_path = Path("/tmp/test.txt")
 
-        with patch.dict(os.environ, {"EDITOR": "nvim"}):
+        with patch.dict(os.environ, {"EDITOR": "nvim", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
             mock_run.assert_called_once_with(["nvim", str(file_path)], check=True)
 
@@ -62,12 +69,12 @@ class TestEditorUtils(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0)
         file_path = Path("/tmp/test.txt")
 
-        with patch.dict(os.environ, {"EDITOR": "code"}):
+        with patch.dict(os.environ, {"EDITOR": "code", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
             mock_run.assert_called_once_with(["code", "--wait", str(file_path)], check=True)
 
         mock_run.reset_mock()
-        with patch.dict(os.environ, {"EDITOR": "/usr/bin/codium"}):
+        with patch.dict(os.environ, {"EDITOR": "/usr/bin/codium", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
             mock_run.assert_called_once_with(["/usr/bin/codium", "--wait", str(file_path)], check=True)
 
@@ -75,7 +82,7 @@ class TestEditorUtils(unittest.TestCase):
     def test_launch_single_file_editor_missing_binary(self, mock_run: MagicMock) -> None:
         """Verifies launch_single_file_editor handles missing binary gracefully."""
         mock_run.side_effect = FileNotFoundError("Executable not found")
-        with patch.dict(os.environ, {"EDITOR": "non_existent_editor"}):
+        with patch.dict(os.environ, {"EDITOR": "non_existent_editor", "VISUAL": ""}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
                 launch_single_file_editor(Path("/tmp/test.txt"))
             self.assertIn("not found", str(ctx.exception))
@@ -174,29 +181,31 @@ class TestEditorUtils(unittest.TestCase):
         """Verifies launch_side_by_side_editor dispatches to appropriate editor adapters."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
 
-        with patch.dict(os.environ, {"EDITOR": "nvim"}):
+        with patch.dict(os.environ, {"EDITOR": "nvim", "VISUAL": ""}, clear=True):
             launch_side_by_side_editor([p1])
             mock_run.assert_called_once()
 
         mock_run.reset_mock()
-        with patch.dict(os.environ, {"EDITOR": "codium"}):
+        with patch.dict(os.environ, {"EDITOR": "codium", "VISUAL": ""}, clear=True):
             launch_side_by_side_editor([p1])
             mock_run.assert_called_once()
 
         mock_run.reset_mock()
-        with patch.dict(os.environ, {"EDITOR": "emacs"}):
+        with patch.dict(os.environ, {"EDITOR": "emacs", "VISUAL": ""}, clear=True):
             launch_side_by_side_editor([p1])
             mock_run.assert_called_once()
 
-    def test_launch_side_by_side_editor_unsupported_raises_error(self) -> None:
+    @patch("subprocess.run")
+    def test_launch_side_by_side_editor_unsupported_raises_error(self, mock_run: MagicMock) -> None:
         """Verifies launch_side_by_side_editor raises RuntimeError for unsupported editors."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
-        with patch.dict(os.environ, {"EDITOR": "nano"}):
+        with patch.dict(os.environ, {"EDITOR": "nano", "VISUAL": ""}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
                 launch_side_by_side_editor([p1])
             self.assertIn("Editor 'nano' is not supported for side-by-side diffing (-y)", str(ctx.exception))
             for ed in ["nvim", "vim", "code", "emacs"]:
                 self.assertIn(ed, str(ctx.exception))
+        mock_run.assert_not_called()
 
     @patch("subprocess.run")
     def test_launch_side_by_side_editor_empty_pairs_noop(self, mock_run: MagicMock) -> None:

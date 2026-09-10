@@ -144,5 +144,22 @@ Once the `install/` state database is cleanly committed, run `drift deploy` as n
 
 ---
 
+### Q13: How do I launch an interactive visual side-by-side diff in my terminal or GUI editor?
+**Situation**: You want to review complex diffs side-by-side in your favorite editor (such as Neovim, Vim, VS Code, or GNU Emacs) instead of reading standard terminal patch streams.  
+**Solution**: Pass **`-y`** or **`--side-by-side`** to `drift diff`:
+```bash
+# Visual diff of pending deployments across all packages:
+drift diff -y
+
+# Visual diff of active system drift for a specific package:
+drift diff -s -y nvim
+
+# Visual diff of template evolution:
+drift diff -t -y shell
+```
+* **Editor Detection & Integration**: Drift automatically inspects `$VISUAL` and `$EDITOR`, or probes available editors (`nvim`, `vim`, `code`, `emacs`), opening changed file pairs in side-by-side split viewports across tabs.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.
