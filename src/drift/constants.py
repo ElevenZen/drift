@@ -1,6 +1,11 @@
 """Global constants for the drift dotfiles manager."""
 
-from enum import IntEnum
+import json
+import os
+import sys
+from enum import Enum, IntEnum
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Union
 
 CONFIG_DIR_NAME = "config"
 WORKSPACE_CONFIG_FILE_NAME = "drift_workspace.toml"
@@ -46,9 +51,6 @@ WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 DEFAULT_WORKSPACE_HOOK_FILE_NAME = f"{CONFIG_DIR_NAME}/drift_workspace.py"
 WORKSPACE_HOOK_FUNCTION_NAME = "configure_workspace"
 
-from enum import Enum, IntEnum
-from typing import Union
-
 
 class PackageStage(str, Enum):
     """Enumeration of package stages and workspace directory bases."""
@@ -86,48 +88,68 @@ class ExitCode(IntEnum):
     HEALTH_CHECK_FAILED = 6
     HOOK_SKIPPED = 7
 
-# This is the default list of ignore patterns used by GNU Stow when no custom .stow-local-ignore file is present in the package source.
-DEFAULT_STOW_IGNORE_PATTERNS = [
-    "RCS",
-    r"\.+,v",
-    "CVS",
-    r"\.\#.+=",
-    r"\.cvsignore",
-    r"\.svn",
-    "_darcs",
-    r"\.hg",
-    r"\.git",
-    r"\.gitignore",
-    r".+~",
-    r"\#.*\#",
-    r"^/README.*",
-    r"^/LICENSE.*",
-    r"^/COPYING.*",
-]
-
-# This is the default content for .stow-local-ignore when no custom ignore file is present in the package source.
-# It contains common patterns which is used to ignore common VCS and editor files when using GNU Stow.
-DEFAULT_STOW_IGNORE_CONTENT = (
-    "# Comments and blank lines are allowed.\n"
-    "RCS\n"
-    r"\.+,v" "\n"
-    "CVS\n"
-    r"\.\#.+=" "\n"
-    "# CVS conflict files / emacs lock files\n"
-    r"\.cvsignore" "\n"
-    r"\.svn" "\n"
+DEFAULT_DRIFT_IGNORE_CONTENT = (
+    "# =====================================================================\n"
+    "# .drift_ignore - PCRE Regex Package Ignore Patterns\n"
+    "# =====================================================================\n"
+    "# Lines starting with '#' or empty lines are ignored.\n"
+    "# Patterns use Perl-Compatible Regular Expressions (PCRE).\n"
+    "# Note: In source packages, hidden files/dirs are named with 'dot-'\n"
+    "# (e.g. 'dot-config/' instead of '.config/').\n"
+    "#\n"
+    "# Matching Rules (GNU Stow Algorithm):\n"
+    "# Drift splits regex patterns into two groups:\n"
+    "# 1. Patterns containing '/':\n"
+    "#    Matched against relative path starting with '/' (e.g. '/sub/file.txt').\n"
+    "#    To match a file at package root, use '^/sample\\.txt$' (do NOT use './').\n"
+    "#    Example: ^/sample\\.txt$\n"
+    "#    Example: ^/dot-config/coc-settings\\.json$\n"
+    "#    Example: /cache/\n"
+    "#\n"
+    "# 2. Patterns WITHOUT '/':\n"
+    "#    Matched against the file/directory basename anywhere in the package.\n"
+    "#    Example: \\.bak$   (matches any file ending in .bak)\n"
+    "#    Example: ^~       (matches temporary files starting with ~)\n"
+    "# ---------------------------------------------------------------------\n"
+    "# Default Stow Ignore List\n"
+    "# ---------------------------------------------------------------------\n"
+    "# Version control systems & ignore metadata\n"
+    "^/\\.gitignore\n"
+    "\\.gitignore\n"
+    "\\.git\n"
+    "\\.hg\n"
+    "\\.svn\n"
     "_darcs\n"
-    r"\.hg" "\n"
-    r"\.git" "\n"
-    r"\.gitignore" "\n"
-    r".+~" "\n"
-    "# emacs backup files\n"
-    r"\#.*\#" "\n"
-    "# emacs autosave files\n"
-    r"^/README.*" "\n"
-    r"^/LICENSE.*" "\n"
-    r"^/COPYING.*" "\n"
+    "CVS\n"
+    "\\.cvsignore\n"
+    "RCS\n"
+    "\\.+,v\n"
+    "\\.\\#.+\n"
+    "\n"
+    "# Editor temporary and backup files\n"
+    ".+~\n"
+    "\\#.*\\#\n"
+    ".*\\.sw[a-p]$\n"
+    ".*\\.swp$\n"
+    ".*\\.swo$\n"
+    ".*\\.un~$\n"
+    "\n"
+    "# OS metadata\n"
+    "^\\.DS_Store$\n"
+    "^Thumbs\\.db$\n"
+    "\n"
+    "# Package documentation and licenses\n"
+    "^/README.*\n"
+    "^/LICENSE.*\n"
+    "^/COPYING.*\n"
 )
+
+# Default list of ignore patterns generated from DEFAULT_DRIFT_IGNORE_CONTENT for GNU Stow matching
+DEFAULT_STOW_IGNORE_PATTERNS: List[str] = [
+    line.strip()
+    for line in DEFAULT_DRIFT_IGNORE_CONTENT.splitlines()
+    if line.strip() and not line.strip().startswith("#")
+]
 
 # Lifecycle hooks categorized by their execution working directory (CWD)
 SOURCE_CWD_HOOK_NAMES = (
@@ -173,12 +195,6 @@ UNINSTALL_HOOK_NAMES = (
 
 DEFAULT_HOOK_TIMEOUT: int = 120
 DEFAULT_HOOK_TIMEOUT_SECONDS: int = DEFAULT_HOOK_TIMEOUT
-
-import json
-import os
-import sys
-from pathlib import Path
-from typing import List, Optional, Dict
 
 IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
 
@@ -249,53 +265,21 @@ DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
     "sample_tool": "git"
 }, indent=4) + "\n"
 
-DEFAULT_DRIFT_IGNORE_CONTENT = (
-    "# =====================================================================\n"
-    "# .drift_ignore - PCRE Regex Package Ignore Patterns\n"
-    "# =====================================================================\n"
-    "# Lines starting with '#' or empty lines are ignored.\n"
-    "# Patterns use Perl-Compatible Regular Expressions (PCRE).\n"
-    "# Note: In source packages, hidden files/dirs are named with 'dot-'\n"
-    "# (e.g. 'dot-config/' instead of '.config/').\n"
-    "#\n"
-    "# Matching Rules (GNU Stow Algorithm):\n"
-    "# Drift splits regex patterns into two groups:\n"
-    "# 1. Patterns containing '/':\n"
-    "#    Matched against relative path starting with '/' (e.g. '/sub/file.txt').\n"
-    "#    To match a file at package root, use '^/sample\\.txt$' (do NOT use './').\n"
-    "#    Example: ^/sample\\.txt$\n"
-    "#    Example: ^/dot-config/coc-settings\\.json$\n"
-    "#    Example: /cache/\n"
-    "#\n"
-    "# 2. Patterns WITHOUT '/':\n"
-    "#    Matched against the file/directory basename anywhere in the package.\n"
-    "#    Example: \\.bak$   (matches any file ending in .bak)\n"
-    "#    Example: ^~       (matches temporary files starting with ~)\n"
-    "# ---------------------------------------------------------------------\n"
-    "# Default Stow Ignore List\n"
-    "# ---------------------------------------------------------------------\n"
-    "# Version control systems & ignore metadata\n"
-    "^/\\.gitignore\n"
-    "\\.gitignore\n"
-    "\\.git\n"
-    "\\.hg\n"
-    "\\.svn\n"
-    "_darcs\n"
-    "CVS\n"
-    "\\.cvsignore\n"
-    "RCS\n"
-    "\\.+,v\n"
-    "\\.\\#.+\n"
-    "\n"
-    "# Editor temporary and backup files\n"
-    ".+~\n"
-    "\\#.*\\#\n"
-    "\n"
-    "# Package documentation and licenses\n"
-    "^/README.*\n"
-    "^/LICENSE.*\n"
-    "^/COPYING.*\n"
+TEMPORARY_FILE_PATTERNS = (
+    "*.stow-local-ignore*",
+    "*.gitignore*",
+    "*~",
+    "*#*#",
+    "*.#*",
+    "*.sw[a-p]",
+    "*.swp",
+    "*.swo",
+    "*.un~",
+    "*.DS_Store*",
+    "*Thumbs.db*",
 )
+
+DEFAULT_DIFF_EXCLUDE_PATTERNS = tuple(f":(exclude){p}" for p in TEMPORARY_FILE_PATTERNS)
 
 DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "# =====================================================================\n"

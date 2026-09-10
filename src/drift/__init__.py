@@ -28,6 +28,9 @@ from .process_utils import (
     check_sudo_privilege,
     run_sudo_command,
 )
+from .file_utils import (
+    is_editor_or_os_temporary_file,
+)
 from .constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
@@ -44,6 +47,8 @@ from .constants import (
     get_default_mustache_content,
     get_default_jinja2_content,
     FORBIDDEN_PACKAGE_NAMES,
+    TEMPORARY_FILE_PATTERNS,
+    DEFAULT_DIFF_EXCLUDE_PATTERNS,
     DEFAULT_INTERNAL_GITIGNORE_CONTENT,
     get_default_internal_gitignore_content,
     INITIAL_ENV,

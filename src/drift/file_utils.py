@@ -10,9 +10,11 @@ import subprocess
 import re
 import shlex
 import tempfile
+import fnmatch
 from pathlib import Path
 from typing import Optional, Union, List, Any
 
+from .constants import TEMPORARY_FILE_PATTERNS
 from .process_utils import (
     format_output,
     has_admin_privileges,
@@ -669,5 +671,11 @@ def atomic_copy_file_with_sudo(
     # Direct fallback from Exception
     cmd = ["cp", "-p", str(src), str(dst)]
     run_sudo_command(cmd, sudo=True)
+
+
+def is_editor_or_os_temporary_file(file_name_or_path: Union[str, Path]) -> bool:
+    """Checks if a file is an editor temporary/swap/backup file or OS metadata."""
+    name = Path(file_name_or_path).name
+    return any(fnmatch.fnmatch(name, pattern) for pattern in TEMPORARY_FILE_PATTERNS)
 
 

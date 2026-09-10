@@ -1,4 +1,45 @@
-"""Primitive 10: Change Visualization (Diff A, B, and C)."""
+"""Primitive 10: Change Visualization (Diff A, B, and Δ / Pending).
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 5: Primitive Entry Point
+    run_primitive_diff(workspace_config, package_names, diff_type, side_by_side, stat)
+        State Synchronization:
+            run_primitive_1_reverse_sync
+            run_primitive_2_render_packages
+
+        Interactive / Visual Mode (side_by_side=True):
+            run_side_by_side_diff(workspace_config, packages, diff_type) [Layer 4]
+                collect_repo_diff_pairs(repo_path, packages, temp_dir) [Layer 2]
+                collect_pending_delta_pairs(workspace_config, packages, temp_dir) [Layer 2]
+                    get_pending_delta_worklist(workspace_config, packages) [Layer 1]
+                launch_side_by_side_editor(pairs)
+
+        Standard Terminal Mode (side_by_side=False):
+            run_terminal_diff(workspace_config, packages, diff_type, stat) [Layer 4]
+                run_repo_diff(repo_path, packages, git_options) [Layer 3]
+                run_pending_delta_diff(workspace_config, packages, git_options) [Layer 3]
+                    get_pending_delta_worklist(workspace_config, packages) [Layer 1]
+
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Worklist Classification Helpers
+        get_pending_delta_worklist
+    Layer 2: Side-by-Side Diff Pair Collectors
+        collect_repo_diff_pairs
+        collect_pending_delta_pairs
+    Layer 3: Terminal Git Diff Runners
+        run_repo_diff
+        run_pending_delta_diff
+    Layer 4: Diff Strategy Dispatchers
+        run_side_by_side_diff
+        run_terminal_diff
+    Layer 5: Public Primitive Entry Point
+        run_primitive_diff
+===============================================================================
+"""
 
 import logging
 import subprocess
@@ -8,14 +49,56 @@ import tempfile
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Sequence
 
-from .constants import DRIFT_GENERATED_FILES
+from .constants import (
+    DRIFT_GENERATED_FILES,
+    DEFAULT_DIFF_EXCLUDE_PATTERNS,
+)
 from .workspace_config import WorkspaceConfig
 from .result_models import DiffType
 from .folder_diff import compare_folders
+from .file_utils import is_editor_or_os_temporary_file
 from .editor_utils import launch_side_by_side_editor
 
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# Layer 1: Worklist Classification Helpers
+# =====================================================================
+
+def get_pending_delta_worklist(
+    workspace_config: WorkspaceConfig,
+    packages: Sequence[str]
+) -> Tuple[List[Tuple[str, Path, Path]], List[str], List[str]]:
+    """
+    Classifies packages based on their presence in render/ and install/ directories.
+    Returns (to_diff_list, new_package_names, orphan_package_names).
+    """
+    to_diff = []
+    new_pkgs = []
+    orphan_pkgs = []
+
+    for pkg in packages:
+        # Use paths relative to drift_root for diffing
+        rel_install = workspace_config.workspace.install_directory / pkg
+        rel_render = workspace_config.workspace.render_directory / pkg
+
+        abs_install = workspace_config.install_path / pkg
+        abs_render = workspace_config.render_path / pkg
+
+        if abs_install.exists() and abs_render.exists():
+            to_diff.append((pkg, rel_install, rel_render))
+        elif abs_render.exists():
+            new_pkgs.append(pkg)
+        elif abs_install.exists():
+            orphan_pkgs.append(pkg)
+
+    return to_diff, new_pkgs, orphan_pkgs
+
+
+# =====================================================================
+# Layer 2: Side-by-Side Diff Pair Collectors
+# =====================================================================
 
 def collect_repo_diff_pairs(
     repo_path: Path,
@@ -46,7 +129,7 @@ def collect_repo_diff_pairs(
                 continue
             status, rel_path_str = parts[0], parts[1]
             rel_path = Path(rel_path_str)
-            if rel_path.name in ignored_files:
+            if is_editor_or_os_temporary_file(rel_path):
                 continue
 
             working_file = repo_path / rel_path
@@ -95,16 +178,16 @@ def collect_pending_delta_pairs(
 
         diff = compare_folders(render_pkg, install_pkg, resolve_symlinks=False)
         for rel_f in diff.modified:
-            if rel_f.name not in ignored_files:
+            if rel_f.name not in ignored_files and not is_editor_or_os_temporary_file(rel_f):
                 pairs.append((install_pkg / rel_f, render_pkg / rel_f))
         for rel_f in diff.added:
-            if rel_f.name not in ignored_files:
+            if rel_f.name not in ignored_files and not is_editor_or_os_temporary_file(rel_f):
                 empty_left = temp_dir / "empty" / pkg / rel_f
                 empty_left.parent.mkdir(parents=True, exist_ok=True)
                 empty_left.touch()
                 pairs.append((empty_left, render_pkg / rel_f))
         for rel_f in diff.deleted:
-            if rel_f.name not in ignored_files:
+            if rel_f.name not in ignored_files and not is_editor_or_os_temporary_file(rel_f):
                 empty_right = temp_dir / "empty" / pkg / rel_f
                 empty_right.parent.mkdir(parents=True, exist_ok=True)
                 empty_right.touch()
@@ -112,6 +195,10 @@ def collect_pending_delta_pairs(
 
     return pairs
 
+
+# =====================================================================
+# Layer 3: Terminal Git Diff Runners
+# =====================================================================
 
 def run_repo_diff(
     repo_path: Path,
@@ -137,41 +224,11 @@ def run_repo_diff(
             sys.stderr.write(res.stderr)
 
 
-def get_pending_delta_worklist(
-    workspace_config: WorkspaceConfig,
-    packages: Sequence[str]
-) -> Tuple[List[Tuple[str, Path, Path]], List[str], List[str]]:
-    """
-    Classifies packages based on their presence in render/ and install/ directories.
-    Returns (to_diff_list, new_package_names, orphan_package_names).
-    """
-    to_diff = []
-    new_pkgs = []
-    orphan_pkgs = []
-
-    for pkg in packages:
-        # Use paths relative to drift_root for diffing
-        rel_install = workspace_config.workspace.install_directory / pkg
-        rel_render = workspace_config.workspace.render_directory / pkg
-
-        abs_install = workspace_config.install_path / pkg
-        abs_render = workspace_config.render_path / pkg
-
-        if abs_install.exists() and abs_render.exists():
-            to_diff.append((pkg, rel_install, rel_render))
-        elif abs_render.exists():
-            new_pkgs.append(pkg)
-        elif abs_install.exists():
-            orphan_pkgs.append(pkg)
-
-    return to_diff, new_pkgs, orphan_pkgs
-
-
 def run_pending_delta_diff(
     workspace_config: WorkspaceConfig,
     packages: Sequence[str],
     git_options: Sequence[str],
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> None:
     """Helper to run git diff --no-index between render/ and install/ layers."""
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
@@ -191,9 +248,7 @@ def run_pending_delta_diff(
     try:
         base_cmd = ["git", "diff", "--no-index"] + list(git_options)
         for pkg, rel_install, rel_render in to_diff:
-            cmd = base_cmd + [str(rel_install), str(rel_render), "--"]
-            for f in ignored_files:
-                cmd.append(f":!{f}")
+            cmd = base_cmd + [str(rel_install), str(rel_render), "--"] + list(exclude_patterns)
             res = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if res.stdout:
                 sys.stdout.write(res.stdout)
@@ -202,6 +257,60 @@ def run_pending_delta_diff(
     finally:
         os.chdir(old_cwd)
 
+
+# =====================================================================
+# Layer 4: Diff Strategy Dispatchers
+# =====================================================================
+
+def run_side_by_side_diff(
+    workspace_config: WorkspaceConfig,
+    packages: Sequence[str],
+    diff_type: DiffType,
+) -> None:
+    """Collects file pairs and launches side-by-side visual diff editor."""
+    with tempfile.TemporaryDirectory() as td:
+        temp_dir = Path(td)
+        if diff_type == DiffType.TEMPLATE:
+            logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
+            pairs = collect_repo_diff_pairs(workspace_config.render_path, packages, temp_dir, DRIFT_GENERATED_FILES)
+        elif diff_type == DiffType.SYSTEM:
+            logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
+            pairs = collect_repo_diff_pairs(workspace_config.install_path, packages, temp_dir, DRIFT_GENERATED_FILES)
+        elif diff_type == DiffType.PENDING:
+            logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
+            pairs = collect_pending_delta_pairs(workspace_config, packages, temp_dir, DRIFT_GENERATED_FILES)
+        else:
+            pairs = []
+        launch_side_by_side_editor(pairs)
+
+
+def run_terminal_diff(
+    workspace_config: WorkspaceConfig,
+    packages: Sequence[str],
+    diff_type: DiffType,
+    stat: bool = False,
+) -> None:
+    """Dispatches standard terminal git diffs for Diff A, B, or Δ."""
+    git_options = ["--color=always"]
+    if stat:
+        git_options.append("--stat")
+
+    if diff_type == DiffType.TEMPLATE:
+        logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
+        run_repo_diff(workspace_config.render_path, packages, git_options, DRIFT_GENERATED_FILES, "render repo")
+
+    elif diff_type == DiffType.SYSTEM:
+        logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
+        run_repo_diff(workspace_config.install_path, packages, git_options, DRIFT_GENERATED_FILES, "install repo")
+
+    elif diff_type == DiffType.PENDING:
+        logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
+        run_pending_delta_diff(workspace_config, packages, git_options, DEFAULT_DIFF_EXCLUDE_PATTERNS)
+
+
+# =====================================================================
+# Layer 5: Public Primitive Entry Point
+# =====================================================================
 
 def run_primitive_diff(
     workspace_config: WorkspaceConfig,
@@ -239,35 +348,7 @@ def run_primitive_diff(
             run_primitive_2_render_packages(workspace_config, target_pkgs=renderable)
 
     if side_by_side:
-        with tempfile.TemporaryDirectory() as td:
-            temp_dir = Path(td)
-            if diff_type == DiffType.TEMPLATE:
-                logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
-                pairs = collect_repo_diff_pairs(workspace_config.render_path, packages, temp_dir, DRIFT_GENERATED_FILES)
-            elif diff_type == DiffType.SYSTEM:
-                logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
-                pairs = collect_repo_diff_pairs(workspace_config.install_path, packages, temp_dir, DRIFT_GENERATED_FILES)
-            elif diff_type == DiffType.PENDING:
-                logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
-                pairs = collect_pending_delta_pairs(workspace_config, packages, temp_dir, DRIFT_GENERATED_FILES)
-            else:
-                pairs = []
-            launch_side_by_side_editor(pairs)
-        return
+        run_side_by_side_diff(workspace_config, packages, diff_type)
+    else:
+        run_terminal_diff(workspace_config, packages, diff_type, stat=stat)
 
-    # Standard terminal git diff
-    git_options = ["--color=always"]
-    if stat:
-        git_options.append("--stat")
-
-    if diff_type == DiffType.TEMPLATE:
-        logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
-        run_repo_diff(workspace_config.render_path, packages, git_options, DRIFT_GENERATED_FILES, "render repo")
-
-    elif diff_type == DiffType.SYSTEM:
-        logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
-        run_repo_diff(workspace_config.install_path, packages, git_options, DRIFT_GENERATED_FILES, "install repo")
-
-    elif diff_type == DiffType.PENDING:
-        logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
-        run_pending_delta_diff(workspace_config, packages, git_options, DRIFT_GENERATED_FILES)

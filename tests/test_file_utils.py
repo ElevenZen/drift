@@ -783,5 +783,34 @@ class TestFileUtils(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
 
+    def test_is_editor_or_os_temporary_file(self) -> None:
+        """Verifies is_editor_or_os_temporary_file correctly matches temporary files and ignores normal files."""
+        from drift.file_utils import is_editor_or_os_temporary_file
+
+        # Temporary / editor / OS files
+        self.assertTrue(is_editor_or_os_temporary_file(".stow-local-ignore"))
+        self.assertTrue(is_editor_or_os_temporary_file(".gitignore"))
+        self.assertTrue(is_editor_or_os_temporary_file("#file.txt#"))
+        self.assertTrue(is_editor_or_os_temporary_file(".#file.txt"))
+        self.assertTrue(is_editor_or_os_temporary_file("file.txt~"))
+        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swp"))
+        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swo"))
+        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swa"))
+        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.un~"))
+        self.assertTrue(is_editor_or_os_temporary_file(".DS_Store"))
+        self.assertTrue(is_editor_or_os_temporary_file("Thumbs.db"))
+        self.assertTrue(is_editor_or_os_temporary_file("/path/to/nested/#emacs_save#"))
+
+        # Normal and configuration files
+        self.assertFalse(is_editor_or_os_temporary_file("drift_package.toml"))
+        self.assertFalse(is_editor_or_os_temporary_file("drift_package.local.toml"))
+        self.assertFalse(is_editor_or_os_temporary_file(".drift_ignore"))
+        self.assertFalse(is_editor_or_os_temporary_file("file.txt"))
+        self.assertFalse(is_editor_or_os_temporary_file("main.py"))
+        self.assertFalse(is_editor_or_os_temporary_file("README.md"))
+        self.assertFalse(is_editor_or_os_temporary_file("swp_file.py"))
+
+
 if __name__ == "__main__":
     unittest.main()
+

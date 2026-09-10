@@ -302,5 +302,85 @@ class TestDiff(unittest.TestCase):
             self.assertIn("Environment variable $EDITOR is not set", str(ctx.exception))
 
 
+    def test_diff_excludes_temporary_files_in_pending(self) -> None:
+        """Verifies editor temporary and OS metadata files are excluded from Pending diff."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        (pkg_src_dir / "file.txt").write_text("v1\n")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Add editor temp files in install and render
+        (self.install_dir / pkg / "#file.txt#").write_text("emacs auto save")
+        (self.install_dir / pkg / ".#file.txt").write_text("emacs lock")
+        (self.install_dir / pkg / "file.txt~").write_text("backup")
+        (self.install_dir / pkg / ".file.txt.swp").write_text("vim swap")
+        (self.install_dir / pkg / ".DS_Store").write_text("os metadata")
+
+        # 3. Modify actual file
+        (pkg_src_dir / "file.txt").write_text("v2\n")
+
+        # 4. Run Diff Δ
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            out = stdout.getvalue()
+            self.assertIn("v2", out)
+            self.assertNotIn("#file.txt#", out)
+            self.assertNotIn(".#file.txt", out)
+            self.assertNotIn("file.txt~", out)
+            self.assertNotIn(".file.txt.swp", out)
+            self.assertNotIn(".DS_Store", out)
+
+    @patch("drift.workspace_diff.launch_side_by_side_editor")
+    def test_diff_side_by_side_excludes_temporary_files(self, mock_launch: MagicMock) -> None:
+        """Verifies side-by-side diff pairs exclude editor temporary and OS metadata files."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        (pkg_src_dir / "file.txt").write_text("v1\n")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Add editor temp files in install/
+        (self.install_dir / pkg / "#file.txt#").write_text("emacs auto save")
+        (self.install_dir / pkg / ".DS_Store").write_text("os metadata")
+
+        # 3. Modify template
+        (pkg_src_dir / "file.txt").write_text("v2\n")
+
+        # 4. Run Diff Δ with side_by_side=True
+        run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        mock_launch.assert_called_once()
+        pairs = mock_launch.call_args[0][0]
+        self.assertEqual(len(pairs), 1)
+        left, right = pairs[0]
+        self.assertEqual(left, self.install_dir / pkg / "file.txt")
+        self.assertEqual(right, self.render_dir / pkg / "file.txt")
+
+
 if __name__ == "__main__":
     unittest.main()
+
