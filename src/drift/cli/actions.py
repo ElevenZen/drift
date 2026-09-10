@@ -95,8 +95,12 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
                 logger.info(f"  [*] {file.as_posix()}")
             for file in pkg_change.deployable_changes.deleted:
                 logger.info(f"  [-] {file.as_posix()}")
-            if pkg_change.has_metadata_or_hook_changes:
-                logger.info("  [*] (package config or lifecycle hooks)")
+            for file in pkg_change.non_deployable_changes.added:
+                logger.info(f"  [+] {file.as_posix()} (metadata/hook)")
+            for file in pkg_change.non_deployable_changes.modified:
+                logger.info(f"  [*] {file.as_posix()} (metadata/hook)")
+            for file in pkg_change.non_deployable_changes.deleted:
+                logger.info(f"  [-] {file.as_posix()} (metadata/hook)")
 
 
 def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:

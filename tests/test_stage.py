@@ -434,7 +434,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].deployable_changes.added, [])
         self.assertFalse(changes["pkg_a"].has_deployable_changes)
-        self.assertTrue(changes["pkg_a"].has_metadata_or_hook_changes)
+        self.assertTrue(changes["pkg_a"].has_non_deployable_changes)
         # file1.txt still exists physically in install/ (so ignored files like hooks remain available)
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
@@ -479,7 +479,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertNotIn(Path("pre_install.sh"), changes[pkg].deployable_changes.added)
         self.assertTrue(changes[pkg].has_changes)
         self.assertTrue(changes[pkg].has_deployable_changes)
-        self.assertFalse(changes[pkg].has_metadata_or_hook_changes)
+        self.assertTrue(changes[pkg].has_non_deployable_changes)
 
         # But physical install/ directory MUST contain the hook script
         pkg_install = self.install_dir / pkg
@@ -898,13 +898,13 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(change.deployable_changes.deleted, [Path("d.txt")])
         self.assertTrue(change.has_changes)
         self.assertTrue(change.has_deployable_changes)
-        self.assertFalse(change.has_metadata_or_hook_changes)
+        self.assertFalse(change.has_non_deployable_changes)
 
         # Empty changes
         empty_change = PackageStageChanges("empty_pkg")
         self.assertFalse(empty_change.has_changes)
         self.assertFalse(empty_change.has_deployable_changes)
-        self.assertFalse(empty_change.has_metadata_or_hook_changes)
+        self.assertFalse(empty_change.has_non_deployable_changes)
 
         # Metadata/hook only change
         hook_change = PackageStageChanges(
@@ -914,13 +914,30 @@ class TestStageRepo(unittest.TestCase):
         )
         self.assertTrue(hook_change.has_changes)
         self.assertFalse(hook_change.has_deployable_changes)
-        self.assertTrue(hook_change.has_metadata_or_hook_changes)
+        self.assertTrue(hook_change.has_non_deployable_changes)
         self.assertEqual(hook_change.deployable_changes.added, [])
         self.assertEqual(hook_change.deployable_changes.modified, [])
         self.assertEqual(hook_change.deployable_changes.deleted, [])
+        self.assertEqual(hook_change.non_deployable_changes.modified, [Path("drift_package.toml"), Path("hooks/post_install.sh")])
+
+        # Mixed deployable and metadata/hook change
+        mixed_change = PackageStageChanges(
+            package_name="mixed_pkg",
+            deployable_changes=FolderDiff(added=[Path("payload.txt")]),
+            physical_changes=FolderDiff(
+                added=[Path("payload.txt"), Path("hooks/pre_install.sh")],
+                modified=[Path("drift_package.toml")],
+            ),
+        )
+        self.assertTrue(mixed_change.has_changes)
+        self.assertTrue(mixed_change.has_deployable_changes)
+        self.assertTrue(mixed_change.has_non_deployable_changes)
+        self.assertEqual(mixed_change.non_deployable_changes.added, [Path("hooks/pre_install.sh")])
+        self.assertEqual(mixed_change.non_deployable_changes.modified, [Path("drift_package.toml")])
+        self.assertEqual(mixed_change.non_deployable_changes.deleted, [])
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
-        """Verifies that modifying hook script or drift_package.toml produces stage changes with has_metadata_or_hook_changes=True."""
+        """Verifies that modifying hook script or drift_package.toml produces stage changes with has_non_deployable_changes=True."""
         pkg = "pkg_hook_detect"
         pkg_render = self.render_dir / pkg
         pkg_render.mkdir(parents=True, exist_ok=True)
@@ -957,12 +974,48 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn(pkg, changes3)
         self.assertTrue(changes3[pkg].has_changes)
         self.assertFalse(changes3[pkg].has_deployable_changes)
-        self.assertTrue(changes3[pkg].has_metadata_or_hook_changes)
+        self.assertTrue(changes3[pkg].has_non_deployable_changes)
 
         # Verify post_install.sh was copied into install/
         install_hook = self.install_dir / pkg / "post_install.sh"
         self.assertTrue(install_hook.is_file())
         self.assertIn("v2 updated", install_hook.read_text(encoding="utf-8"))
+
+    def test_stage_mixed_deployable_and_hook_changes(self) -> None:
+        """Verifies staging when both deployable payload files and lifecycle hooks are modified together."""
+        pkg = "pkg_mixed"
+        pkg_render = self.render_dir / pkg
+        pkg_render.mkdir(parents=True, exist_ok=True)
+
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "~/.config/test"
+
+        [hooks]
+        post_install = "post.sh"
+        """, encoding="utf-8")
+        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("post.sh\n", encoding="utf-8")
+        (pkg_render / "post.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
+        (pkg_render / "config.json").write_text('{"v": 1}', encoding="utf-8")
+
+        # Initial stage
+        changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
+        self.assertIn(pkg, changes1)
+
+        # Modify both config.json (deployable) and post.sh (hook)
+        (pkg_render / "config.json").write_text('{"v": 2}', encoding="utf-8")
+        (pkg_render / "post.sh").write_text("#!/bin/sh\necho 'v2'\n", encoding="utf-8")
+
+        changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
+        self.assertIn(pkg, changes2)
+        stage_pkg = changes2[pkg]
+        self.assertTrue(stage_pkg.has_changes)
+        self.assertTrue(stage_pkg.has_deployable_changes)
+        self.assertTrue(stage_pkg.has_non_deployable_changes)
+        self.assertEqual(stage_pkg.deployable_changes.modified, [Path("config.json")])
+        self.assertEqual(stage_pkg.non_deployable_changes.modified, [Path("post.sh")])
 
 
 if __name__ == "__main__":

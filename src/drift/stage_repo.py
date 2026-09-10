@@ -66,9 +66,28 @@ class PackageStageChanges:
         return bool(d.added or d.modified or d.deleted)
 
     @property
-    def has_metadata_or_hook_changes(self) -> bool:
-        """Returns True if hooks, .drift_ignore, or drift_package.toml changed without deployable payload changes."""
-        return self.has_changes and not self.has_deployable_changes
+    def has_non_deployable_changes(self) -> bool:
+        """Returns True if any metadata, hook, or non-deployable file was added, modified, or deleted."""
+        p = self.physical_changes
+        d = self.deployable_changes
+        return (
+            len(p.added) != len(d.added)
+            or len(p.modified) != len(d.modified)
+            or len(p.deleted) != len(d.deleted)
+        )
+
+    @property
+    def non_deployable_changes(self) -> FolderDiff:
+        """Returns physical changes that are not deployable payload files (e.g. metadata, config, hooks, ignored files)."""
+        dep_added = set(self.deployable_changes.added)
+        dep_modified = set(self.deployable_changes.modified)
+        dep_deleted = set(self.deployable_changes.deleted)
+
+        return FolderDiff(
+            added=[p for p in self.physical_changes.added if p not in dep_added],
+            modified=[p for p in self.physical_changes.modified if p not in dep_modified],
+            deleted=[p for p in self.physical_changes.deleted if p not in dep_deleted],
+        )
 
 
 
@@ -355,12 +374,17 @@ def run_primitive_4_stage_render_to_install(
     if changed_package_map:
         logger.info("✨ Staging completed. Summary of changes:")
         for pkg_change in changed_package_map.values():
-            # TODO: do we have a better way to show there are extra changes that are not deployable? Maybe a separate summary section for metadata/hook changes?
-            extra = " (metadata/hooks modified)" if pkg_change.has_metadata_or_hook_changes else ""
+            dep = pkg_change.deployable_changes
+            non_dep = pkg_change.non_deployable_changes
             logger.info(f"   Package '{pkg_change.package_name}': "
-                        f"+{len(pkg_change.deployable_changes.added)}, "
-                        f"~{len(pkg_change.deployable_changes.modified)}, "
-                        f"-{len(pkg_change.deployable_changes.deleted)}{extra}")
+                        f"+{len(dep.added)}, "
+                        f"~{len(dep.modified)}, "
+                        f"-{len(dep.deleted)}")
+            if pkg_change.has_non_deployable_changes:
+                logger.info(f"     (metadata/hooks: "
+                            f"+{len(non_dep.added)}, "
+                            f"~{len(non_dep.modified)}, "
+                            f"-{len(non_dep.deleted)})")
     else:
         logger.info("✨ Staging completed. No changes detected.")
 
