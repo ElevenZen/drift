@@ -530,10 +530,11 @@ def handle_rename_interactive(
                 return fallback_conflict_editor(new_src_file, adjusted_patch)
             elif choice == "3":
                 return fallback_side_by_side(new_src_file, install_pkg_dir / new_rel_path)
-            elif choice == "4":
-                return True
-            else:
-                return False
+
+        if choice == "4":
+            return True
+        else:
+            return False
 
 
 def handle_single_rename(
