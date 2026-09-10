@@ -17,12 +17,12 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 > **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
-* 🧩 **Native TOML Variable Stitching**: Compose variables topologically (`$VAR`, `${VAR}`) across all TOML configuration files with Kahn's algorithm DAG cycle detection—no external template wrappers or subprocesses required.
+* 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`) and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
-* 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, and Fish** with rich inline documentation hints and dynamic workspace package discovery.
-* 📦 **Modular & Pluggable**: Pure standard-library core with DAG template pipelines, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
+* 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, Fish, and Nushell** with rich inline documentation hints and dynamic workspace package discovery.
+* 📦 **Modular & Pluggable**: Pure standard-library core, customizable render engines with DAG dependency piping, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
 
 ---
 
@@ -113,7 +113,7 @@ pip install --user .
 ---
 
 ### 4. 🐚 Interactive Shell Tab-Completion (`drift complete`)
-
+ 
 Drift features built-in, zero-latency tab-completion generators for **Bash**, **Zsh**, **Fish**, and **Nushell** with rich inline documentation hints and dynamic package discovery.
 
 #### Automatic Installation (Standard User Directories)
@@ -219,19 +219,44 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     ```
     When Drift runs, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
-### 🧩 4. Native TOML Variable Stitching & Topological Resolution
-Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all TOML configuration files (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts) using Kahn's algorithm DAG topological sorting without invoking external subprocesses:
-*   **Self-Referencing in `[env]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic cycle detection.
-*   **Unidirectional Evaluation**: `[env]` resolves first; non-env sections (`target_directory`, `hooks`, etc.) dynamically reference `[env]` variables without circular dependencies.
+### 🧩 4. Native In-TOML Variable Stitching & Derived Values
+
+Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly within any TOML configuration file (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts). This lets you compute derived variables from one another without having to set up extra template engines or boilerplate preprocessing scripts:
+*   **Derived Variables in `[env]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic resolution and circular dependency detection.
+*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) can dynamically reference variables declared in `[env]` without circular dependencies.
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
+*   **Dynamic Programmatic Generation via Python Hooks**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use **Python workspace hooks** (`config/drift_workspace.py`), which are already implemented. Package-level Python configuration hooks (`drift_package.py`) will also be available soon.
 
-### 🔗 5. Directed Acyclic Graph (DAG) Template Pipelines
-Drift supports declaring arbitrary, nested render engine pipelines in `drift_workspace.toml` (e.g., matching `.envst` or `.mustache`). 
-*   **Template Input Dependencies**: A render engine's input variables can itself be a template compiled by another engine (e.g., `mustache` needing a static JSON config generated from environment variables).
-*   **Cycle Detection**: Drift constructs a compiler dependency graph and executes cycle-detection validation, throwing `CyclicDependencyError` to prevent compilation loops.
-*   **Deferred Render Compilation**: If variables or templates are missing during boot, Drift gracefully logs a warning. Compilation is only blocked if a file in the active workspace *actually* relies on the disabled engine, preventing unrelated package bottlenecks.
+### 🔗 5. Custom Render Engines & DAG Pipeline Piping
+
+Drift lets you declare custom render engines in `drift_workspace.toml` to compile any template format (e.g. `envsubst`, `mustache`, `jinja2`) into your `render/` sandbox:
+
+#### A. Defining a Custom Render Engine
+Register an engine by specifying its target file suffix, optional input variables file, and execution shell command:
+```toml
+# config/drift_workspace.toml
+[render.envsubst]
+suffix = "envst"                                         # Compiles any file ending with .envst
+input_file = "envsubst.bash"                              # Injected environment script from config/
+render_command = "bash -c 'source %i && envsubst < %s'"  # %i=input_file, %s=template
+```
+*   `%s`: Automatically replaced by the path to the template file being compiled.
+*   `%i`: Automatically replaced by the resolved path to `input_file`.
+*   `render_command = "internal"`: Built-in zero-dependency variable replacement engine (`[render.var]`).
+
+#### B. Piping Engines Together (DAG Dependency Pipelines)
+When an engine's `input_file` is itself a template (e.g. `mustache` needing a JSON configuration generated from environment variables), Drift automatically builds a dependency graph and pipes them in order:
+```toml
+[render.mustache]
+suffix = "mustache"
+input_file = "mustache.envst.json"                       # This .envst.json template is compiled by envsubst first!
+render_command = "mustache %i %s"
+```
+*   **Automatic Dependency Ordering**: Drift compiles `config/mustache.envst.json` into `mustache.json` using the `envsubst` engine first, then passes the compiled JSON file as `%i` to `mustache`.
+*   **Cycle Detection**: Drift validates the engine dependency graph to prevent infinite compilation loops, raising a clear `CyclicDependencyError` if circular references occur.
+*   **Deferred Compilation**: Compilation is only performed when an enabled package in your workspace actually relies on the template engine, preventing unnecessary bottlenecks.
 
 ### 🛑 6. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
@@ -242,12 +267,12 @@ Drift values your data integrity. Before any physical stage or deployment execut
 > [!IMPORTANT]
 > **Transient `backup/` Policy & User Responsibility**: The `backup/` folder stores displaced original files and pruned artifacts created during deployment collisions. **`backup/` is a local, unversioned directory that is neither tracked nor saved in Git by Drift.** Users are responsible for inspecting `backup/`, preserving critical historical assets, or committing them to private archival storage as needed.
 
-### 🕵️ 6. PCRE-Based Ignorance & Stow Compatibility
+### 🕵️ 7. PCRE-Based Ignorance & Stow Compatibility
 Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`), matching the exact parsing rules of GNU Stow's `.stow-local-ignore`.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
-### 🧹 7. Autonomous Garbage Collection (Self-Cleaning)  
+### 🧹 8. Autonomous Garbage Collection (Self-Cleaning)  
 Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
 
 When you toggle packages to `false` in `drift_workspace.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
@@ -255,7 +280,7 @@ When you toggle packages to `false` in `drift_workspace.toml` or delete package 
 *   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
 
-### 🔌 8. Decouple & Eject Packages on Demand (Detach Mode)
+### 🔌 9. Decouple & Eject Packages on Demand (Detach Mode)
 Sometimes, you want to stop managing a configuration through a dotfile manager but keep the configurations permanently active on your host system. 
 *   **Keep Active Configurations**: Drift supports a dedicated **Detach Mode (`drift uninstall <pkg> --detach`)** that unregisters the package without deleting any files on your system.
 *   **Symlink to Copy Conversion**: If the package was stowed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
@@ -467,17 +492,17 @@ Drift executes all lifecycle hooks with predictable working directories and auto
 * **Q**: A deployment script or hook crashed midway and left files in a half-written state.
 * **A**: Run **`drift rollback <pkg>`** to revert `install/` to the last committed clean HEAD and redeploy the last stable state.
 
-### 6. Debugging & Iterating on Broken Hook Scripts
-* **Q**: What if a broken lifecycle hook script blocks me from deploying or authoring a package correctly?
-* **A**: Deploy with **`--no-hooks`** first, then debug your hook script in isolation using **`drift hook --from src <pkg> <hook> -v`**:
+### 6. Deploying Files Without Hooks & Debugging Broken Scripts
+* **Q**: How do I deploy a package's configuration files without executing its lifecycle hooks, or debug a broken hook script?
+* **A**: Deploy with **`--no-hooks`** to install the package's configuration files directly to disk without running any lifecycle hooks (`pre_install`, `post_update`, etc.). You can then test and debug any hook script in isolation using **`drift hook --from src <pkg> <hook> -v`**:
   ```bash
-  # 1. Deploy the package safely while bypassing failing hook scripts
+  # 1. Deploy the package's configuration files safely without running any hooks:
   drift deploy <pkg> --no-hooks
 
-  # 2. Iterate and debug the hook script live from the source directory with all injected variables & verbose output
+  # 2. Iterate and debug the hook script live from source with all injected variables & verbose output:
   drift hook <pkg> <hook> --from src -v
   ```
-  This allows you to edit hook scripts in `src/<pkg>/` and test them immediately with full environment variable and host fact injection without triggering repeated deployment passes.
+  This allows you to safely place your configuration files on disk while iterating on hook scripts in `src/<pkg>/` with full 7-tier environment variables and host facts injected.
 
 ### 7. Forcing Full Redeployment (`--redeploy`)
 * **Q**: Why was package deployment skipped, and how do I force redeployment of all packages and lifecycle hooks?
