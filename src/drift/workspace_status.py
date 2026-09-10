@@ -10,7 +10,7 @@ from .workspace_config import WorkspaceConfig
 from .render_package import run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
 from .folder_diff import compare_folders, FolderDiff
-from .constants import MANAGED_CONFIG_FILES
+from .constants import DRIFT_GENERATED_FILES
 from .git_utils import get_git_status_porcelain
 from .result_models import (
     SerializableModel,
@@ -135,10 +135,10 @@ def calculate_pending_delta(
     """Calculates the pending delta between render/ and install/ for a package."""
     if render_pkg_dir.exists() and install_pkg_dir.exists():
         diff = compare_folders(render_pkg_dir, install_pkg_dir)
-        # Filter out internally managed files from the pending delta view
-        diff.added = [p for p in diff.added if p.name not in MANAGED_CONFIG_FILES]
-        diff.modified = [p for p in diff.modified if p.name not in MANAGED_CONFIG_FILES]
-        diff.deleted = [p for p in diff.deleted if p.name not in MANAGED_CONFIG_FILES]
+        # Filter out internally generated synthetic files from the pending delta view
+        diff.added = [p for p in diff.added if p.name not in DRIFT_GENERATED_FILES]
+        diff.modified = [p for p in diff.modified if p.name not in DRIFT_GENERATED_FILES]
+        diff.deleted = [p for p in diff.deleted if p.name not in DRIFT_GENERATED_FILES]
 
         if not diff.added and not diff.modified and not diff.deleted:
             return "CLEAN", diff

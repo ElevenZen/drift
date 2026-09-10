@@ -122,6 +122,75 @@ class TestDiff(unittest.TestCase):
             run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
             self.assertIn("new version content", stdout.getvalue())
 
+    def test_diff_managed_config_files(self):
+        """Verifies changes to drift_package.toml appear in Template and Pending diffs."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        (pkg_src_dir / "file.txt").write_text("content\n")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy and commit
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Modify drift_package.toml in src/
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="stow"\n')
+
+        # 3. Diff A (Template Evolution) should show change in drift_package.toml
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            out = stdout.getvalue()
+            self.assertIn("drift_package.toml", out)
+            self.assertIn("install_method", out)
+            self.assertIn("stow", out)
+
+        # 4. Diff Δ (Pending Delta) should show change in drift_package.toml
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            out = stdout.getvalue()
+            self.assertIn("drift_package.toml", out)
+            self.assertIn("install_method", out)
+            self.assertIn("stow", out)
+
+    def test_diff_stow_local_ignore_excluded(self):
+        """Verifies synthetic .stow-local-ignore in install/ is not reported as deleted in Pending diff."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        (pkg_src_dir / "file.txt").write_text("content\n")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy and commit (generates .stow-local-ignore in install/)
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # Verify .stow-local-ignore exists in install/ but not in render/
+        self.assertTrue((self.install_dir / pkg / ".stow-local-ignore").exists())
+        self.assertFalse((self.render_dir / pkg / ".stow-local-ignore").exists())
+
+        # 2. Diff Δ should be completely empty (no false positive deletion of .stow-local-ignore)
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            out = stdout.getvalue()
+            self.assertNotIn(".stow-local-ignore", out)
+
     def test_diff_enum_types(self):
         """Verifies run_primitive_diff accepts DiffType enum members."""
         from drift.result_models import DiffType

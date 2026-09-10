@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Sequence
 
+from .constants import DRIFT_GENERATED_FILES
 from .workspace_config import WorkspaceConfig
 from .result_models import DiffType
 
@@ -16,8 +17,8 @@ def run_repo_diff(
     repo_path: Path,
     packages: Sequence[str],
     git_options: Sequence[str],
-    managed_files: Sequence[str],
-    repo_name: str
+    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    repo_name: str = "repo"
 ) -> None:
     """Helper to run git diff within a specific repository for a set of packages."""
     if not repo_path.exists():
@@ -27,7 +28,7 @@ def run_repo_diff(
     for pkg in packages:
         # We use pathspecs after '--' to avoid revision ambiguity
         cmd = ["git", "-C", str(repo_path), "diff"] + list(git_options) + ["--", f"{pkg}/"]
-        for f in managed_files:
+        for f in ignored_files:
             cmd.append(f":!{pkg}/{f}")
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.stdout:
@@ -68,7 +69,7 @@ def run_pending_delta_diff(
     workspace_config: WorkspaceConfig,
     packages: Sequence[str],
     git_options: Sequence[str],
-    managed_files: Sequence[str]
+    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES
 ) -> None:
     """Helper to run git diff --no-index between render/ and install/ layers."""
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
@@ -89,7 +90,7 @@ def run_pending_delta_diff(
         base_cmd = ["git", "diff", "--no-index"] + list(git_options)
         for pkg, rel_install, rel_render in to_diff:
             cmd = base_cmd + [str(rel_install), str(rel_render), "--"]
-            for f in managed_files:
+            for f in ignored_files:
                 cmd.append(f":!{f}")
             res = subprocess.run(cmd, capture_output=True, text=True, check=False)
             if res.stdout:
@@ -142,16 +143,14 @@ def run_primitive_diff(
     if stat:
         git_options.append("--stat")
 
-    from .constants import MANAGED_CONFIG_FILES
-
     if diff_type == DiffType.TEMPLATE:
         logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
-        run_repo_diff(workspace_config.render_path, packages, git_options, MANAGED_CONFIG_FILES, "render repo")
+        run_repo_diff(workspace_config.render_path, packages, git_options, DRIFT_GENERATED_FILES, "render repo")
             
     elif diff_type == DiffType.SYSTEM:
         logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
-        run_repo_diff(workspace_config.install_path, packages, git_options, MANAGED_CONFIG_FILES, "install repo")
+        run_repo_diff(workspace_config.install_path, packages, git_options, DRIFT_GENERATED_FILES, "install repo")
             
     elif diff_type == DiffType.PENDING:
         logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
-        run_pending_delta_diff(workspace_config, packages, git_options, MANAGED_CONFIG_FILES)
+        run_pending_delta_diff(workspace_config, packages, git_options, DRIFT_GENERATED_FILES)

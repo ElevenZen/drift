@@ -124,6 +124,39 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(len(diff_model.packages), 1)
         self.assertTrue(diff_model.packages[0].has_changes)
 
+    def test_status_managed_config_files(self):
+        """Verifies changing drift_package.toml marks template MODIFIED and pending STAGED."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        (pkg_src_dir / "file.txt").write_text("content\n")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+
+        # Initial full deployment and clean state
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # Clean check
+        clean_res = run_primitive_status(self.workspace_config)
+        self.assertEqual(clean_res[0].template_status, "CLEAN")
+        self.assertEqual(clean_res[0].pending_status, "CLEAN")
+
+        # Modify drift_package.toml
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="stow"\n')
+
+        # Status check
+        modified_res = run_primitive_status(self.workspace_config)
+        self.assertEqual(modified_res[0].template_status, "MODIFIED")
+        self.assertEqual(modified_res[0].pending_status, "STAGED")
+        self.assertTrue(any("drift_package.toml" in str(p) for p in modified_res[0].pending_changes.modified))
+
     def test_status_empty(self):
         """Verifies empty workspace status format."""
         from drift.workspace_status import WorkspaceStatusResult
