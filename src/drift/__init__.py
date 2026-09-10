@@ -163,6 +163,14 @@ from .workspace_status import (
 from .workspace_diff import (
     run_primitive_diff,
 )
+from .editor_utils import (
+    get_configured_editor,
+    launch_single_file_editor,
+    launch_side_by_side_editor,
+    launch_vim_diff,
+    launch_vscode_diff,
+    launch_emacs_diff,
+)
 from .exceptions import (
     DriftError,
     ConfigError,

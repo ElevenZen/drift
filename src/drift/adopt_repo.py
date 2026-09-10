@@ -19,6 +19,7 @@ from .git_utils import (
 )
 from .file_utils import remove_file_or_dir, atomic_copy_file
 from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
+from .editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
 logger = logging.getLogger(__name__)
 
@@ -286,25 +287,25 @@ def fallback_over_render(src_file: Path, static_file: Path) -> None:
     logger.warning(f"⚠️  [FREEZE] Overwrote template '{src_file.name}' with static content. Original template backed up to '{bak_file.name}'.")
 
 
-def fallback_conflict_editor(src_file: Path, patch_content: str) -> None:
-    """Uses patch --merge to write conflict markers into the template, then opens default $EDITOR."""
-    apply_source_patch(src_file, patch_content, accept_conflicts=True)
-    editor = os.environ.get("EDITOR", "vim")
-    logger.info(f"📝 Launching editor '{editor}' to resolve conflicts in '{src_file}'...")
-    subprocess.run([editor, str(src_file)], check=True)
+def fallback_conflict_editor(src_file: Path, patch_content: str) -> bool:
+    """Uses patch --merge to write conflict markers into the template, then opens $EDITOR."""
+    try:
+        apply_source_patch(src_file, patch_content, accept_conflicts=True)
+        launch_single_file_editor(src_file)
+        return True
+    except RuntimeError as e:
+        logger.warning(f"⚠️  Failed to open conflict editor: {e}. Skipping file adoption.")
+        return False
 
 
-def fallback_side_by_side(src_file: Path, install_file: Path) -> None:
+def fallback_side_by_side(src_file: Path, install_file: Path) -> bool:
     """Launches editor to display both template and the final compiled/static drift as side-by-side reference."""
-    editor = os.environ.get("EDITOR", "vim")
-    if editor in ["vim", "nvim", "code"]:
-        cmd = [editor, "-d", str(src_file), str(install_file)]
-    elif editor == 'emacs':
-        cmd = ['emacs', '--eval', f'(ediff-files "{str(src_file)}" "{str(install_file)}")']
-    else:
-        cmd = [editor, str(src_file), str(install_file)]
-    logger.info(f"📝 Launching editor '{editor}' for side-by-side template edit...")
-    subprocess.run(cmd, check=True)
+    try:
+        launch_side_by_side_editor([(src_file, install_file)])
+        return True
+    except RuntimeError as e:
+        logger.warning(f"⚠️  Failed to open side-by-side editor: {e}. Skipping file adoption.")
+        return False
 
 
 # --- The Dry-Run Engine ---
@@ -519,6 +520,7 @@ def handle_rename_interactive(
 
             if choice == "1":
                 fallback_over_render(new_src_file, install_pkg_dir / new_rel_path)
+                return True
             elif choice == "2":
                 # Adjust patch to new file name
                 adjusted_patch = generate_adjusted_patch(
@@ -528,14 +530,13 @@ def handle_rename_interactive(
                     old_rel_path=old_rel_path,
                     target_src_filename=new_src_file.name
                 )
-                fallback_conflict_editor(new_src_file, adjusted_patch)
+                return fallback_conflict_editor(new_src_file, adjusted_patch)
             elif choice == "3":
-                fallback_side_by_side(new_src_file, install_pkg_dir / new_rel_path)
-            return True
-        elif choice == "4":
-            return True
-        else:
-            return False
+                return fallback_side_by_side(new_src_file, install_pkg_dir / new_rel_path)
+            elif choice == "4":
+                return True
+            else:
+                return False
 
 
 def handle_single_rename(
@@ -687,11 +688,9 @@ def handle_modification_interactive(
             fallback_over_render(src_file, install_file)
             return True
         elif choice == "2":
-            fallback_conflict_editor(src_file, patch_content)
-            return True
+            return fallback_conflict_editor(src_file, patch_content)
         elif choice == "3":
-            fallback_side_by_side(src_file, install_file)
-            return True
+            return fallback_side_by_side(src_file, install_file)
         elif choice == "4":
             return True
         else:

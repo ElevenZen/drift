@@ -6,6 +6,7 @@ import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch, MagicMock
 
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_engine_config import RenderEngineRegistry
@@ -24,6 +25,8 @@ from drift.adopt_repo import (
     adopt_deletion,
     adopt_modification,
     fallback_over_render,
+    fallback_conflict_editor,
+    fallback_side_by_side,
     adopt_one_package_drifts,
     run_primitive_adopt_drifts,
 )
@@ -1027,6 +1030,34 @@ class TestAdopt(unittest.TestCase):
         for line in status_res.stdout.splitlines():
             if len(line) >= 2:
                 self.assertIn(line[0], [" ", "?"])
+
+    @patch("drift.adopt_repo.launch_single_file_editor")
+    @patch("drift.adopt_repo.apply_source_patch")
+    def test_fallback_conflict_editor_success_and_failure(self, mock_apply: MagicMock, mock_launch: MagicMock) -> None:
+        """Verifies fallback_conflict_editor returns True on success and False on RuntimeError."""
+        src_file = self.src_dir / "pkg_a" / "test.txt"
+
+        # Success
+        self.assertTrue(fallback_conflict_editor(src_file, "patch content"))
+        mock_launch.assert_called_once_with(src_file)
+
+        # Failure when EDITOR is unset or invalid
+        mock_launch.side_effect = RuntimeError("Environment variable $EDITOR is not set")
+        self.assertFalse(fallback_conflict_editor(src_file, "patch content"))
+
+    @patch("drift.adopt_repo.launch_side_by_side_editor")
+    def test_fallback_side_by_side_success_and_failure(self, mock_launch: MagicMock) -> None:
+        """Verifies fallback_side_by_side returns True on success and False on RuntimeError."""
+        src_file = self.src_dir / "pkg_a" / "test.txt"
+        install_file = self.install_dir / "pkg_a" / "test.txt"
+
+        # Success
+        self.assertTrue(fallback_side_by_side(src_file, install_file))
+        mock_launch.assert_called_once_with([(src_file, install_file)])
+
+        # Failure when EDITOR is unset or invalid
+        mock_launch.side_effect = RuntimeError("Editor 'nano' is not supported")
+        self.assertFalse(fallback_side_by_side(src_file, install_file))
 
 
 if __name__ == "__main__":

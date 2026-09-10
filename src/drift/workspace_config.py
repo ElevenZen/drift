@@ -289,13 +289,8 @@ class WorkspaceConfig:
 
     @classmethod
     def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:
-        if not custom_dir.exists() or not custom_dir.is_dir():
-            return []
-
-        packages = [d.name for d in custom_dir.iterdir()
-                    if d.is_dir()
-                    and d.name != '.git'
-                    and (d / PACKAGE_CONFIG_FILE_NAME).exists()]
+        packages = [pkg for pkg in cls.get_package_names_from_dir(custom_dir)
+                    if (custom_dir / pkg / PACKAGE_CONFIG_FILE_NAME).exists()]
         return sorted(packages)
 
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:

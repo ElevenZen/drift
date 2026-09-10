@@ -4,7 +4,7 @@ import io
 import tempfile
 import subprocess
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.workspace_diff import run_primitive_diff
 
@@ -204,6 +204,103 @@ class TestDiff(unittest.TestCase):
         from drift.cli.actions import execute_diff
         with self.assertRaises(ValueError):
             execute_diff(self.drift_root, diff_type="invalid_type")
+
+    @patch("drift.workspace_diff.launch_side_by_side_editor")
+    def test_diff_side_by_side_template_evolution(self, mock_launch: MagicMock) -> None:
+        """Verifies run_primitive_diff with side_by_side=True extracts HEAD and calls launch_side_by_side_editor."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("initial content")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.result_models import DiffType
+
+        # 1. Render and commit
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+
+        # 2. Modify template
+        (pkg_src_dir / "file.txt").write_text("modified content")
+
+        captured_pairs = []
+
+        def side_effect(pairs):
+            for l, r in pairs:
+                captured_pairs.append((l.read_text(), r))
+
+        mock_launch.side_effect = side_effect
+
+        # 3. Run Diff A with side_by_side=True
+        run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE, side_by_side=True)
+        mock_launch.assert_called_once()
+        self.assertEqual(len(captured_pairs), 1)
+        left_content, right = captured_pairs[0]
+        self.assertEqual(right, self.render_dir / pkg / "file.txt")
+        self.assertEqual(left_content, "initial content")
+
+    @patch("drift.workspace_diff.launch_side_by_side_editor")
+    def test_diff_side_by_side_pending_delta(self, mock_launch: MagicMock) -> None:
+        """Verifies run_primitive_diff with side_by_side=True pairs install and render files."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("content v1")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Modify Template
+        (pkg_src_dir / "file.txt").write_text("content v2")
+
+        # 3. Run Diff Δ with side_by_side=True
+        run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        mock_launch.assert_called_once()
+        pairs = mock_launch.call_args[0][0]
+        self.assertEqual(len(pairs), 1)
+        left, right = pairs[0]
+        self.assertEqual(left, self.install_dir / pkg / "file.txt")
+        self.assertEqual(right, self.render_dir / pkg / "file.txt")
+
+    def test_diff_side_by_side_unset_editor_raises_error(self) -> None:
+        """Verifies run_primitive_diff with side_by_side=True raises RuntimeError if EDITOR is unset."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("content v1")
+
+        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.result_models import DiffType
+
+        # 1. Full Deploy
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Modify Template so diff exists
+        (pkg_src_dir / "file.txt").write_text("content v2")
+
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(RuntimeError) as ctx:
+                run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+            self.assertIn("Environment variable $EDITOR is not set", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
