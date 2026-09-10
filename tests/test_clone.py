@@ -71,7 +71,8 @@ class TestWorkspaceClone(unittest.TestCase):
         dest_path = self.dest_base / "my_cloned_drift"
         res = run_primitive_clone(
             git_url=str(remote_repo),
-            target_dir=dest_path
+            target_dir=dest_path,
+            streaming=False,
         )
 
         self.assertEqual(res.status, "SUCCESS")
@@ -118,7 +119,8 @@ class TestWorkspaceClone(unittest.TestCase):
         dest_path = self.dest_base / "legacy_dotfiles"
         res = run_primitive_clone(
             git_url=str(remote_repo),
-            target_dir=dest_path
+            target_dir=dest_path,
+            streaming=False,
         )
 
         self.assertEqual(res.status, "SUCCESS")
@@ -161,7 +163,8 @@ class TestWorkspaceClone(unittest.TestCase):
 
         res = run_primitive_clone(
             git_url=str(remote_repo),
-            target_dir=dest_path
+            target_dir=dest_path,
+            streaming=False,
         )
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.error_message)
@@ -179,7 +182,8 @@ class TestWorkspaceClone(unittest.TestCase):
         res = run_primitive_clone(
             git_url=str(remote_repo),
             target_dir=dest_path,
-            no_repair=True
+            no_repair=True,
+            streaming=False,
         )
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue(res.is_drift_workspace)
@@ -207,5 +211,29 @@ class TestWorkspaceClone(unittest.TestCase):
             self.assertEqual(data["target_directory"], str(dest_path))
 
 
+    @patch("drift.workspace_clone.run_command")
+    def test_clone_streaming_flag(self, mock_run_command):
+        """Verifies streaming flag is passed to run_command from run_primitive_clone."""
+        from drift.workspace_clone import clone_git_repository
+        mock_run_command.return_value = subprocess.CompletedProcess([], 0)
+
+        # 1. streaming=True (default in clone_git_repository)
+        clone_git_repository("https://example.com/repo.git", self.dest_base / "stream_true", streaming=True)
+        mock_run_command.assert_called_with(
+            ["git", "clone", "https://example.com/repo.git", str(self.dest_base / "stream_true")],
+            streaming=True,
+            text=True
+        )
+
+        # 2. streaming=False
+        clone_git_repository("https://example.com/repo.git", self.dest_base / "stream_false", streaming=False)
+        mock_run_command.assert_called_with(
+            ["git", "clone", "https://example.com/repo.git", str(self.dest_base / "stream_false")],
+            streaming=False,
+            text=True
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
+

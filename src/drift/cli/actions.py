@@ -442,7 +442,8 @@ def execute_clone(
         target_dir=target_dir,
         branch=branch,
         depth=depth,
-        no_repair=no_repair
+        no_repair=no_repair,
+        streaming=not json_mode,
     )
 
     if json_mode:

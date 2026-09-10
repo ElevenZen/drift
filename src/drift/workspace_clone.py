@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 
 from .workspace_init import init_drift_workspace
 from .workspace_repair import repair_drift_workspace
+from .process_utils import run_command
 from .constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
@@ -67,7 +68,8 @@ def clone_git_repository(
     git_url: str,
     target_dir: Path,
     branch: Optional[str] = None,
-    depth: Optional[int] = None
+    depth: Optional[int] = None,
+    streaming: bool = True,
 ) -> None:
     """Clones a remote or local Git repository to target_dir."""
     if target_dir.exists():
@@ -85,13 +87,7 @@ def clone_git_repository(
     cmd.extend([git_url, str(target_dir)])
 
     try:
-        res = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        logger.debug(f"Git clone output: {res.stdout}")
+        run_command(cmd, streaming=streaming, text=True)
     except subprocess.CalledProcessError as e:
         err_msg = e.stderr.strip() if e.stderr else str(e)
         logger.error(f"Git clone failed: {err_msg}")
@@ -166,7 +162,8 @@ def run_primitive_clone(
     target_dir: Optional[Path] = None,
     branch: Optional[str] = None,
     depth: Optional[int] = None,
-    no_repair: bool = False
+    no_repair: bool = False,
+    streaming: bool = True,
 ) -> CloneResult:
     """Clones a repository, inspects workspace structure, and bootstraps or heals state databases."""
     if target_dir is None:
@@ -181,7 +178,8 @@ def run_primitive_clone(
             git_url=git_url,
             target_dir=target_dir,
             branch=branch,
-            depth=depth
+            depth=depth,
+            streaming=streaming,
         )
     except Exception as e:
         return CloneResult(
