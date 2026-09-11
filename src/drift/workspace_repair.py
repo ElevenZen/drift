@@ -1,9 +1,55 @@
-"""Feature implementation for repairing a damaged or partially-initialized drift workspace."""
+"""Feature implementation for repairing a damaged or partially-initialized drift workspace.
 
-import json
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Repair Pipeline Flow:
+    repair_drift_workspace(drift_root, dry_run) [Layer 3: Pipeline Orchestration]
+        │
+        ├── [Step 1: Workspace Config (Fail-Fast Foundation)] [Layer 1]
+        │   └── repair_workspace_config(drift_root, dry_run) -> (actions, WorkspaceConfig)
+        │       ├── Migrates legacy filenames (drift.toml -> drift_workspace.toml)
+        │       ├── Generates default configuration if missing
+        │       ├── Validates & loads WorkspaceConfig (raises ConfigError immediately if broken)
+        │
+        └── [Step 2: Component Repair Steps (Require WorkspaceConfig)] [Layer 2]
+            ├── repair_core_directories(drift_root, workspace_config, dry_run)
+            ├── repair_gitignore(drift_root, workspace_config, dry_run)
+            ├── repair_render_repo(drift_root, workspace_config, dry_run)
+            ├── repair_install_repo(drift_root, workspace_config, dry_run)
+            ├── repair_internal_gitignores(drift_root, workspace_config, dry_run)
+            ├── repair_install_stow_ignore(drift_root, workspace_config, dry_run)
+            ├── repair_state_registry(drift_root, workspace_config, dry_run)
+            ├── repair_secrets_env(drift_root, workspace_config, dry_run)
+            └── repair_engine_inputs(drift_root, workspace_config, dry_run)
+
+Result Formatting:
+    build_repair_result(report, actions, dry_run) [Layer 3: Pipeline Orchestration]
+
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Foundation Config Repair (Step 1 - Fail Fast)
+        repair_workspace_config
+    Layer 2: Downstream Component Repair Handlers (Step 2 - Require WorkspaceConfig)
+        repair_core_directories
+        repair_gitignore
+        repair_render_repo
+        repair_install_repo
+        repair_internal_gitignores
+        repair_install_stow_ignore
+        repair_state_registry
+        repair_secrets_env
+        repair_engine_inputs
+    Layer 3: Pipeline Orchestration & Reporting
+        repair_drift_workspace
+        build_repair_result
+===============================================================================
+"""
+
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING, List, Optional, Callable, Tuple, Sequence
+from typing import List, Sequence, Tuple
 
 from .constants import (
     CONFIG_DIR_NAME,
@@ -11,7 +57,6 @@ from .constants import (
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
-    INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
     get_default_drift_workspace_toml_content,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
@@ -33,8 +78,6 @@ from .check_repo import (
     check_install_stow_ignore,
     check_state_registry,
     check_workspace_config,
-    check_core_dirs,
-    check_engine_inputs,
 )
 from .git_utils import (
     git_init_repo,
@@ -46,6 +89,10 @@ from .toml_utils import parse_toml
 
 logger = logging.getLogger(__name__)
 
+
+# =====================================================================
+# Layer 1: Foundation Config Repair (Step 1 - Fail Fast)
+# =====================================================================
 
 def repair_workspace_config(
     drift_root: Path,
@@ -144,6 +191,10 @@ def repair_workspace_config(
 
     return actions, ws_config
 
+
+# =====================================================================
+# Layer 2: Downstream Component Repair Handlers (Step 2 - Require WorkspaceConfig)
+# =====================================================================
 
 def repair_core_directories(
     drift_root: Path,
@@ -365,6 +416,10 @@ def repair_engine_inputs(
 
     return actions
 
+
+# =====================================================================
+# Layer 3: Pipeline Orchestration & Reporting
+# =====================================================================
 
 def repair_drift_workspace(
     drift_root: Path,
