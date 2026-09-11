@@ -129,8 +129,9 @@ from .git_utils import (
 from .workspace_repair import (
     repair_drift_workspace,
 )
-from .check_repo import (
+from .workspace_check import (
     check_existing_workspace_status,
+    check_drift_workspace,
     ComponentStatus,
     WorkspaceHealthReport,
 )

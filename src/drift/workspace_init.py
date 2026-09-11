@@ -22,7 +22,7 @@ from .constants import (
     get_default_internal_gitignore_content,
 )
 from .ignore import get_default_install_stow_ignore_content
-from .check_repo import check_existing_workspace_status, ComponentStatus
+from .workspace_check import check_existing_workspace_status, ComponentStatus
 from .git_utils import (
     is_git_tracked,
     get_drift_root,
@@ -119,8 +119,10 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     # Create secrets.env template
     secrets_file = config_dir / SECRETS_ENV_FILE_NAME
-    if not secrets_file.exists() or force:
+    if not secrets_file.exists():
         secrets_file.write_text(get_default_secrets_env_content(), encoding="utf-8")
+    else:
+        logger.warning(f"secrets.env already exists at '{secrets_file}', skipping creation.")
 
     # Create empty envsubst.bash, mustache.envst.json, and jinja2.mustache.json as referenced in default drift_workspace.toml
     envsubst_input = config_dir / "envsubst.bash"

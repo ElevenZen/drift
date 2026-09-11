@@ -67,7 +67,7 @@ from .constants import (
     get_default_internal_gitignore_content,
 )
 from .ignore import get_default_install_stow_ignore_content
-from .check_repo import (
+from .workspace_check import (
     ComponentStatus,
     WorkspaceHealthReport,
     check_root_gitignore,
@@ -226,7 +226,7 @@ def repair_gitignore(
 ) -> List[str]:
     """Repairs root .gitignore rules."""
     actions: List[str] = []
-    gitignore_res = check_root_gitignore(drift_root)
+    gitignore_res = check_root_gitignore(drift_root, workspace_config=workspace_config)
     if gitignore_res.status != ComponentStatus.GOOD:
         actions.append("Updated '.gitignore' with required workspace isolation entries.")
         if not dry_run:

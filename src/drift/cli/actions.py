@@ -368,7 +368,7 @@ def execute_deploy(
 def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = False) -> None:
     """Core function to repair a damaged or partially-initialized drift workspace."""
     from ..workspace_repair import repair_drift_workspace, build_repair_result
-    from ..check_repo import check_existing_workspace_status
+    from ..workspace_check import check_existing_workspace_status
 
     report = check_existing_workspace_status(drift_root)
 

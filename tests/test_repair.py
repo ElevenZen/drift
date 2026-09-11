@@ -18,11 +18,11 @@ from drift.constants import (
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     set_test_mode,
 )
-from drift.check_repo import (
+from drift.workspace_check import (
     ComponentStatus,
     CheckResult,
     WorkspaceHealthReport,
-    check_root_git_repo,
+    probe_existing_workspace_structure,
     check_workspace_config,
     check_state_registry,
     check_render_repo,
@@ -43,11 +43,15 @@ from drift.workspace_repair import (
     repair_drift_workspace,
     repair_workspace_config,
 )
+from drift.workspace_config import (
+    WorkspaceConfig,
+    load_workspace_config,
+)
 from drift.cli import main
 
 
 class TestCheckRepoModular(unittest.TestCase):
-    """Tests for granular 3-value component checks in check_repo.py."""
+    """Tests for granular 3-value component checks in workspace_check.py."""
 
     def setUp(self) -> None:
         set_test_mode(True)
@@ -65,6 +69,28 @@ class TestCheckRepoModular(unittest.TestCase):
         self.assertFalse(report.is_healthy())
         self.assertFalse(report.is_broken())
         self.assertFalse(bool(report))
+
+    def test_fresh_repo_with_only_root_git_is_not_found(self) -> None:
+        """A fresh directory with only a root .git repo must still return NOT_FOUND."""
+        from drift.git_utils import git_init_repo
+        git_init_repo(self.drift_root, "main")
+        self.assertFalse(probe_existing_workspace_structure(self.drift_root))
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertEqual(report.overall_status, ComponentStatus.NOT_FOUND)
+        self.assertTrue(report.is_fresh())
+
+    def test_missing_workspace_config_with_existing_artifacts_is_broken(self) -> None:
+        """If workspace artifacts exist but drift_workspace.toml is missing, status is BROKEN."""
+        (self.drift_root / "src").mkdir(parents=True)
+        self.assertTrue(probe_existing_workspace_structure(self.drift_root))
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
+        self.assertTrue(report.is_broken())
+        self.assertEqual(len(report.checks), 1)
+        self.assertEqual(report.checks[0].name, "Workspace Configuration")
+        self.assertEqual(report.checks[0].status, ComponentStatus.NOT_FOUND)
 
     def test_fully_initialized_workspace_is_good(self) -> None:
         """A properly initialized workspace must report GOOD across all checks and overall."""
@@ -84,8 +110,9 @@ class TestCheckRepoModular(unittest.TestCase):
         """If render/ exists but is missing its .git repository, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         shutil.rmtree(self.drift_root / "render" / ".git")
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_render_repo(self.drift_root)
+        res = check_render_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
         report = check_existing_workspace_status(self.drift_root)
@@ -96,8 +123,9 @@ class TestCheckRepoModular(unittest.TestCase):
         """If install/ exists but is missing its .git repository, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         shutil.rmtree(self.drift_root / "install" / ".git")
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_install_repo(self.drift_root)
+        res = check_install_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
         report = check_existing_workspace_status(self.drift_root)
@@ -107,8 +135,9 @@ class TestCheckRepoModular(unittest.TestCase):
         """If install/state.toml is deleted after init, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "install" / "state.toml").unlink()
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_state_registry(self.drift_root)
+        res = check_state_registry(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.NOT_FOUND)
 
         report = check_existing_workspace_status(self.drift_root)
@@ -124,13 +153,17 @@ class TestCheckRepoModular(unittest.TestCase):
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
+        self.assertTrue(report.is_broken())
+        self.assertEqual(len(report.checks), 1)
+        self.assertEqual(report.checks[0].name, "Workspace Configuration")
 
     def test_missing_gitignore_rules_is_broken(self) -> None:
         """If .gitignore is missing mandatory ignore lines, it reports BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / ".gitignore").write_text("# empty\n", encoding="utf-8")
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_root_gitignore(self.drift_root)
+        res = check_root_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
         report = check_existing_workspace_status(self.drift_root)
@@ -138,22 +171,38 @@ class TestCheckRepoModular(unittest.TestCase):
 
     def test_file_blocking_directory_is_broken(self) -> None:
         """If render or install exists as a regular file, it reports BROKEN."""
+        init_drift_workspace(self.drift_root)
+        shutil.rmtree(self.drift_root / "render")
         (self.drift_root / "render").write_text("i am a file", encoding="utf-8")
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_render_repo(self.drift_root)
+        res = check_render_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
     def test_missing_engine_inputs_is_broken(self) -> None:
         """If drift_workspace.toml declares an engine input file that is missing on disk, reports BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "config" / "envsubst.bash").unlink()
+        ws_config = load_workspace_config(self.drift_root)
 
-        res = check_engine_inputs(self.drift_root)
+        res = check_engine_inputs(self.drift_root, workspace_config=ws_config)
+        self.assertEqual(res.status, ComponentStatus.BROKEN)
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
+
+    def test_all_engine_inputs_missing_is_not_found(self) -> None:
+        """If all declared engine input files are missing on disk, reports NOT_FOUND for that check."""
+        init_drift_workspace(self.drift_root)
+        (self.drift_root / "config" / "envsubst.bash").unlink()
+        (self.drift_root / "config" / "mustache.envst.json").unlink()
+        (self.drift_root / "config" / "jinja2.mustache.json").unlink()
+        ws_config = load_workspace_config(self.drift_root)
+
+        res = check_engine_inputs(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.NOT_FOUND)
 
-        from drift.workspace_config import load_workspace_config
-        workspace_config = load_workspace_config(self.drift_root)
-        report = check_existing_workspace_status(self.drift_root, workspace_config=workspace_config)
+        report = check_existing_workspace_status(self.drift_root)
         self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
 
 
@@ -242,10 +291,11 @@ class TestWorkspaceRepair(unittest.TestCase):
         init_drift_workspace(self.drift_root)
         (self.drift_root / "render" / ".gitignore").unlink()
         (self.drift_root / "install" / ".gitignore").unlink()
+        ws_config = load_workspace_config(self.drift_root)
 
-        res_render = check_render_gitignore(self.drift_root)
+        res_render = check_render_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res_render.status, ComponentStatus.NOT_FOUND)
-        res_install = check_install_gitignore(self.drift_root)
+        res_install = check_install_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res_install.status, ComponentStatus.NOT_FOUND)
 
         actions = repair_drift_workspace(self.drift_root)
