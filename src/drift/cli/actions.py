@@ -471,7 +471,7 @@ def execute_hook(
     from_stage: Optional[Union[str, Any]] = None
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
-    from ..package_hook import run_primitive_trigger_hook
+    from ..trigger_hook import run_primitive_trigger_hook
     from ..lifecycle_hooks import HookExecFlags
 
     workspace_config = load_workspace_config_default(drift_root)

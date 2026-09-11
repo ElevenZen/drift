@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PACKAGE_CONFIG_FILE_NAME
-from drift.package_hook import run_primitive_trigger_hook
+from drift.trigger_hook import run_primitive_trigger_hook
 from drift.lifecycle_hooks import HookExecFlags
 from drift.exceptions import ConfigError
 from drift.cli import main, run_argparse_cli
@@ -207,14 +207,14 @@ class TestPackageHook(unittest.TestCase):
         stdout_buf = StringIO()
         with patch("sys.stdout", stdout_buf), patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config):
             # 1. Skipped hook
-            with patch("drift.package_hook.run_primitive_trigger_hook") as mock_trigger:
+            with patch("drift.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
                 mock_trigger.return_value = HookResult.skipped(package="pkg_a", hook_name="pre_source")
                 with self.assertRaises(SystemExit) as cm:
                     execute_hook(self.drift_root, "pkg_a", "pre_source")
                 self.assertEqual(cm.exception.code, ExitCode.HOOK_SKIPPED)
 
             # 2. Failed hook
-            with patch("drift.package_hook.run_primitive_trigger_hook") as mock_trigger:
+            with patch("drift.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
                 mock_trigger.return_value = HookResult(package="pkg_a", hook_name="pre_source", status="FAILED", exit_code=1, error_message="Fail")
                 with self.assertRaises(SystemExit) as cm:
                     execute_hook(self.drift_root, "pkg_a", "pre_source")

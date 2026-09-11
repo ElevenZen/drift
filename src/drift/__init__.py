@@ -84,6 +84,9 @@ from .lifecycle_hooks import (
     trigger_probe_hook,
     trigger_package_hook,
 )
+from .trigger_hook import (
+    run_primitive_trigger_hook,
+)
 from .render_core import (
     render_template,
     render_template_to_file,
