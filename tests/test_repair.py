@@ -38,8 +38,10 @@ from drift.check_repo import (
 from drift.workspace_init import (
     init_drift_workspace,
 )
+from drift.exceptions import ConfigError
 from drift.workspace_repair import (
     repair_drift_workspace,
+    repair_workspace_config,
 )
 from drift.cli import main
 
@@ -409,6 +411,46 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertTrue(any("Renamed legacy workspace configuration file 'config/drift.toml' to 'config/drift_workspace.toml'" in a for a in actions))
         self.assertTrue(legacy_main.is_file())
         self.assertFalse(ws_file.exists())
+
+    def test_repair_workspace_config_broken_fails_fast(self) -> None:
+        """When workspace config has invalid syntax, repair_drift_workspace raises ConfigError immediately."""
+        init_drift_workspace(self.drift_root)
+        config_path = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        config_path.write_text("invalid_syntax = [ {", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            repair_drift_workspace(self.drift_root)
+        self.assertIn("invalid", str(ctx.exception).lower())
+
+    def test_repair_workspace_config_helper_returns_tuple(self) -> None:
+        """repair_workspace_config returns (actions, WorkspaceConfig) tuple."""
+        init_drift_workspace(self.drift_root)
+        actions, ws_config = repair_workspace_config(self.drift_root)
+        self.assertEqual(len(actions), 0)
+        self.assertEqual(ws_config.drift_root, self.drift_root)
+
+    def test_repair_with_custom_workspace_paths(self) -> None:
+        """repair_drift_workspace consumes custom paths from workspace_config correctly."""
+        (self.drift_root / CONFIG_DIR_NAME).mkdir(parents=True)
+        config_path = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        config_path.write_text("""
+[workspace]
+render_directory = "custom_render"
+install_directory = "custom_install"
+source_directory = "custom_src"
+
+[packages.enable]
+DEFAULT = true
+""", encoding="utf-8")
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("custom_render" in a for a in actions))
+        self.assertTrue(any("custom_install" in a for a in actions))
+        self.assertTrue(any("custom_src" in a for a in actions))
+
+        self.assertTrue((self.drift_root / "custom_render" / ".git").is_dir())
+        self.assertTrue((self.drift_root / "custom_install" / ".git").is_dir())
+        self.assertTrue((self.drift_root / "custom_src").is_dir())
 
 
 if __name__ == "__main__":

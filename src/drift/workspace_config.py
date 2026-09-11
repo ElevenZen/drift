@@ -519,6 +519,7 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
     ]
     for p in legacy_candidates:
         if p.is_file():
+            logger.error("❌ DEPRECATION ERROR: Legacy workspace configuration file detected!")
             err_box = (
                 "\n" + "=" * 80 + "\n"
                 "❌ DEPRECATION ERROR: Legacy workspace configuration file detected!\n\n"
@@ -533,7 +534,6 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
                 "You can also run 'drift repair' to automatically migrate legacy configuration files.\n"
                 + "=" * 80 + "\n"
             )
-            logger.error(err_box)
             print(err_box, file=sys.stderr)
             raise ConfigError(
                 f"Legacy workspace configuration file '{p.name}' is no longer supported. "
