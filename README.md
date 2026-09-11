@@ -220,7 +220,7 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     ```
 
 *   **Dynamic Python Workspace Hook (`config/drift_workspace.py`)**:
-    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."`). The hook executes on the fly without requiring any external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
+    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on the fly without requiring any external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
     ```python
     # config/drift_workspace.py
     def configure_workspace(context):

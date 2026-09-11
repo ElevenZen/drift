@@ -24,16 +24,16 @@ default_target_directory = "~"
 # Options: "stow" (symlinks) or "copy" (physical copies)
 default_install_method = "stow"
 
-# Optional dynamic Python workspace configuration hook file (relative to workspace root).
-# Defaults to "config/drift_workspace.py".
-# hook_file = "config/drift_workspace.py"
+# Optional dynamic Python workspace configuration hook file (relative to the 'config/' directory).
+# Defaults to "drift_workspace.py".
+# hook_file = "drift_workspace.py"
 
 
 # ---------------------------------------------------------------------
 # Dynamic Python Workspace Hook (config/drift_workspace.py)
 # ---------------------------------------------------------------------
 # For programmatic configuration across heterogeneous machines without external scripts,
-# author a Python hook in `config/drift_workspace.py` (or specify via `hook_file` above).
+# author a Python hook in `config/drift_workspace.py` (or specify via `[workspace] hook_file` above, relative to `config/`).
 # The hook receives a `WorkspaceHookContext` object with `context.config`, `context.facts`,
 # `context.env`, and `context.discovered_packages`:
 #

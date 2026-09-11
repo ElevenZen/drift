@@ -94,7 +94,7 @@ def configure_workspace(context):
         self.assertTrue(len(cfg.env["DETECTED_OS"]) > 0)
 
     def test_custom_hook_file_in_workspace_config(self) -> None:
-        """Custom hook_file defined in [workspace] is executed."""
+        """Custom hook_file defined in [workspace] is resolved relative to config/."""
         custom_hook = self.drift_root / CONFIG_DIR_NAME / "custom_hook.py"
         custom_hook.write_text("""
 def configure_workspace(context):
@@ -105,7 +105,7 @@ def configure_workspace(context):
         self.config_file.write_text("""
 [workspace]
 default_target_directory = "~"
-hook_file = "config/custom_hook.py"
+hook_file = "custom_hook.py"
 
 [packages.enable]
 pkg1 = true
@@ -113,14 +113,57 @@ pkg1 = true
 
         cfg = load_workspace_config(self.drift_root)
         self.assertEqual(cfg.env.get("CUSTOM_HOOK_RAN"), "yes")
-        self.assertEqual(str(cfg.workspace.hook_file), "config/custom_hook.py")
+        self.assertEqual(str(cfg.workspace.hook_file), "custom_hook.py")
+
+    def test_custom_hook_file_nested_in_config_dir(self) -> None:
+        """Custom hook_file nested inside a subdirectory of config/ resolves properly."""
+        nested_dir = self.drift_root / CONFIG_DIR_NAME / "hooks"
+        nested_dir.mkdir(parents=True, exist_ok=True)
+        (nested_dir / "nested_hook.py").write_text("""
+def configure_workspace(context):
+    context.config.setdefault("env", {})["NESTED_RAN"] = "yes"
+    return context.config
+""", encoding="utf-8")
+
+        self.config_file.write_text("""
+[workspace]
+default_target_directory = "~"
+hook_file = "hooks/nested_hook.py"
+
+[packages.enable]
+pkg1 = true
+""", encoding="utf-8")
+
+        cfg = load_workspace_config(self.drift_root)
+        self.assertEqual(cfg.env.get("NESTED_RAN"), "yes")
+
+    def test_custom_hook_file_absolute_path(self) -> None:
+        """Custom hook_file with an absolute path is resolved directly."""
+        abs_hook = self.drift_root / "abs_hook.py"
+        abs_hook.write_text("""
+def configure_workspace(context):
+    context.config.setdefault("env", {})["ABS_RAN"] = "yes"
+    return context.config
+""", encoding="utf-8")
+
+        self.config_file.write_text(f"""
+[workspace]
+default_target_directory = "~"
+hook_file = "{abs_hook.as_posix()}"
+
+[packages.enable]
+pkg1 = true
+""", encoding="utf-8")
+
+        cfg = load_workspace_config(self.drift_root)
+        self.assertEqual(cfg.env.get("ABS_RAN"), "yes")
 
     def test_custom_hook_file_missing_raises_config_error(self) -> None:
         """Specifying a non-existent hook_file in [workspace] raises ConfigError."""
         self.config_file.write_text("""
 [workspace]
 default_target_directory = "~"
-hook_file = "config/nonexistent_hook.py"
+hook_file = "nonexistent_hook.py"
 
 [packages.enable]
 pkg1 = true

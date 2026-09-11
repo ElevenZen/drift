@@ -48,7 +48,7 @@ MIDWAY_TRANSACTION_STATES = ("staging", "deploying")
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 
-DEFAULT_WORKSPACE_HOOK_FILE_NAME = f"{CONFIG_DIR_NAME}/drift_workspace.py"
+DEFAULT_WORKSPACE_HOOK_FILE_NAME = "drift_workspace.py"
 WORKSPACE_HOOK_FUNCTION_NAME = "configure_workspace"
 
 

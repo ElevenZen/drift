@@ -46,7 +46,7 @@ A local-only, git-ignored override file. If present at startup, drift recursivel
     ```
 
 ### Layer 3: Dynamic Python Workspace Hook (`config/drift_workspace.py`)
-For complete programmatic control across heterogeneous fleets, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."`). The hook executes on-the-fly without external wrapper scripts, providing direct access to detected system facts, discovered packages, and configuration tables:
+For complete programmatic control across heterogeneous fleets, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on-the-fly without external wrapper scripts, providing direct access to detected system facts, discovered packages, and configuration tables:
 
 ```python
 # config/drift_workspace.py
