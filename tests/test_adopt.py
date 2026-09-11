@@ -80,7 +80,7 @@ class TestAdopt(unittest.TestCase):
             render_command="bash -c 'source %i && envsubst < %s'"
         )
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.workspace_path,
+            drift_root=self.workspace_path,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.workspace_path / "system_home",
             ),

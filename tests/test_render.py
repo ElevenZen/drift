@@ -593,7 +593,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # 2. Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -647,7 +647,7 @@ class TestRenderPackage(unittest.TestCase):
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
             render_engine_configs=RenderEngineRegistry({
                 "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")
             })
@@ -695,7 +695,7 @@ class TestRenderPackage(unittest.TestCase):
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
 
         pkg_dir = drift_root / "src" / "pkg_with_empty_dirs"
@@ -750,7 +750,7 @@ class TestRenderPackage(unittest.TestCase):
             f.write("export PKG_NAME='rendered_pkg_name'\n")
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -788,7 +788,7 @@ class TestRenderPackage(unittest.TestCase):
             f.write("export PKG_NAME='rendered_pkg_name'\n")
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
@@ -836,7 +836,7 @@ class TestRenderPackage(unittest.TestCase):
         # pkg_b is explicitly disabled (False)
         # pkg_c is not listed, but packages_enable_default is True
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
             packages_enable={
                 "pkg_a": True,
                 "pkg_b": False,
@@ -874,7 +874,7 @@ class TestRenderPackage(unittest.TestCase):
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
 
         # 1. Create render directory
@@ -942,7 +942,7 @@ class TestRenderPackage(unittest.TestCase):
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
         )
 
         # 1. Create package source directories under src/
@@ -1006,7 +1006,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # 2. Setup WorkspaceConfig with engines
         workspace_config = WorkspaceConfig(
-            drift_root_path=drift_root,
+            drift_root=drift_root,
             packages_enable={"my_pkg": True}
         )
         envsubst_engine = RenderEngineConfig(
@@ -1117,7 +1117,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
 
         # Create package dir starting with dot-
@@ -1149,7 +1149,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
 
         # Create package dir
@@ -1280,7 +1280,7 @@ class TestRenderPackage(unittest.TestCase):
 
         # Define workspace config
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
         workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
@@ -1330,7 +1330,7 @@ class TestRenderPackage(unittest.TestCase):
         )
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
 
         from drift.render_package import run_primitive_2_render_packages
@@ -1371,7 +1371,7 @@ class TestRenderPackage(unittest.TestCase):
         )
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
 
         from drift.render_package import run_primitive_2_render_packages
@@ -1393,7 +1393,7 @@ class TestRenderPackage(unittest.TestCase):
         (config_dir / "envsubst.bash").write_text("# dummy env", encoding="utf-8")
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
@@ -1477,7 +1477,7 @@ class TestRenderPackage(unittest.TestCase):
         from drift.render_package import run_primitive_2_render_packages
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_good": True, "pkg_broken": True},
             packages_enable_default=False
         )
@@ -1518,7 +1518,7 @@ class TestRenderPackage(unittest.TestCase):
         from drift.lifecycle_hooks import trigger_pre_source_hook
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_static_hook": True},
             packages_enable_default=False
         )
@@ -1579,7 +1579,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         )
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_hook": True},
             packages_enable_default=False
         )
@@ -1740,7 +1740,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         from drift.render_package import render_package
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_hooks_bypass": True},
             packages_enable_default=False
         )
@@ -1783,7 +1783,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         from drift.render_package import render_package
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_subfolder": True},
             packages_enable_default=False
         )
@@ -1825,7 +1825,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         from drift.render_package import render_package
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_missing_sub": True},
             packages_enable_default=False
         )
@@ -1849,7 +1849,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         from drift.exceptions import ConfigError
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={"pkg_bad_ignore": True},
             packages_enable_default=False,
             render_engine_configs=RenderEngineRegistry({
@@ -1888,7 +1888,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
 
         workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",

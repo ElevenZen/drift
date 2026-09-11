@@ -133,10 +133,10 @@ def repair_workspace_config(
         if dry_run and not config_file.exists() and not (config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml").exists():
             if (config_dir / "drift.toml").is_file():
                 d = parse_toml((config_dir / "drift.toml").read_text(encoding="utf-8"))
-                ws_config = WorkspaceConfig.from_dict(d, drift_root_path=drift_root)
+                ws_config = WorkspaceConfig.from_dict(d, drift_root=drift_root)
             else:
                 default_dict = parse_toml(get_default_drift_workspace_toml_content())
-                ws_config = WorkspaceConfig.from_dict(default_dict, drift_root_path=drift_root)
+                ws_config = WorkspaceConfig.from_dict(default_dict, drift_root=drift_root)
         else:
             ws_config = load_workspace_config(drift_root)
     except Exception as e:

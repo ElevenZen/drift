@@ -251,7 +251,7 @@ def run_pending_delta_diff(
         cmd = [*base_cmd, str(rel_install), str(rel_render), "--", *exclude_patterns]
         res = subprocess.run(
             cmd,
-            cwd=str(workspace_config.drift_root_path),
+            cwd=str(workspace_config.drift_root),
             capture_output=True,
             text=True,
             check=False,

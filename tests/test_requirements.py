@@ -222,7 +222,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         (self.drift_root / "install").mkdir(parents=True)
 
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
         )
 
     def tearDown(self) -> None:

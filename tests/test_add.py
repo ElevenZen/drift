@@ -31,7 +31,7 @@ class TestAddResource(unittest.TestCase):
         from drift.workspace_config import WorkspaceSectionConfig
         from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir,
             ),

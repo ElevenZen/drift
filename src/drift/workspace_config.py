@@ -176,7 +176,7 @@ class WorkspaceSectionConfig:
 @dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift_workspace.toml."""
-    drift_root_path: Path = Path(".")
+    drift_root: Path = Path(".")
     workspace: WorkspaceSectionConfig = field(default_factory=WorkspaceSectionConfig)
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
@@ -186,7 +186,7 @@ class WorkspaceConfig:
 
     def __init__(
         self,
-        drift_root_path: Union[Path, str] = Path("."),
+        drift_root: Union[Path, str] = Path("."),
         workspace: Optional[WorkspaceSectionConfig] = None,
         packages_enable: Mapping[str, bool] = {},
         packages_enable_default: bool = False,
@@ -194,8 +194,8 @@ class WorkspaceConfig:
         env: Mapping[str, str] = {},
         settings: Optional[SettingsConfig] = None,
     ) -> None:
-        if not isinstance(drift_root_path, (str, Path)):
-            raise ConfigError(f"drift_root_path must be a Path or str, got {type(drift_root_path).__name__}")
+        if not isinstance(drift_root, (str, Path)):
+            raise ConfigError(f"drift_root must be a Path or str, got {type(drift_root).__name__}")
         if workspace is not None and not isinstance(workspace, WorkspaceSectionConfig):
             raise ConfigError(f"workspace must be a WorkspaceSectionConfig instance, got {type(workspace).__name__}")
         if settings is not None and not isinstance(settings, SettingsConfig):
@@ -207,7 +207,7 @@ class WorkspaceConfig:
         if not isinstance(env, (dict, Mapping)):
             raise ConfigError("env must be a dictionary.")
 
-        self.drift_root_path = Path(drift_root_path)
+        self.drift_root = Path(drift_root)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
         self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
@@ -217,8 +217,8 @@ class WorkspaceConfig:
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
-        if not isinstance(self.drift_root_path, Path):
-            raise ConfigError("drift_root_path must be a Path object.")
+        if not isinstance(self.drift_root, Path):
+            raise ConfigError("drift_root must be a Path object.")
         if not isinstance(self.workspace, WorkspaceSectionConfig):
             raise ConfigError("workspace must be a WorkspaceSectionConfig instance.")
         self.workspace.validate()
@@ -236,29 +236,29 @@ class WorkspaceConfig:
         self.settings.validate()
 
     @property
-    def drift_root(self) -> Path:
-        """Returns the absolute path to drift workspace root."""
-        return self.drift_root_path
+    def drift_root_path(self) -> Path:
+        """Alias property for drift_root to support backward compatibility."""
+        return self.drift_root
 
     @property
     def source_path(self) -> Path:
         """Returns the absolute path to source directory."""
-        return self.drift_root_path / self.workspace.source_directory
+        return self.drift_root / self.workspace.source_directory
 
     @property
     def render_path(self) -> Path:
         """Returns the absolute path to render directory."""
-        return self.drift_root_path / self.workspace.render_directory
+        return self.drift_root / self.workspace.render_directory
 
     @property
     def install_path(self) -> Path:
         """Returns the absolute path to install directory."""
-        return self.drift_root_path / self.workspace.install_directory
+        return self.drift_root / self.workspace.install_directory
 
     @property
     def backup_path(self) -> Path:
         """Returns the absolute path to backup directory."""
-        return self.drift_root_path / self.workspace.backup_directory
+        return self.drift_root / self.workspace.backup_directory
 
     @property
     def default_target_path(self) -> Path:
@@ -401,8 +401,13 @@ class WorkspaceConfig:
         return self.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, rel_target_path)
 
     @classmethod
-    def from_dict(cls, data: dict, drift_root_path: Path = Path(".")) -> "WorkspaceConfig":
+    def from_dict(
+        cls,
+        data: dict,
+        drift_root: Path = Path("."),
+    ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
+        root = drift_root
         if not isinstance(data, dict):
             raise ConfigError("Workspace configuration data must be a dictionary.")
 
@@ -455,7 +460,7 @@ class WorkspaceConfig:
         settings = SettingsConfig.from_dict(settings_data)
 
         config = cls(
-            drift_root_path=Path(drift_root_path).resolve(),
+            drift_root=root.resolve(),
             workspace=workspace_section,
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
@@ -542,13 +547,16 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
             )
 
 
-def load_workspace_config(drift_root_path: Path, check_legacy: bool = True) -> WorkspaceConfig:
+def load_workspace_config(
+    drift_root: Path = Path("."),
+    check_legacy: bool = True,
+) -> WorkspaceConfig:
     """Loads and parses the workspace configuration, merging drift_workspace.toml and drift_workspace.local.toml if present."""
-    drift_root_path = Path(drift_root_path).resolve()
+    root = Path(drift_root).resolve()
     if check_legacy:
-        check_for_legacy_workspace_config(drift_root_path)
+        check_for_legacy_workspace_config(root)
 
-    file_path = drift_root_path / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+    file_path = root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
 
     # Ensure system facts are present before rendering workspace config (default: no WAN probe)
     inject_system_facts(probe_wan_ip=False)
@@ -577,7 +585,7 @@ def load_workspace_config(drift_root_path: Path, check_legacy: bool = True) -> W
 
     # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
     from .workspace_hook import apply_workspace_hook
-    combined_dict = apply_workspace_hook(drift_root_path, combined_dict)
+    combined_dict = apply_workspace_hook(root, combined_dict)
 
     # 1. Resolve inter-variable dependencies within [env] using topological sorting
     env_dict = combined_dict.get("env", {})
@@ -599,7 +607,7 @@ def load_workspace_config(drift_root_path: Path, check_legacy: bool = True) -> W
     )
 
     try:
-        return WorkspaceConfig.from_dict(combined_dict, drift_root_path=drift_root_path)
+        return WorkspaceConfig.from_dict(combined_dict, drift_root=root)
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:

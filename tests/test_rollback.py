@@ -37,7 +37,7 @@ class TestRollback(unittest.TestCase):
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),
@@ -169,7 +169,7 @@ class TestRollback(unittest.TestCase):
 
         # Enable in workspace config
         workspace_cfg = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),
@@ -242,7 +242,7 @@ class TestRollback(unittest.TestCase):
         save_state_registry(registry)
 
         workspace_cfg = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),

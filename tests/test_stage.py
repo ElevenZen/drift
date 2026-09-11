@@ -28,7 +28,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Create WorkspaceConfig
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={
                 "pkg_a": True,
                 "pkg_b": True,
@@ -389,7 +389,7 @@ class TestStageRepo(unittest.TestCase):
         """Verifies that stage returns early if there are no active packages."""
         # Create config with no enabled packages
         empty_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             packages_enable={},
             packages_enable_default=False,
         )

@@ -987,7 +987,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         set_initial_env(["CLI_OVERRIDE_VAR"])
 
         ws = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=Path("/target"),
             ),
@@ -1041,7 +1041,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
 
         ws = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 source_directory=Path("custom_src"),
                 render_directory=Path("custom_render"),
@@ -1115,7 +1115,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         from drift.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 source_directory=Path("src"),
                 render_directory=Path("render"),
@@ -1164,7 +1164,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         from drift.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 source_directory=Path("src"),
                 render_directory=Path("render"),

@@ -709,7 +709,7 @@ class TestConfigClasses(unittest.TestCase):
             pkg_c_dir.mkdir()
 
             config = WorkspaceConfig(
-                drift_root_path=root_path,
+                drift_root=root_path,
                 packages_enable={"pkg_a": True, "pkg_b": False},
                 packages_enable_default=False
             )
@@ -757,7 +757,7 @@ class TestConfigClasses(unittest.TestCase):
             (install_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
 
             config = WorkspaceConfig(
-                drift_root_path=root,
+                drift_root=root,
                 workspace=WorkspaceSectionConfig(
                     source_directory=Path("src"),
                     render_directory=Path("render"),
@@ -876,7 +876,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(
-            drift_root_path=Path("/test"),
+            drift_root=Path("/test"),
             workspace=WorkspaceSectionConfig(default_install_method="stow"),
         )
         pkg_config = PackageConfig(name="test_pkg", install_method="stow")
@@ -891,7 +891,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
-            drift_root_path=Path("/test"),
+            drift_root=Path("/test"),
             workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
         )
         home = Path.home()
@@ -918,7 +918,7 @@ class TestConfigClasses(unittest.TestCase):
     def test_target_directory_windows_forward_and_mixed_slashes(self) -> None:
         """Verifies that forward slashes '/' and mixed slashes in target_directory_windows are supported and parsed correctly."""
         ws_config = WorkspaceConfig(
-            drift_root_path=Path("/test"),
+            drift_root=Path("/test"),
             workspace=WorkspaceSectionConfig(default_target_directory=Path("/default/target")),
         )
         home = Path.home()
@@ -997,7 +997,8 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
         config = load_workspace_config(self.drift_root)
         self.assertEqual(config.workspace.render_directory, Path("sandbox"))
-        # Verify absolute drift_root_path computation
+        # Verify absolute drift_root and drift_root_path computation
+        self.assertEqual(config.drift_root, self.drift_root)
         self.assertEqual(config.drift_root_path, self.drift_root)
 
         # Invalid default_install_method raises ConfigError
@@ -1075,7 +1076,7 @@ class TestConfigLoaders(unittest.TestCase):
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # Create WorkspaceConfig
-        workspace_config = WorkspaceConfig(drift_root_path=self.drift_root)
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
         engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
         workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": engine})
 
@@ -1130,6 +1131,7 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Load WorkspaceConfig
         workspace_config = load_workspace_config(self.drift_root)
+        self.assertEqual(workspace_config.drift_root, self.drift_root)
         self.assertEqual(workspace_config.drift_root_path, self.drift_root)
 
         # 3. Create package template: src/my_pkg/package.envst.toml
@@ -1145,7 +1147,7 @@ class TestConfigLoaders(unittest.TestCase):
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
         from drift.render_input import render_input_templates
-        render_input_templates(workspace_config.render_engine_configs, workspace_config.drift_root_path)
+        render_input_templates(workspace_config.render_engine_configs, workspace_config.drift_root)
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
         pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
@@ -1475,6 +1477,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml
         config = load_workspace_config(Path(self.temp_dir.name))
 
+        self.assertEqual(config.drift_root, Path(self.temp_dir.name).resolve())
         self.assertEqual(config.drift_root_path, Path(self.temp_dir.name).resolve())
         self.assertEqual(config.workspace.render_directory, Path("templated_render"))
         self.assertEqual(config.workspace.install_directory, Path("templated_install"))
@@ -1507,7 +1510,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             os.makedirs(os.path.join(root_path, "src", "pkg_src_b"), exist_ok=True)
             
             config = WorkspaceConfig(
-                drift_root_path=Path(root_path),
+                drift_root=Path(root_path),
                 workspace=WorkspaceSectionConfig(
                     source_directory=Path("src"),
                     render_directory=Path("render"),
@@ -1551,7 +1554,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         config = WorkspaceConfig(
-            drift_root_path=Path("/dummy/root"),
+            drift_root=Path("/dummy/root"),
             workspace=WorkspaceSectionConfig(default_target_directory=Path("/global/target")),
         )
         pkg = PackageConfig(
@@ -1602,7 +1605,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # Workspace with non-default target directory != '~' and non-default install method
         custom_global_target = Path("/opt/custom_drift_target")
         workspace_config = WorkspaceConfig(
-            drift_root_path=Path("/dummy/root"),
+            drift_root=Path("/dummy/root"),
             workspace=WorkspaceSectionConfig(
                 default_target_directory=custom_global_target,
                 default_install_method="copy",
@@ -1744,7 +1747,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # Setup workspace config
         workspace_config = WorkspaceConfig(
-            drift_root_path=Path("/test/workspace"),
+            drift_root=Path("/test/workspace"),
         )
 
         # Base system fact is present

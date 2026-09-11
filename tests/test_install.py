@@ -53,7 +53,7 @@ class TestInstallRepo(unittest.TestCase):
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
 
         self.workspace_config = WorkspaceConfig(
-            drift_root_path=self.drift_root,
+            drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),
