@@ -33,7 +33,6 @@ from drift.workspace_config import (
 from drift.package_config import (
     PackageConfig,
     PackageHooks,
-    locate_load_package_config_file_static,
     load_package_config_rendered,
     load_package_config_from_source_dir,
     get_package_config_file_info,
@@ -1044,19 +1043,15 @@ class TestConfigLoaders(unittest.TestCase):
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # No config file exists yet (raises FileNotFoundError)
-        self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
-                         ({}, None))
         with self.assertRaises(FileNotFoundError):
             load_package_config_from_source_dir(pkg_dir)
 
-        # Creating drift_package.toml (alternative name)
+        # Creating drift_package.toml
         alt_config_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
         alt_config_path.write_text("""
             [package]
             install_method = "copy"
             """, encoding="utf-8")
-        self.assertEqual(locate_load_package_config_file_static(pkg_dir, PACKAGE_CONFIG_FILE_NAME_LIST),
-                        ({ "package" : { "install_method": "copy" } }, alt_config_path))
         
         config = load_package_config_from_source_dir(pkg_dir)
         self.assertEqual(config.name, "my_pkg_folder")

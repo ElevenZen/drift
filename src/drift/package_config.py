@@ -28,9 +28,10 @@ if TYPE_CHECKING:
 from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
-    PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
     LIFECYCLE_HOOK_NAMES,
     INSTALLATION_HOOK_NAMES,
+    HOOK_CONFIG_OPTION_SET,
     WINDOWS_PLATFORM_ALIASES,
     DEFAULT_HOOK_TIMEOUT,
     INITIAL_ENV,
@@ -275,10 +276,7 @@ class PackageHooks:
         is_subtable: bool = False
     ) -> None:
         """Helper to validate unknown keys, value types, and platform sub-tables in a hook dictionary."""
-        known_keys = set(LIFECYCLE_HOOK_NAMES) | {
-            "timeout",
-            "rollback_on_failure",
-        }
+        known_keys = set(HOOK_CONFIG_OPTION_SET)
         if not is_subtable:
             known_keys |= set(WINDOWS_PLATFORM_ALIASES)
 
@@ -332,24 +330,21 @@ class PackageHooks:
         Returns:
             A validated PackageHooks instance.
         """
-        hooks_dict = dict(data) if isinstance(data, dict) else {}
-
         # Validate top-level hooks table and any nested platform sub-tables
-        cls._validate_hook_dict(hooks_dict, package_name=package_name)
+        effective_hooks = data
+        cls._validate_hook_dict(effective_hooks, package_name=package_name)
 
         # On Windows, resolve platform-specific hook overrides from sub-tables
-        effective_hooks = dict(hooks_dict)
         if sys.platform == "win32":
             for alias in WINDOWS_PLATFORM_ALIASES:
-                windows_hooks = hooks_dict.get(alias)
-                if isinstance(windows_hooks, dict):
-                    for k, v in windows_hooks.items():
-                        if k in LIFECYCLE_HOOK_NAMES or k in {
-                            "timeout",
-                            "rollback_on_failure",
-                        }:
-                            effective_hooks[k] = v
-                    break
+                windows_hooks = data.get(alias)
+                if not isinstance(windows_hooks, dict):
+                    continue
+                for k, v in windows_hooks.items():
+                    if k in HOOK_CONFIG_OPTION_SET:
+                        effective_hooks[k] = v
+                # pick only the first match
+                break
 
         raw_timeout = effective_hooks.get("timeout", DEFAULT_HOOK_TIMEOUT)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
@@ -752,6 +747,8 @@ class PackageConfig:
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
     requirements: PackageRequirements = field(default_factory=PackageRequirements)
+    env_override: Dict[str, str] = field(default_factory=dict)
+    env_fallback: Dict[str, str] = field(default_factory=dict)
 
     def check_hook_files(
         self,
@@ -1182,57 +1179,34 @@ def render_or_load_toml(
     if info.type == "static":
         content = info.path.read_text(encoding="utf-8")
         return parse_toml(content)
-    else:
-        # It's a template, we need to render it!
-        engine = info.engine
-        if engine is None:
-            raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
 
-        # Create a temporary file
-        fd, temp_path = tempfile.mkstemp(suffix=".toml", prefix=f"{package_name}_pkg_")
-        temp_path_obj = Path(temp_path)
-        os.close(fd) # Close immediately so render_template_to_file can write to it safely
+    # It's a template, we need to render it!
+    engine = info.engine
+    if engine is None:
+        raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
 
-        from .constants import INITIAL_ENV
-        from .env_utils import env_scope
+    from .constants import INITIAL_ENV
+    from .env_utils import env_scope
 
-        pkg_envs = {
-            "drift_package_name": package_name,
-            "drift_package_source_dir": str(workspace_config.source_path / package_name),
-            "drift_package_render_dir": str(workspace_config.render_path / package_name),
-            "drift_package_install_dir": str(workspace_config.install_path / package_name),
-        }
+    pkg_envs = {
+        "drift_package_name": package_name,
+        "drift_package_source_dir": str(workspace_config.source_path / package_name),
+        "drift_package_render_dir": str(workspace_config.render_path / package_name),
+        "drift_package_install_dir": str(workspace_config.install_path / package_name),
+    }
 
+    with tempfile.TemporaryDirectory(prefix=f"{package_name}_pkg_") as tmpdir:
+        temp_path_obj = Path(tmpdir) / "drift_package.toml"
         with env_scope(pkg_envs, overwrite=True, env_keep=INITIAL_ENV):
-            try:
-                from .render_core import render_template_to_file
-                render_template_to_file(
-                    engine_config=engine,
-                    drift_root=workspace_config.drift_root,
-                    template_file_path=info.path,
-                    output_file_path=temp_path_obj
-                )
-                content = temp_path_obj.read_text(encoding="utf-8")
-                data = parse_toml(content)
-            finally:
-                if temp_path_obj.exists():
-                    temp_path_obj.unlink()
-
-        return data
-
-
-def locate_load_package_config_file_static(package_dir: Path, names: Sequence[str]) -> Tuple[dict, Optional[Path]]:
-    """Locates and loads the local static package config override file if present.
-
-    Propagates any read/parse errors if the file is found.
-    """
-    for filename in names:
-        local_path = package_dir / filename
-        if not local_path.is_file():
-            continue 
-        content = local_path.read_text(encoding="utf-8")
-        return parse_toml(content), local_path
-    return {}, None
+            from .render_core import render_template_to_file
+            render_template_to_file(
+                engine_config=engine,
+                drift_root=workspace_config.drift_root,
+                template_file_path=info.path,
+                output_file_path=temp_path_obj
+            )
+            content = temp_path_obj.read_text(encoding="utf-8")
+            return parse_toml(content)
 
 
 def load_package_config_from_source_dir(
@@ -1246,12 +1220,15 @@ def load_package_config_from_source_dir(
     """
     pkg_name = package_dir.name
     if workspace_config is None:
+        # mainly used in tests, to load a config without rendering or writing out into the render/ directory.
         logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
         # Fallback for backward compatibility/static loading without workspace settings
-        base_dict, base_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
-        if not base_dict:
+        base_path = package_dir / PACKAGE_CONFIG_FILE_NAME
+        if not base_path.is_file():
             raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
-        local_dict, local_path = locate_load_package_config_file_static(package_dir, PACKAGE_CONFIG_LOCAL_FILE_NAME_LIST)
+        base_dict = parse_toml(base_path.read_text(encoding="utf-8"))
+        local_path = package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
+        local_dict = parse_toml(local_path.read_text(encoding="utf-8")) if local_path.is_file() else {}
         combined_dict = merge_toml(base_dict, local_dict)
         try:
             return PackageConfig.from_dict(combined_dict,
@@ -1267,13 +1244,13 @@ def load_package_config_from_source_dir(
     logger.debug(f"Local package config info: {local_info}")
     if not base_info:
         raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
+
+    assert base_info is not None, "Base package config info should not be None"
+    assert base_info.path.is_file(), f"Base package config path is not a file: {base_info.path}"
     base_dict = render_or_load_toml(base_info, workspace_config, pkg_name)
-    source_files = [base_info.path]
-    if local_info:
-        local_dict = render_or_load_toml(local_info, workspace_config, pkg_name)
-        source_files.append(local_info.path)
-    else:
-        local_dict = {}
+    # None is accepted in source_files to indicate that the local override may not exist.
+    source_files = [base_info.path, local_info and local_info.path]
+    local_dict = render_or_load_toml(local_info, workspace_config, pkg_name) if local_info else {}
     combined_dict = merge_toml(base_dict, local_dict)
 
     # 1. Resolve environment variables and stitch configuration sections
@@ -1289,11 +1266,10 @@ def load_package_config_from_source_dir(
     toml_str = dump_toml(stitched_dict)
     output_file_path.write_text(toml_str, encoding="utf-8")
     # copy file permission from the template input.
-    if base_info and base_info.path.exists():
-        try:
-            shutil.copymode(base_info.path, output_file_path)
-        except Exception:
-            pass
+    try:
+        shutil.copymode(base_info.path, output_file_path)
+    except Exception:
+        pass
 
     # 3. Load PackageConfig from the stitched dictionary
     try:
