@@ -26,6 +26,9 @@ target_directory = "~/.config/my_app"
 
 # Advanced Flags
 
+# Optional dynamic Python package hook file path (relative to src/<pkg>/, defaults to "drift_package.py" if present)
+# hook_file = "drift_package.py"
+
 # Execute physical file deployments (copy, stow, deletions, permissions) with root privileges (sudo).
 # Note: All lifecycle hooks always execute in user space without sudo to preserve all injected environment variables.
 sudo = false
@@ -202,4 +205,63 @@ When rendering package templates and running hook scripts, variables resolve in 
 5. **`secrets` in Workspace**: Loaded from `config/secrets.env` / Secret Provider.
 6. **`[env]` in Workspace Config**: Shared defaults from `config/drift_workspace.toml` / `drift_workspace.local.toml`.
 7. **`[env.fallback]` in Package Config**: Package defaults used only when unset by upper tiers.
+ 
+ 
+## 🐍 Dynamic Python Package Hooks (`drift_package.py`)
+
+For programmatic, procedural package configuration that exceeds static TOML or variable stitching capabilities, Drift supports **dynamic Python package hooks**.
+
+### Automatic Discovery or Custom Path
+* **Default Path**: Place a `drift_package.py` file directly in your package's source directory (`src/<pkg>/drift_package.py`). Drift automatically discovers and executes it.
+* **Custom Path**: Explicitly configure `[package] hook_file = "my_hook.py"` (resolved relative to `src/<pkg>/`).
+
+### Execution Model
+* The hook must define a `configure_package(context)` function.
+* The hook runs dynamically during source package configuration loading and sandbox rendering (`render/`).
+* Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
+
+### `PackageHookContext` Reference
+The `context` object passed into `configure_package(context)` provides:
+* `context.config`: The package's raw configuration dictionary (from `drift_package.toml` and `.local.toml`).
+* `context.package_name`: Active package name (`str`).
+* `context.package_dir`: Absolute path to the package's source directory (`Path`).
+* `context.drift_root`: Absolute path to the drift root directory (`Optional[Path]`).
+* `context.workspace_config`: The parent `WorkspaceConfig` object (`Optional[WorkspaceConfig]`).
+* `context.env`: Full host environment snapshot (`Dict[str, str]`).
+* `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+* `context.package_facts`: Detected package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
+* Helper properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
+
+### Example `drift_package.py`
+```python
+# src/my_app/drift_package.py
+
+def configure_package(context):
+    """Dynamically transform package configuration based on host facts and workspace settings."""
+    cfg = context.config
+    pkg = cfg.setdefault("package", {})
+
+    # Strictly disable package installation on incompatible hosts
+    if context.os not in ("linux", "darwin"):
+        pkg["enable_install"] = False
+        return cfg
+
+    # Dynamically select install method or target directory based on OS
+    if context.os == "darwin":
+        pkg["target_directory"] = "~/Library/Application Support/my_app"
+    elif context.os == "linux" and context.distro == "arch":
+        pkg["install_method"] = "stow"
+
+    # Dynamically set host requirements
+    reqs = pkg.setdefault("requirements", {})
+    if context.arch == "x86_64":
+        reqs["binaries"] = ["my_app_x86"]
+
+    # Inject package environment variables
+    env_override = cfg.setdefault("env", {}).setdefault("override", {})
+    env_override["APP_RUN_MODE"] = "optimized" if "prod" in context.hostname else "debug"
+
+    return cfg
+```
+
 

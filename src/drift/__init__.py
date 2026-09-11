@@ -87,6 +87,23 @@ from .lifecycle_hooks import (
 from .trigger_hook import (
     run_primitive_trigger_hook,
 )
+from .python_hook_utils import (
+    load_python_module,
+    execute_python_hook,
+)
+from .workspace_hook import (
+    WorkspaceHookContext,
+    load_workspace_hook_module,
+    execute_workspace_hook,
+    apply_workspace_hook,
+)
+from .package_hook import (
+    PackageHookContext,
+    resolve_package_hook_path,
+    load_package_hook_module,
+    execute_package_hook,
+    apply_package_hook,
+)
 from .render_core import (
     render_template,
     render_template_to_file,

@@ -6,6 +6,7 @@ install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (phys
 # source_directory = "."          # Package root relative to package directory
 
 # Advanced Flags
+# hook_file = "drift_package.py"  # Dynamic Python hook (configure_package(context))
 # sudo = false
 # fully_controlled_dirs = []      # Sync deletions inside these directories
 # enable_render = true

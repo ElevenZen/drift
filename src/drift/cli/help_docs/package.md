@@ -9,6 +9,7 @@ Every package resides within your workspace source directory (by default, `src/<
 ```
 src/nvim/
 ├── drift_package.toml       <-- Package configuration metadata
+├── drift_package.py         <-- Optional dynamic Python configuration hook
 ├── .drift_ignore            <-- PCRE patterns for files to exclude from deployment
 ├── init.lua                 <-- Static dotfile
 └── lua/
@@ -18,7 +19,7 @@ src/nvim/
 
 ## 📝 Package Configurations
 Each package is controlled by a dedicated configuration file named either `drift_package.toml` 
-or `drift_package.local.toml`. This file dictates:
+or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_package.py` or configured via `[package] hook_file`). This dictates:
 1.  **`install_method`**: How configurations are written to the host system:
     *   `stow`: Symmetric symlinking from `install/` state DB (uses GNU Stow logic).
     *   `copy`: Secure, physical file copying.
@@ -26,7 +27,8 @@ or `drift_package.local.toml`. This file dictates:
     (e.g., `~/.config/nvim`).
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
     automatically synchronize and prune deleted files inside them (FCDs).
-4.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
+4.  **`Dynamic Python Hook`**: A `drift_package.py` (or custom `hook_file`) defining `configure_package(context)` to dynamically transform package settings based on host facts, workspace context, and environment.
+5.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
     (`probe`, `pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
     All lifecycle hooks always execute in user space without `sudo`, preserving all injected environment variables.
 

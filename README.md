@@ -246,6 +246,29 @@ A **single, unified dotfiles repository** can effortlessly power everything from
         return cfg
     ```
 
+*   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py`)**:
+    Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`) defining `configure_package(context)` to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
+    ```python
+    # src/my_app/drift_package.py
+    def configure_package(context):
+        """Dynamically configure package and disable installation on incompatible machines."""
+        cfg = context.config
+        pkg = cfg.setdefault("package", {})
+
+        # Strictly disable package deployment on incompatible systems or architectures
+        if context.os not in ("linux", "darwin") or context.arch == "arm64":
+            pkg["enable_install"] = False
+            return cfg
+
+        # Dynamically customize target destination based on OS
+        if context.os == "darwin":
+            pkg["target_directory"] = "~/Library/Application Support/my_app"
+        else:
+            pkg["target_directory"] = "~/.config/my_app"
+
+        return cfg
+    ```
+
 *   **Dynamic Host Profiling via Meta-Config Templating (`config/drift_workspace.local.envst.toml`)**:
     For automated fleet deployments across servers and laptops using shell environments, you can author a local configuration template:
     ```toml
@@ -264,7 +287,7 @@ Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly wi
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
-*   **Dynamic Programmatic Generation via Python Hooks**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use **Python workspace hooks** (`config/drift_workspace.py`), which are already implemented. Package-level Python configuration hooks (`drift_package.py`) will also be available soon.
+*   **Dynamic Programmatic Generation via Python Hooks**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
 
 ### 🔗 5. Custom Render Engines & DAG Pipeline Piping
 

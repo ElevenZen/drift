@@ -1,9 +1,7 @@
 """Dynamic Python workspace hook loader and executor for Drift."""
 
 import os
-import sys
 import logging
-import importlib.util
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -14,6 +12,7 @@ from .constants import (
     WORKSPACE_HOOK_FUNCTION_NAME,
 )
 from .exceptions import ConfigError
+from .python_hook_utils import load_python_module, execute_python_hook
 
 logger = logging.getLogger(__name__)
 
@@ -31,50 +30,41 @@ class WorkspaceHookContext:
         """Convenience accessor for auto-detected drift_* system facts."""
         return {k: v for k, v in self.env.items() if k.startswith("drift_")}
 
+    @property
+    def os(self) -> str:
+        return self.facts.get("drift_os", "")
+
+    @property
+    def arch(self) -> str:
+        return self.facts.get("drift_arch", "")
+
+    @property
+    def distro(self) -> str:
+        return self.facts.get("drift_distro", "")
+
+    @property
+    def hostname(self) -> str:
+        return self.facts.get("drift_hostname", "")
+
+    @property
+    def user(self) -> str:
+        return self.facts.get("drift_user", "")
+
 
 def load_workspace_hook_module(hook_path: Path) -> Any:
     """Dynamically loads the workspace hook Python module from disk."""
-    if not hook_path.is_file():
-        raise ConfigError(f"Workspace hook file not found at '{hook_path}'.")
-    try:
-        spec = importlib.util.spec_from_file_location("drift_workspace_hook", hook_path)
-        if spec is None or spec.loader is None:
-            raise ConfigError(f"Could not load module specification for workspace hook at '{hook_path}'.")
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-    except ConfigError:
-        raise
-    except Exception as e:
-        raise ConfigError(f"Failed to load workspace hook at '{hook_path}': {e}") from e
+    return load_python_module(hook_path, module_name="drift_workspace_hook", hook_desc="Workspace hook")
 
 
 def execute_workspace_hook(hook_path: Path, context: WorkspaceHookContext) -> Dict[str, Any]:
     """Executes the configure_workspace() function from the hook module."""
-    module = load_workspace_hook_module(hook_path)
-
-    hook_func = getattr(module, WORKSPACE_HOOK_FUNCTION_NAME, None)
-    if hook_func is None or not callable(hook_func):
-        raise ConfigError(
-            f"Workspace hook at '{hook_path}' must define a callable '{WORKSPACE_HOOK_FUNCTION_NAME}(context)' function."
-        )
-
-    try:
-        logger.debug(f"Executing workspace hook at '{hook_path}'...")
-        res = hook_func(context)
-        if res is None:
-            raise ConfigError(
-                f"Workspace hook '{hook_path}' returned None. It must explicitly return the transformed configuration dictionary."
-            )
-        if not isinstance(res, dict):
-            raise ConfigError(
-                f"Workspace hook '{hook_path}' must return a dictionary, got {type(res).__name__}."
-            )
-        return res
-    except ConfigError:
-        raise
-    except Exception as e:
-        raise ConfigError(f"Error executing workspace hook at '{hook_path}': {e}") from e
+    return execute_python_hook(
+        module_path=hook_path,
+        function_name=WORKSPACE_HOOK_FUNCTION_NAME,
+        context=context,
+        hook_desc="Workspace hook",
+        module_name="drift_workspace_hook",
+    )
 
 
 def apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any]) -> Dict[str, Any]:

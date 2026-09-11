@@ -29,6 +29,7 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DEFAULT_PACKAGE_HOOK_FILE_NAME,
     LIFECYCLE_HOOK_NAMES,
     INSTALLATION_HOOK_NAMES,
     HOOK_CONFIG_OPTION_SET,
@@ -336,15 +337,10 @@ class PackageHooks:
 
         # On Windows, resolve platform-specific hook overrides from sub-tables
         if sys.platform == "win32":
-            for alias in WINDOWS_PLATFORM_ALIASES:
-                windows_hooks = data.get(alias)
-                if not isinstance(windows_hooks, dict):
-                    continue
-                for k, v in windows_hooks.items():
-                    if k in HOOK_CONFIG_OPTION_SET:
-                        effective_hooks[k] = v
-                # pick only the first match
-                break
+            win_hooks = next(filter(None, (data.get(alias) for alias in WINDOWS_PLATFORM_ALIASES)), {})
+            for k, v in win_hooks.items():
+                if k in HOOK_CONFIG_OPTION_SET:
+                    effective_hooks[k] = v
 
         raw_timeout = effective_hooks.get("timeout", DEFAULT_HOOK_TIMEOUT)
         if isinstance(raw_timeout, str) and raw_timeout.isdigit():
@@ -747,6 +743,7 @@ class PackageConfig:
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
     requirements: PackageRequirements = field(default_factory=PackageRequirements)
+    hook_file: Optional[Path] = None
     env_override: Dict[str, str] = field(default_factory=dict)
     env_fallback: Dict[str, str] = field(default_factory=dict)
 
@@ -772,6 +769,7 @@ class PackageConfig:
         fully_controlled_dirs: Sequence[Path] = (),
         hooks: Optional[PackageHooks] = None,
         requirements: Optional[PackageRequirements] = None,
+        hook_file: Optional[Union[Path, str]] = None,
         env_override: Mapping[str, str] = {},
         env_fallback: Mapping[str, str] = {},
     ) -> None:
@@ -785,6 +783,8 @@ class PackageConfig:
             raise ConfigError(f"hooks must be a PackageHooks instance, got {type(hooks).__name__}")
         if requirements is not None and not isinstance(requirements, PackageRequirements):
             raise ConfigError(f"requirements must be a PackageRequirements instance, got {type(requirements).__name__}")
+        if hook_file is not None and not isinstance(hook_file, (str, Path)):
+            raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
         if not isinstance(env_override, (dict, Mapping)):
             raise ConfigError(f"env_override must be a dictionary or Mapping, got {type(env_override).__name__}")
         if not isinstance(env_fallback, (dict, Mapping)):
@@ -803,6 +803,7 @@ class PackageConfig:
         self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
         self.requirements = requirements if requirements is not None else PackageRequirements()
+        self.hook_file = Path(hook_file) if hook_file is not None else None
         self.env_override = {str(k): str(v) for k, v in env_override.items()}
         self.env_fallback = {str(k): str(v) for k, v in env_fallback.items()}
 
@@ -840,6 +841,8 @@ class PackageConfig:
         self.hooks.validate(self.name)
         if not isinstance(self.requirements, PackageRequirements):
             raise ConfigError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
+        if self.hook_file is not None and not isinstance(self.hook_file, Path):
+            raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
         if not isinstance(self.env_override, dict):
             raise ConfigError(f"env_override must be a dictionary for package '{self.name}'.")
         if not isinstance(self.env_fallback, dict):
@@ -906,7 +909,7 @@ class PackageConfig:
         return package_dir / rel
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
-        if sys.platform == "win32" and self.target_directory_windows is not None:
+        if sys.platform == "win32"and self.target_directory_windows is not None:
             return expand_user_and_env(self.target_directory_windows)
         return expand_user_and_env(self.target_directory or workspace_config.default_target_path)
 
@@ -1033,7 +1036,8 @@ class PackageConfig:
             "target_directory",
             "sudo",
             "fully_controlled_dirs",
-            "requirements"
+            "requirements",
+            "hook_file",
         } | {f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES}
         for key in package_data:
             if key not in known_package_keys:
@@ -1072,16 +1076,14 @@ class PackageConfig:
             source_dir = Path(".")
 
         # Expand home directory and env vars for target_directory on load
-        target_dir = package_data.get("target_directory")
-        if target_dir:
-            target_dir = expand_user_and_env(target_dir)
+        target_dir = (val := package_data.get("target_directory")) and expand_user_and_env(val)
 
-        target_dir_windows = None
-        for alias in WINDOWS_PLATFORM_ALIASES:
-            val = package_data.get(f"target_directory_{alias}")
-            if val:
-                target_dir_windows = expand_user_and_env(val)
-                break
+        target_dir_windows_val = next(
+            filter(None, (package_data.get(f"target_directory_{alias}")
+                          for alias in WINDOWS_PLATFORM_ALIASES)),
+            None
+        )
+        target_dir_windows = target_dir_windows_val and expand_user_and_env(target_dir_windows_val)
 
         config = cls(
             name=str(name),
@@ -1095,6 +1097,7 @@ class PackageConfig:
             fully_controlled_dirs=[Path(d) for d in fcd],
             hooks=hooks,
             requirements=requirements,
+            hook_file=package_data.get("hook_file"),
             env_override=override_map,
             env_fallback=fallback_map
         )
@@ -1216,9 +1219,11 @@ def load_package_config_from_source_dir(
     """
     Loads package configuration from a package directory,
     including its local override if present,
-    optionally rendering it if it is a template.
+    optionally rendering it if it is a template, and executing dynamic Python package hooks.
     """
     pkg_name = package_dir.name
+    from .package_hook import apply_package_hook
+
     if workspace_config is None:
         # mainly used in tests, to load a config without rendering or writing out into the render/ directory.
         logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
@@ -1230,10 +1235,18 @@ def load_package_config_from_source_dir(
         local_path = package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
         local_dict = parse_toml(local_path.read_text(encoding="utf-8")) if local_path.is_file() else {}
         combined_dict = merge_toml(base_dict, local_dict)
+
+        # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
+        combined_dict, hook_path = apply_package_hook(package_dir, combined_dict, None, package_name_override=pkg_name)
+
+        source_files = [base_path, local_path]
+        if hook_path:
+            source_files.append(hook_path)
+
         try:
             return PackageConfig.from_dict(combined_dict,
                                            package_name=pkg_name,
-                                           source_files=[base_path, local_path])
+                                           source_files=source_files)
         except (TypeError, ValueError) as e:
             raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
 
@@ -1252,6 +1265,13 @@ def load_package_config_from_source_dir(
     source_files = [base_info.path, local_info and local_info.path]
     local_dict = render_or_load_toml(local_info, workspace_config, pkg_name) if local_info else {}
     combined_dict = merge_toml(base_dict, local_dict)
+
+    # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
+    combined_dict, hook_path = apply_package_hook(package_dir, combined_dict, workspace_config, package_name_override=pkg_name)
+
+    # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
+    if hook_path:
+        source_files.append(hook_path)
 
     # 1. Resolve environment variables and stitch configuration sections
     stitched_dict = resolve_and_interpolate_package_config(

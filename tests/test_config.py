@@ -344,6 +344,8 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", hooks=PackageHooks(timeout=-10)).validate()
         with self.assertRaises(ConfigError):
             PackageConfig(name="foo", hooks=PackageHooks(pre_source=123)).validate() # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageConfig(name="foo", hook_file=123).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
         hooks = PackageHooks(
