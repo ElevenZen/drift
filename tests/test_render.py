@@ -414,8 +414,8 @@ class TestDependencyResolver(unittest.TestCase):
         # Call render_input_templates
         render_input_templates(engines, self.drift_root)
 
-        # Verify output file render/config/mustache.json exists and contains correct rendered json
-        expected_output_path = self.drift_root / "render" / "config" / "mustache.json"
+        # Verify output file render/.config/mustache.json exists and contains correct rendered json
+        expected_output_path = self.drift_root / "render" / ".config" / "mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "templated_env_value"}')
 
@@ -482,9 +482,9 @@ class TestDependencyResolver(unittest.TestCase):
         render_input_templates(engines, self.drift_root)
 
         # 3. Check that the transitive files compiled successfully inside the sandbox
-        rendered_b_input = self.drift_root / "render" / "config" / "b"
-        rendered_c_input = self.drift_root / "render" / "config" / "c"
-        rendered_d_input = self.drift_root / "render" / "config" / "d"
+        rendered_b_input = self.drift_root / "render" / ".config" / "b"
+        rendered_c_input = self.drift_root / "render" / ".config" / "c"
+        rendered_d_input = self.drift_root / "render" / ".config" / "d"
 
         self.assertTrue(rendered_b_input.is_file())
         self.assertTrue(rendered_c_input.is_file())
@@ -526,8 +526,8 @@ class TestDependencyResolver(unittest.TestCase):
         # Test custom render directory name
         render_input_templates(engines, self.drift_root, render_dir="my_custom_render_sandbox")
 
-        # Expected output should reside inside "my_custom_render_sandbox/config/"
-        expected_output_path = self.drift_root / "my_custom_render_sandbox" / "config" / "mustache.json"
+        # Expected output should reside inside "my_custom_render_sandbox/.config/"
+        expected_output_path = self.drift_root / "my_custom_render_sandbox" / ".config" / "mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "custom_val"}')
 
@@ -566,7 +566,7 @@ class TestDependencyResolver(unittest.TestCase):
         render_input_templates(engines, self.drift_root)
 
         # Output should be stripped from abs_mustache.envst.json -> abs_mustache.json
-        expected_output_path = self.drift_root / "render" / "config" / "abs_mustache.json"
+        expected_output_path = self.drift_root / "render" / ".config" / "abs_mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "abs_val"}')
 
@@ -1040,7 +1040,7 @@ class TestRenderPackage(unittest.TestCase):
         run_primitive_2_render_packages(workspace_config)
 
         # 5. Verify engine input was rendered
-        rendered_mustache_json = drift_root / "render" / "config" / "mustache.json"
+        rendered_mustache_json = drift_root / "render" / ".config" / "mustache.json"
         self.assertTrue(rendered_mustache_json.is_file())
         self.assertIn('"the_value": "orchestrated_value"', rendered_mustache_json.read_text(encoding="utf-8"))
 

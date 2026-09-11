@@ -449,8 +449,8 @@ Render engines often require dynamic input parameters (such as `mustache` needin
 *   **The Transitive Resolution Chain**: 
     If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first. This resolution is fully transitive/recursive: a multi-level dependency chain (e.g., Engine A -> Engine B -> Engine C -> Engine D) is allowed and gets compiled in topological order from leaf to root.
     *   *Example*: The `mustache` engine registers `input_file = "mustache.envst.json"`. Since `.envst.json` matches the `envsubst` suffix (`envst`), the compiler first renders `config/mustache.envst.json` via the `envsubst` engine.
-    *   The compiled static output is saved inside the sandbox under `render/config/mustache.json`.
-    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/config/mustache.json`).
+    *   The compiled static output is saved inside the sandbox under `render/.config/mustache.json`.
+    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/.config/mustache.json`).
 
 #### 3. Single-Dependency Constraint per Engine
 While multi-level transitive chains are fully supported, each engine's input file can match at most one other engine's suffix pattern. Thus, every engine is limited to a single direct dependency (a 1-to-1 matching relationship per level), forming a dependency tree/forest (without cycles) rather than a complex multi-parent DAG. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:

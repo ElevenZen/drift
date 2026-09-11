@@ -140,8 +140,8 @@ def render_input_templates(
                 return Path("")
 
             output_filename = dep_engine.strip_suffix(template_file_path.name)
-            # The 'render' directory is read dynamically from render_dir
-            output_file_path = drift_root / render_dir_path / CONFIG_DIR_NAME / output_filename
+            # The 'render' directory is read dynamically from render_dir; internal inputs are saved under '.config/'
+            output_file_path = drift_root / render_dir_path / f".{CONFIG_DIR_NAME}" / output_filename
 
             # Use logger.info with a high-signal format
             logger.info(f"🎨 Rendering engine input: {engine.name} (via {dep_name})")

@@ -1942,6 +1942,37 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
                 self.assertTrue(any("config" in msg for msg in warn_calls))
                 self.assertTrue(any("install" in msg for msg in warn_calls))
 
+    def test_get_package_names_from_source_dir_skips_dot_folders(self) -> None:
+        """Verifies that all dot-named folders in src/ and render/.config are skipped cleanly without warnings."""
+        with tempfile.TemporaryDirectory() as td:
+            drift_root = Path(td)
+            src_dir = drift_root / "src"
+            src_dir.mkdir(parents=True)
+            (src_dir / "pkg_one").mkdir()
+            (src_dir / "pkg_two").mkdir()
+            (src_dir / ".git").mkdir()
+            (src_dir / ".cache").mkdir()
+            (src_dir / ".hidden_folder").mkdir()
+            (src_dir / ".config").mkdir()
+
+            render_dir = drift_root / "render"
+            render_dir.mkdir(parents=True)
+            (render_dir / ".config").mkdir()
+            (render_dir / ".git").mkdir()
+            (render_dir / "pkg_one").mkdir()
+            (render_dir / "pkg_one" / "drift_package.toml").write_text("[package]\nname = 'pkg_one'\n")
+
+            ws_cfg = WorkspaceConfig(drift_root=drift_root, packages_enable_default=True)
+            with patch("drift.workspace_config.logger.warning") as mock_warn:
+                src_pkgs = ws_cfg.get_package_names_from_source_dir()
+                self.assertEqual(src_pkgs, ["pkg_one", "pkg_two"])
+
+                rendered_pkgs = ws_cfg.get_rendered_packages()
+                self.assertEqual(rendered_pkgs, ["pkg_one"])
+
+                # No warnings should be emitted for any dot-named folders
+                self.assertEqual(mock_warn.call_count, 0)
+
 
 if __name__ == "__main__":
     unittest.main()
