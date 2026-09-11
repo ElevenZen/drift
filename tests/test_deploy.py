@@ -43,13 +43,14 @@ class TestDeploy(unittest.TestCase):
         self.config_dir = self.drift_root / "config"
         self.config_dir.mkdir(parents=True, exist_ok=True)
         self.config_file = self.config_dir / "drift_workspace.toml"
-        self.config_file.write_text("""
+        self.config_file.write_text(f"""
 [workspace]
 source_directory = "src"
 render_directory = "render"
 install_directory = "install"
 backup_directory = "backup"
-default_target_directory = "~"
+default_target_directory = "{self.system_target_dir}"
+default_install_method = "copy"
 
 [packages.enable]
 pkg_a = true

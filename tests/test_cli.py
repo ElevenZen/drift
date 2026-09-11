@@ -19,14 +19,19 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         # Initialize Git in the temporary directory
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
+        self.system_target_dir = os.path.join(self.temp_dir.name, "system_home")
+        os.makedirs(self.system_target_dir, exist_ok=True)
+
         # Create config and env file
         self.config_dir = os.path.join(self.drift_root, "config")
         os.makedirs(self.config_dir, exist_ok=True)
         with open(os.path.join(self.config_dir, "drift_workspace.toml"), "w", encoding="utf-8") as f:
-            f.write("""
+            f.write(f"""
             [workspace]
             source_directory = "src"
             render_directory = "render"
+            default_target_directory = "{self.system_target_dir}"
+            default_install_method = "copy"
 
             [packages.enable]
             pkg_a = true

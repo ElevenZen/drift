@@ -114,11 +114,13 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         # Update drift_workspace.toml
         self.config_dir = os.path.join(self.drift_root, "config")
         with open(os.path.join(self.config_dir, "drift_workspace.toml"), "w", encoding="utf-8") as f:
-            f.write("""
+            f.write(f"""
             [workspace]
             source_directory = "src"
             render_directory = "render"
             install_directory = "install"
+            default_target_directory = "{self.target_dir}"
+            default_install_method = "copy"
 
             [packages.enable]
             pkg_a = true
@@ -259,8 +261,10 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
 
         cfg_path = os.path.join(self.src_dir, "pkg_a", "drift_package.toml")
         with open(cfg_path, "w", encoding="utf-8") as f:
-            f.write("""[package]
+            f.write(f"""[package]
 name = "pkg_a"
+install_method = "copy"
+target_directory = "{self.target_dir}"
 [hooks]
 post_update = "post_update.sh"
 rollback_on_failure = false
