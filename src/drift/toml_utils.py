@@ -109,6 +109,9 @@ def _parse_toml_fallback(content: str) -> dict:
     open_brackets = 0
     open_braces = 0
     
+    def _is_clean() -> bool:
+        return not in_double_quote and not in_single_quote and open_brackets == 0 and open_braces == 0
+    
     buffer = []
     
     for raw_line in content.splitlines():
@@ -140,7 +143,7 @@ def _parse_toml_fallback(content: str) -> dict:
             
         buffer.append(line_stripped)
         
-        if not in_double_quote and not in_single_quote and open_brackets == 0 and open_braces == 0:
+        if _is_clean():
             logical_line = " ".join(buffer).strip()
             buffer = []
             
@@ -165,6 +168,9 @@ def _parse_toml_fallback(content: str) -> dict:
                 else:
                     set_nested_val(data, current_table_keys + [key], val)
                     
+    if not _is_clean():
+        raise ValueError("Toml format error, unclosed brackets or quotes.")
+
     return data
 
 

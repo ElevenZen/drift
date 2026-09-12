@@ -98,7 +98,7 @@ class TestExitCodes(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 run_argparse_cli(["-C", str(self.drift_root), "--no-git-root", "render"])
             self.assertEqual(cm.exception.code, ExitCode.CONFIG_ERROR)
-        self.assertIn("Workspace main configuration file not found", stderr_buf.getvalue())
+        self.assertIn("Workspace configuration file not found", stderr_buf.getvalue())
 
     def test_health_check_failed_exit_code(self) -> None:
         # Initialize a real workspace

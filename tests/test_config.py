@@ -1974,5 +1974,31 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
                 self.assertEqual(mock_warn.call_count, 0)
 
 
+class TestPathSuffixHelpers(unittest.TestCase):
+    def test_path_and_string_suffix_helpers(self) -> None:
+        from drift.constants import (
+            add_suffix_path,
+            add_local_path,
+            add_envst_path,
+            add_suffix_str,
+            add_local_str,
+            add_envst_str,
+        )
+
+        p = Path("config/drift_workspace.toml")
+        self.assertEqual(add_suffix_path(p, "local"), Path("config/drift_workspace.local.toml"))
+        self.assertEqual(add_local_path(p), Path("config/drift_workspace.local.toml"))
+        self.assertEqual(add_envst_path(p), Path("config/drift_workspace.envst.toml"))
+        self.assertEqual(add_envst_path(Path("config/drift.local.toml")), Path("config/drift.local.envst.toml"))
+
+        self.assertEqual(add_suffix_str("drift_workspace.toml", "local"), "drift_workspace.local.toml")
+        self.assertEqual(add_local_str("drift_workspace.toml"), "drift_workspace.local.toml")
+        self.assertEqual(add_envst_str("drift_workspace.toml"), "drift_workspace.envst.toml")
+        self.assertEqual(
+            add_envst_str("drift_root/config/drift.local.toml"),
+            "drift_root/config/drift.local.envst.toml"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

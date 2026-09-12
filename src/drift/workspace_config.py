@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Iterator, Union, Any, Sequence, Mapping
 
 from .constants import (
+        add_envst_path,
         CONFIG_DIR_NAME,
         WORKSPACE_CONFIG_FILE_NAME,
         WORKSPACE_CONFIG_LOCAL_FILE_NAME,
@@ -484,27 +485,21 @@ def render_workspace_config_toml(envst_path: Path) -> str:
     return rendered_content
     
 
-def add_envst(file: Path) -> Path:
-    return file.with_name(file.stem + ".envst" + file.suffix)
-
-
 def render_envst_load_toml(config_path: Path) -> Optional[dict]:
     """Loads and parses the TOML file at path.
 
     Checks the static file first, then falls back to rendering its .envst.toml counterpart.
     Propagates FileNotFoundError if neither exists.
     """
-    envst_path = add_envst(config_path)
-
+    envst_path = add_envst_path(config_path)
     if config_path.exists():
-        logger.debug(f"Workspace config is loaded from: '{config_path}'")
+        logger.debug(f"Workspace config is being loaded from: '{config_path}'")
         content = config_path.read_text(encoding="utf-8")
     elif envst_path.exists():
+        logger.debug(f"Workspace config is being rendered from template: '{envst_path}'")
         content = render_workspace_config_toml(envst_path)
-        logger.debug(f"Workspace config is rendered from template: '{envst_path}'")
     else:
         return None
-
     return parse_toml(content)
 
 
@@ -517,65 +512,71 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
         config_dir / "drift.local.toml",
         config_dir / "drift.envst.toml",
         config_dir / "drift.local.envst.toml",
-        Path(drift_root) / "drift.toml",
-        Path(drift_root) / "drift.local.toml",
-        Path(drift_root) / "drift.envst.toml",
-        Path(drift_root) / "drift.local.envst.toml",
     ]
-    for p in legacy_candidates:
-        if p.is_file():
-            logger.error("❌ DEPRECATION ERROR: Legacy workspace configuration file detected!")
-            err_box = (
-                "\n" + "=" * 80 + "\n"
-                "❌ DEPRECATION ERROR: Legacy workspace configuration file detected!\n\n"
-                f"Found legacy file: '{p}'\n\n"
-                "The workspace configuration file has been renamed:\n"
-                "  • 'drift.toml'             -> 'drift_workspace.toml'\n"
-                "  • 'drift.local.toml'       -> 'drift_workspace.local.toml'\n"
-                "  • 'drift.envst.toml'       -> 'drift_workspace.envst.toml'\n"
-                "  • 'drift.local.envst.toml' -> 'drift_workspace.local.envst.toml'\n\n"
-                "Backward compatibility for 'drift.toml' has been completely removed.\n"
-                "Please rename your configuration file to 'drift_workspace.toml' (or appropriate suffix) to proceed.\n"
-                "You can also run 'drift repair' to automatically migrate legacy configuration files.\n"
-                + "=" * 80 + "\n"
-            )
-            print(err_box, file=sys.stderr)
-            raise ConfigError(
-                f"Legacy workspace configuration file '{p.name}' is no longer supported. "
-                f"Please rename '{p.name}' to 'drift_workspace{p.name[5:]}' (e.g. drift_workspace.toml) "
-                f"or run 'drift repair' to automatically migrate it."
-            )
+    legacy_found = [x for x in legacy_candidates if x.is_file()]
+    if not legacy_found:
+        return
+    logger.error("❌ DEPRECATION ERROR: Legacy workspace configuration file detected!")
+    err_box = (
+        "\n" + "=" * 80 + "\n"
+        "❌ DEPRECATION ERROR: Legacy workspace configuration file detected!\n\n"
+        f"Found legacy file: {', '.join(str(x) for x in legacy_found)}\n\n"
+        "The workspace configuration file has been renamed:\n"
+        "  • 'drift.toml'             -> 'drift_workspace.toml'\n"
+        "  • 'drift.local.toml'       -> 'drift_workspace.local.toml'\n"
+        "  • 'drift.envst.toml'       -> 'drift_workspace.envst.toml'\n"
+        "  • 'drift.local.envst.toml' -> 'drift_workspace.local.envst.toml'\n\n"
+        "Backward compatibility for 'drift.toml' has been completely removed.\n"
+        "Please rename your configuration file to 'drift_workspace.toml' (or appropriate suffix) to proceed.\n"
+        "You can also run 'drift repair' to automatically migrate legacy configuration files.\n"
+        + "=" * 80 + "\n"
+    )
+    print(err_box, file=sys.stderr)
+    raise ConfigError(
+        f"Legacy workspace configuration file [{', '.join(x.name for x in legacy_found)}] is no longer supported. "
+        f"Please rename [{', '.join(x.name for x in legacy_found)}] to "
+        f"[{', '.join(x.name.replace('drift', 'drift_workspace') for x in legacy_found)}] "
+        f"or run 'drift repair' to automatically migrate it."
+    )
+
+
+def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for idx, file in enumerate(config_files):
+        f_dict = render_envst_load_toml(file)
+        if not f_dict:
+            continue
+        logger.debug(f"Loaded workspace config {'base' if idx == 0 else 'override'} from '{file}'")
+        result = merge_toml(result, f_dict)
+    # Base config file missing with override files existence is accepted.
+    # The whole result cannot be an empty dict.
+    if not result:
+        raise ConfigError(
+            f"Workspace configuration file not found in [{', '.join(str(x) for x in config_files)}] "
+            "or their templates."
+        )
+    return result
 
 
 def load_workspace_config(
-    drift_root: Path = Path("."),
+    drift_root: Path,
     check_legacy: bool = True,
+    config_files_override: Optional[Sequence[Path]] = None,
 ) -> WorkspaceConfig:
     """Loads and parses the workspace configuration, merging drift_workspace.toml and drift_workspace.local.toml if present."""
     root = Path(drift_root).resolve()
     if check_legacy:
         check_for_legacy_workspace_config(root)
 
-    file_path = root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+    load_configs_from = list(config_files_override) if config_files_override else [
+            root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME,
+            root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+    ]
 
     # Ensure system facts are present before rendering workspace config (default: no WAN probe)
     inject_system_facts(probe_wan_ip=False)
 
-    main_dict = render_envst_load_toml(file_path)
-    if main_dict is None:
-        raise ConfigError(
-            f"Workspace main configuration file not found in '{file_path}' or its template '{add_envst(file_path)}'."
-        )
-
-    # Search for the *.local.toml override (e.g. drift_workspace.local.toml)
-    local_path = file_path.with_name(file_path.stem + ".local" + file_path.suffix)
-    local_dict = render_envst_load_toml(local_path)
-    if local_dict is None:
-        logger.debug(f"No local workspace config override at '{local_path}'")
-        combined_dict = main_dict
-    else:
-        logger.debug(f"Loaded workspace config override from '{local_path}'")
-        combined_dict = merge_toml(main_dict, local_dict)
+    combined_dict = load_workspace_config_dict(load_configs_from)
 
     # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
     settings_dict = combined_dict.get("settings", {})
@@ -611,6 +612,6 @@ def load_workspace_config(
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:
-        raise ConfigError(f"Invalid workspace configuration in '{file_path}': {e}") from e
+        raise ConfigError(f"Invalid workspace configuration in '{load_configs_from[0]}': {e}") from e
 
 

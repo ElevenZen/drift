@@ -66,6 +66,8 @@ from .constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+    CURRENT_WORKSPACE_CONFIG_FILE_NAMES,
+    LEGACY_WORKSPACE_CONFIG_FILE_NAMES,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
     INSTALL_STOW_IGNORE_PATTERN,
@@ -177,55 +179,50 @@ def probe_existing_workspace_structure(drift_root: Path) -> bool:
         drift_root / "install",
         drift_root / CONFIG_DIR_NAME,
         drift_root / "backup",
-        drift_root / "drift.toml",
         drift_root / CONFIG_DIR_NAME / "drift.toml",
+        drift_root / CONFIG_DIR_NAME / "drift.local.toml",
         drift_root / CONFIG_DIR_NAME / "drift.envst.toml",
+        drift_root / CONFIG_DIR_NAME / "drift.local.envst.toml",
         drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME,
     ]
     return any(p.exists() for p in candidates)
 
 
 def check_workspace_config(drift_root: Path) -> CheckResult:
-    """Checks the workspace configuration file (config/drift_workspace.toml or template)."""
+    """Checks the workspace configuration file (config/drift_workspace.toml or template).
+
+    If any legacy configuration file (e.g. config/drift.toml or config/drift.local.toml)
+    is detected, immediately returns BROKEN so that 'drift repair' can migrate it.
+    """
     from .workspace_config import load_workspace_config, render_envst_load_toml
 
     config_dir = drift_root / CONFIG_DIR_NAME
-    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
-    envst_file = config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"
 
-    if not config_file.exists() and not envst_file.exists():
+    # 1. Check for legacy configuration files in config/
+    legacy_name_found = next((legacy_name
+                             for legacy_name in LEGACY_WORKSPACE_CONFIG_FILE_NAMES
+                             if (config_dir / legacy_name).is_file()), None)
+    if legacy_name_found is not None:
+        return CheckResult(
+            name="Workspace Configuration",
+            status=ComponentStatus.BROKEN,
+            details=f"Legacy configuration file '{CONFIG_DIR_NAME}/{legacy_name_found}' detected in workspace.",
+            fix_hint="Run 'drift repair' to migrate legacy configuration files"
+        )
+
+    # 2. Check for existence of current configuration file or template
+    # Base config file missing with override files existence is accepted.
+    config_found = next((x for x in CURRENT_WORKSPACE_CONFIG_FILE_NAMES if (config_dir / x).is_file()), None)
+    if not config_found:
         return CheckResult(
             name="Workspace Configuration",
             status=ComponentStatus.NOT_FOUND,
-            details=f"'{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' not found.",
+            details=f"Workspace configuration not found.",
             fix_hint=f"Create default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'"
         )
 
     try:
-        data = render_envst_load_toml(config_file)
-        if data is None:
-            return CheckResult(
-                name="Workspace Configuration",
-                status=ComponentStatus.NOT_FOUND,
-                details=f"'{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' not found.",
-                fix_hint=f"Create default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'"
-            )
-
-        if (
-            not isinstance(data, dict)
-            or "workspace" not in data
-            or "packages" not in data
-            or not isinstance(data["packages"], dict)
-            or "enable" not in data["packages"]
-        ):
-            return CheckResult(
-                name="Workspace Configuration",
-                status=ComponentStatus.BROKEN,
-                details="Configuration is missing mandatory '[workspace]' or '[packages.enable]' section.",
-                fix_hint="Add '[workspace]' and '[packages.enable]' sections"
-            )
-
-        # Validate full workspace config loading (without legacy check)
+        # Validate full workspace config loading (without legacy check since already checked)
         load_workspace_config(drift_root, check_legacy=False)
     except Exception as e:
         return CheckResult(

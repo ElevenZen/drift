@@ -1237,7 +1237,8 @@ def load_package_config_from_source_dir(
         combined_dict = merge_toml(base_dict, local_dict)
 
         # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
-        combined_dict, hook_path = apply_package_hook(package_dir, combined_dict, None, package_name_override=pkg_name)
+        combined_dict, hook_path = apply_package_hook(
+                package_dir, combined_dict, None, package_name_override=pkg_name)
 
         source_files = [base_path, local_path]
         if hook_path:
@@ -1267,7 +1268,8 @@ def load_package_config_from_source_dir(
     combined_dict = merge_toml(base_dict, local_dict)
 
     # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
-    combined_dict, hook_path = apply_package_hook(package_dir, combined_dict, workspace_config, package_name_override=pkg_name)
+    combined_dict, hook_path = apply_package_hook(
+            package_dir, combined_dict, workspace_config, package_name_override=pkg_name)
 
     # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
     if hook_path:

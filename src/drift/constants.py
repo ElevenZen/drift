@@ -7,9 +7,35 @@ from enum import Enum, IntEnum
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Union
 
+def add_suffix_path(file: Path, suffix: str) -> Path:
+    return file.with_name(file.stem + "." + suffix + file.suffix)
+
+def add_local_path(file: Path) -> Path:
+    return add_suffix_path(file, 'local')
+
+def add_envst_path(file: Path) -> Path:
+    return add_suffix_path(file, 'envst')
+
+def add_suffix_str(file: str, suffix: str) -> str:
+    stem, ext = os.path.splitext(os.path.basename(file))
+    return os.path.join(os.path.dirname(file), stem + "." + suffix + ext)
+
+def add_local_str(file: str) -> str:
+    return add_suffix_str(file, 'local')
+
+def add_envst_str(file: str) -> str:
+    return add_suffix_str(file, 'envst')
+
+
 CONFIG_DIR_NAME = "config"
 WORKSPACE_CONFIG_FILE_NAME = "drift_workspace.toml"
-WORKSPACE_CONFIG_LOCAL_FILE_NAME = "drift_workspace.local.toml"
+WORKSPACE_CONFIG_LOCAL_FILE_NAME = add_local_str(WORKSPACE_CONFIG_FILE_NAME)
+CURRENT_WORKSPACE_CONFIG_FILE_NAMES = (
+    WORKSPACE_CONFIG_FILE_NAME,
+    add_envst_str(WORKSPACE_CONFIG_FILE_NAME),
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+    add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+)
 LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
     "drift.toml",
     "drift.local.toml",

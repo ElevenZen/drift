@@ -52,6 +52,8 @@ from pathlib import Path
 from typing import List, Sequence, Tuple
 
 from .constants import (
+    add_envst_path,
+    add_envst_str,
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
@@ -111,51 +113,48 @@ def repair_workspace_config(
     config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
     local_config_file = config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME
 
-    # 1. Detect and rename legacy workspace configuration files
+    # 1. Detect and rename legacy workspace configuration files in config/
     legacy_mappings = [
         ("drift.toml", WORKSPACE_CONFIG_FILE_NAME),
         ("drift.local.toml", WORKSPACE_CONFIG_LOCAL_FILE_NAME),
-        ("drift.envst.toml", f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml"),
-        ("drift.local.envst.toml", f"{WORKSPACE_CONFIG_LOCAL_FILE_NAME.split('.')[0]}.local.envst.toml"),
+        ("drift.envst.toml", add_envst_str(WORKSPACE_CONFIG_FILE_NAME)),
+        ("drift.local.envst.toml", add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME)),
     ]
 
-    has_legacy_main = False
+    # in dry-run mode, we cannot rename file, so we need to load legacy config files if they exist.
+    use_legacy_main = False
+    use_legacy_local = False
+
     for old_name, new_name in legacy_mappings:
         old_path = config_dir / old_name
         if not old_path.is_file():
             continue
         target_path = config_dir / new_name
-
         if target_path.exists():
-            actions.append(
-                f"⚠️ Found legacy file '{CONFIG_DIR_NAME}/{old_name}', but '{CONFIG_DIR_NAME}/{new_name}' already exists. "
-                f"Please migrate and remove '{old_name}' manually."
+            raise ConfigError(
+                f"Cannot migrate legacy file '{CONFIG_DIR_NAME}/{old_name}': "
+                f"Target configuration file '{CONFIG_DIR_NAME}/{new_name}' already exists. "
+                f"Please manually inspect, merge, and remove '{CONFIG_DIR_NAME}/{old_name}'."
             )
-            continue
-
-        if old_name in ("drift.toml", "drift.envst.toml"):
-            has_legacy_main = True
-
         actions.append(f"Renamed legacy workspace configuration file '{CONFIG_DIR_NAME}/{old_name}' to '{CONFIG_DIR_NAME}/{new_name}'.")
         if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
             old_path.rename(target_path)
+        else:
+            if old_name in ('drift.toml', add_envst_str('drift.toml')):
+                use_legacy_main = True
+            else:
+                use_legacy_local = True
 
     # 2. Check if main workspace configuration needs to be generated or inspected
-    main_config_files = [
-        config_file,
-        config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml",
-        config_dir / "drift.toml",
-        config_dir / "drift.envst.toml",
-    ]
-    main_config_occupied = any(f.exists() for f in main_config_files)
     config_res = check_workspace_config(drift_root)
     if config_res.status == ComponentStatus.NOT_FOUND:
+        # check_workspace_config will return BROKEN if legacy main exists.
+        actions.append(f"Generated default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
         if not dry_run:
             config_dir.mkdir(parents=True, exist_ok=True)
             config_file.write_text(get_default_drift_workspace_toml_content(), encoding="utf-8")
-        if not main_config_occupied:
-            actions.append(f"Generated default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
-    elif config_res.status == ComponentStatus.BROKEN and not has_legacy_main:
+    elif config_res.status == ComponentStatus.BROKEN and not use_legacy_main:
         raise ConfigError(
             f"Workspace configuration at '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' is invalid ({config_res.details}). "
             f"Manual inspection required."
@@ -164,28 +163,28 @@ def repair_workspace_config(
     # 3. Check and restore drift_workspace.local.toml template if missing
     local_config_files = [
         local_config_file,
-        config_dir / f"{WORKSPACE_CONFIG_LOCAL_FILE_NAME.split('.')[0]}.local.envst.toml",
-        config_dir / "drift.local.toml",
-        config_dir / "drift.local.envst.toml",
+        config_dir / add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
     ]
     local_config_occupied = any(f.exists() for f in local_config_files)
-    if not local_config_occupied:
+    if not local_config_occupied and not use_legacy_local:
         if not dry_run:
             config_dir.mkdir(parents=True, exist_ok=True)
             local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
         actions.append(f"Generated '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_LOCAL_FILE_NAME}' template.")
 
     # 4. Load and validate WorkspaceConfig
+    load_config_from = [
+            config_dir / ('drift.toml' if use_legacy_main else WORKSPACE_CONFIG_FILE_NAME),
+            config_dir / ('drift.local.toml' if use_legacy_local else WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+    ]
     try:
-        if dry_run and not config_file.exists() and not (config_dir / f"{WORKSPACE_CONFIG_FILE_NAME.split('.')[0]}.envst.toml").exists():
-            if (config_dir / "drift.toml").is_file():
-                d = parse_toml((config_dir / "drift.toml").read_text(encoding="utf-8"))
-                ws_config = WorkspaceConfig.from_dict(d, drift_root=drift_root)
-            else:
-                default_dict = parse_toml(get_default_drift_workspace_toml_content())
-                ws_config = WorkspaceConfig.from_dict(default_dict, drift_root=drift_root)
+        if dry_run and not any(p.exists() or add_envst_path(p).exists() for p in load_config_from):
+            ws_config = WorkspaceConfig.from_dict(
+                parse_toml(get_default_drift_workspace_toml_content()),
+                drift_root=drift_root
+            )
         else:
-            ws_config = load_workspace_config(drift_root)
+            ws_config = load_workspace_config(drift_root, check_legacy=False, config_files_override=load_config_from)
     except Exception as e:
         raise ConfigError(f"Failed to load workspace configuration during repair: {e}") from e
 
