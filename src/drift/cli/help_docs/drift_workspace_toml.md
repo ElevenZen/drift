@@ -81,6 +81,10 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 # ---------------------------------------------------------------------
 # Render Engines Configurations
 # ---------------------------------------------------------------------
+# Note: 'input_file' fields in render engines are specified as names BEFORE rendering
+# (e.g. "mustache.envst.json" rather than "mustache.json"). Because input files frequently contain
+# render engine names/suffixes, specifying the pre-rendered source name allows Drift to detect
+# dependencies unambiguously and compile inputs in topological DAG order.
 
 # Built-in zero-dependency variable substitution engine (Windows + POSIX)
 # Strictly validates that all referenced variables ($VAR, ${VAR}) exist.

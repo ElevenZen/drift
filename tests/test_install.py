@@ -356,7 +356,7 @@ class TestInstallRepo(unittest.TestCase):
         config = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            hooks=PackageHooks(post_install=Path("on-install.sh"))
+            hooks=PackageHooks(post_install=Path(pkg_install_dir) / "on-install.sh")
         )
         
         # Write dummy hook script so hook_path.exists() is True
@@ -364,7 +364,6 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("# dummy")
 
-        hook_base_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
 
         # 1. Test CalledProcessError
@@ -380,7 +379,6 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
-                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
             self.assertIn("failed with exit code 5", str(ctx.exception))
@@ -399,7 +397,6 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
-                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
             self.assertIn("timed out after 120 seconds", str(ctx.exception))
@@ -409,14 +406,13 @@ class TestInstallRepo(unittest.TestCase):
         config_missing = PackageConfig(
             name=pkg,
             target_directory=Path(self.system_target_dir),
-            hooks=PackageHooks(post_install=Path("non_existent_script.sh"))
+            hooks=PackageHooks(post_install=Path(pkg_install_dir) / "non_existent_script.sh")
         )
         with self.assertRaises(FileNotFoundError) as ctx:
             trigger_package_hook(
                 pkg=pkg,
                 hook_name="post_install",
                 metadata=config_missing,
-                hook_base_dir=hook_base_dir,
                 cwd=cwd
             )
         self.assertIn("not found", str(ctx.exception))
@@ -430,17 +426,18 @@ class TestInstallRepo(unittest.TestCase):
         pkg_install_dir = os.path.join(self.install_dir, pkg)
         os.makedirs(pkg_install_dir, exist_ok=True)
 
+        hook_abs = Path(pkg_install_dir) / "hook.sh"
         all_hooks = PackageHooks(
-            probe=Path("hook.sh"),
-            pre_source=Path("hook.sh"),
-            pre_install=Path("hook.sh"),
-            post_install=Path("hook.sh"),
-            pre_update=Path("hook.sh"),
-            post_update=Path("hook.sh"),
-            pre_uninstall=Path("hook.sh"),
-            post_uninstall=Path("hook.sh"),
-            post_render=Path("hook.sh"),
-            health=Path("hook.sh")
+            probe=hook_abs,
+            pre_source=hook_abs,
+            pre_install=hook_abs,
+            post_install=hook_abs,
+            pre_update=hook_abs,
+            post_update=hook_abs,
+            pre_uninstall=hook_abs,
+            post_uninstall=hook_abs,
+            post_render=hook_abs,
+            health=hook_abs
         )
         config_sudo = PackageConfig(
             name=pkg,
@@ -454,7 +451,6 @@ class TestInstallRepo(unittest.TestCase):
             f.write("# dummy")
         os.chmod(hook_path, 0o755)
 
-        hook_base_dir = Path(pkg_install_dir)
         cwd = Path(self.system_target_dir)
 
         from drift.constants import LIFECYCLE_HOOK_NAMES
@@ -467,7 +463,6 @@ class TestInstallRepo(unittest.TestCase):
                     pkg=pkg,
                     hook_name=hook_name,
                     metadata=config_sudo,
-                    hook_base_dir=hook_base_dir,
                     cwd=cwd
                 )
                 called_cmd = mock_run.call_args[0][0]

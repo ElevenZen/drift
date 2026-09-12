@@ -666,9 +666,9 @@ def deploy_one_package_impl(
     hook_flags = HookExecFlags.resolve(flags)
     try:
         if is_first_time:
-            metadata.hooks.trigger_pre_install(install_pkg_dir, flags=hook_flags)
+            metadata.hooks.trigger_pre_install(flags=hook_flags)
         else:
-            metadata.hooks.trigger_pre_update(install_pkg_dir, flags=hook_flags)
+            metadata.hooks.trigger_pre_update(flags=hook_flags)
     except HookExecutionError as e:
         if not e.requires_rollback:
             if is_first_time:
@@ -717,9 +717,9 @@ def deploy_one_package_impl(
     no_rollback_err = False
     try:
         if is_first_time:
-            metadata.hooks.trigger_post_install(install_pkg_dir, target_dir, flags=hook_flags)
+            metadata.hooks.trigger_post_install(target_dir=target_dir, flags=hook_flags)
         else:
-            metadata.hooks.trigger_post_update(install_pkg_dir, target_dir, flags=hook_flags)
+            metadata.hooks.trigger_post_update(target_dir=target_dir, flags=hook_flags)
         success = True
     except HookExecutionError as e:
         if not e.requires_rollback:

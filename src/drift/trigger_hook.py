@@ -136,7 +136,6 @@ def trigger_hook_from_install(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,
-            hook_base_dir=install_pkg_dir,
             cwd=cwd,
             flags=flags,
         )

@@ -40,6 +40,29 @@ def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: st
         remove_file_or_dir(render_pkg_dir)
 
 
+def _validate_not_driftignore_target(
+    file_path: Path,
+    target_rel_path: str,
+    package_name: str,
+    is_template: bool = False,
+) -> None:
+    """Validates that a template or pseudo-dot file is not used to dynamically generate .driftignore."""
+    target_name = Path(target_rel_path).name
+    translated_name = translate_dot_prefixes(Path(target_name)).name
+    if translated_name in DRIFT_IGNORE_FILE_NAME_LIST:
+        if is_template:
+            raise ConfigError(
+                f"Package '{package_name}' cannot render template '{file_path.name}' to '{target_rel_path}'. "
+                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
+            )
+        # check if the any file not in package root is being used to represent .driftignore
+        if target_rel_path not in DRIFT_IGNORE_FILE_NAME_LIST:
+            raise ConfigError(
+                f"Package '{package_name}' cannot use '{file_path.name}' to represent '{DRIFT_IGNORE_FILE_NAME}'. "
+                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
+            )
+
+
 def render_or_copy_file(
     file_path: Path,
     package_dir: Path,
@@ -69,12 +92,12 @@ def render_or_copy_file(
 
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
-        translated_dest = translate_dot_prefixes(Path(stripped_relative_path))
-        if translated_dest.name in DRIFT_IGNORE_FILE_NAME_LIST:
-            raise ConfigError(
-                f"Package '{package_dir.name}' cannot render template '{file_path.name}' to '{stripped_relative_path}'. "
-                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
-            )
+        _validate_not_driftignore_target(
+            file_path=file_path,
+            target_rel_path=stripped_relative_path,
+            package_name=package_dir.name,
+            is_template=True,
+        )
         dest_path = render_pkg_dir / stripped_relative_path
         logger.info(f"🎨 Rendering: {relative_path} ({engine.name})")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
@@ -87,13 +110,12 @@ def render_or_copy_file(
         dest_rel = stripped_relative_path
         is_rendered = True
     else:
-        translated_dest = translate_dot_prefixes(relative_path)
-        if (translated_dest.name in DRIFT_IGNORE_FILE_NAME_LIST
-                and relative_path.as_posix() not in DRIFT_IGNORE_FILE_NAME_LIST):
-            raise ConfigError(
-                f"Package '{package_dir.name}' cannot use '{file_path.name}' to represent '{DRIFT_IGNORE_FILE_NAME}'. "
-                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
-            )
+        _validate_not_driftignore_target(
+            file_path=file_path,
+            target_rel_path=relative_path.as_posix(),
+            package_name=package_dir.name,
+            is_template=False,
+        )
         dest_path = render_pkg_dir / relative_path
         logger.info(f"📄 Copying: {relative_path}")
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
@@ -104,22 +126,26 @@ def render_or_copy_file(
 
     # Ensure hook permissions on POSIX for declared lifecycle hooks
     ensure_rendered_file_hook_permissions(
-        file_path=file_path,
+        src_path=file_path,
         dest_path=dest_path,
         dest_rel=dest_rel,
-        relative_path=relative_path,
-        pkg_config=pkg_config
+        pkg_config=pkg_config,
+        workspace_config=workspace_config,
+        package_dir=package_dir,
+        render_pkg_dir=render_pkg_dir,
     )
 
     return (dest_rel, is_rendered)
 
 
 def ensure_rendered_file_hook_permissions(
-    file_path: Path,
+    src_path: Path,
     dest_path: Path,
     dest_rel: str,
-    relative_path: Path,
-    pkg_config: PackageConfig
+    pkg_config: PackageConfig,
+    workspace_config: Optional[WorkspaceConfig] = None,
+    package_dir: Optional[Path] = None,
+    render_pkg_dir: Optional[Path] = None,
 ) -> None:
     """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
 
@@ -129,8 +155,20 @@ def ensure_rendered_file_hook_permissions(
     if sys.platform == "win32":
         return
 
-    configured_hooks = pkg_config.hooks.get_configured_hook_paths()
-    if dest_rel not in configured_hooks and relative_path.as_posix() not in configured_hooks:
+    rel_bases: List[Path] = []
+    if package_dir is not None:
+        rel_bases.append(package_dir)
+    if render_pkg_dir is not None:
+        rel_bases.append(render_pkg_dir)
+    if workspace_config is not None:
+        rel_bases.extend([
+            workspace_config.source_path / pkg_config.name,
+            workspace_config.render_path / pkg_config.name,
+            workspace_config.install_path / pkg_config.name,
+        ])
+
+    configured_hooks = pkg_config.hooks.get_configured_hook_paths(relative_to=rel_bases)
+    if dest_rel not in configured_hooks:
         return
 
     try:
@@ -138,10 +176,10 @@ def ensure_rendered_file_hook_permissions(
             dest_mode = dest_path.stat().st_mode
             if not (dest_mode & 0o111):
                 dest_path.chmod(dest_mode | 0o755)
-        if file_path.exists() and file_path.is_file():
-            src_mode = file_path.stat().st_mode
+        if src_path.exists() and src_path.is_file():
+            src_mode = src_path.stat().st_mode
             if not (src_mode & 0o111):
-                file_path.chmod(src_mode | 0o755)
+                src_path.chmod(src_mode | 0o755)
     except Exception as e:
         logger.debug(f"Could not ensure executable permission for hook file '{dest_path}': {e}")
 
@@ -246,7 +284,6 @@ def render_package_files(
 
     # Trigger post_render hook
     pkg_config.hooks.trigger_post_render(
-        render_dir=render_pkg_dir,
         flags=hook_flags,
     )
     logger.info(f"✨ Package '{package_name}' rendered successfully.")

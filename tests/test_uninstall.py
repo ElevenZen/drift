@@ -308,7 +308,7 @@ fi
         self.assertTrue(post_hook_out.is_file())
         self.assertEqual(
             post_hook_out.read_text(encoding="utf-8").strip(),
-            f"POST_UNINSTALL_{pkg}_IN_{pkg_install_dir}"
+            f"POST_UNINSTALL_{pkg}_IN_{post_hook.parent}"
         )
 
     def test_uninstall_fails_if_hook_file_missing_in_install(self):

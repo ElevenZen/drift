@@ -89,6 +89,9 @@ fully_controlled_dirs = [
 
 [hooks]
 # Lifecycle Hooks (Optional shell command execution)
+# Note: All hook fields specify the path/filename AFTER rendering (without template engine suffixes like .envst).
+# If a hook is authored as a template (e.g. scripts/health.sh.envst), configure its rendered name (scripts/health.sh).
+# Drift automatically resolves and renders matching template files into the sandbox before executing hooks.
 # Timeout in seconds before hook processes are aborted (defaults to 120)
 # Note: All hooks run in user space with full environment variable inheritance (all 7 tiers).
 # If a hook command requires root privileges, use 'sudo' explicitly inside the hook script.
@@ -158,6 +161,11 @@ health = "scripts/health_check.ps1"
 # are inherited from workspace configuration, while input_file is overridden.
 # Relative input_file paths are resolved relative to this package's directory (src/<pkg>/).
 # Intermediate input file template outputs are rendered into render/<pkg>/.drift/ sandbox.
+#
+# Note: 'input_file' fields in render engines are specified as names BEFORE rendering
+# (e.g. "config_data.envst.json" rather than "config_data.json"). Because input files frequently contain
+# render engine names/suffixes, specifying the pre-rendered source name allows Drift to unambiguously
+# detect dependencies and compile inputs in topological DAG order.
 
 # Define a brand new package-scoped render engine:
 [render.custom]
@@ -186,6 +194,9 @@ All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 t
 | `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` |
 | `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` |
 | `health` | During `drift health` probe execution | `target_directory` |
+
+> [!IMPORTANT]
+> **Hook File Paths & Template Compilation**: All hook fields in `drift_package.toml` are defined using their **post-rendering paths** (without template engine suffixes like `.envst`). If your source repository contains a template script like `scripts/health.sh.envst` or `scripts/pre_source.sh.envst`, configure `health = "scripts/health.sh"` or `pre_source = "scripts/pre_source.sh"`. Drift automatically detects, compiles, and stages matching templates into the render sandbox before executing the hook.
 
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.

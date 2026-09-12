@@ -299,7 +299,7 @@ def uninstall_one_package(
         # 1. Trigger pre_uninstall hook (only if drift_package.toml is available, CWD is target_dir)
         if not dry_run and pkg_config.hooks.pre_uninstall:
             pkg_config.hooks.trigger_pre_uninstall(
-                install_dir=install_pkg_dir, cwd=target_dir, flags=hook_flags
+                target_dir=target_dir, flags=hook_flags
             )
 
         # 2. Remove deployed files
@@ -314,7 +314,7 @@ def uninstall_one_package(
         # 4. Trigger post_uninstall hook (only if drift_package.toml is available, CWD is install_pkg_dir)
         if pkg_config.hooks.post_uninstall:
             pkg_config.hooks.trigger_post_uninstall(
-                install_dir=install_pkg_dir, flags=hook_flags
+                flags=hook_flags
             )
         clean_up_package_directories(workspace_config, pkg)
         return True

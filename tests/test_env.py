@@ -926,12 +926,13 @@ ALL_PROXY = "${SOCKS_PROXY}"
             }
         }
         from drift.package_config import resolve_and_interpolate_package_config
+        base_dir = Path("/mock/src/my_daemon")
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon")
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
         self.assertEqual(pkg_cfg.name, "my_daemon")
         self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
         self.assertEqual(pkg_cfg.env_override["SERVICE_URL"], "http://127.0.0.1:8000")
-        self.assertEqual(str(pkg_cfg.hooks.post_install), "scripts/start_my_daemon.sh")
+        self.assertEqual(pkg_cfg.hooks.post_install, base_dir / "scripts/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
 
     def test_package_config_with_direct_env_raises_error(self) -> None:
@@ -1024,7 +1025,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         os.environ["OVERRIDDEN_BY_WORKSPACE"] = "workspace_val"
 
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_pkg", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", source_files=[pkg_toml_path])
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
         self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
         self.assertEqual(pkg_cfg.env_override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))

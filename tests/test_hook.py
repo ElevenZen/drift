@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.package_config import PACKAGE_CONFIG_FILE_NAME
+from drift.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageHooks
 from drift.trigger_hook import run_primitive_trigger_hook
 from drift.lifecycle_hooks import HookExecFlags
 from drift.exceptions import ConfigError
@@ -305,7 +305,7 @@ class TestPackageHook(unittest.TestCase):
         res_rendered_alias = pkg_config.hooks.trigger_pre_source_with_render(workspace_config=self.workspace_config)
         self.assertEqual(res_rendered_alias.status, "SUCCESS")
 
-        res_direct = pkg_config.hooks.trigger_pre_source_without_render(source_dir=self.src_pkg_dir)
+        res_direct = pkg_config.hooks.trigger_pre_source_without_render(cwd_override=self.src_pkg_dir)
         self.assertEqual(res_direct.status, "SUCCESS")
 
         # 6. PackageHooks no_hooks=True -> status == "SKIPPED"
@@ -317,7 +317,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res_pkg_no_hooks.status, "SKIPPED")
 
         res_pkg_without_render_no_hooks = pkg_config.hooks.trigger_pre_source_without_render(
-            source_dir=self.src_pkg_dir,
+            cwd_override=self.src_pkg_dir,
             flags=HookExecFlags(no_hooks=True)
         )
         self.assertEqual(res_pkg_without_render_no_hooks.status, "SKIPPED")
@@ -536,27 +536,26 @@ echo "VALUE=$DYNAMIC_VAL"
         from drift.package_config import PackageConfig, PackageHooks
         from drift.lifecycle_hooks import HookExecFlags
         hooks = PackageHooks(
-            probe=Path("scripts/probe.sh"),
-            pre_source=Path("scripts/pre_source.sh"),
-            post_render=Path("scripts/post_render.sh"),
-            pre_install=Path("scripts/pre_install.sh"),
-            post_install=Path("scripts/post_install.sh"),
-            pre_update=Path("scripts/pre_update.sh"),
-            post_update=Path("scripts/post_update.sh"),
-            pre_uninstall=Path("scripts/pre_uninstall.sh"),
-            post_uninstall=Path("scripts/post_uninstall.sh"),
-            health=Path("scripts/health.sh")
+            probe=self.drift_root / "scripts/probe.sh",
+            pre_source=self.drift_root / "scripts/pre_source.sh",
+            post_render=self.drift_root / "scripts/post_render.sh",
+            pre_install=self.drift_root / "scripts/pre_install.sh",
+            post_install=self.drift_root / "scripts/post_install.sh",
+            pre_update=self.drift_root / "scripts/pre_update.sh",
+            post_update=self.drift_root / "scripts/post_update.sh",
+            pre_uninstall=self.drift_root / "scripts/pre_uninstall.sh",
+            post_uninstall=self.drift_root / "scripts/post_uninstall.sh",
+            health=self.drift_root / "scripts/health.sh",
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
         with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
-            hooks.trigger("pre_install", hook_base_dir=self.drift_root, cwd=self.drift_root, flags=HookExecFlags(streaming=False))
+            hooks.trigger("pre_install", cwd=self.drift_root, flags=HookExecFlags(streaming=False))
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="pre_install",
                 metadata=pkg_config,
-                hook_base_dir=self.drift_root,
                 cwd=self.drift_root,
                 flags=HookExecFlags(no_hooks=False, streaming=False, inject_non_interactive_envs=True)
             )
@@ -723,52 +722,84 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_methods_signatures_and_cwd(self) -> None:
         """Verifies trigger_pre_install, trigger_pre_update, trigger_post_uninstall use install_dir as CWD."""
-        from drift.package_config import PackageConfig, PackageHooks
-        from drift.lifecycle_hooks import HookExecFlags
-
-        hooks = PackageHooks(
-            pre_install=Path("scripts/pre_install.sh"),
-            pre_update=Path("scripts/pre_update.sh"),
-            post_uninstall=Path("scripts/post_uninstall.sh"),
-        )
-        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
         install_dir = self.drift_root / "install" / "pkg_hook"
         install_dir.mkdir(parents=True, exist_ok=True)
+        hooks = PackageHooks(
+            pre_install=install_dir / "scripts/pre_install.sh",
+            pre_update=install_dir / "scripts/pre_update.sh",
+            post_uninstall=install_dir / "scripts/post_uninstall.sh",
+        )
+        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
         with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
 
-            # 1. trigger_pre_install without redundant cwd
-            hooks.trigger_pre_install(install_dir=install_dir)
+            # 1. trigger_pre_install without explicit cwd defaults to pre_install.parent
+            hooks.trigger_pre_install()
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="pre_install",
                 metadata=pkg_config,
-                hook_base_dir=install_dir,
-                cwd=install_dir,
-                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+                cwd=install_dir / "scripts",
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            # 2. trigger_pre_update without redundant cwd
-            hooks.trigger_pre_update(install_dir=install_dir)
+            # 2. trigger_pre_update with explicit cwd_override
+            hooks.trigger_pre_update(cwd_override=install_dir)
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="pre_update",
                 metadata=pkg_config,
-                hook_base_dir=install_dir,
                 cwd=install_dir,
-                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            # 3. trigger_post_uninstall without redundant cwd
-            hooks.trigger_post_uninstall(install_dir=install_dir)
+            # 3. trigger_post_uninstall with explicit cwd_override
+            hooks.trigger_post_uninstall(cwd_override=install_dir)
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="post_uninstall",
                 metadata=pkg_config,
-                hook_base_dir=install_dir,
                 cwd=install_dir,
-                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True)
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
+            )
+
+            # 4. Target-scoped hooks require target_dir
+            target_dir = self.drift_root / "target"
+            hooks.trigger_post_install(target_dir=target_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="post_install",
+                metadata=pkg_config,
+                cwd=target_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
+            )
+
+            hooks.trigger_post_update(target_dir=target_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="post_update",
+                metadata=pkg_config,
+                cwd=target_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
+            )
+
+            hooks.trigger_pre_uninstall(target_dir=target_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="pre_uninstall",
+                metadata=pkg_config,
+                cwd=target_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
+            )
+
+            hooks.trigger_health(target_dir=target_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="health",
+                metadata=pkg_config,
+                cwd=target_dir,
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
     def test_hook_raise_on_error_flag(self) -> None:
@@ -906,6 +937,95 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 flags=HookExecFlags(streaming=False),
             )
         self.assertTrue(ctx.exception.requires_rollback)
+
+    def test_package_hooks_from_dict_without_base_dir_when_no_relative_hooks(self) -> None:
+        """Verifies that base_dir or workspace_config is not required when no relative hooks are configured."""
+        from drift.package_config import PackageConfig, PackageHooks, DEFAULT_HOOK_TIMEOUT
+        from drift.exceptions import ConfigError
+
+        # 1. Empty hooks dict requires no base_dir
+        hooks_empty = PackageHooks.from_dict({})
+        self.assertIsNone(hooks_empty.pre_install)
+        self.assertEqual(hooks_empty.timeout, DEFAULT_HOOK_TIMEOUT)
+
+        # 2. Options only (timeout, rollback_on_failure) requires no base_dir
+        hooks_opts = PackageHooks.from_dict({"timeout": 45, "rollback_on_failure": False})
+        self.assertIsNone(hooks_opts.pre_install)
+        self.assertEqual(hooks_opts.timeout, 45)
+        self.assertFalse(hooks_opts.rollback_on_failure)
+
+        # 3. Absolute hook path requires no base_dir
+        abs_path = (Path("/opt/scripts/pre_install.sh")).resolve()
+        hooks_abs = PackageHooks.from_dict({"pre_install": str(abs_path)})
+        self.assertEqual(hooks_abs.pre_install, abs_path)
+
+        # 4. Relative hook path without base_dir raises ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            PackageHooks.from_dict({"pre_install": "scripts/pre_install.sh"}, package_name="test_pkg")
+        self.assertIn("base_dir or workspace_config must be provided", str(ctx.exception))
+
+        # 5. PackageConfig without hooks requires no base_dir
+        pkg_cfg = PackageConfig.from_dict({"package": {"name": "test_pkg"}}, package_name="test_pkg")
+        self.assertEqual(pkg_cfg.name, "test_pkg")
+        self.assertIsNone(pkg_cfg.hooks.pre_install)
+
+        # 6. PackageConfig with relative hook without base_dir raises ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            PackageConfig.from_dict(
+                {
+                    "package": {"name": "test_pkg"},
+                    "hooks": {"pre_install": "scripts/pre_install.sh"}
+                },
+                package_name="test_pkg",
+            )
+        self.assertIn("base_dir or workspace_config must be provided", str(ctx.exception))
+
+    def test_external_shared_hook_trigger_with_render(self) -> None:
+        """Verifies that an external hook outside the package directory is executed directly without rendering."""
+        from drift.lifecycle_hooks import trigger_pre_source_hook, trigger_package_hook_with_render
+        from drift.trigger_hook import run_primitive_trigger_hook
+
+        # Create a shared script outside package directory
+        common_dir = self.drift_root / "common_scripts"
+        common_dir.mkdir(parents=True, exist_ok=True)
+        shared_hook = common_dir / "shared_hook.sh"
+        shared_out = common_dir / "shared_hook.out"
+        shared_hook.write_text(f"#!/bin/sh\necho 'SHARED_HOOK_RAN' > '{shared_out}'\nexit 0\n", encoding="utf-8")
+        shared_hook.chmod(0o755)
+
+        # Configure package with absolute path to external shared hook
+        (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_hook"
+        install_method = "copy"
+        target_directory = "{self.target_dir.as_posix()}"
+
+        [hooks]
+        pre_source = "{shared_hook.as_posix()}"
+        """, encoding="utf-8")
+
+        # Trigger via trigger_pre_source_hook
+        res = trigger_pre_source_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.exit_code, 0)
+        self.assertEqual(res.hook_path, str(shared_hook))
+        self.assertTrue(shared_out.is_file())
+        self.assertEqual(shared_out.read_text(encoding="utf-8").strip(), "SHARED_HOOK_RAN")
+
+        # Trigger via run_primitive_trigger_hook with from_stage="source"
+        shared_out.unlink()
+        res_primitive = run_primitive_trigger_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+            hook_name="pre_source",
+            from_stage="source",
+        )
+        self.assertEqual(res_primitive.status, "SUCCESS")
+        self.assertEqual(res_primitive.hook_path, str(shared_hook))
+        self.assertTrue(shared_out.is_file())
 
 
 if __name__ == "__main__":

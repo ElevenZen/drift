@@ -320,21 +320,40 @@ def trigger_package_hook_with_render(
         )
 
     hook_file_path = Path(hook_file_val)
-    if hook_file_path.is_absolute():
+
+    # Resolve hook file path relative to package source directory if not absolute
+    # Determine the relative subpath of the hook within the package hierarchy
+    rel_hook_path: Optional[Path] = None
+    for candidate_base in (
+        workspace_config.install_path / package_name,
+        workspace_config.render_path / package_name,
+        src_pkg_dir,
+    ):
+        if is_relative_to(hook_file_path, candidate_base):
+            rel_hook_path = hook_file_path.relative_to(candidate_base)
+            break
+
+    if rel_hook_path is None:
+        # If hook is outside the package directory hierarchy, it is shared across packages and executed directly
         nominal_hook_path = hook_file_path
     else:
-        # Locate static file or template matching hook_file_path.name in src_pkg_dir / hook_file_path.parent
-        hook_parent_dir = src_pkg_dir / hook_file_path.parent
-        if engines_override is not None:
-            hook_engines = engines_override
+        # If hook is inside the package directory hierarchy, check if it exists in the source directory first
+        # If not, check if it can be rendered from the source directory using the package's render engines
+        hook_parent_in_src = src_pkg_dir / rel_hook_path.parent
+        static_candidate = hook_parent_in_src / rel_hook_path.name
+        if static_candidate.exists():
+            nominal_hook_path = static_candidate
         else:
-            hook_engines = pkg_config.package_render_engines(workspace_config)
+            if engines_override is not None:
+                hook_engines = engines_override
+            else:
+                hook_engines = pkg_config.package_render_engines(workspace_config)
 
-        match_info = hook_engines.find_source_file_for_rendered_names(
-            hook_parent_dir,
-            [hook_file_path.name]
-        )
-        nominal_hook_path = match_info and match_info.path
+            match_info = hook_engines.find_source_file_for_rendered_names(
+                hook_parent_in_src,
+                [rel_hook_path.name]
+            )
+            nominal_hook_path = match_info.path if match_info else None
 
     if not nominal_hook_path or not nominal_hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {nominal_hook_path}"
@@ -432,8 +451,7 @@ def trigger_package_hook(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
-    hook_base_dir: Path,
-    cwd: Path,
+    cwd: Optional[Path] = None,
     custom_timeout: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
@@ -456,7 +474,6 @@ def trigger_package_hook(
             package=pkg,
             hook_name=hook_name,
             cwd=cwd,
-            hook_base_dir=hook_base_dir
         )
 
     hook_file = getattr(metadata.hooks, hook_name, None) if metadata and metadata.hooks else None
@@ -466,22 +483,21 @@ def trigger_package_hook(
             package=pkg,
             hook_name=hook_name,
             cwd=cwd,
-            hook_base_dir=hook_base_dir
         )
 
-    hook_file_path = Path(hook_file)
-    hook_path = hook_file_path if hook_file_path.is_absolute() else hook_base_dir / hook_file_path
+    hook_path = Path(hook_file)
+    effective_cwd = cwd or hook_path.parent
 
     res = execute_hook_script(
         hook_path=hook_path,
         pkg=pkg,
         hook_name=hook_name,
         metadata=metadata,
-        cwd=cwd,
+        cwd=effective_cwd,
         custom_timeout=custom_timeout,
         flags=exec_flags,
     )
-    res.hook_base_dir = str(hook_base_dir)
+    res.hook_base_dir = str(hook_path.parent)
     return res
 
 

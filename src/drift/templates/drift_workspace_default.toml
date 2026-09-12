@@ -43,6 +43,11 @@ DEFAULT = false
 # Define template rendering engines for compiling dotfiles and configuration templates.
 # Note: Standard .toml files already support native ${VAR} self-referencing without engines.
 # Render engines below compile template files (e.g. .zshrc.envst, config.j2, or drift_workspace.local.envst.toml).
+#
+# IMPORTANT: 'input_file' fields in render engines are specified as names BEFORE rendering
+# (e.g. "mustache.envst.json" rather than "mustache.json"). Because input files frequently contain
+# engine suffixes indicating which engine compiles them, specifying the pre-rendered source name
+# enables Drift to unambiguously detect dependencies (DAG) and compile them in topological order.
 [render.envsubst]
 # Shell script providing env variables for envsubst
 # If it's a relative path, it's always relative to the 'config' folder under drift root directory.

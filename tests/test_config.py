@@ -303,6 +303,7 @@ class TestConfigClasses(unittest.TestCase):
 
 
     def test_package_config_from_dict(self) -> None:
+        base_dir = Path("/mock/src/my_pkg")
         data = {
             "package": {
                 "install_method": "stow"
@@ -312,9 +313,9 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": 60
             }
         }
-        config = PackageConfig.from_dict(data, package_name="my_pkg")
+        config = PackageConfig.from_dict(data, base_dir=base_dir, package_name="my_pkg")
         self.assertEqual(config.name, "my_pkg")
-        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
+        self.assertEqual(config.hooks.pre_source, base_dir / "scripts/gen.sh")
         self.assertEqual(config.hooks.timeout, 60)
 
         # Test string casting for timeout
@@ -357,20 +358,21 @@ class TestConfigClasses(unittest.TestCase):
             PackageConfig(name="foo", hook_file=123).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
+        base = Path("/workspace/test_pkg")
         hooks = PackageHooks(
-            pre_source=Path("scripts/gen.sh"),
-            pre_install=Path("scripts/pre.sh"),
-            post_install=Path("scripts/post.sh"),
+            pre_source=base / "scripts/gen.sh",
+            pre_install=base / "scripts/pre.sh",
+            post_install=base / "scripts/post.sh",
             timeout=30
         )
         config = PackageConfig(name="test_pkg", hooks=hooks)
-        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
+        self.assertEqual(config.hooks.pre_source, base / "scripts/gen.sh")
         self.assertEqual(config.hooks.timeout, 30)
         self.assertIs(config.hooks.package_config, config)
 
         # Direct property modification on hooks
-        config.hooks.post_render = Path("scripts/render.sh")
-        self.assertEqual(config.hooks.post_render, Path("scripts/render.sh"))
+        config.hooks.post_render = base / "scripts/render.sh"
+        self.assertEqual(config.hooks.post_render, base / "scripts/render.sh")
 
     def test_package_hooks_from_dict_and_validation(self) -> None:
         """Verifies PackageHooks.from_dict method, validation, and error handling."""
@@ -380,24 +382,25 @@ class TestConfigClasses(unittest.TestCase):
             "post_install": "scripts/post.sh",
             "timeout": "60"
         }
-        hooks = PackageHooks.from_dict(raw, package_name="my_pkg")
-        self.assertEqual(hooks.pre_source, Path("scripts/gen.sh"))
-        self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
+        base = Path("/workspace/my_pkg")
+        hooks = PackageHooks.from_dict(raw, package_name="my_pkg", base_dir=base)
+        self.assertEqual(hooks.pre_source, base / "scripts/gen.sh")
+        self.assertEqual(hooks.post_install, base / "scripts/post.sh")
         self.assertEqual(hooks.timeout, 60)
 
         # 2. Non-string hook value raises ConfigError
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"pre_source": 12345}, package_name="bad_pkg")
+            PackageHooks.from_dict({"pre_source": 12345}, package_name="bad_pkg", base_dir=base)
 
         # 3. Non-dict Windows subtable raises ConfigError
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"windows": "not_a_dict"}, package_name="bad_pkg")
+            PackageHooks.from_dict({"windows": "not_a_dict"}, package_name="bad_pkg", base_dir=base)
 
         # 4. Invalid timeout raises ConfigError
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"timeout": "abc"}, package_name="bad_pkg")
+            PackageHooks.from_dict({"timeout": "abc"}, package_name="bad_pkg", base_dir=base)
         with self.assertRaises(ConfigError):
-            PackageHooks.from_dict({"timeout": -10}, package_name="bad_pkg")
+            PackageHooks.from_dict({"timeout": -10}, package_name="bad_pkg", base_dir=base)
 
     def test_load_package_config_with_hooks_table(self) -> None:
         """Verifies parsing package configuration with dedicated [hooks] table."""
@@ -419,18 +422,19 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": 45
             }
         }
-        config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks")
+        base = Path("/workspace/pkg_with_hooks")
+        config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks", base_dir=base)
         self.assertEqual(config.name, "pkg_with_hooks")
         self.assertEqual(config.install_method, "copy")
-        self.assertEqual(config.hooks.pre_source, Path("scripts/gen.sh"))
-        self.assertEqual(config.hooks.pre_install, Path("scripts/pre_install.sh"))
-        self.assertEqual(config.hooks.post_install, Path("scripts/post_install.sh"))
-        self.assertEqual(config.hooks.pre_update, Path("scripts/pre_update.sh"))
-        self.assertEqual(config.hooks.post_update, Path("scripts/post_update.sh"))
-        self.assertEqual(config.hooks.pre_uninstall, Path("scripts/pre_uninstall.sh"))
-        self.assertEqual(config.hooks.post_uninstall, Path("scripts/post_uninstall.sh"))
-        self.assertEqual(config.hooks.post_render, Path("scripts/post_render.sh"))
-        self.assertEqual(config.hooks.health, Path("scripts/health_check.sh"))
+        self.assertEqual(config.hooks.pre_source, base / "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_install, base / "scripts/pre_install.sh")
+        self.assertEqual(config.hooks.post_install, base / "scripts/post_install.sh")
+        self.assertEqual(config.hooks.pre_update, base / "scripts/pre_update.sh")
+        self.assertEqual(config.hooks.post_update, base / "scripts/post_update.sh")
+        self.assertEqual(config.hooks.pre_uninstall, base / "scripts/pre_uninstall.sh")
+        self.assertEqual(config.hooks.post_uninstall, base / "scripts/post_uninstall.sh")
+        self.assertEqual(config.hooks.post_render, base / "scripts/post_render.sh")
+        self.assertEqual(config.hooks.health, base / "scripts/health_check.sh")
         self.assertEqual(config.hooks.timeout, 45)
 
     def test_load_package_config_with_hooks_windows_and_aliases(self) -> None:
@@ -450,19 +454,20 @@ class TestConfigClasses(unittest.TestCase):
                     }
                 }
             }
+            base = Path("/workspace/my_pkg")
             # On POSIX (Linux/macOS), windows subtable is ignored
             with patch("sys.platform", "linux"):
-                config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-                self.assertEqual(config_linux.hooks.pre_install, Path("scripts/bootstrap.sh"))
-                self.assertEqual(config_linux.hooks.post_install, Path("scripts/setup.sh"))
+                config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg", base_dir=base)
+                self.assertEqual(config_linux.hooks.pre_install, base / "scripts/bootstrap.sh")
+                self.assertEqual(config_linux.hooks.post_install, base / "scripts/setup.sh")
                 self.assertIsNone(config_linux.hooks.post_update)
 
             # On Windows, windows subtable overrides default hooks
             with patch("sys.platform", "win32"):
-                config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg")
-                self.assertEqual(config_win.hooks.pre_install, Path("scripts/bootstrap.ps1"))
-                self.assertEqual(config_win.hooks.post_install, Path("scripts/setup.ps1"))
-                self.assertEqual(config_win.hooks.post_update, Path("scripts/update.bat"))
+                config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg", base_dir=base)
+                self.assertEqual(config_win.hooks.pre_install, base / "scripts/bootstrap.ps1")
+                self.assertEqual(config_win.hooks.post_install, base / "scripts/setup.ps1")
+                self.assertEqual(config_win.hooks.post_update, base / "scripts/update.bat")
 
     def test_package_hooks_disabled_values_in_base_and_subtables(self) -> None:
         """Verifies that 'disable' and 'disabled' (case-insensitive) in base [hooks] or platform tables turn off hooks."""
@@ -481,14 +486,15 @@ class TestConfigClasses(unittest.TestCase):
                 "post_uninstall": "scripts/uninstall.sh",
             }
         }
-        config = PackageConfig.from_dict(toml_dict, package_name="pkg_disabled")
+        base = Path("/workspace/pkg_disabled")
+        config = PackageConfig.from_dict(toml_dict, package_name="pkg_disabled", base_dir=base)
         self.assertIsNone(config.hooks.pre_source)
         self.assertIsNone(config.hooks.pre_install)
         self.assertIsNone(config.hooks.post_install)
         self.assertIsNone(config.hooks.pre_update)
         self.assertIsNone(config.hooks.post_update)
         self.assertIsNone(config.hooks.pre_uninstall)
-        self.assertEqual(config.hooks.post_uninstall, Path("scripts/uninstall.sh"))
+        self.assertEqual(config.hooks.post_uninstall, base / "scripts/uninstall.sh")
 
         # 2. [hooks.windows] disabling a base hook on Windows
         override_dict = {
@@ -503,17 +509,18 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with patch("sys.platform", "linux"):
-            config_linux = PackageConfig.from_dict(override_dict, package_name="pkg_override")
-            self.assertEqual(config_linux.hooks.post_install, Path("scripts/posix_post.sh"))
+            config_linux = PackageConfig.from_dict(override_dict, package_name="pkg_override", base_dir=base)
+            self.assertEqual(config_linux.hooks.post_install, base / "scripts/posix_post.sh")
 
         with patch("sys.platform", "win32"):
-            config_win = PackageConfig.from_dict(override_dict, package_name="pkg_override")
+            config_win = PackageConfig.from_dict(override_dict, package_name="pkg_override", base_dir=base)
             self.assertIsNone(config_win.hooks.post_install)
 
     def test_package_hooks_property_setters_with_disabled(self) -> None:
         """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
-        hooks = PackageHooks(post_install=Path("scripts/post.sh"))
-        self.assertEqual(hooks.post_install, Path("scripts/post.sh"))
+        base = Path("/workspace/my_pkg")
+        hooks = PackageHooks(post_install=base / "scripts/post.sh")
+        self.assertEqual(hooks.post_install, base / "scripts/post.sh")
 
         hooks.post_install = Path("disabled")
         self.assertIsNone(hooks.post_install)
@@ -662,28 +669,28 @@ class TestConfigClasses(unittest.TestCase):
             (scripts_dir / "post_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
             hooks = PackageHooks(
-                pre_install=Path("scripts/pre_install.sh"),
-                post_install=Path("scripts/post_install.sh")
+                pre_install=base / "scripts/pre_install.sh",
+                post_install=base / "scripts/post_install.sh"
             )
             # 1. Valid hook files pass
             hooks.check_hook_files(base)
 
             # 2. Missing hook file raises FileNotFoundError
-            hooks.post_update = Path("scripts/missing.sh")
+            hooks.post_update = base / "scripts/missing.sh"
             with self.assertRaises(FileNotFoundError) as cm:
                 hooks.check_hook_files(base)
             self.assertIn("missing.sh", str(cm.exception))
 
             # 3. Hook path pointing to directory raises ValueError
             (scripts_dir / "dir_hook").mkdir()
-            hooks.post_update = Path("scripts/dir_hook")
+            hooks.post_update = base / "scripts/dir_hook"
             with self.assertRaises(ValueError) as cm:
                 hooks.check_hook_files(base)
             self.assertIn("not a regular file", str(cm.exception))
 
             # 4. Filtered hook_names ignores unrequested broken hooks
             (scripts_dir / "pre_uninstall.sh").write_text("#!/bin/bash\n", encoding="utf-8")
-            hooks.pre_uninstall = Path("scripts/pre_uninstall.sh")
+            hooks.pre_uninstall = base / "scripts/pre_uninstall.sh"
             # Checking only pre_uninstall passes even though post_update is broken
             hooks.check_hook_files(base, hook_names=["pre_uninstall"])
 
@@ -2035,6 +2042,37 @@ class TestPathSuffixHelpers(unittest.TestCase):
             add_envst_str("drift_root/config/drift.local.toml"),
             "drift_root/config/drift.local.envst.toml"
         )
+
+
+class TestPackageHooksConfiguredPaths(unittest.TestCase):
+    def test_package_hooks_get_configured_hook_paths(self) -> None:
+        from drift.package_config import PackageHooks
+
+        base1 = Path("/workspace/src/pkg1")
+        base2 = Path("/workspace/render/pkg1")
+        external = Path("/opt/shared/hooks/global.sh")
+
+        hooks = PackageHooks(
+            pre_source=base1 / "scripts/pre_source.sh",
+            post_render=base2 / "scripts/post_render.sh",
+            post_install=external,
+        )
+
+        # 1. Without relative_to, returns absolute POSIX paths
+        abs_paths = hooks.get_configured_hook_paths()
+        self.assertEqual(abs_paths, {
+            "/workspace/src/pkg1/scripts/pre_source.sh",
+            "/workspace/render/pkg1/scripts/post_render.sh",
+            "/opt/shared/hooks/global.sh",
+        })
+
+        # 2. With relative_to bases, returns relative paths for matched bases and absolute for external
+        rel_paths = hooks.get_configured_hook_paths(relative_to=[base1, base2])
+        self.assertEqual(rel_paths, {
+            "scripts/pre_source.sh",
+            "scripts/post_render.sh",
+            "/opt/shared/hooks/global.sh",
+        })
 
 
 if __name__ == "__main__":

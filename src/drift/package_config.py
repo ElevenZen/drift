@@ -41,7 +41,7 @@ from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_sett
 from .render_engine_config import RenderEngineRegistry
 from .env_utils import resolve_env_references, interpolate_config_dict, update_env_dict
 from .exceptions import ConfigError
-from .file_utils import expand_user_and_env
+from .file_utils import expand_user_and_env, is_relative_to
 from .result_models import HookResult
 
 from dataclasses import dataclass, field
@@ -49,11 +49,14 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
-def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
+def normalize_hook_value(
+    val: Optional[Union[str, Path]],
+    base_dir: Optional[Path] = None,
+) -> Optional[Path]:
     """Normalizes a lifecycle hook configuration value to Optional[Path].
 
     Returns None if val is None, empty string "", or "disable" / "disabled" (case-insensitive).
-    Returns Path instances as-is.
+    If base_dir is provided and the path is relative, resolves to absolute Path.
     """
     if val is None:
         return None
@@ -61,7 +64,10 @@ def normalize_hook_value(val: Optional[Union[str, Path]]) -> Optional[Path]:
         s = str(val).strip()
         if s == "" or s.lower() in ("disable", "disabled"):
             return None
-        return val if isinstance(val, Path) else Path(s)
+        p = Path(s)
+        if p.is_absolute() or base_dir is None:
+            return p
+        return (Path(base_dir) / p).resolve()
     raise ConfigError(f"Hook value must be a string or Path, got {type(val).__name__}")
 
 
@@ -247,9 +253,13 @@ class PackageHooks:
         """Validates hook configurations."""
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = getattr(self, hook_name)
-            if val is not None and not isinstance(val, Path):
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"{hook_name} must be a Path{name_str}.")
+            if val is not None:
+                if not isinstance(val, Path):
+                    name_str = f" for package '{package_name}'" if package_name else ""
+                    raise ConfigError(f"{hook_name} must be a Path{name_str}.")
+                if not val.is_absolute():
+                    name_str = f" for package '{package_name}'" if package_name else ""
+                    raise ConfigError(f"{hook_name} must be an absolute Path{name_str}.")
         if not isinstance(self.timeout, int):
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"timeout must be an integer{name_str}.")
@@ -320,16 +330,20 @@ class PackageHooks:
     def from_dict(
         cls,
         data: Dict[str, Any],
-        package_name: str = ""
+        package_name: str = "",
+        base_dir: Optional[Path] = None,
+        workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageHooks":
         """Parses, validates, and resolves a PackageHooks instance from a hooks dictionary.
 
         Args:
             data: The [hooks] dictionary.
             package_name: Optional name of the package for error messages.
+            base_dir: Optional base directory to resolve relative hook paths into absolute paths.
+            workspace_config: Optional parent WorkspaceConfig to resolve stage-specific hook base paths.
 
         Returns:
-            A validated PackageHooks instance.
+            A validated PackageHooks instance with absolute hook Paths.
         """
         # Validate top-level hooks table and any nested platform sub-tables
         effective_hooks = data
@@ -363,37 +377,94 @@ class PackageHooks:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
+        def _is_relative_hook(h: str) -> bool:
+            v = effective_hooks.get(h)
+            if v is None or not str(v).strip():
+                return False
+            return not Path(v).is_absolute()
+
+        has_relative_hooks = any(_is_relative_hook(h) for h in LIFECYCLE_HOOK_NAMES)
+        if workspace_config is not None and package_name:
+            src_base = workspace_config.source_path / package_name
+            render_base = workspace_config.render_path / package_name
+            install_base = workspace_config.install_path / package_name
+            hook_base_map: Dict[str, Path] = {
+                "probe": src_base,
+                "pre_source": src_base,
+                "post_render": render_base,
+                "pre_install": install_base,
+                "post_install": install_base,
+                "pre_update": install_base,
+                "post_update": install_base,
+                "pre_uninstall": install_base,
+                "post_uninstall": install_base,
+                "health": install_base,
+            }
+        elif base_dir is not None:
+            resolved_base = Path(base_dir).resolve()
+            hook_base_map = {hook_name: resolved_base for hook_name in LIFECYCLE_HOOK_NAMES}
+        elif not has_relative_hooks:
+            hook_base_map = {}
+        else:
+            name_str = f" for package '{package_name}'" if package_name else ""
+            raise ConfigError(f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}.")
+
+        def _resolve_hook(hook_name: str) -> Optional[Path]:
+            val = effective_hooks.get(hook_name)
+            target_base = hook_base_map.get(hook_name)
+            return normalize_hook_value(val, base_dir=target_base)
+
         hooks = cls(
-            probe=normalize_hook_value(effective_hooks.get("probe")),
-            pre_source=normalize_hook_value(effective_hooks.get("pre_source")),
-            pre_install=normalize_hook_value(effective_hooks.get("pre_install")),
-            post_install=normalize_hook_value(effective_hooks.get("post_install")),
-            pre_update=normalize_hook_value(effective_hooks.get("pre_update")),
-            post_update=normalize_hook_value(effective_hooks.get("post_update")),
-            pre_uninstall=normalize_hook_value(effective_hooks.get("pre_uninstall")),
-            post_uninstall=normalize_hook_value(effective_hooks.get("post_uninstall")),
-            post_render=normalize_hook_value(effective_hooks.get("post_render")),
-            health=normalize_hook_value(effective_hooks.get("health")),
+            probe=_resolve_hook("probe"),
+            pre_source=_resolve_hook("pre_source"),
+            pre_install=_resolve_hook("pre_install"),
+            post_install=_resolve_hook("post_install"),
+            pre_update=_resolve_hook("pre_update"),
+            post_update=_resolve_hook("post_update"),
+            pre_uninstall=_resolve_hook("pre_uninstall"),
+            post_uninstall=_resolve_hook("post_uninstall"),
+            post_render=_resolve_hook("post_render"),
+            health=_resolve_hook("health"),
             timeout=raw_timeout,
             rollback_on_failure=resolved_rollback,
         )
         hooks.validate(package_name)
         return hooks
 
-    def get_configured_hook_paths(self) -> Set[str]:
-        """Returns a set of all normalized relative POSIX path strings for configured hooks."""
-        paths = set()
-        for hook_name in LIFECYCLE_HOOK_NAMES:
-            val = getattr(self, hook_name, None)
-            if val is not None:
-                paths.add(val.as_posix())
-        return paths
+    def get_configured_hook_paths(
+        self,
+        relative_to: Optional[Union[Path, Sequence[Path]]] = None
+    ) -> Set[str]:
+        """Returns a set of normalized POSIX path strings for configured hooks.
+
+        If a hook path is inside one of the `relative_to` bases, its relative POSIX path
+        is returned; otherwise, its absolute POSIX path is returned.
+        """
+        bases: List[Path] = (
+            [Path(relative_to)] if isinstance(relative_to, (str, Path))
+            else [Path(b) for b in relative_to] if isinstance(relative_to, (list, tuple, set))
+            else []
+        )
+
+        def _resolve_hook_path_strings(val: Path) -> Set[str]:
+            matching_rel_paths = {
+                val.relative_to(b).as_posix()
+                for b in bases
+                if is_relative_to(val, b)
+            }
+            return matching_rel_paths or {val.as_posix()}
+
+        configured_hooks = filter(None, (getattr(self, h, None) for h in LIFECYCLE_HOOK_NAMES))
+        return {
+            p
+            for hook_val in configured_hooks
+            for p in _resolve_hook_path_strings(hook_val)
+        }
 
     def trigger(
         self,
         hook_name: str,
-        hook_base_dir: Path,
-        cwd: Path,
+        cwd: Optional[Path] = None,
         flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Executes a package lifecycle hook script if specified and found."""
@@ -405,7 +476,6 @@ class PackageHooks:
                 package=self._package_config.name if self._package_config else "",
                 hook_name=hook_name,
                 cwd=cwd,
-                hook_base_dir=hook_base_dir,
             )
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
@@ -413,7 +483,6 @@ class PackageHooks:
             pkg=self._package_config.name,
             hook_name=hook_name,
             metadata=self._package_config,
-            hook_base_dir=hook_base_dir,
             cwd=cwd,
             flags=exec_flags,
         )
@@ -463,138 +532,138 @@ class PackageHooks:
 
     def trigger_pre_source_without_render(
         self,
-        source_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the pre_source hook directly inside source_dir without workspace template rendering."""
+        """Triggers the pre_source hook directly inside source directory without workspace template rendering."""
+        effective_cwd = cwd_override or (self.pre_source.parent if self.pre_source else Path("."))
         return self.trigger(
             "pre_source",
-            hook_base_dir=source_dir,
-            cwd=source_dir,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_post_render(
         self,
-        render_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_render hook inside render_dir."""
+        """Triggers the post_render hook inside render directory."""
+        effective_cwd = cwd_override or (self.post_render.parent if self.post_render else Path("."))
         return self.trigger(
             "post_render",
-            hook_base_dir=render_dir,
-            cwd=render_dir,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_pre_install(
         self,
-        install_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the pre_install hook in install_dir."""
+        """Triggers the pre_install hook in install directory."""
+        effective_cwd = cwd_override or (self.pre_install.parent if self.pre_install else Path("."))
         return self.trigger(
             "pre_install",
-            hook_base_dir=install_dir,
-            cwd=install_dir,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_post_install(
         self,
-        install_dir: Path,
-        cwd: Path,
+        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_install hook."""
+        """Triggers the post_install hook in target directory."""
+        effective_cwd = cwd_override or target_dir
         return self.trigger(
             "post_install",
-            hook_base_dir=install_dir,
-            cwd=cwd,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_pre_update(
         self,
-        install_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the pre_update hook in install_dir."""
+        """Triggers the pre_update hook in install directory."""
+        effective_cwd = cwd_override or (self.pre_update.parent if self.pre_update else Path("."))
         return self.trigger(
             "pre_update",
-            hook_base_dir=install_dir,
-            cwd=install_dir,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_post_update(
         self,
-        install_dir: Path,
-        cwd: Path,
+        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_update hook."""
+        """Triggers the post_update hook in target directory."""
+        effective_cwd = cwd_override or target_dir
         return self.trigger(
             "post_update",
-            hook_base_dir=install_dir,
-            cwd=cwd,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_pre_uninstall(
         self,
-        install_dir: Path,
-        cwd: Path,
+        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the pre_uninstall hook.
+        """Triggers the pre_uninstall hook in target directory.
 
         Note:
             Uninstall hooks are only triggered if the package-level configuration
             file ('drift_package.toml') is available in the install/ directory.
         """
+        effective_cwd = cwd_override or target_dir
         return self.trigger(
             "pre_uninstall",
-            hook_base_dir=install_dir,
-            cwd=cwd,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_post_uninstall(
         self,
-        install_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_uninstall hook in install_dir.
+        """Triggers the post_uninstall hook in install directory.
 
         Note:
             Uninstall hooks are only triggered if the package-level configuration
             file ('drift_package.toml') is available in the install/ directory.
         """
+        effective_cwd = cwd_override or (self.post_uninstall.parent if self.post_uninstall else Path("."))
         return self.trigger(
             "post_uninstall",
-            hook_base_dir=install_dir,
-            cwd=install_dir,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def trigger_health(
         self,
-        install_dir: Path,
-        cwd: Path,
+        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
+        cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the health probe hook."""
+        """Triggers the health probe hook in target directory."""
+        effective_cwd = cwd_override or target_dir
         return self.trigger(
             "health",
-            hook_base_dir=install_dir,
-            cwd=cwd,
+            cwd=effective_cwd,
             flags=flags,
         )
 
     def check_hook_files(
         self,
-        base_dir: Path,
+        base_dir: Optional[Path] = None,
         hook_names: Sequence[str] = ()
     ) -> None:
         """Checks that configured lifecycle hook files exist in base_dir and are regular files.
@@ -612,6 +681,7 @@ class PackageHooks:
         hook_rel_map = { hook_name: getattr(self, hook_name, None) for hook_name in target_hooks }
         hook_rel_map = { k: v for k, v in hook_rel_map.items() if v }
         for hook_name, hook_rel in hook_rel_map.items():
+            # handles absolute paths as well.
             hook_path = base_dir / hook_rel
             if not hook_path.exists():
                 raise FileNotFoundError(
@@ -846,8 +916,11 @@ class PackageConfig:
         self.hooks.validate(self.name)
         if not isinstance(self.requirements, PackageRequirements):
             raise ConfigError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
-        if self.hook_file is not None and not isinstance(self.hook_file, Path):
-            raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
+        if self.hook_file is not None:
+            if not isinstance(self.hook_file, Path):
+                raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
+            if not self.hook_file.is_absolute():
+                raise ConfigError(f"hook_file must be an absolute Path for package '{self.name}'.")
         if not isinstance(self.env_override, dict):
             raise ConfigError(f"env_override must be a dictionary for package '{self.name}'.")
         if not isinstance(self.env_fallback, dict):
@@ -1022,6 +1095,7 @@ class PackageConfig:
         package_name: str,
         source_files: Sequence[Optional[Path]] = (),
         base_dir: Optional[Path] = None,
+        workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         if not package_name or not isinstance(package_name, str):
@@ -1068,9 +1142,12 @@ class PackageConfig:
             override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
 
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
+        resolved_base_dir = Path(base_dir) if base_dir is not None else None
         hooks = PackageHooks.from_dict(
             hooks_data,
-            package_name=str(name)
+            package_name=str(name),
+            base_dir=resolved_base_dir,
+            workspace_config=workspace_config,
         )
 
         # Parse declarative requirements ([package.requirements] or top-level [requirements])
@@ -1078,10 +1155,10 @@ class PackageConfig:
         requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
 
         # Parse render engines configurations under [render.*]
-        resolved_base_dir = Path(base_dir) if base_dir is not None else Path(".")
+        render_engine_base_dir = resolved_base_dir if resolved_base_dir is not None else Path(".")
         render_engine_configs = RenderEngineRegistry.from_dict(
             render_data,
-            base_dir=resolved_base_dir
+            base_dir=render_engine_base_dir
         )
 
         fcd = package_data.get("fully_controlled_dirs", [])
@@ -1109,6 +1186,14 @@ class PackageConfig:
         )
         target_dir_windows = target_dir_windows_val and expand_user_and_env(target_dir_windows_val)
 
+        raw_hook_file = package_data.get("hook_file")
+        if raw_hook_file is not None:
+            resolved_hook_file = Path(raw_hook_file)
+            if not resolved_hook_file.is_absolute() and resolved_base_dir is not None:
+                resolved_hook_file = (resolved_base_dir / resolved_hook_file).resolve()
+        else:
+            resolved_hook_file = None
+
         config = cls(
             name=str(name),
             source_directory=source_dir,
@@ -1121,7 +1206,7 @@ class PackageConfig:
             fully_controlled_dirs=[Path(d) for d in fcd],
             hooks=hooks,
             requirements=requirements,
-            hook_file=package_data.get("hook_file"),
+            hook_file=resolved_hook_file,
             env_override=override_map,
             env_fallback=fallback_map,
             render_engine_configs=render_engine_configs,
@@ -1353,6 +1438,7 @@ def load_package_config_from_source_dir(
             package_name=pkg_name,
             source_files=source_files,
             base_dir=package_dir,
+            workspace_config=workspace_config,
         )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e

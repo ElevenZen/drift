@@ -187,7 +187,7 @@ hook_file = "hooks/custom_setup.py"
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.install_method, "copy")
-        self.assertEqual(cfg.hook_file, Path("hooks/custom_setup.py"))
+        self.assertEqual(cfg.hook_file, (pkg_dir / "hooks/custom_setup.py").resolve())
 
     def test_custom_hook_file_absolute_path(self) -> None:
         """Custom hook_file specified as an absolute path is resolved properly."""

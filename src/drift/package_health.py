@@ -176,7 +176,6 @@ def run_health_probe_from_install(
                 pkg=pkg,
                 hook_name="health",
                 metadata=pkg_config,
-                hook_base_dir=install_pkg_dir,
                 cwd=target_dir,
                 custom_timeout=custom_timeout,
                 flags=hook_flags,
