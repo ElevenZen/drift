@@ -1080,32 +1080,40 @@ class TestConfigLoaders(unittest.TestCase):
         engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
         workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": engine})
 
-        # 1. No files exist - should return (None, None)
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
-        self.assertIsNone(base_res)
-        self.assertIsNone(local_res)
+        config_files = [
+            pkg_dir / PACKAGE_CONFIG_FILE_NAME,
+            pkg_dir / "drift_package.local.toml",
+        ]
+
+        # 1. No files exist - should return []
+        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
+        self.assertEqual(res, [])
 
         # 2. drift_package.envst.toml exists
         template_drift_path = pkg_dir / package_config_template_name
         template_drift_path.write_text("", encoding="utf-8")
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
-        res = cast(PackageConfigFileInfo, base_res)
-        self.assertIsNotNone(res)
-        self.assertEqual(res.type, "template")
-        self.assertEqual(res.path, template_drift_path)
-        self.assertEqual(res.engine, engine)
-        self.assertIsNone(local_res)
+        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].type, "template")
+        self.assertEqual(res[0].path, template_drift_path)
+        self.assertEqual(res[0].engine, engine)
 
         # 3. drift_package.toml exists (takes precedence over drift_package.envst.toml)
         drift_package_toml_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
         drift_package_toml_path.write_text("", encoding="utf-8")
-        base_res, local_res = get_package_config_file_info(pkg_dir, workspace_config.render_engine_configs)
-        res = cast(PackageConfigFileInfo, base_res)
-        self.assertIsNotNone(res)
-        self.assertEqual(res.type, "static")
-        self.assertEqual(res.path, drift_package_toml_path)
-        self.assertIsNone(res.engine)
-        self.assertIsNone(local_res)
+        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].type, "static")
+        self.assertEqual(res[0].path, drift_package_toml_path)
+        self.assertIsNone(res[0].engine)
+
+        # 4. drift_package.local.toml also exists
+        local_path = pkg_dir / "drift_package.local.toml"
+        local_path.write_text("", encoding="utf-8")
+        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
+        self.assertEqual(len(res), 2)
+        self.assertEqual(res[0].path, drift_package_toml_path)
+        self.assertEqual(res[1].path, local_path)
 
     def test_package_toml_template_rendering(self) -> None:
         # 1. Create config/drift_workspace.toml

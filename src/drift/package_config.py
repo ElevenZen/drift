@@ -1137,37 +1137,23 @@ class PackageConfigFileInfo:
 
 
 def get_package_config_file_info(
-    package_dir: Path,
-    render_engines: RenderEngineRegistry,
-) -> Tuple[Optional[PackageConfigFileInfo], Optional[PackageConfigFileInfo]]:
-    """Finds the package config file (or template) and its local override file (or template) in the given package directory.
-
-    Returns a Tuple containing:
-    1. Base PackageConfigFileInfo or None
-    2. Local override PackageConfigFileInfo or None
+        config_files: Sequence[Path],
+        render_engines: RenderEngineRegistry,
+    ) -> List[PackageConfigFileInfo]:
     """
-    # 1. Base config check
-    base_res = render_engines.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
-    base_info = None
-    if base_res:
-        base_info = PackageConfigFileInfo(
-            type="static" if base_res.engine is None else "template",
-            path=base_res.path,
-            engine=base_res.engine,
-        )
-
-    # 2. Local config check
-    local_names = ["drift_package.local.toml", "package.local.toml"]
-    local_res = render_engines.find_source_file_for_rendered_names(package_dir, local_names)
-    local_info = None
-    if local_res:
-        local_info = PackageConfigFileInfo(
-            type="static" if local_res.engine is None else "template",
-            path=local_res.path,
-            engine=local_res.engine,
-        )
-
-    return base_info, local_info
+    Finds the package config file (or template) for given rendered path list.
+    """
+    result = []
+    for file in config_files:
+        file_match = render_engines.find_source_file_for_rendered_names(file.parent, [file.name])
+        if not file_match:
+            continue
+        result.append(PackageConfigFileInfo(
+            type="static" if file_match.engine is None else "template",
+            path=file_match.path,
+            engine=file_match.engine,
+        ))
+    return result
 
 
 def render_or_load_toml(
@@ -1212,6 +1198,39 @@ def render_or_load_toml(
             return parse_toml(content)
 
 
+def load_package_config_dict(
+        pkg_name: str,
+        config_files: Sequence[Path],
+        workspace_config: Optional[WorkspaceConfig] = None
+    ) -> Tuple[dict, List[Path]]:
+    combined_dict = {}
+    source_list = []
+    if workspace_config is None:
+        # mainly used in tests, to load a config without rendering or writing out into the render/ directory.
+        logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
+        for file in config_files:
+            if not file.is_file():
+                continue
+            source_list.append(file)
+            f_dict = parse_toml(file.read_text(encoding="utf-8"))
+            combined_dict = merge_toml(combined_dict, f_dict)
+    else:
+        # With workspace_config provided, we can render templates if needed.
+        info_list = get_package_config_file_info(
+                config_files, workspace_config.render_engine_configs)
+        for info in info_list:
+            source_list.append(info.path)
+            f_dict = render_or_load_toml(info, workspace_config, pkg_name)
+            combined_dict = merge_toml(combined_dict, f_dict)
+
+    if not combined_dict or not source_list:
+        raise FileNotFoundError(
+                f"Package configuration file not found in [{', '.join(str(x) for x in config_files)}] "
+                "or their templates."
+        )
+    return combined_dict, source_list
+
+
 def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional[WorkspaceConfig] = None,
@@ -1224,48 +1243,11 @@ def load_package_config_from_source_dir(
     pkg_name = package_dir.name
     from .package_hook import apply_package_hook
 
-    if workspace_config is None:
-        # mainly used in tests, to load a config without rendering or writing out into the render/ directory.
-        logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
-        # Fallback for backward compatibility/static loading without workspace settings
-        base_path = package_dir / PACKAGE_CONFIG_FILE_NAME
-        if not base_path.is_file():
-            raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
-        base_dict = parse_toml(base_path.read_text(encoding="utf-8"))
-        local_path = package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
-        local_dict = parse_toml(local_path.read_text(encoding="utf-8")) if local_path.is_file() else {}
-        combined_dict = merge_toml(base_dict, local_dict)
-
-        # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
-        combined_dict, hook_path = apply_package_hook(
-                package_dir, combined_dict, None, package_name_override=pkg_name)
-
-        source_files = [base_path, local_path]
-        if hook_path:
-            source_files.append(hook_path)
-
-        try:
-            return PackageConfig.from_dict(combined_dict,
-                                           package_name=pkg_name,
-                                           source_files=source_files)
-        except (TypeError, ValueError) as e:
-            raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
-
-    # With workspace_config provided, we can render templates if needed.
-    base_info, local_info = get_package_config_file_info(
-            package_dir, workspace_config.render_engine_configs)
-    logger.debug(f"Base package config info: {base_info}")
-    logger.debug(f"Local package config info: {local_info}")
-    if not base_info:
-        raise FileNotFoundError(f"'{PACKAGE_CONFIG_FILE_NAME}' not found in directory: {package_dir}")
-
-    assert base_info is not None, "Base package config info should not be None"
-    assert base_info.path.is_file(), f"Base package config path is not a file: {base_info.path}"
-    base_dict = render_or_load_toml(base_info, workspace_config, pkg_name)
-    # None is accepted in source_files to indicate that the local override may not exist.
-    source_files = [base_info.path, local_info and local_info.path]
-    local_dict = render_or_load_toml(local_info, workspace_config, pkg_name) if local_info else {}
-    combined_dict = merge_toml(base_dict, local_dict)
+    combined_dict, source_files = load_package_config_dict(
+            pkg_name, [
+                package_dir / PACKAGE_CONFIG_FILE_NAME,
+                package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+            ], workspace_config)
 
     # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
     combined_dict, hook_path = apply_package_hook(
@@ -1283,15 +1265,11 @@ def load_package_config_from_source_dir(
     )
 
     # 2. Determine output path: render/<package_name>/drift_package.toml
-    output_file_path = workspace_config.render_path / pkg_name / PACKAGE_CONFIG_FILE_NAME
-    output_file_path.parent.mkdir(parents=True, exist_ok=True)
-    toml_str = dump_toml(stitched_dict)
-    output_file_path.write_text(toml_str, encoding="utf-8")
-    # copy file permission from the template input.
-    try:
-        shutil.copymode(base_info.path, output_file_path)
-    except Exception:
-        pass
+    if workspace_config is not None:
+        output_file_path = workspace_config.render_path / pkg_name / PACKAGE_CONFIG_FILE_NAME
+        output_file_path.parent.mkdir(parents=True, exist_ok=True)
+        toml_str = dump_toml(stitched_dict)
+        output_file_path.write_text(toml_str, encoding="utf-8")
 
     # 3. Load PackageConfig from the stitched dictionary
     try:
