@@ -67,6 +67,7 @@ from .constants import (
     get_default_mustache_content,
     get_default_jinja2_content,
     get_default_internal_gitignore_content,
+    DEFAULT_ROOT_GITIGNORE_ENTRIES,
 )
 from .ignore import get_default_install_stow_ignore_content
 from .workspace_check import (
@@ -229,12 +230,14 @@ def repair_gitignore(
     if gitignore_res.status != ComponentStatus.GOOD:
         actions.append("Updated '.gitignore' with required workspace isolation entries.")
         if not dry_run:
-            append_to_gitignore(drift_root, [
+            rules = [
                 f"{workspace_config.render_path.name}/",
                 f"{workspace_config.install_path.name}/",
-                "*.local.toml",
-                f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}"
-            ])
+            ]
+            for entry in DEFAULT_ROOT_GITIGNORE_ENTRIES:
+                if entry not in ("render/", "install/"):
+                    rules.append(entry)
+            append_to_gitignore(drift_root, rules)
     return actions
 
 

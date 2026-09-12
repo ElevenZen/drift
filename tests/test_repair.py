@@ -282,6 +282,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertIn("install/", content)
         self.assertIn("*.local.toml", content)
         self.assertIn("config/secrets.env", content)
+        self.assertIn("__pycache__/", content)
+        self.assertIn(".venv/", content)
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

@@ -105,6 +105,23 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertTrue(ignore.match_path(Path("backup.txt~")))
         self.assertTrue(ignore.match_path(Path(".#lockfile=")))
 
+        # Ensure Python cache, bytecode, and virtual environments are ignored
+        self.assertTrue(ignore.match_path(Path("__pycache__")))
+        self.assertTrue(ignore.match_path(Path("__pycache__/mod.cpython-312.pyc")))
+        self.assertTrue(ignore.match_path(Path("subdir/__pycache__/mod.pyc")))
+        self.assertTrue(ignore.match_path(Path("foo.pyc")))
+        self.assertTrue(ignore.match_path(Path("foo.pyo")))
+        self.assertTrue(ignore.match_path(Path("foo.pyd")))
+        self.assertTrue(ignore.match_path(Path("foo$py.class")))
+        self.assertTrue(ignore.match_path(Path(".pytest_cache/v/cache")))
+        self.assertTrue(ignore.match_path(Path(".mypy_cache/3.10/mod.data.json")))
+        self.assertTrue(ignore.match_path(Path(".ruff_cache/content")))
+        self.assertTrue(ignore.match_path(Path(".venv/bin/activate")))
+        self.assertTrue(ignore.match_path(Path("venv/bin/activate")))
+        self.assertTrue(ignore.match_path(Path("subdir/.venv/bin/python")))
+        self.assertTrue(ignore.match_path(Path("subdir/venv/bin/python")))
+        self.assertFalse(ignore.match_path(Path("venv_helper.py")))
+
         # Subdirectory README should NOT be ignored because pattern is ^/README.*
         self.assertFalse(ignore.match_path(Path("subdir/README.md")))
 

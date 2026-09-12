@@ -161,6 +161,22 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "# ---------------------------------------------------------------------\n"
     "# Default Stow Ignore List\n"
     "# ---------------------------------------------------------------------\n"
+    "# Python bytecode and cache files\n"
+    "__pycache__\n"
+    "/__pycache__/\n"
+    "\\.py[cod]$\n"
+    "\\$py\\.class$\n"
+    "\\.pytest_cache\n"
+    "/\\.pytest_cache/\n"
+    "\\.mypy_cache\n"
+    "/\\.mypy_cache/\n"
+    "\\.ruff_cache\n"
+    "/\\.ruff_cache/\n"
+    "\\.venv\n"
+    "/\\.venv/\n"
+    "^venv$\n"
+    "/venv/\n"
+    "\n"
     "# Version control systems & ignore metadata\n"
     "^/\\.gitignore\n"
     "\\.gitignore\n"
@@ -319,6 +335,12 @@ DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
 TEMPORARY_FILE_PATTERNS = (
     "*.stow-local-ignore*",
     "*.gitignore*",
+    "*__pycache__*",
+    "*.py[cod]",
+    "*$py.class",
+    ".pytest_cache*",
+    ".mypy_cache*",
+    ".ruff_cache*",
     "*~",
     "*#*#",
     "*.#*",
@@ -336,6 +358,14 @@ DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "# =====================================================================\n"
     "# .gitignore - Internal Repository Ignore Rules (render/ & install/)\n"
     "# =====================================================================\n"
+    "# Python bytecode and cache files\n"
+    "__pycache__/\n"
+    "*.py[cod]\n"
+    "*$py.class\n"
+    ".pytest_cache/\n"
+    ".mypy_cache/\n"
+    ".ruff_cache/\n"
+    "\n"
     "# Editor temporary, auto-save, and lock files\n"
     "*~\n"
     r"\#*\#" "\n"
@@ -350,6 +380,21 @@ DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "# OS metadata files\n"
     ".DS_Store\n"
     "Thumbs.db\n"
+)
+
+DEFAULT_ROOT_GITIGNORE_ENTRIES = (
+    "render/",
+    "install/",
+    "*.local.toml",
+    f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}",
+    "__pycache__/",
+    "*.py[cod]",
+    "*$py.class",
+    ".venv/",
+    "venv/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
 )
 
 

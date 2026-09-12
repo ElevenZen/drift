@@ -53,6 +53,9 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             content = f.read()
         self.assertIn("render/", content)
         self.assertIn("install/", content)
+        self.assertIn("__pycache__/", content)
+        self.assertIn("*.py[cod]", content)
+        self.assertIn(".venv/", content)
 
         # Check render and install sub-repos exist with .git and .gitignore
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "render", ".git")))
@@ -67,12 +70,18 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             render_gi_content = f.read()
         self.assertIn("*.swp", render_gi_content)
         self.assertIn(".DS_Store", render_gi_content)
+        self.assertIn("__pycache__/", render_gi_content)
+        self.assertIn("*.py[cod]", render_gi_content)
 
         # Verify git check-ignore respects the internal .gitignore
         res_render = subprocess.run(["git", "check-ignore", "test.swp"], cwd=str(self.drift_root / "render"), capture_output=True, text=True)
         self.assertEqual(res_render.returncode, 0)
+        res_render_pyc = subprocess.run(["git", "check-ignore", "module.pyc"], cwd=str(self.drift_root / "render"), capture_output=True, text=True)
+        self.assertEqual(res_render_pyc.returncode, 0)
         res_install = subprocess.run(["git", "check-ignore", "#autosave#"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
         self.assertEqual(res_install.returncode, 0)
+        res_install_pyc = subprocess.run(["git", "check-ignore", "__pycache__/foo.pyc"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
+        self.assertEqual(res_install_pyc.returncode, 0)
 
         # Check `.stow-local-ignore` inside install/
         stow_ignore = os.path.join(self.drift_root, "install", STOW_LOCAL_IGNORE_FILE_NAME)

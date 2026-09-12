@@ -20,6 +20,7 @@ from .constants import (
     get_default_mustache_content,
     get_default_jinja2_content,
     get_default_internal_gitignore_content,
+    DEFAULT_ROOT_GITIGNORE_ENTRIES,
 )
 from .ignore import get_default_install_stow_ignore_content
 from .workspace_check import check_existing_workspace_status, ComponentStatus
@@ -76,13 +77,8 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
                 f"👉 Run 'drift init --force' to completely overwrite and re-initialize."
             )
 
-    # 4. Creates .gitignore entries to isolate render/ and install/ folders and local-only config overrides.
-    append_to_gitignore(drift_root, [
-        "render/",
-        "install/",
-        "*.local.toml",
-        f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}"
-        ])
+    # 4. Creates .gitignore entries to isolate render/ and install/ folders, local-only config overrides, and Python artifacts.
+    append_to_gitignore(drift_root, list(DEFAULT_ROOT_GITIGNORE_ENTRIES))
 
     # 5. Initializes render/ and install/ as independent, untracked local Git repositories.
     render_dir = drift_root / "render"
