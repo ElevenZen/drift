@@ -284,6 +284,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertIn("config/secrets.env", content)
         self.assertIn("__pycache__/", content)
         self.assertIn(".venv/", content)
+        self.assertIn("*.swp", content)
+        self.assertIn(".DS_Store", content)
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())
@@ -307,6 +309,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertIn("__pycache__/", content)
         self.assertIn("*.py[cod]", content)
         self.assertIn(".venv/", content)
+        self.assertIn("*.swp", content)
+        self.assertIn(".DS_Store", content)
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

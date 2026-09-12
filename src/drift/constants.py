@@ -362,6 +362,8 @@ DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "__pycache__/\n"
     "*.py[cod]\n"
     "*$py.class\n"
+    ".venv/\n"
+    "venv/\n"
     ".pytest_cache/\n"
     ".mypy_cache/\n"
     ".ruff_cache/\n"
@@ -382,25 +384,18 @@ DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "Thumbs.db\n"
 )
 
-DEFAULT_ROOT_GITIGNORE_ENTRIES = (
-    "render/",
-    "install/",
-    "*.local.toml",
-    f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}",
-    "__pycache__/",
-    "*.py[cod]",
-    "*$py.class",
-    ".venv/",
-    "venv/",
-    ".pytest_cache/",
-    ".mypy_cache/",
-    ".ruff_cache/",
-)
-
 DEFAULT_INTERNAL_GITIGNORE_ENTRIES: Tuple[str, ...] = tuple(
     line.strip()
     for line in DEFAULT_INTERNAL_GITIGNORE_CONTENT.splitlines()
     if line.strip() and not line.strip().startswith("#")
+)
+
+DEFAULT_ROOT_GITIGNORE_ENTRIES: Tuple[str, ...] = (
+    "render/",
+    "install/",
+    "*.local.toml",
+    f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}",
+    *DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
 )
 
 

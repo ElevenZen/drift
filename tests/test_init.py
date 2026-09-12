@@ -56,6 +56,8 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("__pycache__/", content)
         self.assertIn("*.py[cod]", content)
         self.assertIn(".venv/", content)
+        self.assertIn("*.swp", content)
+        self.assertIn(".DS_Store", content)
 
         # Check render and install sub-repos exist with .git and .gitignore
         self.assertTrue(os.path.isdir(os.path.join(self.drift_root, "render", ".git")))
