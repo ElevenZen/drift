@@ -178,6 +178,8 @@ class TestIntegration(unittest.TestCase):
         # 6. Verify zombies purged
         self.assertFalse(zombie_render.exists())
         self.assertFalse(zombie_install.exists())
+        # 7. Verify rendered folder of disabled package was purged
+        self.assertFalse((self.render_dir / pkg).exists())
 
     def test_workspace_gc_scopes_commits(self):
         """Scenario: Running GC should only commit purged folders, leaving other modified packages unstaged/uncommitted."""
