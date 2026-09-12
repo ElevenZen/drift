@@ -541,6 +541,21 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
 
 
 def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
+    """Sequentially loads, renders (if templated), and deep-merges an arbitrary list of workspace configuration files.
+
+    Accepts an arbitrary sequence of workspace config paths (e.g. base drift_workspace.toml,
+    machine-local drift_workspace.local.toml, or custom override layers), rendering any .envst.toml
+    templates as needed. Base missing with override existing is supported.
+
+    Args:
+        config_files: Ordered list of candidate workspace configuration file paths.
+
+    Returns:
+        Merged configuration dictionary across all loaded file layers.
+
+    Raises:
+        ConfigError: If none of the specified configuration files or their templates exist.
+    """
     result: Dict[str, Any] = {}
     for idx, file in enumerate(config_files):
         f_dict = render_envst_load_toml(file)
@@ -563,7 +578,27 @@ def load_workspace_config(
     check_legacy: bool = True,
     config_files_override: Optional[Sequence[Path]] = None,
 ) -> WorkspaceConfig:
-    """Loads and parses the workspace configuration, merging drift_workspace.toml and drift_workspace.local.toml if present."""
+    """Loads, transforms, and validates the workspace configuration.
+
+    Configuration Pipeline Execution Order:
+    1. Multi-File Discovery & Merging: Loads base and override TOML files (or .envst.toml templates)
+       via load_workspace_config_dict.
+    2. Dynamic Python Workspace Hook: Executes configure_workspace(context) from config/drift_workspace.py
+       (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
+       resolved context facts and environment.
+    3. Variable Stitching & Topological Sort: Resolves inter-variable references in [env] using Kahn's
+       topological sort algorithm with cycle detection.
+    4. Cross-Section Interpolation: Interpolates ${VAR} references across all non-env sections.
+    5. Schema Validation & Model Construction: Instantiates strongly-typed WorkspaceConfig.
+
+    Args:
+        drift_root: Path to the drift workspace repository root.
+        check_legacy: Whether to detect and reject legacy drift.toml files.
+        config_files_override: Optional custom sequence of configuration paths to load instead of defaults.
+
+    Returns:
+        Fully resolved and validated WorkspaceConfig instance.
+    """
     root = Path(drift_root).resolve()
     if check_legacy:
         check_for_legacy_workspace_config(root)

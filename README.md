@@ -287,7 +287,12 @@ Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly wi
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
-*   **Dynamic Programmatic Generation via Python Hooks**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
+*   **Dynamic Programmatic Generation via Python Hooks (Preprocessor Stage)**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
+    > **Pipeline Execution Order**:
+    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_dict` / `load_package_config_dict`).
+    > 2. **Dynamic Python Hook (Preprocessor)**: Executes *before* variable stitching, receiving the raw configuration dictionary with full access to resolved host facts and environment variables via `context`.
+    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` references (including any injected by the hook) and interpolates `${VAR}` across all non-env fields.
+    > 4. **Validation & Model Instantiation**: Builds validated, strongly-typed configuration objects.
 
 ### 🔗 5. Custom Render Engines & DAG Pipeline Piping
 

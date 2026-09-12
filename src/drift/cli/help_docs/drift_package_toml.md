@@ -215,10 +215,13 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 * **Default Path**: Place a `drift_package.py` file directly in your package's source directory (`src/<pkg>/drift_package.py`). Drift automatically discovers and executes it.
 * **Custom Path**: Explicitly configure `[package] hook_file = "my_hook.py"` (resolved relative to `src/<pkg>/`).
 
-### Execution Model
-* The hook must define a `configure_package(context)` function.
-* The hook runs dynamically during source package configuration loading and sandbox rendering (`render/`).
-* Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
+### Execution Model & Pipeline Order
+1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via `load_package_config_dict`, merging them sequentially.
+2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment (`context.env`). The hook can inject `[env.override]`, customize `target_directory`, or set `enable_install = False`.
+3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves `[env.override]` and `[env.fallback]` tables (including any injected by the hook) according to Drift's 7-tier precedence model and Kahn's topological sort algorithm.
+4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`target_directory`, `requirements`, etc.).
+5. **Render Staging**: Writes the fully resolved, stitched configuration to `render/<pkg>/drift_package.toml`. Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
+6. **Schema Validation & Model Construction**: Instantiates the strongly-typed `PackageConfig` object.
 
 ### `PackageHookContext` Reference
 The `context` object passed into `configure_package(context)` provides:

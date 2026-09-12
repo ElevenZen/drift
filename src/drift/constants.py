@@ -8,22 +8,38 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Union
 
 def add_suffix_path(file: Path, suffix: str) -> Path:
+    """Returns a new Path with the given suffix injected before the file extension.
+
+    Example:
+        add_suffix_path(Path("config/drift_workspace.toml"), "local")
+        # -> Path("config/drift_workspace.local.toml")
+    """
     return file.with_name(file.stem + "." + suffix + file.suffix)
 
 def add_local_path(file: Path) -> Path:
+    """Appends '.local' before the file extension of a Path object."""
     return add_suffix_path(file, 'local')
 
 def add_envst_path(file: Path) -> Path:
+    """Appends '.envst' before the file extension of a Path object."""
     return add_suffix_path(file, 'envst')
 
 def add_suffix_str(file: str, suffix: str) -> str:
+    """Returns a path string with the given suffix injected before the file extension.
+
+    Example:
+        add_suffix_str("drift_workspace.toml", "local")
+        # -> "drift_workspace.local.toml"
+    """
     stem, ext = os.path.splitext(os.path.basename(file))
     return os.path.join(os.path.dirname(file), stem + "." + suffix + ext)
 
 def add_local_str(file: str) -> str:
+    """Appends '.local' before the file extension of a path string."""
     return add_suffix_str(file, 'local')
 
 def add_envst_str(file: str) -> str:
+    """Appends '.envst' before the file extension of a path string."""
     return add_suffix_str(file, 'envst')
 
 

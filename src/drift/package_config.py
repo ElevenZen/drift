@@ -1137,11 +1137,20 @@ class PackageConfigFileInfo:
 
 
 def get_package_config_file_info(
-        config_files: Sequence[Path],
-        render_engines: RenderEngineRegistry,
-    ) -> List[PackageConfigFileInfo]:
-    """
-    Finds the package config file (or template) for given rendered path list.
+    config_files: Sequence[Path],
+    render_engines: RenderEngineRegistry,
+) -> List[PackageConfigFileInfo]:
+    """Finds the package config file (or template) for an arbitrary list of rendered candidate paths.
+
+    Inspects each candidate path against the render engine registry, determining whether a static
+    file exists or if a matching template counterpart (e.g. .envst.toml) is present.
+
+    Args:
+        config_files: Ordered list of candidate package configuration file paths.
+        render_engines: Registry of available template render engines.
+
+    Returns:
+        List of PackageConfigFileInfo objects for all matched configuration files/templates.
     """
     result = []
     for file in config_files:
@@ -1199,10 +1208,26 @@ def render_or_load_toml(
 
 
 def load_package_config_dict(
-        pkg_name: str,
-        config_files: Sequence[Path],
-        workspace_config: Optional[WorkspaceConfig] = None
-    ) -> Tuple[dict, List[Path]]:
+    pkg_name: str,
+    config_files: Sequence[Path],
+    workspace_config: Optional[WorkspaceConfig] = None
+) -> Tuple[dict, List[Path]]:
+    """Sequentially loads, renders (if templated), and deep-merges an arbitrary sequence of package config files.
+
+    Supports arbitrary multi-layer package configs without a hardcoded base/local limit.
+    If workspace_config is None, falls back to direct static file parsing without template rendering.
+
+    Args:
+        pkg_name: Name of the package.
+        config_files: Ordered sequence of configuration candidate paths.
+        workspace_config: Optional WorkspaceConfig providing render engine registry.
+
+    Returns:
+        Tuple of (merged_config_dict, list_of_source_paths).
+
+    Raises:
+        FileNotFoundError: If none of the specified configuration files or templates exist.
+    """
     combined_dict = {}
     source_list = []
     if workspace_config is None:
@@ -1235,10 +1260,30 @@ def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional[WorkspaceConfig] = None,
 ) -> PackageConfig:
-    """
-    Loads package configuration from a package directory,
-    including its local override if present,
-    optionally rendering it if it is a template, and executing dynamic Python package hooks.
+    """Loads, transforms, and validates the package configuration from its source directory.
+
+    Configuration Pipeline Execution Order:
+    1. Multi-File Discovery & Merging: Discovers candidate files (drift_package.toml,
+       drift_package.local.toml, and templates) and deep-merges them via load_package_config_dict.
+    2. Dynamic Python Package Hook: Executes configure_package(context) from src/<pkg>/drift_package.py
+       (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
+       resolved context facts and environment.
+    3. Variable Stitching & Topological Sort: Resolves [env.override] and [env.fallback] tables using
+       Kahn's topological sort and Drift's 7-tier precedence model.
+    4. Cross-Section Interpolation: Interpolates ${VAR} across all non-env sections.
+    5. Render Staging: Writes stitched configuration to render/<pkg>/drift_package.toml.
+    6. Schema Validation & Model Construction: Instantiates strongly-typed PackageConfig.
+
+    Args:
+        package_dir: Directory path of the package (e.g. src/<pkg>/).
+        workspace_config: Optional active WorkspaceConfig instance.
+
+    Returns:
+        Fully resolved and validated PackageConfig instance.
+
+    Raises:
+        FileNotFoundError: If the package has no configuration file or template.
+        ConfigError: If configuration syntax or schema is invalid.
     """
     pkg_name = package_dir.name
     from .package_hook import apply_package_hook

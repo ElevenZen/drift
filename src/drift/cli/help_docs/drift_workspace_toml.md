@@ -34,8 +34,15 @@ default_install_method = "stow"
 # ---------------------------------------------------------------------
 # For programmatic configuration across heterogeneous machines without external scripts,
 # author a Python hook in `config/drift_workspace.py` (or specify via `[workspace] hook_file` above, relative to `config/`).
-# The hook receives a `WorkspaceHookContext` object with `context.config`, `context.facts`,
-# `context.env`, and `context.discovered_packages`:
+#
+# Configuration Pipeline Execution Order:
+# 1. Multi-File Discovery & Merging: Loads base and override TOML files (or .envst.toml templates).
+# 2. Dynamic Python Hook (Preprocessor): Executes configure_workspace(context) BEFORE variable stitching.
+#    The hook receives raw config dict and can inject/modify [env], [packages.enable], etc., with full access to
+#    resolved host facts (context.facts, context.os, context.arch, etc.) and active environment (context.env).
+# 3. Variable Stitching & Topological Resolution: Resolves inter-variable references in [env] (including any
+#    injected by the hook) and interpolates ${VAR} across all non-env sections.
+# 4. Schema Validation: Constructs validated WorkspaceConfig instance.
 #
 # def configure_workspace(context):
 #     cfg = context.config
