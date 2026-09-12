@@ -8,6 +8,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
+from drift.constants import PACKAGE_CONFIG_FILE_NAME
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_engine_config import RenderEngineRegistry
 from drift.lifecycle_hooks import HookExecFlags
@@ -75,7 +76,7 @@ class TestAdopt(unittest.TestCase):
         from drift.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
         env_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("envsubst.bash"),
+            input_file=config_dir / "envsubst.bash",
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
@@ -1066,6 +1067,120 @@ class TestAdopt(unittest.TestCase):
         # Failure when EDITOR is unset or invalid
         mock_launch.side_effect = RuntimeError("Editor 'nano' is not supported")
         self.assertFalse(fallback_side_by_side(src_file, install_file))
+
+    def test_adopt_modifications_deletions_additions_with_package_level_render_engine(self) -> None:
+        """Verifies adopt handles modifications, deletions, and additions when package defines its own render engine."""
+        pkg = "pkg_adopt_engine"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        data_file = src_pkg / "custom.env"
+        data_file.write_text("ENV_KEY=val\n", encoding="utf-8")
+
+        # Package defines [render.custom] which is NOT in workspace_config
+        (src_pkg / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+[package]
+name = "{pkg}"
+enable_render = true
+
+[render.custom]
+input_file = "custom.env"
+suffix = "custom"
+render_command = "bash -c 'cat %i %s'"
+""")
+
+        # 1. Setup existing templated files in src/ and rendered files in install/
+        src_config = src_pkg / "config.custom.ini"
+        src_config.write_text("[section]\nkey=original_val\n", encoding="utf-8")
+
+        src_app = src_pkg / "app.custom.txt"
+        src_app.write_text("hello original app\n", encoding="utf-8")
+
+        install_config = install_pkg / "config.ini"
+        install_config.write_text("[section]\nkey=original_val\n", encoding="utf-8")
+
+        install_app = install_pkg / "app.txt"
+        install_app.write_text("hello original app\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_engine"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_engine"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 2. Host modifications:
+        # - modify config.ini
+        install_config.write_text("[section]\nkey=modified_val\n", encoding="utf-8")
+        # - delete app.txt
+        install_app.unlink()
+        # - add new_file.txt
+        (install_pkg / "new_file.txt").write_text("new content added\n", encoding="utf-8")
+
+        # 3. Run adopt
+        res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.adopted_modifications, ["config.ini"])
+        self.assertEqual(res.adopted_deletions, ["app.txt"])
+        self.assertEqual(res.adopted_additions, ["new_file.txt"])
+
+        # 4. Verify source transformations:
+        # Templated file config.custom.ini adopted modifications
+        self.assertEqual(src_config.read_text(encoding="utf-8"), "[section]\nkey=modified_val\n")
+        # Templated file app.custom.txt was deleted
+        self.assertFalse(src_app.exists())
+        # Added file new_file.txt was created in source
+        self.assertTrue((src_pkg / "new_file.txt").is_file())
+        self.assertEqual((src_pkg / "new_file.txt").read_text(encoding="utf-8"), "new content added\n")
+
+    def test_adopt_renames_with_package_level_render_engine(self) -> None:
+        """Verifies adopt renames templated source files according to package-level render engine suffixes."""
+        pkg = "pkg_adopt_rename_engine"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        data_file = src_pkg / "custom.env"
+        data_file.write_text("ENV_KEY=val\n", encoding="utf-8")
+
+        (src_pkg / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+[package]
+name = "{pkg}"
+enable_render = true
+
+[render.custom]
+input_file = "custom.env"
+suffix = "custom"
+render_command = "bash -c 'cat %i %s'"
+""")
+
+        src_doc = src_pkg / "document.custom.md"
+        src_doc.write_text("# Document Title\n", encoding="utf-8")
+
+        install_doc = install_pkg / "document.md"
+        install_doc.write_text("# Document Title\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_adopt_rename_engine"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_adopt_rename_engine"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Host renames document.md -> manual.md
+        subprocess.run(["git", "mv", f"{pkg}/document.md", f"{pkg}/manual.md"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Run adopt
+        res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.adopted_renames, ["document.md -> manual.md"])
+
+        # Verify old templated source is removed and new templated source exists with .custom.md suffix
+        self.assertFalse(src_doc.exists())
+        new_src_doc = src_pkg / "manual.custom.md"
+        self.assertTrue(new_src_doc.is_file())
+        self.assertEqual(new_src_doc.read_text(encoding="utf-8"), "# Document Title\n")
 
 
 if __name__ == "__main__":

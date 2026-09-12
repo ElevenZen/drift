@@ -100,9 +100,9 @@ def trigger_hook_from_source(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name=hook_name,
-        pkg_config=pkg_config,
         custom_cwd=cwd,
         flags=flags,
+        pkg_config_override=pkg_config,
     )
     if res.status == "SKIPPED":
         raise ConfigError(

@@ -12,11 +12,13 @@ from typing import List, Tuple, Optional, Sequence, TYPE_CHECKING
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig, RenderEngineConfig
     from .package_config import PackageConfig
+    from .render_engine_config import RenderEngineRegistry
 
 from .constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_INTERNAL_DIR_NAME,
     INITIAL_ENV,
 )
 from .workspace_config import secrets_env_scope, WorkspaceConfig
@@ -43,7 +45,8 @@ def render_or_copy_file(
     package_dir: Path,
     render_pkg_dir: Path,
     workspace_config: WorkspaceConfig,
-    pkg_config: PackageConfig
+    pkg_config: PackageConfig,
+    render_engines: RenderEngineRegistry,
 ) -> Tuple[str, bool]:
     """Renders a single file using a matched engine, or copies it if no engine matches or rendering is disabled.
 
@@ -62,7 +65,7 @@ def render_or_copy_file(
 
     engine: Optional[RenderEngineConfig] = None
     if pkg_config.enable_render:
-        engine = workspace_config.render_engine_configs.find_engine_for_file(relative_path.as_posix())
+        engine = render_engines.find_engine_for_file(relative_path.as_posix())
 
     if engine:
         stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
@@ -175,7 +178,8 @@ def render_package_files(
     package_dir: Path,
     pkg_config: PackageConfig,
     render_pkg_dir: Path,
-    hook_flags: HookExecFlags
+    hook_flags: HookExecFlags,
+    render_engines: RenderEngineRegistry,
 ) -> PackageRenderResult:
     """
     Renders package source files, copies static assets, and triggers lifecycle hooks.
@@ -189,8 +193,9 @@ def render_package_files(
     trigger_pre_source_hook(
         workspace_config=workspace_config,
         package_name=package_name,
-        pkg_config=pkg_config,
         flags=hook_flags,
+        pkg_config_override=pkg_config,
+        engines_override=render_engines,
     )
 
     handle_driftignore_file(package_dir, render_pkg_dir)
@@ -231,7 +236,8 @@ def render_package_files(
             package_dir=src_dir_to_render,
             render_pkg_dir=render_pkg_dir,
             workspace_config=workspace_config,
-            pkg_config=pkg_config
+            pkg_config=pkg_config,
+            render_engines=render_engines,
         )
         if was_rendered:
             rendered_files.append(dest_rel)
@@ -251,6 +257,24 @@ def render_package_files(
         rendered_files=rendered_files,
         copied_static_files=copied_files
     )
+
+
+def prepare_package_render_engines(
+    workspace_config: WorkspaceConfig,
+    pkg_config: PackageConfig,
+    render_pkg_dir: Path,
+) -> RenderEngineRegistry:
+    """
+    Overlays package-level render engine configurations onto the workspace registry
+    and renders any input file templates into the package's internal sandbox (.drift/).
+    """
+    effective_engines = pkg_config.package_render_engines(workspace_config)
+    render_input_templates(
+        engines=effective_engines,
+        drift_root=workspace_config.drift_root,
+        output_dir=render_pkg_dir / DRIFT_INTERNAL_DIR_NAME,
+    )
+    return effective_engines
 
 
 def render_package(
@@ -287,12 +311,20 @@ def render_package(
                 skip_reason=failure_reason
             )
 
+        # Stage 2 & 2.5: Merge package render engines and render intermediate input templates
+        effective_engines = prepare_package_render_engines(
+            workspace_config=workspace_config,
+            pkg_config=pkg_config,
+            render_pkg_dir=render_pkg_dir,
+        )
+
         return render_package_files(
             workspace_config=workspace_config,
             pkg_config=pkg_config,
             package_dir=package_dir,
             render_pkg_dir=render_pkg_dir,
             hook_flags=scoped_flags,
+            render_engines=effective_engines,
         )
 
 
@@ -310,7 +342,7 @@ def run_primitive_2_render_packages(
         render_input_templates(
             engines=workspace_config.render_engine_configs,
             drift_root=workspace_config.drift_root,
-            render_dir=workspace_config.workspace.render_directory,
+            output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME,
         )
 
         # 2. Identify and render packages

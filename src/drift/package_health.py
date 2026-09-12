@@ -128,10 +128,10 @@ def run_health_probe_from_source(
             workspace_config=workspace_config,
             package_name=pkg,
             hook_name="health",
-            pkg_config=pkg_config,
             custom_cwd=target_dir,
             custom_timeout=custom_timeout,
             flags=hook_flags,
+            pkg_config_override=pkg_config,
         ),
         pkg=pkg,
         target_dir=target_dir

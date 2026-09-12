@@ -9,6 +9,7 @@ from typing import cast, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
+    from .render_engine_config import RenderEngineRegistry
 
 from .package_config import PackageConfig
 from .file_utils import is_relative_to
@@ -266,10 +267,11 @@ def trigger_package_hook_with_render(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     hook_name: str,
-    pkg_config: Optional[PackageConfig] = None,
     custom_cwd: Optional[Path] = None,  
     custom_timeout: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
+    pkg_config_override: Optional[PackageConfig] = None,
+    engines_override: Optional["RenderEngineRegistry"] = None,
 ) -> HookResult:
     """Executes a package lifecycle hook in the source directory with automatic template rendering.
 
@@ -278,6 +280,8 @@ def trigger_package_hook_with_render(
     Otherwise it will be executed directly without rendering.
 
     custom_cwd: Optional working directory for hook execution. If not provided, defaults to the package source directory.
+    pkg_config_override: Optional pre-loaded PackageConfig. If not provided, loads from package source dir.
+    engines_override: Optional pre-prepared RenderEngineRegistry (skips re-rendering engine input templates).
     """
     exec_flags = HookExecFlags.resolve(flags)
     if exec_flags.no_hooks:
@@ -289,6 +293,7 @@ def trigger_package_hook_with_render(
             f"Package '{package_name}' source directory not found: {src_pkg_dir}"
         )
 
+    pkg_config = pkg_config_override
     if pkg_config is None:
         try:
             from .package_config import load_package_config_from_source_dir
@@ -320,16 +325,18 @@ def trigger_package_hook_with_render(
     else:
         # Locate static file or template matching hook_file_path.name in src_pkg_dir / hook_file_path.parent
         hook_parent_dir = src_pkg_dir / hook_file_path.parent
-        match_info = workspace_config.find_source_file_for_rendered_names(
+        if engines_override is not None:
+            hook_engines = engines_override
+        else:
+            hook_engines = pkg_config.package_render_engines(workspace_config)
+
+        match_info = hook_engines.find_source_file_for_rendered_names(
             hook_parent_dir,
             [hook_file_path.name]
         )
-        if match_info:
-            nominal_hook_path = match_info.path
-        else:
-            nominal_hook_path = hook_parent_dir / hook_file_path.name
+        nominal_hook_path = match_info and match_info.path
 
-    if not nominal_hook_path.exists():
+    if not nominal_hook_path or not nominal_hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {nominal_hook_path}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
@@ -344,14 +351,23 @@ def trigger_package_hook_with_render(
     def _execute() -> HookResult:
         # Check if nominal hook path is inside src_pkg_dir
         if is_relative_to(nominal_hook_path, src_pkg_dir):
-            from .render_package import render_or_copy_file
+            from .render_package import render_or_copy_file, prepare_package_render_engines
             target_render_dir = workspace_config.render_path / package_name
+            if engines_override is not None:
+                effective_engines = engines_override
+            else:
+                effective_engines = prepare_package_render_engines(
+                    workspace_config=workspace_config,
+                    pkg_config=pkg_config,
+                    render_pkg_dir=target_render_dir,
+                )
             dest_rel_path, _ = render_or_copy_file(
                 file_path=nominal_hook_path,
                 package_dir=src_pkg_dir,
                 render_pkg_dir=target_render_dir,
                 workspace_config=workspace_config,
-                pkg_config=pkg_config
+                pkg_config=pkg_config,
+                render_engines=effective_engines,
             )
             hook_exec_path = target_render_dir / dest_rel_path
         else:
@@ -369,7 +385,7 @@ def trigger_package_hook_with_render(
         res.hook_base_dir = str(src_pkg_dir)
         return res
 
-    if exec_flags.load_envs and pkg_config is not None:
+    if exec_flags.load_envs:
         with pkg_config.package_envs(workspace_config):
             return _execute()
     return _execute()
@@ -378,24 +394,27 @@ def trigger_package_hook_with_render(
 def trigger_pre_source_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
-    pkg_config: Optional[PackageConfig] = None,
     flags: Optional[HookExecFlags] = None,
+    pkg_config_override: Optional[PackageConfig] = None,
+    engines_override: Optional["RenderEngineRegistry"] = None,
 ) -> HookResult:
     """Executes the pre_source hook for a package in the source directory."""
     return trigger_package_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name="pre_source",
-        pkg_config=pkg_config,
         flags=flags,
+        pkg_config_override=pkg_config_override,
+        engines_override=engines_override,
     )
 
 
 def trigger_probe_hook(
     workspace_config: "WorkspaceConfig",
     package_name: str,
-    pkg_config: Optional[PackageConfig] = None,
     flags: Optional[HookExecFlags] = None,
+    pkg_config_override: Optional[PackageConfig] = None,
+    engines_override: Optional["RenderEngineRegistry"] = None,
 ) -> HookResult:
     """Executes the probe hook for a package in the source directory."""
     exec_flags = replace(flags, raise_on_error=False) if flags is not None else HookExecFlags(raise_on_error=False)
@@ -403,8 +422,9 @@ def trigger_probe_hook(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name="probe",
-        pkg_config=pkg_config,
         flags=exec_flags,
+        pkg_config_override=pkg_config_override,
+        engines_override=engines_override,
     )
 
 

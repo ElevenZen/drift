@@ -1,8 +1,31 @@
-"""Render engine configuration model, registry collection, and source matching."""
+"""Render engine configuration model, registry collection, and source matching.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 2: First-Class Collection Registry
+    RenderEngineRegistry (MutableMapping[str, RenderEngineConfig])
+        - overlay(overrides): Field-level inheritance (Option A) and engine patching
+        - from_dict(render_data): Declarative dictionary constructor
+        - find_engine_for_file(filename): Suffix-matching engine locator
+        - make_new_template_name(old, new): Template naming for reverse-sync / add
+        - find_source_file_for_rendered_names(dir, names): Multi-engine source match
+        - find_conflict_in_source_dir(dir, rel_path): Path conflict & blocking detector
+
+Layer 1: Individual Engine Model & Data Structures
+    RenderEngineConfig (Dataclass)
+        - patch(override): Pure field-level patching helper
+        - validate(): Strict validation of engine fields
+        - strip_suffix(filename): Removes engine suffix from filename
+    RenderSourceMatch (Dataclass)
+        - Encapsulates matched source file, engine, and status (match / block)
+===============================================================================
+"""
 
 import logging
 from collections.abc import MutableMapping, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Mapping
 
@@ -49,6 +72,29 @@ class RenderEngineConfig:
         if self.is_internal:
             return False
         return not self.input_file or str(self.input_file) in ("", ".")
+
+    def copy(self) -> "RenderEngineConfig":
+        """Returns a copy of the RenderEngineConfig."""
+        return replace(self)
+
+    def patch(self, override: Union["RenderEngineConfig", Mapping[str, Any]]) -> "RenderEngineConfig":
+        """Creates a new RenderEngineConfig by applying non-empty override fields onto this config."""
+        if isinstance(override, Mapping):
+            override = RenderEngineConfig(
+                name=self.name,
+                input_file=Path(override.get("input_file", "")),
+                suffix=str(override.get("suffix", "")),
+                render_command=str(override.get("render_command", "")),
+            )
+        elif not isinstance(override, RenderEngineConfig):
+            raise ConfigError(f"Cannot patch render engine '{self.name}' with {type(override).__name__}")
+
+        return replace(
+            self,
+            input_file=override.input_file if str(override.input_file) not in ("", ".") else self.input_file,
+            suffix=override.suffix if override.suffix else self.suffix,
+            render_command=override.render_command if override.render_command else self.render_command,
+        )
 
     def strip_suffix(self, filename: str) -> str:
         """Strips the engine suffix segment from the filename, replacing only the last occurrence."""
@@ -134,6 +180,47 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
     def copy(self) -> "RenderEngineRegistry":
         return RenderEngineRegistry(self._engines.copy())
 
+    def overlay(
+        self,
+        overrides: Optional[Union["RenderEngineRegistry", Mapping[str, Any]]] = None
+    ) -> "RenderEngineRegistry":
+        """Creates a new RenderEngineRegistry by overlaying package-level overrides onto this registry.
+
+        Implements Option A (field-level inheritance/patching):
+        - Inherits base engine fields from self, overriding only specified non-empty fields from overrides.
+        - Adds new engine definitions declared in overrides.
+        - Validates the resulting merged registry.
+        """
+        if not overrides:
+            return self.copy()
+
+        override_items = dict(overrides)
+        merged: Dict[str, RenderEngineConfig] = {
+            name: engine.patch(override_items[name]) if name in override_items else engine.copy()
+            for name, engine in self._engines.items()
+        }
+
+        # Add new engines from overrides that are not in self
+        new_engines: Dict[str, RenderEngineConfig] = {
+            name: (
+                override.copy()
+                if isinstance(override, RenderEngineConfig)
+                else RenderEngineConfig(
+                    name=name,
+                    input_file=Path(override.get("input_file", "")),
+                    suffix=str(override.get("suffix", "")),
+                    render_command=str(override.get("render_command", "")),
+                )
+            )
+            for name, override in override_items.items()
+            if name not in self._engines
+        }
+        merged.update(new_engines)
+
+        result = RenderEngineRegistry(merged)
+        result.validate()
+        return result
+
     def validate(self) -> None:
         """Validates all contained RenderEngineConfig instances."""
         for name, engine in self._engines.items():
@@ -142,26 +229,39 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
             engine.validate()
 
     @classmethod
-    def from_dict(cls, render_data: Any) -> "RenderEngineRegistry":
-        """Builds a RenderEngineRegistry collection from parsed [render.*] TOML dictionary."""
+    def from_dict(cls, render_data: Any, base_dir: Path) -> "RenderEngineRegistry":
+        """Builds a RenderEngineRegistry collection from parsed [render.*] TOML dictionary,
+        resolving any relative input_file to base_dir.
+        """
         if not render_data:
             return cls()
         if not isinstance(render_data, dict):
             raise ConfigError("'[render]' must be a TOML table.")
+        if not isinstance(base_dir, Path):
+            base_dir = Path(base_dir)
 
-        configs: Dict[str, RenderEngineConfig] = {}
         known_render_keys = {"input_file", "suffix", "render_command"}
-        for name, config_dict in render_data.items():
-            if isinstance(config_dict, dict):
-                for key in config_dict:
-                    if key not in known_render_keys:
-                        raise ConfigError(f"Unknown option under render.{name}: '{key}'")
-                configs[name] = RenderEngineConfig(
-                    name=name,
-                    input_file=Path(config_dict.get("input_file", "")),
-                    suffix=str(config_dict.get("suffix", "")),
-                    render_command=str(config_dict.get("render_command", ""))
-                )
+
+        def build_engine(name: str, config_dict: Any) -> RenderEngineConfig:
+            if not isinstance(config_dict, dict):
+                raise ConfigError(f"Render engine '{name}' configuration must be a dictionary.")
+            for key in config_dict:
+                if key not in known_render_keys:
+                    raise ConfigError(f"Unknown option under render.{name}: '{key}'")
+            raw_input = Path(config_dict.get("input_file", ""))
+            input_path = (base_dir / raw_input) if (str(raw_input) not in ("", ".") and not raw_input.is_absolute()) else raw_input
+            return RenderEngineConfig(
+                name=name,
+                input_file=input_path,
+                suffix=str(config_dict.get("suffix", "")),
+                render_command=str(config_dict.get("render_command", ""))
+            )
+
+        configs = {
+            name: build_engine(name, config_dict)
+            for name, config_dict in render_data.items()
+            if isinstance(config_dict, dict)
+        }
         return cls(configs)
 
     def find_engine_for_file(self, filename: str) -> Optional[RenderEngineConfig]:

@@ -388,7 +388,7 @@ class TestPackageHook(unittest.TestCase):
             "envsubst": RenderEngineConfig(
                 name="envsubst",
                 suffix="envst",
-                input_file=Path("env.sh"),
+                input_file=input_file,
                 render_command="bash -c 'source %i && envsubst < %s'"
             )
         })
@@ -567,8 +567,8 @@ echo "VALUE=$DYNAMIC_VAL"
             mock_probe.assert_called_with(
                 workspace_config=self.workspace_config,
                 package_name="pkg_hook",
-                pkg_config=pkg_config,
-                flags=HookExecFlags(streaming=False)
+                flags=HookExecFlags(streaming=False),
+                pkg_config_override=pkg_config,
             )
 
     def test_hook_non_interactive_envs_injected(self) -> None:

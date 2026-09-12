@@ -430,8 +430,8 @@ class PackageHooks:
         return trigger_probe_hook(
             workspace_config=workspace_config,
             package_name=self._package_config.name,
-            pkg_config=self._package_config,
             flags=flags,
+            pkg_config_override=self._package_config,
         )
 
     def trigger_pre_source(
@@ -457,8 +457,8 @@ class PackageHooks:
         return trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name=self._package_config.name,
-            pkg_config=self._package_config,
             flags=flags,
+            pkg_config_override=self._package_config,
         )
 
     def trigger_pre_source_without_render(
@@ -746,6 +746,7 @@ class PackageConfig:
     hook_file: Optional[Path] = None
     env_override: Dict[str, str] = field(default_factory=dict)
     env_fallback: Dict[str, str] = field(default_factory=dict)
+    render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
 
     def check_hook_files(
         self,
@@ -772,6 +773,7 @@ class PackageConfig:
         hook_file: Optional[Union[Path, str]] = None,
         env_override: Mapping[str, str] = {},
         env_fallback: Mapping[str, str] = {},
+        render_engine_configs: Optional[RenderEngineRegistry] = None,
     ) -> None:
         if source_directory is not None and not isinstance(source_directory, (str, Path)):
             raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
@@ -789,6 +791,8 @@ class PackageConfig:
             raise ConfigError(f"env_override must be a dictionary or Mapping, got {type(env_override).__name__}")
         if not isinstance(env_fallback, (dict, Mapping)):
             raise ConfigError(f"env_fallback must be a dictionary or Mapping, got {type(env_fallback).__name__}")
+        if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
+            raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
 
         self.name = name
         self.source_files = list(source_files) if source_files else []
@@ -806,6 +810,7 @@ class PackageConfig:
         self.hook_file = Path(hook_file) if hook_file is not None else None
         self.env_override = {str(k): str(v) for k, v in env_override.items()}
         self.env_fallback = {str(k): str(v) for k, v in env_fallback.items()}
+        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
 
     def validate(self) -> None:
         """Validates configuration values."""
@@ -847,6 +852,8 @@ class PackageConfig:
             raise ConfigError(f"env_override must be a dictionary for package '{self.name}'.")
         if not isinstance(self.env_fallback, dict):
             raise ConfigError(f"env_fallback must be a dictionary for package '{self.name}'.")
+        if not isinstance(self.render_engine_configs, RenderEngineRegistry):
+            raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry for package '{self.name}'.")
 
     def evaluate_requirements(
         self,
@@ -917,6 +924,14 @@ class PackageConfig:
         if sys.platform == "win32":
             return "copy"
         return self.install_method or workspace_config.workspace.default_install_method
+
+    def get_render_engines(self, workspace_config: WorkspaceConfig) -> RenderEngineRegistry:
+        """Computes effective render engines by overlaying package engines onto workspace engines."""
+        return workspace_config.render_engine_configs.overlay(self.render_engine_configs)
+
+    def package_render_engines(self, workspace_config: WorkspaceConfig) -> RenderEngineRegistry:
+        """Alias for get_render_engines."""
+        return self.get_render_engines(workspace_config)
 
     def load_package_envs(
         self,
@@ -1006,6 +1021,7 @@ class PackageConfig:
         data: dict,
         package_name: str,
         source_files: Sequence[Optional[Path]] = (),
+        base_dir: Optional[Path] = None,
     ) -> "PackageConfig":
         """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
         if not package_name or not isinstance(package_name, str):
@@ -1014,7 +1030,7 @@ class PackageConfig:
             raise ConfigError(f"Package configuration data must be a dictionary for package '{package_name}'.")
 
         # Error for unknown top-level sections
-        known_top_sections = {"package", "hooks", "env", "requirements"}
+        known_top_sections = {"package", "hooks", "env", "requirements", "render"}
         for key in data:
             if key not in known_top_sections:
                 name_str = f" for package '{package_name}'" if package_name else ""
@@ -1023,6 +1039,7 @@ class PackageConfig:
         package_data = data.get("package", {})
         hooks_data = data.get("hooks", {})
         env_data = data.get("env", {})
+        render_data = data.get("render", {})
 
         name = package_name
 
@@ -1059,6 +1076,13 @@ class PackageConfig:
         # Parse declarative requirements ([package.requirements] or top-level [requirements])
         req_data = package_data.get("requirements") or data.get("requirements") or {}
         requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
+
+        # Parse render engines configurations under [render.*]
+        resolved_base_dir = Path(base_dir) if base_dir is not None else Path(".")
+        render_engine_configs = RenderEngineRegistry.from_dict(
+            render_data,
+            base_dir=resolved_base_dir
+        )
 
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
@@ -1099,7 +1123,8 @@ class PackageConfig:
             requirements=requirements,
             hook_file=package_data.get("hook_file"),
             env_override=override_map,
-            env_fallback=fallback_map
+            env_fallback=fallback_map,
+            render_engine_configs=render_engine_configs,
         )
         if source_files:
             config.source_files = [x for x in source_files if isinstance(x, Path)]
@@ -1118,7 +1143,12 @@ def load_package_config_rendered(
     content = package_toml_path.read_text(encoding="utf-8")
     data = parse_toml(content)
     try:
-        config = PackageConfig.from_dict(data, package_name=pkg_name, source_files=[package_toml_path])
+        config = PackageConfig.from_dict(
+            data,
+            package_name=pkg_name,
+            source_files=[package_toml_path],
+            base_dir=package_toml_path.parent
+        )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_toml_path}': {e}") from e
     return config
@@ -1318,9 +1348,12 @@ def load_package_config_from_source_dir(
 
     # 3. Load PackageConfig from the stitched dictionary
     try:
-        config = PackageConfig.from_dict(stitched_dict,
-                                         package_name=pkg_name,
-                                         source_files=source_files)
+        config = PackageConfig.from_dict(
+            stitched_dict,
+            package_name=pkg_name,
+            source_files=source_files,
+            base_dir=package_dir,
+        )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
     return config

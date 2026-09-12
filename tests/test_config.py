@@ -140,8 +140,17 @@ class TestConfigParser(unittest.TestCase):
 
 
 class TestConfigClasses(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.drift_root = Path(cls.temp_dir.name)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.temp_dir.cleanup()
+
     def test_workspace_config_defaults(self) -> None:
-        config = WorkspaceConfig()
+        config = WorkspaceConfig(drift_root=self.drift_root)
         self.assertEqual(config.workspace.render_directory, Path("render"))
         self.assertEqual(config.workspace.install_directory, Path("install"))
         self.assertEqual(config.workspace.backup_directory, Path("backup"))
@@ -164,7 +173,7 @@ class TestConfigClasses(unittest.TestCase):
                 }
              }
         }
-        config = WorkspaceConfig.from_dict(data)
+        config = WorkspaceConfig.from_dict(data, drift_root=self.drift_root)
         self.assertEqual(config.workspace.render_directory, Path("custom_render"))
         self.assertEqual(config.workspace.install_directory, Path("custom_install"))
         self.assertEqual(config.workspace.backup_directory, Path("custom_backup"))
@@ -173,26 +182,26 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_workspace_config_validation(self) -> None:
         with self.assertRaises(ConfigError):
-            WorkspaceConfig(workspace=WorkspaceSectionConfig(render_directory=Path(""))).validate()
+            WorkspaceConfig(drift_root=self.drift_root, workspace=WorkspaceSectionConfig(render_directory=Path(""))).validate()
         with self.assertRaises(ConfigError):
-            WorkspaceConfig(workspace="not_a_workspace_config").validate() # type: ignore
+            WorkspaceConfig(drift_root=self.drift_root, workspace="not_a_workspace_config").validate() # type: ignore
         with self.assertRaises(ConfigError):
-            WorkspaceConfig(packages_enable="not_a_dict").validate() # type: ignore
+            WorkspaceConfig(drift_root=self.drift_root, packages_enable="not_a_dict").validate() # type: ignore
 
     def test_workspace_config_missing_packages_enable_raises(self) -> None:
         # 1. Missing [packages] entirely
         with self.assertRaises(ValueError) as cm:
-            WorkspaceConfig.from_dict({"workspace": {}})
+            WorkspaceConfig.from_dict({"workspace": {}}, drift_root=self.drift_root)
         self.assertIn("Missing '[packages.enable]'", str(cm.exception))
 
         # 2. Obsolete flat [packages] without nested enable
         with self.assertRaises(ValueError) as cm:
-            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"pkg_a": True}})
+            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"pkg_a": True}}, drift_root=self.drift_root)
         self.assertIn("Missing '[packages.enable]'", str(cm.exception))
 
         # 3. [packages.enable] is not a dict
         with self.assertRaises(ConfigError) as cm:
-            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"enable": "not_a_table"}})
+            WorkspaceConfig.from_dict({"workspace": {}, "packages": {"enable": "not_a_table"}}, drift_root=self.drift_root)
         self.assertIn("'[packages.enable]' must be a TOML table", str(cm.exception))
 
     def test_find_source_file_for_rendered_names(self) -> None:
@@ -202,7 +211,7 @@ class TestConfigClasses(unittest.TestCase):
             
             # Setup engines
             engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry({"envsubst": engine}))
+            config = WorkspaceConfig(drift_root=directory, render_engine_configs=RenderEngineRegistry({"envsubst": engine}))
             
             targets = ["config.toml", "settings.json"]
             
@@ -232,7 +241,7 @@ class TestConfigClasses(unittest.TestCase):
         """Verifies find_source_file_for_rendered_names correctly identifies directories."""
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir).resolve()
-            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry())
+            config = WorkspaceConfig(drift_root=directory, render_engine_configs=RenderEngineRegistry())
             
             targets = ["my_folder", "other_folder"]
             
@@ -257,7 +266,7 @@ class TestConfigClasses(unittest.TestCase):
             src_pkg_dir.mkdir(parents=True)
             
             engine = RenderEngineConfig(name="envst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-            config = WorkspaceConfig(render_engine_configs=RenderEngineRegistry({"envst": engine}))
+            config = WorkspaceConfig(drift_root=root, render_engine_configs=RenderEngineRegistry({"envst": engine}))
             
             # 1. Exact match (static file)
             f1 = src_pkg_dir / "dot-bashrc"
@@ -783,11 +792,11 @@ class TestConfigClasses(unittest.TestCase):
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
         # Using an absolute directory is valid
-        WorkspaceConfig(workspace=WorkspaceSectionConfig(default_target_directory=Path("/absolute/path"))).validate()
+        WorkspaceConfig(drift_root=self.drift_root, workspace=WorkspaceSectionConfig(default_target_directory=Path("/absolute/path"))).validate()
         
         # Using a relative directory raises ValueError
         with self.assertRaises(ValueError) as ctx:
-            WorkspaceConfig(workspace=WorkspaceSectionConfig(default_target_directory=Path("relative/path"))).validate()
+            WorkspaceConfig(drift_root=self.drift_root, workspace=WorkspaceSectionConfig(default_target_directory=Path("relative/path"))).validate()
         self.assertIn("default_target_directory must be an absolute path", str(ctx.exception))
 
     def test_unknown_option_raises_config_error(self) -> None:
@@ -799,7 +808,7 @@ class TestConfigClasses(unittest.TestCase):
             "unknown_top_section": {"foo": "bar"}
         }
         with self.assertRaises(ConfigError) as ctx:
-            WorkspaceConfig.from_dict(data_unknown_top)
+            WorkspaceConfig.from_dict(data_unknown_top, drift_root=self.drift_root)
         self.assertIn("Unknown top-level config section: 'unknown_top_section'", str(ctx.exception))
 
         # 2. Workspace unknown option in [workspace]
@@ -810,7 +819,7 @@ class TestConfigClasses(unittest.TestCase):
             "packages": {"enable": {}}
         }
         with self.assertRaises(ConfigError) as ctx:
-            WorkspaceConfig.from_dict(data_unknown_workspace)
+            WorkspaceConfig.from_dict(data_unknown_workspace, drift_root=self.drift_root)
         self.assertIn("Unknown workspace option: 'unknown_workspace_opt'", str(ctx.exception))
 
         # 3. Workspace unknown option in [render.<engine>]
@@ -827,7 +836,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            WorkspaceConfig.from_dict(data_unknown_render)
+            WorkspaceConfig.from_dict(data_unknown_render, drift_root=self.drift_root)
         self.assertIn("Unknown option under render.mustache: 'unknown_render_opt'", str(ctx.exception))
 
         # 4. PackageConfig unknown top-level section
@@ -1155,7 +1164,12 @@ class TestConfigLoaders(unittest.TestCase):
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
         from drift.render_input import render_input_templates
-        render_input_templates(workspace_config.render_engine_configs, workspace_config.drift_root)
+        from drift.constants import DRIFT_INTERNAL_DIR_NAME
+        render_input_templates(
+            workspace_config.render_engine_configs,
+            workspace_config.drift_root,
+            workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME
+        )
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
         pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
@@ -1360,11 +1374,12 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 }
             }
         }
-        config = WorkspaceConfig.from_dict(data)
+        dummy_root = Path("/workspace_test")
+        config = WorkspaceConfig.from_dict(data, drift_root=dummy_root)
         self.assertIn("envsubst", config.render_engine_config)
         self.assertEqual(config.render_engine_config["envsubst"].suffix, "envst")
         self.assertIn("mustache", config.render_engine_configs)
-        self.assertEqual(config.render_engine_configs["mustache"].input_file, Path("mustache.envst.json"))
+        self.assertEqual(config.render_engine_configs["mustache"].input_file, (dummy_root / "config" / "mustache.envst.json").resolve())
         self.assertIn("var", config.render_engine_configs)
         self.assertTrue(config.render_engine_configs["var"].is_internal)
         self.assertFalse(config.render_engine_configs["var"].is_disabled)
@@ -1374,12 +1389,13 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry, RenderSourceMatch
         from drift.exceptions import ConfigError
 
+        dummy_base = Path("/workspace_test/config")
         # Test from_dict empty / non-dict
-        self.assertEqual(len(RenderEngineRegistry.from_dict({})), 0)
+        self.assertEqual(len(RenderEngineRegistry.from_dict({}, base_dir=dummy_base)), 0)
         with self.assertRaises(ConfigError):
-            RenderEngineRegistry.from_dict("invalid")
+            RenderEngineRegistry.from_dict("invalid", base_dir=dummy_base)
         with self.assertRaises(ConfigError):
-            RenderEngineRegistry.from_dict({"test": {"invalid_key": 123}})
+            RenderEngineRegistry.from_dict({"test": {"invalid_key": 123}}, base_dir=dummy_base)
 
         # Test valid instantiation and mapping operations
         engine = RenderEngineConfig(
@@ -1411,6 +1427,19 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         copied = registry.copy()
         self.assertEqual(copied, registry)
         self.assertIsNot(copied, registry)
+
+        # Test overlay (Option A field-level inheritance)
+        pkg_engine_override = RenderEngineConfig(
+            name="envst",
+            input_file=Path("/pkg/input.env"),
+            suffix="",
+            render_command=""
+        )
+        pkg_registry = RenderEngineRegistry({"envst": pkg_engine_override})
+        merged = registry.overlay(pkg_registry)
+        self.assertEqual(merged["envst"].input_file, Path("/pkg/input.env"))
+        self.assertEqual(merged["envst"].suffix, "envst")  # Inherited
+        self.assertEqual(merged["envst"].render_command, "render %i %s")  # Inherited
 
         # Test __setitem__ type validation
         with self.assertRaises(ConfigError):
@@ -1862,7 +1891,7 @@ class TestSettingsConfig(unittest.TestCase):
         probe_wan_ip = true
         """
         data = parse_toml(toml_content)
-        ws_cfg = WorkspaceConfig.from_dict(data)
+        ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
         self.assertTrue(ws_cfg.settings.probe_wan_ip)
 
 

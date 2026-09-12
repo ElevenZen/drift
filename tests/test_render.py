@@ -394,14 +394,14 @@ class TestDependencyResolver(unittest.TestCase):
         # Define the engines
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=env_file_path,
             suffix="envst",
             render_command="bash -c 'source %i && source %s'"
         )
 
         mustache_engine = RenderEngineConfig(
             name="mustache",
-            input_file=Path("mustache.envst.json"),
+            input_file=mustache_template_path,
             suffix="mustache",
             render_command="cat %s # %i"
         )
@@ -411,11 +411,12 @@ class TestDependencyResolver(unittest.TestCase):
             "mustache": mustache_engine
         })
 
+        output_dir = self.drift_root / "render" / ".drift"
         # Call render_input_templates
-        render_input_templates(engines, self.drift_root)
+        render_input_templates(engines, self.drift_root, output_dir)
 
-        # Verify output file render/.config/mustache.json exists and contains correct rendered json
-        expected_output_path = self.drift_root / "render" / ".config" / "mustache.json"
+        # Verify output file render/.drift/mustache.json exists and contains correct rendered json
+        expected_output_path = output_dir / "mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "templated_env_value"}')
 
@@ -432,7 +433,11 @@ class TestDependencyResolver(unittest.TestCase):
         )
         # Calling render_input_templates should not raise FileNotFoundError anymore.
         # It logs a warning and updates input_file to Path("").
-        render_input_templates(RenderEngineRegistry({"envsubst": envsubst_engine}), self.drift_root)
+        render_input_templates(
+            RenderEngineRegistry({"envsubst": envsubst_engine}),
+            self.drift_root,
+            self.drift_root / "render" / ".drift"
+        )
         self.assertEqual(envsubst_engine.input_file, Path(""))
 
     def test_multi_level_dependency_tree(self) -> None:
@@ -456,10 +461,10 @@ class TestDependencyResolver(unittest.TestCase):
         # 4 engines: A, B, C, D representing:
         # A -> B
         # A -> C -> D
-        engine_a = RenderEngineConfig(name="engine_a", input_file=Path("static.txt"), suffix="suf_a", render_command="cat %s # %i")
-        engine_b = RenderEngineConfig(name="engine_b", input_file=Path("b.suf_a"), suffix="suf_b", render_command="cat %s # %i")
-        engine_c = RenderEngineConfig(name="engine_c", input_file=Path("c.suf_a"), suffix="suf_c", render_command="cat %s # %i")
-        engine_d = RenderEngineConfig(name="engine_d", input_file=Path("d.suf_c"), suffix="suf_d", render_command="cat %s # %i")
+        engine_a = RenderEngineConfig(name="engine_a", input_file=static_file, suffix="suf_a", render_command="cat %s # %i")
+        engine_b = RenderEngineConfig(name="engine_b", input_file=template_b, suffix="suf_b", render_command="cat %s # %i")
+        engine_c = RenderEngineConfig(name="engine_c", input_file=template_c, suffix="suf_c", render_command="cat %s # %i")
+        engine_d = RenderEngineConfig(name="engine_d", input_file=template_d, suffix="suf_d", render_command="cat %s # %i")
 
         engines = RenderEngineRegistry({
             "engine_a": engine_a,
@@ -479,12 +484,13 @@ class TestDependencyResolver(unittest.TestCase):
         self.assertEqual(dep_map["engine_d"], "engine_c")
 
         # 2. Run transitive template input rendering
-        render_input_templates(engines, self.drift_root)
+        output_dir = self.drift_root / "render" / ".drift"
+        render_input_templates(engines, self.drift_root, output_dir)
 
         # 3. Check that the transitive files compiled successfully inside the sandbox
-        rendered_b_input = self.drift_root / "render" / ".config" / "b"
-        rendered_c_input = self.drift_root / "render" / ".config" / "c"
-        rendered_d_input = self.drift_root / "render" / ".config" / "d"
+        rendered_b_input = output_dir / "b"
+        rendered_c_input = output_dir / "c"
+        rendered_d_input = output_dir / "d"
 
         self.assertTrue(rendered_b_input.is_file())
         self.assertTrue(rendered_c_input.is_file())
@@ -508,13 +514,13 @@ class TestDependencyResolver(unittest.TestCase):
         # Engines
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=env_file_path,
             suffix="envst",
             render_command="bash -c 'source %i && source %s'"
         )
         mustache_engine = RenderEngineConfig(
             name="mustache",
-            input_file=Path("mustache.envst.json"),
+            input_file=mustache_template_path,
             suffix="mustache",
             render_command="cat %s # %i"
         )
@@ -524,10 +530,11 @@ class TestDependencyResolver(unittest.TestCase):
         })
 
         # Test custom render directory name
-        render_input_templates(engines, self.drift_root, render_dir="my_custom_render_sandbox")
+        output_dir = self.drift_root / "my_custom_render_sandbox" / ".drift"
+        render_input_templates(engines, self.drift_root, output_dir)
 
-        # Expected output should reside inside "my_custom_render_sandbox/.config/"
-        expected_output_path = self.drift_root / "my_custom_render_sandbox" / ".config" / "mustache.json"
+        # Expected output should reside inside "my_custom_render_sandbox/.drift/"
+        expected_output_path = output_dir / "mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "custom_val"}')
 
@@ -545,7 +552,7 @@ class TestDependencyResolver(unittest.TestCase):
         # Define the engines, setting mustache engine's input file as an absolute path
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=env_file_path,
             suffix="envst",
             render_command="bash -c 'source %i && source %s'"
         )
@@ -562,11 +569,12 @@ class TestDependencyResolver(unittest.TestCase):
             "mustache": mustache_engine
         })
 
+        output_dir = self.drift_root / "render" / ".drift"
         # Render
-        render_input_templates(engines, self.drift_root)
+        render_input_templates(engines, self.drift_root, output_dir)
 
         # Output should be stripped from abs_mustache.envst.json -> abs_mustache.json
-        expected_output_path = self.drift_root / "render" / ".config" / "abs_mustache.json"
+        expected_output_path = output_dir / "abs_mustache.json"
         self.assertTrue(expected_output_path.is_file())
         self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "abs_val"}')
 
@@ -597,7 +605,7 @@ class TestRenderPackage(unittest.TestCase):
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=config_dir / "env.sh",
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
@@ -1011,14 +1019,14 @@ class TestRenderPackage(unittest.TestCase):
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=config_dir / "env.sh",
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
         # Mustache engine depends on rendered mustache.json (from mustache.envst.json)
         mustache_engine = RenderEngineConfig(
             name="mustache",
-            input_file=Path("mustache.envst.json"),
+            input_file=mustache_template_path,
             suffix="mustache",
             # We'll use a simple python command to 'render' mustache-like if mustache is not installed
             # But here we just want to verify the orchestration.
@@ -1040,7 +1048,7 @@ class TestRenderPackage(unittest.TestCase):
         run_primitive_2_render_packages(workspace_config)
 
         # 5. Verify engine input was rendered
-        rendered_mustache_json = drift_root / "render" / ".config" / "mustache.json"
+        rendered_mustache_json = drift_root / "render" / ".drift" / "mustache.json"
         self.assertTrue(rendered_mustache_json.is_file())
         self.assertIn('"the_value": "orchestrated_value"', rendered_mustache_json.read_text(encoding="utf-8"))
 
@@ -1068,7 +1076,11 @@ class TestRenderPackage(unittest.TestCase):
 
         # Calling render_input_templates should not raise FileNotFoundError anymore
         # It logs a warning and updates engine_config.input_file to Path("")
-        render_input_templates(RenderEngineRegistry({"missing_static_engine": engine_config}), self.drift_root)
+        render_input_templates(
+            RenderEngineRegistry({"missing_static_engine": engine_config}),
+            self.drift_root,
+            self.drift_root / "render" / ".drift"
+        )
         self.assertEqual(engine_config.input_file, Path(""))
 
         # Create a mock template
@@ -1093,21 +1105,25 @@ class TestRenderPackage(unittest.TestCase):
         # Create a dependent engine where its input template file is missing
         dep_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"), # we can let env.sh exist or not
+            input_file=config_dir / "env.sh", # we can let env.sh exist or not
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )
         mustache_engine = RenderEngineConfig(
             name="mustache",
-            input_file=Path("non_existent_mustache.envst.json"), # Missing template input!
+            input_file=config_dir / "non_existent_mustache.envst.json", # Missing template input!
             suffix="mustache",
             render_command="mustache %i %s"
         )
 
-        render_input_templates(RenderEngineRegistry({
-            "envsubst": dep_engine,
-            "mustache": mustache_engine
-        }), self.drift_root)
+        render_input_templates(
+            RenderEngineRegistry({
+                "envsubst": dep_engine,
+                "mustache": mustache_engine
+            }),
+            self.drift_root,
+            self.drift_root / "render" / ".drift"
+        )
         self.assertEqual(mustache_engine.input_file, Path(""))
 
     def test_render_package_name_starts_with_dot_dash(self) -> None:
@@ -1285,7 +1301,7 @@ class TestRenderPackage(unittest.TestCase):
         workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
                 name="envsubst",
-                input_file=Path("envsubst.sh"),
+                input_file=config_dir / "envsubst.sh",
                 suffix="envst",
                 render_command="bash -c 'envsubst < %s # %i'"
             )
@@ -1397,7 +1413,7 @@ class TestRenderPackage(unittest.TestCase):
             render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
-                    input_file=Path("envsubst.bash"),
+                    input_file=config_dir / "envsubst.bash",
                     suffix="envst",
                     render_command="bash -c 'source %i && envsubst < %s'"
                 )
@@ -1444,30 +1460,34 @@ class TestRenderPackage(unittest.TestCase):
 
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=config_dir / "env.sh",
             suffix="envst",
             render_command="bash -c 'source %i && cp %s %s'"
         )
         mustache_engine = RenderEngineConfig(
             name="mustache",
-            input_file=Path("mustache.json"), # static input
+            input_file=config_dir / "mustache.json", # static input
             suffix="mustache",
             render_command="non_existent_command_12345 %i %s" # command will fail
         )
         (config_dir / "mustache.json").write_text("{}", encoding="utf-8")
         jinja2_engine = RenderEngineConfig(
             name="jinja2",
-            input_file=Path("jinja2.mustache.json"), # depends on mustache!
+            input_file=config_dir / "jinja2.mustache.json", # depends on mustache!
             suffix="jinja2",
             render_command="jinja2 %i %s"
         )
 
         # render_input_templates should not throw, but should gracefully set jinja2.input_file = Path("")
-        render_input_templates(RenderEngineRegistry({
-            "envsubst": envsubst_engine,
-            "mustache": mustache_engine,
-            "jinja2": jinja2_engine
-        }), self.drift_root)
+        render_input_templates(
+            RenderEngineRegistry({
+                "envsubst": envsubst_engine,
+                "mustache": mustache_engine,
+                "jinja2": jinja2_engine
+            }),
+            self.drift_root,
+            self.drift_root / "render" / ".drift"
+        )
         self.assertEqual(jinja2_engine.input_file, Path(""))
         self.assertTrue(jinja2_engine.is_disabled)
 
@@ -1573,7 +1593,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
 
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=config_dir / "env.sh",
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )

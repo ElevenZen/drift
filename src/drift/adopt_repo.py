@@ -840,6 +840,7 @@ def adopt_one_package_drifts(
         from .package_config import load_package_config_from_source_dir
         pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
         src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
+        render_engines = pkg_config.package_render_engines(workspace_config)
     except Exception:
         src_dir_to_render = src_pkg_dir
 

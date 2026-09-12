@@ -39,7 +39,7 @@ class TestAddResource(unittest.TestCase):
             render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
-                    input_file=Path("env.sh"),
+                    input_file=config_dir / "env.sh",
                     suffix="envst",
                     render_command="bash -c 'source %i && envsubst < %s'"
                 )
@@ -340,6 +340,66 @@ class TestAddResource(unittest.TestCase):
         # Ensure it was not imported at root of package
         self.assertFalse((pkg_src_dir / "dot-config" / "sub_app.conf").exists())
 
+    def test_add_conflict_detection_with_package_level_render_engine(self):
+        """Verifies that add detects conflicts with templates matching package-level-only render engines."""
+        pkg = "pkg_pkg_engine_conflict"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        data_file = pkg_src_dir / "custom.json"
+        data_file.write_text('{"key": "val"}', encoding="utf-8")
+
+        # Package defines [render.custom] which is NOT present in workspace_config
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+[package]
+name = "{pkg}"
+enable_render = true
+
+[render.custom]
+input_file = "custom.json"
+suffix = "custom"
+render_command = "bash -c 'cat %i %s'"
+""")
+        # Existing template in src matching package-level engine
+        (pkg_src_dir / "dot-bashrc.custom").write_text("templated custom bashrc")
+
+        # Create target file on system
+        target_file = self.system_target_dir / ".bashrc"
+        target_file.write_text("system bashrc content")
+
+        # Add must detect conflict with dot-bashrc.custom
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+        self.assertIn("Conflict detected", str(ctx.exception))
+        self.assertIn("dot-bashrc.custom", str(ctx.exception))
+
+    def test_add_with_package_level_render_engine_success(self):
+        """Verifies that add succeeds in importing non-conflicting files into a package with package-level render engines."""
+        pkg = "pkg_pkg_engine_success"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        data_file = pkg_src_dir / "custom.json"
+        data_file.write_text('{"key": "val"}', encoding="utf-8")
+
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+[package]
+name = "{pkg}"
+enable_render = true
+
+[render.custom]
+input_file = "custom.json"
+suffix = "custom"
+render_command = "bash -c 'cat %i %s'"
+""")
+        target_file = self.system_target_dir / ".zshrc"
+        target_file.write_text("alias z='echo zsh'")
+
+        res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.package, pkg)
+        self.assertTrue((pkg_src_dir / "dot-zshrc").is_file())
+        self.assertEqual((pkg_src_dir / "dot-zshrc").read_text(), "alias z='echo zsh'")
+
 
 if __name__ == "__main__":
     unittest.main()
+

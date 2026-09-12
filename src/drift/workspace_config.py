@@ -177,7 +177,7 @@ class WorkspaceSectionConfig:
 @dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift_workspace.toml."""
-    drift_root: Path = Path(".")
+    drift_root: Path
     workspace: WorkspaceSectionConfig = field(default_factory=WorkspaceSectionConfig)
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
@@ -187,7 +187,7 @@ class WorkspaceConfig:
 
     def __init__(
         self,
-        drift_root: Union[Path, str] = Path("."),
+        drift_root: Union[Path, str],
         workspace: Optional[WorkspaceSectionConfig] = None,
         packages_enable: Mapping[str, bool] = {},
         packages_enable_default: bool = False,
@@ -405,7 +405,7 @@ class WorkspaceConfig:
     def from_dict(
         cls,
         data: dict,
-        drift_root: Path = Path("."),
+        drift_root: Path,
     ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         root = drift_root
@@ -447,7 +447,10 @@ class WorkspaceConfig:
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")
 
         # Parse render engines configurations under [render.*]
-        render_engine_configs = RenderEngineRegistry.from_dict(data.get("render", {}))
+        render_engine_configs = RenderEngineRegistry.from_dict(
+            data.get("render", {}),
+            base_dir=root.resolve() / CONFIG_DIR_NAME
+        )
 
         # Parse [env]
         env_data = data.get("env", {})

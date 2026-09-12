@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
+from .render_engine_config import RenderEngineRegistry
 from .result_models import AddResourceResult
 from .file_utils import (
     translate_dot_prefixes_reverse,
@@ -20,12 +21,11 @@ from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
 logger = logging.getLogger(__name__)
 
-def get_package_source_and_target_directory_from_source(
+def resolve_package_import_context(
     workspace_config: WorkspaceConfig,
     src_pkg_dir: Path,
-    package_name: str
-) -> Tuple[Path, Path]:
-    """Resolves both source directory to render and host target directory for a package, handling config templates."""
+) -> Tuple[Path, Path, RenderEngineRegistry]:
+    """Resolves source directory to render, host target directory, and effective render engines for a package."""
     from .package_config import load_package_config_from_source_dir
     try:
         pkg_config = load_package_config_from_source_dir(
@@ -34,12 +34,23 @@ def get_package_source_and_target_directory_from_source(
         )
         src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
         target_base = pkg_config.get_target_directory(workspace_config)
+        render_engines = pkg_config.package_render_engines(workspace_config)
     except Exception as e:
         logger.warning(f"Failed to load package configuration in {src_pkg_dir}: {e}. Using defaults.")
         src_dir_to_render = src_pkg_dir
         target_base = workspace_config.default_target_path
+        render_engines = workspace_config.render_engine_configs
 
-    return src_dir_to_render.resolve(), target_base.resolve()
+    return src_dir_to_render.resolve(), target_base.resolve(), render_engines
+
+def get_package_source_and_target_directory_from_source(
+    workspace_config: WorkspaceConfig,
+    src_pkg_dir: Path,
+    package_name: str
+) -> Tuple[Path, Path]:
+    """Resolves both source directory to render and host target directory for a package, handling config templates."""
+    src_dir_to_render, target_base, _ = resolve_package_import_context(workspace_config, src_pkg_dir)
+    return src_dir_to_render, target_base
 
 def generate_import_worklist(
     workspace_config: WorkspaceConfig,
@@ -117,9 +128,10 @@ def run_primitive_11_add_resources(
         workspace_config, package_name, flags=flags
     )
 
-    # 2. Resolve source render directory, target directory and ignores
-    src_dir_to_render, target_base = get_package_source_and_target_directory_from_source(
-            workspace_config, src_pkg_dir, package_name)
+    # 2. Resolve source render directory, target directory, render engines, and ignores
+    src_dir_to_render, target_base, render_engines = resolve_package_import_context(
+        workspace_config, src_pkg_dir
+    )
     ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir)
 
     # 3. Generate global worklist of files to import
@@ -137,7 +149,7 @@ def run_primitive_11_add_resources(
 
     # 4. Global Conflict Check Phase
     for src_on_system, rel_target in full_worklist:
-        conflict = workspace_config.find_conflict_in_source_dir(src_dir_to_render, rel_target)
+        conflict = render_engines.find_conflict_in_source_dir(src_dir_to_render, rel_target)
         if conflict:
             rel_conflict = conflict.path.relative_to(workspace_config.drift_root)
             raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
