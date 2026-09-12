@@ -466,6 +466,12 @@ If a registered engine's `input_file` is not specified, is empty, or is missing 
 *   **Initialization Warning**: During the workspace bootstrapping phase (`render_input_templates`), instead of raising a fatal crash, the engine logs a clear, descriptive warning and sets the engine's resolved input file to `Path("")` (an empty path). This allows other independent render processes to initialize and compile normally.
 *   **Deferred Runtime Check**: The safety safeguard is deferred to actual template rendering. If any template file in the repository relies on a gracefully disabled engine, the core rendering pipeline (`resolve_render_template_args`) checks for the empty `Path("")` input path. If found, it halts compilation immediately with a descriptive `ValueError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
 
+#### 6. Package-Level Render Engines & Field-Level Inheritance
+Drift supports defining package-scoped render engines and overriding global workspace engines in `drift_package.toml` via `[render.<name>]`:
+*   **Field-Level Inheritance**: When overriding a workspace engine, unspecified fields (`suffix`, `render_command`) are inherited from the workspace configuration, while `input_file` is overridden by the package.
+*   **Relative Path Ingestion**: Package-level `input_file` paths are resolved relative to the package directory (`src/<pkg>/`) immediately upon TOML parsing.
+*   **Two-Stage Pipeline & Internal Sandboxing**: Workspace engines compile workspace inputs into `render/.drift/` and compile package configs (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`). In Stage 2, package engines compile intermediate package inputs into `render/<pkg>/.drift/` before compiling package templates. All downstream primitives (`adopt`, `add`, `reverse-sync`) resolve template suffixes against these effective package engines.
+
 ### C. Package Configuration: `drift_package.toml` Specification
 A package configuration file — named `drift_package.toml` — is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/drift_package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
 

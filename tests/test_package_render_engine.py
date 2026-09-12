@@ -39,7 +39,7 @@ class TestPackageRenderEngine(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_option_a_field_level_inheritance(self) -> None:
+    def test_field_level_inheritance(self) -> None:
         """Verifies that package [render.<name>] inherits unspecified fields from workspace config."""
         # 1. Setup workspace with global mustache engine
         global_json = self.config_dir / "global.json"

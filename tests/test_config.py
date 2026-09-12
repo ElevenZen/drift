@@ -1428,7 +1428,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(copied, registry)
         self.assertIsNot(copied, registry)
 
-        # Test overlay (Option A field-level inheritance)
+        # Test overlay (field-level inheritance)
         pkg_engine_override = RenderEngineConfig(
             name="envst",
             input_file=Path("/pkg/input.env"),

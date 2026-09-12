@@ -28,7 +28,8 @@ or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_packag
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
     automatically synchronize and prune deleted files inside them (FCDs).
 4.  **`Dynamic Python Hook`**: A `drift_package.py` (or custom `hook_file`) defining `configure_package(context)` to dynamically transform package settings based on host facts, workspace context, and environment.
-5.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
+5.  **`Render Engines`**: Package-scoped template engine overrides and custom engines defined under `[render.<name>]` with field-level inheritance and `.drift/` internal sandboxing.
+6.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
     (`probe`, `pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
     All lifecycle hooks always execute in user space without `sudo`, preserving all injected environment variables.
 

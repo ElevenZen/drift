@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Layer 2: First-Class Collection Registry
     RenderEngineRegistry (MutableMapping[str, RenderEngineConfig])
-        - overlay(overrides): Field-level inheritance (Option A) and engine patching
+        - overlay(overrides): Field-level inheritance and engine patching
         - from_dict(render_data): Declarative dictionary constructor
         - find_engine_for_file(filename): Suffix-matching engine locator
         - make_new_template_name(old, new): Template naming for reverse-sync / add
@@ -186,7 +186,7 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
     ) -> "RenderEngineRegistry":
         """Creates a new RenderEngineRegistry by overlaying package-level overrides onto this registry.
 
-        Implements Option A (field-level inheritance/patching):
+        Implements field-level inheritance/patching:
         - Inherits base engine fields from self, overriding only specified non-empty fields from overrides.
         - Adds new engine definitions declared in overrides.
         - Validates the resulting merged registry.

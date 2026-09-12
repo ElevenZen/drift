@@ -148,6 +148,26 @@ pre_install = "scripts/bootstrap.exe"
 post_install = "scripts/setup.ps1"
 post_update = "scripts/reload_service.bat"
 health = "scripts/health_check.ps1"
+
+
+# ---------------------------------------------------------------------
+# Package-Level Render Engines & Field-Level Inheritance
+# ---------------------------------------------------------------------
+# Packages can define custom render engines or override workspace engines.
+# When overriding an existing engine from drift_workspace.toml, unspecified fields (suffix, render_command)
+# are inherited from workspace configuration, while input_file is overridden.
+# Relative input_file paths are resolved relative to this package's directory (src/<pkg>/).
+# Intermediate input file template outputs are rendered into render/<pkg>/.drift/ sandbox.
+
+# Define a brand new package-scoped render engine:
+[render.custom]
+input_file = "config_data.json"
+suffix = "custom"
+render_command = "bash -c 'cat %i %s'"
+
+# Or override only the input_file of a workspace-level engine (inherits suffix and render_command):
+# [render.envsubst]
+# input_file = "pkg_env.sh"
 ```
 
 ## 🪝 Lifecycle Hooks Execution Matrix
@@ -266,5 +286,25 @@ def configure_package(context):
 
     return cfg
 ```
+
+
+## 🎨 Package-Level Render Engines & 2-Stage Compilation
+
+Packages can define custom render engines or override global workspace render engines via `[render.<name>]` in `drift_package.toml`.
+
+### 1. Field-Level Inheritance
+When a package defines a `[render.<name>]` table for an engine already defined in `drift_workspace.toml`, Drift applies **field-level inheritance**:
+* **`input_file`**: Overridden by the package's local input file (relative to `src/<pkg>/`).
+* **`suffix`**: Inherited from the workspace engine if omitted in the package config.
+* **`render_command`**: Inherited from the workspace engine if omitted in the package config.
+
+### 2. Multi-Stage Compilation Chain & Sandbox Isolation
+Drift evaluates compilation pipelines across two distinct, isolated stages:
+1. **Stage 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`).
+2. **Stage 2 (Package Scope)**: Package configurations are loaded, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/`). Package files are then compiled using the effective engine registry.
+
+### 3. Reverse Sync, Add, & Adopt Integration
+All downstream primitives (`drift adopt`, `drift add`, `drift reverse-sync`) automatically respect package-level render engine definitions and suffix mappings when reconciling file modifications, renames, and imports.
+
 
 
