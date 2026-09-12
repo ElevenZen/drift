@@ -72,6 +72,8 @@ from .constants import (
     STATE_REGISTRY_FILE_NAME,
     INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
+    DEFAULT_ROOT_GITIGNORE_ENTRIES,
+    DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
 )
 from .git_utils import (
     is_git_tracked,
@@ -319,21 +321,14 @@ def check_root_gitignore(
         )
 
     lines = {line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")}
-    normalized = set()
-    for l in lines:
-        normalized.add(l)
-        normalized.add(l.rstrip("/"))
+    normalized = {l.rstrip("/") for l in lines} | lines
 
     required = [
         workspace_config.render_path.name,
         workspace_config.install_path.name,
-        "*.local.toml",
-        f"{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}"
+        *[entry for entry in DEFAULT_ROOT_GITIGNORE_ENTRIES if entry not in ("render/", "install/")]
     ]
-    missing = []
-    for req in required:
-        if req not in normalized and req.rstrip("/") not in normalized:
-            missing.append(req)
+    missing = list(filter(lambda req: req not in normalized and req.rstrip("/") not in normalized, required))
 
     if missing:
         return CheckResult(
@@ -426,6 +421,50 @@ def check_install_repo(
     )
 
 
+def check_internal_gitignore_file(
+    gitignore_file: Path,
+    component_name: str,
+    dir_name: str,
+) -> CheckResult:
+    """Checks that an internal .gitignore exists and contains standard ignore entries."""
+    if not gitignore_file.exists():
+        return CheckResult(
+            name=component_name,
+            status=ComponentStatus.NOT_FOUND,
+            details=f"'{dir_name}/.gitignore' not found.",
+            fix_hint=f"Create '{dir_name}/.gitignore' with default ignore rules"
+        )
+
+    try:
+        content = gitignore_file.read_text(encoding="utf-8")
+    except Exception as e:
+        return CheckResult(
+            name=component_name,
+            status=ComponentStatus.BROKEN,
+            details=f"Unreadable '{dir_name}/.gitignore': {e}",
+            fix_hint=f"Ensure '{dir_name}/.gitignore' is readable"
+        )
+
+    lines = {line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")}
+    normalized = {l.rstrip("/") for l in lines} | lines
+
+    missing = list(filter(lambda entry: entry not in normalized and entry.rstrip("/") not in normalized, DEFAULT_INTERNAL_GITIGNORE_ENTRIES))
+
+    if missing:
+        return CheckResult(
+            name=component_name,
+            status=ComponentStatus.BROKEN,
+            details=f"'{dir_name}/.gitignore' missing rules: {missing}",
+            fix_hint=f"Add missing rules to '{dir_name}/.gitignore'"
+        )
+
+    return CheckResult(
+        name=component_name,
+        status=ComponentStatus.GOOD,
+        details=f"'{dir_name}/.gitignore' is present and up to date."
+    )
+
+
 def check_render_gitignore(
     drift_root: Path,
     workspace_config: WorkspaceConfig,
@@ -439,21 +478,7 @@ def check_render_gitignore(
             details=f"'{render_dir.name}/' directory does not exist.",
             fix_hint=f"Initialize '{render_dir.name}/' repository first"
         )
-
-    render_gitignore = render_dir / ".gitignore"
-    if not render_gitignore.exists():
-        return CheckResult(
-            name="Render .gitignore",
-            status=ComponentStatus.NOT_FOUND,
-            details=f"'{render_dir.name}/.gitignore' not found.",
-            fix_hint=f"Create '{render_dir.name}/.gitignore' with default ignore rules"
-        )
-
-    return CheckResult(
-        name="Render .gitignore",
-        status=ComponentStatus.GOOD,
-        details=f"'{render_dir.name}/.gitignore' is present."
-    )
+    return check_internal_gitignore_file(render_dir / ".gitignore", "Render .gitignore", render_dir.name)
 
 
 def check_install_gitignore(
@@ -469,21 +494,7 @@ def check_install_gitignore(
             details=f"'{install_dir.name}/' directory does not exist.",
             fix_hint=f"Initialize '{install_dir.name}/' repository first"
         )
-
-    install_gitignore = install_dir / ".gitignore"
-    if not install_gitignore.exists():
-        return CheckResult(
-            name="Install .gitignore",
-            status=ComponentStatus.NOT_FOUND,
-            details=f"'{install_dir.name}/.gitignore' not found.",
-            fix_hint=f"Create '{install_dir.name}/.gitignore' with default ignore rules"
-        )
-
-    return CheckResult(
-        name="Install .gitignore",
-        status=ComponentStatus.GOOD,
-        details=f"'{install_dir.name}/.gitignore' is present."
-    )
+    return check_internal_gitignore_file(install_dir / ".gitignore", "Install .gitignore", install_dir.name)
 
 
 def check_install_stow_ignore(

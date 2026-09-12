@@ -5,7 +5,7 @@ import os
 import sys
 from enum import Enum, IntEnum
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union
+from typing import Dict, List, Optional, Sequence, Union, Tuple
 
 def add_suffix_path(file: Path, suffix: str) -> Path:
     """Returns a new Path with the given suffix injected before the file extension.
@@ -395,6 +395,12 @@ DEFAULT_ROOT_GITIGNORE_ENTRIES = (
     ".pytest_cache/",
     ".mypy_cache/",
     ".ruff_cache/",
+)
+
+DEFAULT_INTERNAL_GITIGNORE_ENTRIES: Tuple[str, ...] = tuple(
+    line.strip()
+    for line in DEFAULT_INTERNAL_GITIGNORE_CONTENT.splitlines()
+    if line.strip() and not line.strip().startswith("#")
 )
 
 

@@ -288,6 +288,29 @@ class TestWorkspaceRepair(unittest.TestCase):
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())
 
+    def test_repair_updates_partial_root_gitignore_with_python_rules(self) -> None:
+        """Repair updates an existing .gitignore that has base isolation but lacks Python rules."""
+        init_drift_workspace(self.drift_root)
+        # Write only the original 4 rules without Python rules
+        (self.drift_root / ".gitignore").write_text(
+            "render/\ninstall/\n*.local.toml\nconfig/secrets.env\n",
+            encoding="utf-8"
+        )
+        ws_config = load_workspace_config(self.drift_root)
+        res = check_root_gitignore(self.drift_root, workspace_config=ws_config)
+        self.assertEqual(res.status, ComponentStatus.BROKEN)
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any(".gitignore" in a for a in actions))
+
+        content = (self.drift_root / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("__pycache__/", content)
+        self.assertIn("*.py[cod]", content)
+        self.assertIn(".venv/", content)
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertTrue(report.is_healthy())
+
     def test_repair_recovers_missing_internal_gitignores(self) -> None:
         """Repair restores missing render/.gitignore and install/.gitignore."""
         init_drift_workspace(self.drift_root)
@@ -306,6 +329,32 @@ class TestWorkspaceRepair(unittest.TestCase):
 
         self.assertTrue((self.drift_root / "render" / ".gitignore").is_file())
         self.assertTrue((self.drift_root / "install" / ".gitignore").is_file())
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertTrue(report.is_healthy())
+
+    def test_repair_updates_partial_internal_gitignores(self) -> None:
+        """Repair updates existing internal gitignores missing Python rules."""
+        init_drift_workspace(self.drift_root)
+        (self.drift_root / "render" / ".gitignore").write_text("*.swp\n.DS_Store\n", encoding="utf-8")
+        (self.drift_root / "install" / ".gitignore").write_text("*.swp\n.DS_Store\n", encoding="utf-8")
+        ws_config = load_workspace_config(self.drift_root)
+
+        res_render = check_render_gitignore(self.drift_root, workspace_config=ws_config)
+        self.assertEqual(res_render.status, ComponentStatus.BROKEN)
+        res_install = check_install_gitignore(self.drift_root, workspace_config=ws_config)
+        self.assertEqual(res_install.status, ComponentStatus.BROKEN)
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("render/.gitignore" in a for a in actions))
+        self.assertTrue(any("install/.gitignore" in a for a in actions))
+
+        render_gi = (self.drift_root / "render" / ".gitignore").read_text(encoding="utf-8")
+        install_gi = (self.drift_root / "install" / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn("__pycache__/", render_gi)
+        self.assertIn("*.py[cod]", render_gi)
+        self.assertIn("__pycache__/", install_gi)
+        self.assertIn("*.py[cod]", install_gi)
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

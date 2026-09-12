@@ -300,7 +300,7 @@ def append_to_gitignore(drift_root: Path, folders_to_ignore: list) -> None:
         with gitignore_path.open("a", encoding="utf-8") as f:
             if existing_content and not existing_content.endswith("\n"):
                 f.write("\n")
-            f.write("# drift workspace folders\n")
+            f.write("# drift workspace\n")
             for folder in new_ignores:
                 f.write(f"{folder}\n")
 

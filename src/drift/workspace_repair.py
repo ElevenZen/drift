@@ -68,6 +68,7 @@ from .constants import (
     get_default_jinja2_content,
     get_default_internal_gitignore_content,
     DEFAULT_ROOT_GITIGNORE_ENTRIES,
+    DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
 )
 from .ignore import get_default_install_stow_ignore_content
 from .workspace_check import (
@@ -309,15 +310,25 @@ def repair_internal_gitignores(
 
     render_check = check_render_gitignore(drift_root, workspace_config=workspace_config)
     if render_check.status != ComponentStatus.GOOD and render_dir.exists() and render_dir.is_dir():
-        actions.append(f"Restored '{render_dir.name}/.gitignore'.")
-        if not dry_run:
-            (render_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        if render_check.status == ComponentStatus.NOT_FOUND:
+            actions.append(f"Restored '{render_dir.name}/.gitignore'.")
+            if not dry_run:
+                (render_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        else:
+            actions.append(f"Updated '{render_dir.name}/.gitignore' with missing ignore rules.")
+            if not dry_run:
+                append_to_gitignore(render_dir, list(DEFAULT_INTERNAL_GITIGNORE_ENTRIES))
 
     install_check = check_install_gitignore(drift_root, workspace_config=workspace_config)
     if install_check.status != ComponentStatus.GOOD and install_dir.exists() and install_dir.is_dir():
-        actions.append(f"Restored '{install_dir.name}/.gitignore'.")
-        if not dry_run:
-            (install_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        if install_check.status == ComponentStatus.NOT_FOUND:
+            actions.append(f"Restored '{install_dir.name}/.gitignore'.")
+            if not dry_run:
+                (install_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        else:
+            actions.append(f"Updated '{install_dir.name}/.gitignore' with missing ignore rules.")
+            if not dry_run:
+                append_to_gitignore(install_dir, list(DEFAULT_INTERNAL_GITIGNORE_ENTRIES))
 
     return actions
 
