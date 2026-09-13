@@ -134,7 +134,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
     def test_init_in_non_empty_non_git_directory_raises_error(self) -> None:
         """Verifies that init in a non-empty, non-git directory raises an error."""
         # Create a dummy file to make directory non-empty
-        with open(os.path.join(self.drift_root, "dummy.txt"), "w") as f:
+        with open(os.path.join(self.drift_root, "dummy.txt"), "w", encoding="utf-8") as f:
             f.write("dummy")
 
         with self.assertRaises(RuntimeError) as cm:
@@ -172,14 +172,14 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
         # Modify drift_workspace.toml to see if it gets overwritten
         config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
-        with open(config_file, "w") as f:
+        with open(config_file, "w", encoding="utf-8") as f:
             f.write("corrupted_or_modified_toml_content")
 
         # Running again with force=True should not raise an error
         init_drift_workspace(self.drift_root, force=True)
 
         # Check that drift_workspace.toml was overwritten back to default content
-        with open(config_file, "r") as f:
+        with open(config_file, "r", encoding="utf-8") as f:
             content = f.read()
         self.assertIn("[workspace]", content)
 
@@ -188,7 +188,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         init_drift_workspace(self.drift_root)
 
         config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
-        with open(config_file, "w") as f:
+        with open(config_file, "w", encoding="utf-8") as f:
             f.write("this is invalid toml = [ { ")
 
         with self.assertRaises(RuntimeError) as cm:
@@ -201,7 +201,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
 
     def test_init_non_empty_non_git_with_force_succeeds(self) -> None:
         """Verifies that init with force works on a non-empty, non-git directory."""
-        with open(os.path.join(self.drift_root, "somefile.txt"), "w") as f:
+        with open(os.path.join(self.drift_root, "somefile.txt"), "w", encoding="utf-8") as f:
             f.write("hello")
 
         init_drift_workspace(self.drift_root, force=True)
@@ -224,7 +224,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=self.drift_root, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.drift_root, check=True, capture_output=True)
         # Create commit
-        with open(os.path.join(self.drift_root, "file.txt"), "w") as f:
+        with open(os.path.join(self.drift_root, "file.txt"), "w", encoding="utf-8") as f:
             f.write("content")
         subprocess.run(["git", "add", "file.txt"], cwd=self.drift_root, check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=self.drift_root, check=True, capture_output=True)
@@ -246,7 +246,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         git_dir_res = subprocess.run(["git", "rev-parse", "--git-dir"], cwd=self.drift_root, capture_output=True, text=True, check=True)
         git_dir = os.path.join(self.drift_root, git_dir_res.stdout.strip())
         merge_head_file = os.path.join(git_dir, "MERGE_HEAD")
-        with open(merge_head_file, "w") as f:
+        with open(merge_head_file, "w", encoding="utf-8") as f:
             f.write("dummy_commit_hash")
 
         self.assertTrue(is_merge_or_rebase_in_progress(self.drift_root))

@@ -1,8 +1,12 @@
 import sys
 import logging
 
+from ..constants import configure_utf8_streams, update_initial_env
 from .argparse_backend import run_argparse_cli
 from .actions import check_sudo_and_root
+
+# Ensure standard output and error streams are configured for UTF-8 cross-platform
+configure_utf8_streams()
 
 # Try importing Typer to check availability
 try:
@@ -43,7 +47,6 @@ def setup_logging(level: int = logging.INFO) -> None:
 
 
 def main(argv=None) -> None:
-    from ..constants import update_initial_env
     update_initial_env()
     args_list = argv if argv is not None else sys.argv[1:]
     setup_logging()
@@ -57,3 +60,4 @@ def main(argv=None) -> None:
             raise
     else:
         run_argparse_cli(argv)
+

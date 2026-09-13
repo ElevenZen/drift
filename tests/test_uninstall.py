@@ -142,7 +142,7 @@ class TestUninstall(unittest.TestCase):
         
         # 6. Verify restoration
         self.assertTrue(system_target.exists())
-        self.assertEqual(system_target.read_text(), "original user content")
+        self.assertEqual(system_target.read_text(encoding="utf-8"), "original user content")
         
         # Verify cleanup
         self.assertFalse(backup_pkg_overwritten.exists())

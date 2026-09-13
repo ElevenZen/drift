@@ -10,7 +10,7 @@ from drift.workspace_status import run_primitive_status
 class TestStatus(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.base_path = Path(self.temp_dir.name)
+        self.base_path = Path(self.temp_dir.name).resolve()
         
         self.drift_root = self.base_path / "drift_workspace"
         self.system_target_dir = self.base_path / "system_home"

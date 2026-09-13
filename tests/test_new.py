@@ -34,7 +34,7 @@ class TestNewPackage(unittest.TestCase):
             self.assertTrue(config_file.exists())
             self.assertTrue(config_file.is_file())
             
-            content = config_file.read_text()
+            content = config_file.read_text(encoding="utf-8")
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
             self.assertIn('install_method = "stow"', content)
             self.assertIn('# target_directory = "~"', content)
@@ -88,7 +88,7 @@ class TestNewPackage(unittest.TestCase):
             # Should succeed with force
             res = run_primitive_10_create_new_package(config, pkg_name, force=True)
             self.assertEqual(res.status, "SUCCESS")
-            content = (pkg_dir / "drift_package.toml").read_text()
+            content = (pkg_dir / "drift_package.toml").read_text(encoding="utf-8")
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
 
     def test_run_primitive_10_create_new_package_custom_target(self) -> None:
@@ -108,7 +108,7 @@ class TestNewPackage(unittest.TestCase):
             config_file = pkg_dir / "drift_package.toml"
             self.assertTrue(config_file.exists())
             
-            content = config_file.read_text()
+            content = config_file.read_text(encoding="utf-8")
             self.assertIn(f'target_directory = "{target_dir}"', content)
 
     def test_get_default_package_config_content_helper_direct(self) -> None:

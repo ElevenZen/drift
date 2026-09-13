@@ -228,7 +228,7 @@ class TestDiff(unittest.TestCase):
 
         def side_effect(pairs):
             for l, r in pairs:
-                captured_pairs.append((l.read_text(), r))
+                captured_pairs.append((l.read_text(encoding="utf-8"), r))
 
         mock_launch.side_effect = side_effect
 

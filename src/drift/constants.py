@@ -486,8 +486,27 @@ def get_default_drift_workspace_toml_content() -> str:
     raise FileNotFoundError(f"Default drift_workspace.toml template file not found at {template_path}")
 
 
+def configure_utf8_streams() -> None:
+    """Configures sys.stdout and sys.stderr to use UTF-8 encoding with replacement error handler.
+
+    Ensures safe Unicode and emoji printing across all platforms, especially Windows console/pipe.
+    """
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is not None and hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+# Initialize UTF-8 stream encoding immediately upon module import
+configure_utf8_streams()
+
+
 def update_initial_env() -> None:
-    """Updates INITIAL_ENV with current keys in os.environ."""
+    """Updates INITIAL_ENV with current keys in os.environ and configures standard streams."""
+    configure_utf8_streams()
     global INITIAL_ENV
     INITIAL_ENV.clear()
     INITIAL_ENV.extend(os.environ.keys())
@@ -526,5 +545,6 @@ def inject_system_facts(probe_wan_ip: bool = False) -> None:
     for k, v in facts.items():
         if k not in INITIAL_ENV:
             os.environ[k] = v
+
 
 

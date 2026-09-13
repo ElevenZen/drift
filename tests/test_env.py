@@ -189,7 +189,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
         set_test_mode(True)
         self.original_environ = dict(os.environ)
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = Path(self.temp_dir.name)
+        self.drift_root = Path(self.temp_dir.name).resolve()
 
         # Basic workspace layout
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -684,7 +684,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         set_test_mode(True)
         self.original_environ = dict(os.environ)
         self.temp_dir = tempfile.mkdtemp()
-        self.drift_root = Path(self.temp_dir)
+        self.drift_root = Path(self.temp_dir).resolve()
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
         self.config_dir.mkdir(parents=True, exist_ok=True)
 

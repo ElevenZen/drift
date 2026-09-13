@@ -19,9 +19,9 @@ from drift.cli import main, run_argparse_cli
 class TestPackageHook(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.drift_root = Path(self.temp_dir.name) / "drift_workspace"
+        self.drift_root = (Path(self.temp_dir.name) / "drift_workspace").resolve()
         self.drift_root.mkdir(parents=True, exist_ok=True)
-        self.target_dir = Path(self.temp_dir.name) / "target_home"
+        self.target_dir = (Path(self.temp_dir.name) / "target_home").resolve()
         self.target_dir.mkdir(parents=True, exist_ok=True)
 
         self.workspace_config = WorkspaceConfig(

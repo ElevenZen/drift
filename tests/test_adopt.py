@@ -37,7 +37,7 @@ class TestAdopt(unittest.TestCase):
 
     def setUp(self) -> None:
         self.temp_dir = TemporaryDirectory()
-        self.workspace_path = Path(self.temp_dir.name) / "workspace"
+        self.workspace_path = (Path(self.temp_dir.name) / "workspace").resolve()
         self.workspace_path.mkdir()
 
         self.src_dir = self.workspace_path / "src"

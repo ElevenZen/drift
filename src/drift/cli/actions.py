@@ -70,10 +70,6 @@ def check_sudo_and_root(drift_root: Path) -> None:
     """
     if sys.platform == "win32":
         # On Windows, elevated Administrator shell is allowed and sudo/root checks do not apply.
-        if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        if hasattr(sys.stderr, "reconfigure"):
-            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
         return
 
     # 1. Check if running under sudo (SUDO_USER or SUDO_UID environment variables exist)

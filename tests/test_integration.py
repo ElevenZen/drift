@@ -76,11 +76,11 @@ class TestIntegration(unittest.TestCase):
         # Verify deployment
         target_file = self.system_target_dir / "bashrc"
         self.assertTrue(target_file.is_symlink())
-        self.assertEqual(target_file.read_text(), "alias ll='ls -l'")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "alias ll='ls -l'")
         
         # 3. Simulate Drift
         target_file.unlink()
-        target_file.write_text("drifted content") # Replace symlink with physical drifted file
+        target_file.write_text("drifted content", encoding="utf-8") # Replace symlink with physical drifted file
         
         # 4. Reverse Sync
         from drift.reverse_sync import run_primitive_1_reverse_sync
@@ -88,7 +88,7 @@ class TestIntegration(unittest.TestCase):
         
         # Verify install/ state updated
         install_file = self.install_dir / pkg / "bashrc"
-        self.assertEqual(install_file.read_text(), "drifted content")
+        self.assertEqual(install_file.read_text(encoding="utf-8"), "drifted content")
         
         # 5. Uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
@@ -108,11 +108,11 @@ class TestIntegration(unittest.TestCase):
         
         # 1. Pre-existing system file
         target_file = self.system_target_dir / "config.ini"
-        target_file.write_text("original config")
+        target_file.write_text("original config", encoding="utf-8")
         
         # 2. Setup package with copy method
         run_primitive_10_create_new_package(self.workspace_config, pkg, install_method="copy")
-        (self.source_dir / pkg / "config.ini").write_text("drift managed config")
+        (self.source_dir / pkg / "config.ini").write_text("drift managed config", encoding="utf-8")
         
         # 3. Full Deployment
         run_primitive_2_render_packages(self.workspace_config)
@@ -121,9 +121,9 @@ class TestIntegration(unittest.TestCase):
         
         # Verify overwritten and backed up
         backup_file = self.workspace_config.backup_path / pkg / "overwritten" / "config.ini"
-        self.assertEqual(target_file.read_text(), "drift managed config")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "drift managed config")
         self.assertTrue(backup_file.exists())
-        self.assertEqual(backup_file.read_text(), "original config")
+        self.assertEqual(backup_file.read_text(encoding="utf-8"), "original config")
         
         # 4. Uninstall
         run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
@@ -131,7 +131,7 @@ class TestIntegration(unittest.TestCase):
         # Verify restoration
         self.assertTrue(target_file.exists())
         self.assertFalse(target_file.is_symlink())
-        self.assertEqual(target_file.read_text(), "original config")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "original config")
 
     def test_orphan_garbage_collection(self):
         """Scenario: Deploying a package, then disabling it and running gc to trigger cleanup."""
@@ -271,19 +271,19 @@ class TestIntegration(unittest.TestCase):
         py_bin = sys.executable.replace("\\", "/")
         for eng in self.workspace_config.render_engine_config.values():
             if eng.name == "mustache":
-                eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text()); tmpl=pathlib.Path(sys.argv[2]).read_text(); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'
+                eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding=\'utf-8\')); tmpl=pathlib.Path(sys.argv[2]).read_text(encoding=\'utf-8\'); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'
 
         # 1. Setup envsubst template for mustache input
         # Note: drift_root/config/ contains the source templates for engine inputs
         envsubst_input_src = self.drift_root / "config" / "mustache.envst.json"
         # mustache requires valid JSON.
-        envsubst_input_src.write_text('{"user": "$USER"}')
+        envsubst_input_src.write_text('{"user": "$USER"}', encoding="utf-8")
         
         # 2. Setup mustache template that uses this input
         pkg_src = self.source_dir / pkg
         pkg_src.mkdir(parents=True, exist_ok=True)
-        (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"\n')
-        (pkg_src / "greet.mustache.txt").write_text("Hello {{user}}!")
+        (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"\n', encoding="utf-8")
+        (pkg_src / "greet.mustache.txt").write_text("Hello {{user}}!", encoding="utf-8")
         
         # 3. Set environment variable
         os.environ["USER"] = "drift_tester"
@@ -296,7 +296,7 @@ class TestIntegration(unittest.TestCase):
         # 5. Verify result
         target_file = self.system_target_dir / "greet.txt"
         self.assertTrue(target_file.exists())
-        self.assertEqual(target_file.read_text(), "Hello drift_tester!")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello drift_tester!")
 
 if __name__ == "__main__":
     unittest.main()

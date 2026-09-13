@@ -70,20 +70,20 @@ class TestAddResource(unittest.TestCase):
         # 3. Verify translation in src/
         imported_file = pkg_src_dir / "dot-bashrc"
         self.assertTrue(imported_file.exists())
-        self.assertEqual(imported_file.read_text(), "alias hi='echo hello'")
+        self.assertEqual(imported_file.read_text(encoding="utf-8"), "alias hi='echo hello'")
 
     def test_add_directory_recursive(self):
         """Verifies importing a directory recursively with translation."""
         pkg = "pkg_dir"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"')
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"', encoding="utf-8")
         
         # 1. Create directory structure on system
         target_dir = self.system_target_dir / ".config" / "nvim"
         target_dir.mkdir(parents=True, exist_ok=True)
-        (target_dir / "init.vim").write_text("set number")
-        (target_dir / ".hidden").write_text("secret")
+        (target_dir / "init.vim").write_text("set number", encoding="utf-8")
+        (target_dir / ".hidden").write_text("secret", encoding="utf-8")
         
         # 2. Add to drift
         res = run_primitive_11_add_resources(self.workspace_config, pkg, [self.system_target_dir / ".config"])
@@ -95,7 +95,7 @@ class TestAddResource(unittest.TestCase):
         # 3. Verify recursive translation
         self.assertTrue((pkg_src_dir / "dot-config" / "nvim" / "init.vim").exists())
         self.assertTrue((pkg_src_dir / "dot-config" / "nvim" / "dot-hidden").exists())
-        self.assertEqual((pkg_src_dir / "dot-config" / "nvim" / "init.vim").read_text(), "set number")
+        self.assertEqual((pkg_src_dir / "dot-config" / "nvim" / "init.vim").read_text(encoding="utf-8"), "set number")
 
     def test_add_conflict_detection(self):
         """Verifies that add fails if a conflicting source already exists."""
@@ -242,12 +242,12 @@ class TestAddResource(unittest.TestCase):
         # Hook must have run and generated add_hook_out.txt
         hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
-        self.assertEqual(hook_out.read_text().strip(), "STATIC_HOOK_RAN")
+        self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "STATIC_HOOK_RAN")
 
         # Copied static hook must exist in render/
         rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
         self.assertTrue(rendered_hook.is_file())
-        self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text())
+        self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text(encoding="utf-8"))
 
     def test_add_triggers_pre_source_hook_templated(self):
         """Verifies that a templated pre_source hook is rendered and triggered in src/pkg before importing resources."""
@@ -263,28 +263,30 @@ class TestAddResource(unittest.TestCase):
         hook_script = scripts_dir / "pre_add.envst.sh"
         hook_script.write_text(
             "#!/bin/bash\n"
-            "echo \"ADD_HOOK_RAN_${drift_package_name}\" > add_hook_out.txt\n"
+            "echo \"ADD_HOOK_RAN_${drift_package_name}\" > add_hook_out.txt\n",
+            encoding="utf-8"
         )
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.envst.sh"\n'
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.envst.sh"\n',
+            encoding="utf-8"
         )
 
         target_file = self.system_target_dir / "imported_file.txt"
-        target_file.write_text("imported content")
+        target_file.write_text("imported content", encoding="utf-8")
 
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # Hook must have run and generated add_hook_out.txt
         hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
-        self.assertEqual(hook_out.read_text().strip(), f"ADD_HOOK_RAN_{pkg}")
+        self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), f"ADD_HOOK_RAN_{pkg}")
 
         # Rendered hook must exist in render/
         rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
         self.assertTrue(rendered_hook.is_file())
-        self.assertIn(f"ADD_HOOK_RAN_{pkg}", rendered_hook.read_text())
+        self.assertIn(f"ADD_HOOK_RAN_{pkg}", rendered_hook.read_text(encoding="utf-8"))
 
     def test_add_pre_source_hook_failure_aborts_add(self):
         """Verifies that an error in pre_source hook is not suppressed and aborts add."""
@@ -329,14 +331,14 @@ class TestAddResource(unittest.TestCase):
 
         target_file = self.system_target_dir / ".config" / "sub_app.conf"
         target_file.parent.mkdir(parents=True, exist_ok=True)
-        target_file.write_text("sub_app_setting=1\n")
+        target_file.write_text("sub_app_setting=1\n", encoding="utf-8")
 
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # File must be imported inside src/pkg_add_subfolder/dotfiles/dot-config/sub_app.conf
         imported_file = subfolder_dir / "dot-config" / "sub_app.conf"
         self.assertTrue(imported_file.is_file())
-        self.assertEqual(imported_file.read_text(), "sub_app_setting=1\n")
+        self.assertEqual(imported_file.read_text(encoding="utf-8"), "sub_app_setting=1\n")
         # Ensure it was not imported at root of package
         self.assertFalse((pkg_src_dir / "dot-config" / "sub_app.conf").exists())
 
@@ -358,13 +360,13 @@ enable_render = true
 input_file = "custom.json"
 suffix = "custom"
 render_command = "bash -c 'cat %i %s'"
-""")
+""", encoding="utf-8")
         # Existing template in src matching package-level engine
-        (pkg_src_dir / "dot-bashrc.custom").write_text("templated custom bashrc")
+        (pkg_src_dir / "dot-bashrc.custom").write_text("templated custom bashrc", encoding="utf-8")
 
         # Create target file on system
         target_file = self.system_target_dir / ".bashrc"
-        target_file.write_text("system bashrc content")
+        target_file.write_text("system bashrc content", encoding="utf-8")
 
         # Add must detect conflict with dot-bashrc.custom
         with self.assertRaises(RuntimeError) as ctx:
@@ -389,15 +391,15 @@ enable_render = true
 input_file = "custom.json"
 suffix = "custom"
 render_command = "bash -c 'cat %i %s'"
-""")
+""", encoding="utf-8")
         target_file = self.system_target_dir / ".zshrc"
-        target_file.write_text("alias z='echo zsh'")
+        target_file.write_text("alias z='echo zsh'", encoding="utf-8")
 
         res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.package, pkg)
         self.assertTrue((pkg_src_dir / "dot-zshrc").is_file())
-        self.assertEqual((pkg_src_dir / "dot-zshrc").read_text(), "alias z='echo zsh'")
+        self.assertEqual((pkg_src_dir / "dot-zshrc").read_text(encoding="utf-8"), "alias z='echo zsh'")
 
 
 if __name__ == "__main__":

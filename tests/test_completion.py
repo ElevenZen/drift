@@ -166,7 +166,7 @@ class TestCompletionGenerators(unittest.TestCase):
                     self.assertIn("Installed zsh completion script to:", output)
                     target_file = fake_home / ".local" / "share" / "zsh" / "site-functions" / "_drift"
                     self.assertTrue(target_file.is_file())
-                    content = target_file.read_text()
+                    content = target_file.read_text(encoding="utf-8")
                     self.assertIn("#compdef drift", content)
 
     def test_cli_complete_install_json(self):
@@ -234,10 +234,36 @@ class TestCompletionGenerators(unittest.TestCase):
                     self.assertIn("Installed nu completion script to:", output)
                     target_file = fake_home / ".config" / "nushell" / "completions" / "drift.nu"
                     self.assertTrue(target_file.is_file())
-                    content = target_file.read_text()
+                    content = target_file.read_text(encoding="utf-8")
                     self.assertIn('export extern "main"', content)
                     self.assertIn('export extern "drift deploy"', content)
+
+    def test_completion_and_help_with_charmap_streams(self):
+        """Verifies that tab-completion generation and help documentation execution handle non-UTF8 charmap streams safely without UnicodeEncodeError."""
+        import io
+        import sys
+        from unittest.mock import patch
+        from drift.cli.argparse_backend import run_argparse_cli
+
+        for sh in ["bash", "zsh", "fish", "nu"]:
+            raw_buf = io.BytesIO()
+            wrapper = io.TextIOWrapper(raw_buf, encoding="charmap", errors="strict")
+            with patch.object(sys, "stdout", wrapper):
+                run_argparse_cli(["complete", sh])
+                wrapper.flush()
+                output = raw_buf.getvalue().decode("utf-8")
+                self.assertTrue(len(output) > 0)
+
+        raw_buf = io.BytesIO()
+        wrapper = io.TextIOWrapper(raw_buf, encoding="charmap", errors="strict")
+        with patch.object(sys, "stdout", wrapper):
+            with patch("sys.stdout.isatty", return_value=False):
+                run_argparse_cli(["help", "overall"])
+                wrapper.flush()
+                output = raw_buf.getvalue().decode("utf-8")
+                self.assertIn("Drift", output)
 
 
 if __name__ == "__main__":
     unittest.main()
+

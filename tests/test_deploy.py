@@ -92,7 +92,7 @@ target_directory = "{self.system_target_dir}"
         # 1. Target host should contain the file
         target_file = self.system_target_dir / "file.txt"
         self.assertTrue(target_file.exists())
-        self.assertEqual(target_file.read_text(), "Hello source config!")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello source config!")
 
         # 2. State registry in install/ should be set to "installed"
         registry = load_state_registry(self.state_file)
@@ -132,7 +132,7 @@ target_directory = "{self.system_target_dir}"
         # 3. Running deploy with force=True should succeed and overwrite active drift
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
 
-        self.assertEqual(target_file.read_text(), "Hello source config!")
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello source config!")
 
     @patch("drift.deploy_repo.run_primitive_5_install_deployment")
     def test_deploy_pipeline_midway_crash_prints_recovery_card(self, mock_install) -> None:
@@ -349,7 +349,7 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(res2.status, "SUCCESS")
         deployed_names = [p.package for p in res2.deployed_packages]
         self.assertEqual(deployed_names, ["pkg_a"])
-        self.assertEqual((self.system_target_dir / "file.txt").read_text(), "Hello updated source config!")
+        self.assertEqual((self.system_target_dir / "file.txt").read_text(encoding="utf-8"), "Hello updated source config!")
 
     def test_deploy_pipeline_skips_all_when_no_changes(self) -> None:
         """Verifies that when zero packages have stage changes, physical install and commit steps are skipped."""
@@ -400,7 +400,7 @@ target_directory = "{self.system_target_dir}"
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertEqual(res1.status, "SUCCESS")
         self.assertEqual(len(res1.deployed_packages), 1)
-        self.assertEqual(marker_file.read_text().strip(), "v1")
+        self.assertEqual(marker_file.read_text(encoding="utf-8").strip(), "v1")
 
         # Second deploy with no modifications: skipped
         res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -415,7 +415,7 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(res3.status, "SUCCESS")
         self.assertEqual(len(res3.deployed_packages), 1)
         self.assertEqual(res3.deployed_packages[0].package, "pkg_a")
-        self.assertEqual(marker_file.read_text().strip(), "v2 updated")
+        self.assertEqual(marker_file.read_text(encoding="utf-8").strip(), "v2 updated")
 
     def test_deploy_pipeline_redeploys_on_config_modification(self) -> None:
         """Verifies that modifying drift_package.toml (e.g. adding a hook or changing settings) triggers redeployment."""

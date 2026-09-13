@@ -162,3 +162,4 @@ def print_help_document(topic: Optional[str] = None) -> None:
         pydoc.pager(content)
     else:
         print(content)
+

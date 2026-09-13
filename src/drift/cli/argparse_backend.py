@@ -2,6 +2,7 @@ import argparse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
+from ..constants import configure_utf8_streams
 from .schema import (
     CompletionSchema,
     OptionSpec,
@@ -120,6 +121,7 @@ def make_parser() -> argparse.ArgumentParser:
 
 def run_argparse_cli(argv=None) -> None:
     """Executes the CLI command using the argparse parser and unified CLI handlers."""
+    configure_utf8_streams()
     schema = build_completion_schema()
     parser = make_parser()
     args = parser.parse_args(argv)
