@@ -226,7 +226,7 @@ Imports an existing, active host system configuration file directly into the dec
 
 ### Primitive 12: Package Runtime Health Checks [High-level: `drift health`]
 Executes live runtime health check probe scripts declared in `drift_package.toml` (`[hooks] health = ...`):
-1.  Executes the declared health probe script with the working directory (`cwd`) set to the package's deployed host `target_directory`.
+1.  Executes the declared health probe script with the working directory (`cwd`) set to the probe script's directory (`hook_path.parent`), allowing sibling helpers to be sourced naturally. The package's host target directory is accessible via `$drift_package_target_dir`.
 2.  Captures execution exit codes, standard output, standard error, and timing metrics under strict timeout constraints.
 3.  Aggregates health diagnostics across all installed packages with rich status displays and machine-readable `--json` summaries.
 
@@ -562,72 +562,84 @@ fully_controlled_dirs = [
 # ---------------------------------------------------------------------
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
-# Executable scripts located inside the package directory.
+# Dedicated Lifecycle Directory (`drift_hooks/`):
+# Hook scripts placed in `src/<pkg>/drift_hooks/` (e.g. `drift_hooks/pre-install.bash`)
+# compile into `render/<pkg>/.drift/hooks/` and stage into `install/<pkg>/.drift/hooks/`.
+# Because `.drift/` is an internal sandbox directory, these scripts are strictly isolated
+# from target host deployment and never deployed or symlinked.
+#
+# Working Directory (`cwd`) Semantics:
+# All lifecycle hooks always execute with `cwd = hook_path.parent` (the directory containing
+# the executed script), allowing sibling helpers (e.g. `source ./lib/helper.sh`) to be sourced
+# naturally relative to the script. The target directory is accessible via `$drift_package_target_dir`.
+#
 # All lifecycle hooks always run in user space without sudo, preserving all 7 tiers of environment variables.
 # If a hook requires elevated privileges for a specific operation, use 'sudo' explicitly inside the hook script.
 
-# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: src/pkg).
-pre_source = "pre-source.bash"
+# Run before reading/writing source package files (e.g. generating dynamic templates before render, adopt, or add, CWD: hook_path.parent).
+pre_source = "drift_hooks/pre-source.bash"
 
-# Run after templates are rendered into sandbox (CWD: render/pkg).
-post_render = "post-render.bash"
+# Run after templates are rendered into sandbox (CWD: hook_path.parent).
+post_render = "drift_hooks/post-render.bash"
 
-# Run before first-time installation (CWD: install/pkg).
-pre_install = "pre-install.bash"
+# Run before first-time installation (CWD: hook_path.parent).
+pre_install = "drift_hooks/pre-install.bash"
 
-# Run after successful first-time installation (CWD: target_directory).
-post_install = "post-install.bash"
+# Run after successful first-time installation (CWD: hook_path.parent).
+post_install = "drift_hooks/post-install.bash"
 
-# Run before any update/deployment (CWD: install/pkg).
-pre_update = "pre-update.bash"
+# Run before any update/deployment (CWD: hook_path.parent).
+pre_update = "drift_hooks/pre-update.bash"
 
-# Run after any successful update/deployment (CWD: target_directory).
-post_update = "post-update.bash"
+# Run after any successful update/deployment (CWD: hook_path.parent).
+post_update = "drift_hooks/post-update.bash"
 
-# Run before package uninstallation (CWD: install/pkg).
-pre_uninstall = "pre-uninstall.bash"
+# Run before package uninstallation (CWD: hook_path.parent).
+pre_uninstall = "drift_hooks/pre-uninstall.bash"
 
-# Run after package uninstallation (CWD: target_directory).
-post_uninstall = "post-uninstall.bash"
+# Run after package uninstallation (CWD: hook_path.parent).
+post_uninstall = "drift_hooks/post-uninstall.bash"
 
-# Run runtime health check probe on installed package (CWD: target_directory).
-health = "health.bash"
+# Run runtime health check probe on installed package (CWD: hook_path.parent).
+health = "drift_hooks/health.bash"
 
 # Timeout in seconds for lifecycle hook script executions (Default: 120)
 timeout = 120
 
 # Optional Windows-specific hook overrides (aliases: [hooks.windows], [hooks.win32], [hooks.winos], [hooks.win]).
 # [hooks.windows]
-# pre_install = "scripts/bootstrap.exe"
-# post_install = "scripts/setup.ps1"
-# post_update = "scripts/reload_service.bat"
-# health = "scripts/health_check.ps1"
+# pre_install = "drift_hooks/bootstrap.exe"
+# post_install = "drift_hooks/setup.ps1"
+# post_update = "drift_hooks/reload_service.bat"
+# health = "drift_hooks/health_check.ps1"
 ```
 
 #### Lifecycle Hooks Execution Matrix
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
-| :--- | :--- | :--- |
-| `probe` | Requirement validation (deploy, render, status) | `src/<pkg>` |
-| `pre_source` | Before reading templates (render, adopt, add) | `src/<pkg>` |
-| `post_render` | After sandbox compilation | `render/<pkg>` |
-| `pre_install` | Before first-time deployment | `install/<pkg>` |
-| `post_install` | After first-time deployment | `target_directory` |
-| `pre_update` | Before incremental/full update deploy | `install/<pkg>` |
-| `post_update` | After incremental/full update deploy | `target_directory` |
-| `pre_uninstall` | Before unlinking/deleting files | `target_directory` |
-| `post_uninstall`| After unlinking/deleting files | `install/<pkg>` |
-| `health` | During `drift health` probe execution | `target_directory` |
+All lifecycle hooks execute in user space without `sudo`, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The host target directory is accessible via `$drift_package_target_dir`.
+
+| Hook Name | Lifecycle Trigger Stage |
+| :--- | :--- |
+| `probe` | Requirement validation (deploy, render, status) |
+| `pre_source` | Before reading/writing templates (render, adopt, add) |
+| `post_render` | After sandbox compilation |
+| `pre_install` | Before first-time deployment |
+| `post_install` | After first-time deployment |
+| `pre_update` | Before incremental/full update deploy |
+| `post_update` | After incremental/full update deploy |
+| `pre_uninstall` | Before unlinking/deleting files |
+| `post_uninstall`| After unlinking/deleting files |
+| `health` | During `drift health` probe execution |
 
 > [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
+> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
 Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:
 
-*   **`install_method = "copy"` (Strict Event Ordering)**:
+*   **`install_method = "copy"` (Strict Event Ordering & Dot-Prefix Translation)**:
     *   Host target files remain strictly in their previous state during the Staging phase (Primitive 4).
     *   `pre_update` executes while host files are strictly at their prior version.
-    *   Physical files are then copied, updated, or removed on the host during Primitive 5.
+    *   Physical files are then copied, updated, or removed on the host during Primitive 5 using an atomic single-file copy pipeline applying dot-prefix translation (`translate_dot_prefixes`).
     *   `post_update` executes after host files have received the new state.
     *   👉 **Recommendation**: If your package configuration is watched by active system services or daemons (e.g. `systemd` user units with inotify watchers) that must be cleanly stopped in `pre_update` before configuration files change, use **`install_method = "copy"`**.
 
@@ -640,7 +652,7 @@ Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `
 After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
 *   **`drift_package_name`**: Name / directory name of the package.
 *   **`drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
-*   **`drift_package_source_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
+*   **`drift_package_source_dir`** / **`drift_package_src_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
 *   **`drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
 *   **`drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
@@ -747,7 +759,7 @@ To minimize system disruption and application reloads, deployment is executed un
     *   It utilizes high-level automated commands:
         *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`, prefixed with `sudo` if configured.  
             If stow >= 2.4.1 (which fixes `--dotfiles` problems with stow ignore) is not found, the external `stow` command will be replaced by incremental deployment for all files in the install folder.
-        *   *Copy Packages*: Invokes copying commands (like `rsync -av` or `cp -r` prefixed with `sudo` if configured. Use `rsync` first, if not available, fallback to `cp`) **without using `--delete`** (avoiding deleting unrelated files inside target directories). Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+        *   *Copy Packages*: Executes an atomic file copy delivery loop across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
 
 The program ensures compatibility between these two modes. In either mode, the program verifies the package config has `enable_install=true` and loads the install method, install location, and sudo flag from it.
 
@@ -933,10 +945,10 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Rendering Execution Flow (`render_package.py`)**:
         1. *Sandbox Cleansing*: Clears any pre-existing package folder in `render/` using `shutil.rmtree` to maintain clean state while preserving the underlying `render/.git` repo.
         2. *Metadata Compiling*: Loads and compiles package config from the source folder (supporting on-the-fly parsing of `package.envst.toml` templates). If `enable_render` is false, rendering is skipped.
-        3. *Pre-Source Lifecycle Hook*: Triggers the `pre_source` hook script (if defined) running with working directory set to `src/<package>` to dynamically generate/update source templates or dynamic system files prior to compilation.
+        3. *Pre-Source Lifecycle Hook*: Triggers the `pre_source` hook script (if defined) running with working directory set to the script's parent directory (`cwd = hook_path.parent`) to dynamically generate/update source templates or dynamic system files prior to compilation.
         4. *Misspelled Ignore Warning*: Checks for a misspelled `.driftignore` and if found (without `.drift_ignore`), logs a warning and automatically copies it under correct name `.drift_ignore`.
-        5. *Surgical File Walk*: Traverses the source package directory. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
-        6. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to `render/<package>`.
+        5. *Surgical File Walk & Hook Sandbox Compilation*: Traverses the source package directory. Dedicated lifecycle hook scripts in `src/<package>/drift_hooks/` are compiled into `render/<package>/.drift/hooks/` (with template expansion), isolating scripts from deployable dotfiles. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
+        6. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
@@ -945,8 +957,8 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
         1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
-        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>` where they can be executed by Drift during installation.
-        3. *Stow Ignore Generation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore` and package config file so GNU Stow never symlinks ignored files, hooks, or configurations to the active host.
+        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/hooks/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>/.drift/hooks/` where they can be executed by Drift during installation.
+        3. *Stow Ignore Generation & Internal Isolation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore`, package config file, and the `.drift` internal directory so GNU Stow and copy deployments never deploy internal hooks or metadata to the active host.
     - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
@@ -956,15 +968,15 @@ For each redeployable package:
 *   **Collision Guard (Incremental/Full)**:
     - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
     - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` and removed from the active system to clear the path.
-*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to `install/<package>`.
+*   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **File Delivery Phase**:
     - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
         1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
-        2.  *High-Level Delivery*: Invokes copying commands (using `rsync` if available, otherwise `cp -R`) or links packages via GNU Stow (stow version must be >= 2.4.1; falls back to manual file-by-file linking on older versions).
+        2.  *High-Level Delivery*: Delivers physical files via an atomic single-file copy pipeline applying dot-prefix translation (`translate_dot_prefixes`), or links packages via GNU Stow (stow version must be >= 2.4.1; falls back to manual file-by-file linking on older versions). Internal `.drift` directories and hook scripts are strictly filtered from deployment.
     - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
         1.  Deletes files listed in `package_changes.deployable_changes.deleted`.
-        2.  Deploys individual files manually using precise symlink creation or copy operations.
-*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the package's target directory.
+        2.  Deploys individual files manually using precise symlink creation or copy operations with dot-prefix translation.
+*   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
 
 #### 5. Stage 2: Final State Commit (Primitive 6)

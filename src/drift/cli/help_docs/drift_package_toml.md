@@ -90,44 +90,55 @@ fully_controlled_dirs = [
 [hooks]
 # Lifecycle Hooks (Optional shell command execution)
 # Note: All hook fields specify the path/filename AFTER rendering (without template engine suffixes like .envst).
-# If a hook is authored as a template (e.g. scripts/health.sh.envst), configure its rendered name (scripts/health.sh).
+# If a hook is authored as a template (e.g. drift_hooks/health.sh.envst), configure its rendered name (drift_hooks/health.sh).
 # Drift automatically resolves and renders matching template files into the sandbox before executing hooks.
-# Timeout in seconds before hook processes are aborted (defaults to 120)
-# Note: All hooks run in user space with full environment variable inheritance (all 7 tiers).
+#
+# Dedicated Lifecycle Directory (`drift_hooks/`):
+# Hook scripts placed in `drift_hooks/` (e.g. `drift_hooks/bootstrap.sh`) compile to `render/<pkg>/.drift/hooks/`
+# and stage to `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal sandbox directory, these scripts
+# are strictly isolated and never deployed/symlinked to the target directory.
+#
+# Working Directory (`cwd`) Semantics:
+# All lifecycle hooks always execute with `cwd = hook_path.parent` (the directory containing the executed script),
+# allowing sibling helpers (e.g. `source ./lib/helper.sh`) to be sourced naturally relative to the script.
+# The host target directory is always accessible via `$drift_package_target_dir`.
+#
+# Privilege Model:
+# All hooks run in user space with full environment variable inheritance (all 7 tiers).
 # If a hook command requires root privileges, use 'sudo' explicitly inside the hook script.
 timeout = 120
 
 # Run pre-flight dynamic requirement probe (Exit 0 = Met, Exit != 0 = Unmet -> package gracefully skipped)
-# Executed from src/ package root in user space
-# probe = "scripts/check_wayland.sh"
+# Executed during pre-flight requirement validation with cwd = hook_path.parent
+# probe = "drift_hooks/check_wayland.sh"
 
 # Run before reading/writing source package files (e.g. generating dynamic files based on system status before render, adopt, or add)
-# Executed from src/ package root
-pre_source = "scripts/generate_dynamic_templates.sh"
+# Executed before reading source templates with cwd = hook_path.parent
+pre_source = "drift_hooks/generate_dynamic_templates.sh"
 
-# Run before a first-time installation (executed from install/ package root)
-pre_install = "scripts/bootstrap.sh"
+# Run before a first-time installation (cwd = hook_path.parent)
+pre_install = "drift_hooks/bootstrap.sh"
 
-# Run after a first-time installation (executed from host target directory)
+# Run after a first-time installation (cwd = hook_path.parent, target accessible via $drift_package_target_dir)
 post_install = "echo 'Completed installation!'"
 
-# Run before updating an already installed package (executed from install/ package root)
-pre_update = "scripts/backup_settings.sh"
+# Run before updating an already installed package (cwd = hook_path.parent)
+pre_update = "drift_hooks/backup_settings.sh"
 
-# Run after updating an already installed package (executed from host target directory)
-post_update = "scripts/reload_service.sh"
+# Run after updating an already installed package (cwd = hook_path.parent, target accessible via $drift_package_target_dir)
+post_update = "drift_hooks/reload_service.sh"
 
-# Run before uninstalling a package (executed from install/ package root)
-pre_uninstall = "scripts/cleanup_pre.sh"
+# Run before uninstalling a package (cwd = hook_path.parent)
+pre_uninstall = "drift_hooks/cleanup_pre.sh"
 
-# Run after uninstalling a package (executed from host target directory)
-post_uninstall = "scripts/cleanup_post.sh"
+# Run after uninstalling a package (cwd = hook_path.parent)
+post_uninstall = "drift_hooks/cleanup_post.sh"
 
-# Run immediately after sandbox rendering is complete (executed from render/ package root)
-post_render = "scripts/generate_checksums.sh"
+# Run immediately after sandbox rendering is complete (cwd = hook_path.parent)
+post_render = "drift_hooks/generate_checksums.sh"
 
-# Run runtime health check probes on installed package (executed from host target directory)
-health = "scripts/health_check.sh"
+# Run runtime health check probes on installed package (cwd = hook_path.parent)
+health = "drift_hooks/health_check.sh"
 
 # Control whether installation hook failure triggers an emergency rollback state (default: true).
 # Set to false if hook failure does not corrupt system files and only requires stopping with a report.
@@ -147,10 +158,10 @@ rollback_on_failure = true
 #   • .py   -> python <script>
 #   • .sh / .bash -> bash.exe <script> (if available in PATH)
 [hooks.windows]
-pre_install = "scripts/bootstrap.exe"
-post_install = "scripts/setup.ps1"
-post_update = "scripts/reload_service.bat"
-health = "scripts/health_check.ps1"
+pre_install = "drift_hooks/bootstrap.exe"
+post_install = "drift_hooks/setup.ps1"
+post_update = "drift_hooks/reload_service.bat"
+health = "drift_hooks/health_check.ps1"
 
 
 # ---------------------------------------------------------------------
@@ -180,23 +191,30 @@ render_command = "bash -c 'cat %i %s'"
 
 ## 🪝 Lifecycle Hooks Execution Matrix
 
-All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
+All lifecycle hooks execute **in user space without `sudo`**, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The target directory is accessible via `$drift_package_target_dir`. If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
 
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
-| :--- | :--- | :--- |
-| `probe` | Requirement validation (`deploy`, `render`, `status`) | `src/<pkg>` |
-| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` |
-| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` |
-| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
-| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` |
-| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
-| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` |
-| `health` | During `drift health` probe execution | `target_directory` |
+| Hook Name | Lifecycle Trigger Stage |
+| :--- | :--- |
+| `probe` | Pre-flight requirement validation (`deploy`, `render`, `status`) |
+| `pre_source` | Before reading/writing templates (`render`, `adopt`, `add`, `deploy`) |
+| `post_render` | After sandbox compilation (`render`, `deploy`) |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
+| `health` | During `drift health` probe execution |
 
 > [!IMPORTANT]
-> **Hook File Paths & Template Compilation**: All hook fields in `drift_package.toml` are defined using their **post-rendering paths** (without template engine suffixes like `.envst`). If your source repository contains a template script like `scripts/health.sh.envst` or `scripts/pre_source.sh.envst`, configure `health = "scripts/health.sh"` or `pre_source = "scripts/pre_source.sh"`. Drift automatically detects, compiles, and stages matching templates into the render sandbox before executing the hook.
+> **Unified Hook Working Directory (`cwd`)**: Across all lifecycle hooks, the execution working directory defaults to `hook_path.parent` (the directory containing the executed script). This allows sibling helper scripts (e.g., `. ./helper.sh` or `. ./lib/utils.sh`) to be sourced naturally relative to the script regardless of execution stage. The destination target directory is accessible via `$drift_package_target_dir`.
+
+> [!TIP]
+> **Dedicated `drift_hooks/` Directory & `.drift/hooks/` Isolation**:
+> Place lifecycle scripts inside `src/<pkg>/drift_hooks/` (e.g., `drift_hooks/bootstrap.sh`). Drift automatically compiles them to `render/<pkg>/.drift/hooks/` and stages them into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal Drift metadata directory, hook scripts and helper libraries are completely isolated from deployment and never deployed or symlinked to the host target directory.
+
+> [!IMPORTANT]
+> **Hook File Paths & Template Compilation**: All hook fields in `drift_package.toml` are defined using their **post-rendering paths** (without template engine suffixes like `.envst`). If your source repository contains a template script like `drift_hooks/health.sh.envst` or `drift_hooks/pre_source.sh.envst`, configure `health = "drift_hooks/health.sh"` or `pre_source = "drift_hooks/pre_source.sh"`. Drift automatically detects, compiles, and stages matching templates into the render sandbox before executing the hook.
 
 > [!NOTE]
 > Pass `--no-hooks` (or `--no-hook`) on relevant CLI commands (`render`, `apply`, `deploy`, `adopt`, `add`, `uninstall`, `rollback`, `gc`) to bypass hook execution entirely.
@@ -204,9 +222,9 @@ All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 t
 > [!TIP]
 > **Triggering Hooks Directly**: You can trigger any individual lifecycle hook script in isolation using the low-level command:
 > ```bash
-> drift hook <package> <hook-name> [--json]
+> drift hook <package> <hook-name> [--from source|install] [--json]
 > ```
-> This executes the hook with its standard working directory, stage directory context, and complete environment variable injections.
+> This executes the hook with its standard working directory (`hook_path.parent`), stage directory context, and complete environment variable injections.
 
 ## 🌐 Package Environment Variables & Preemption Order
  
@@ -222,7 +240,7 @@ When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_instal
 ### 📦 Package-Specific Facts:
 *   **`$drift_package_name`**: Name / directory name of the package.
 *   **`$drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
-*   **`$drift_package_source_dir`**: Absolute path to the package's source directory (`<drift_root>/src/<pkg>`).
+*   **`$drift_package_source_dir`** / **`$drift_package_src_dir`**: Absolute path to the package's source directory (`<drift_root>/src/<pkg>`).
 *   **`$drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`$drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
 *   **`$drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).

@@ -11,6 +11,9 @@ src/nvim/
 ├── drift_package.toml       <-- Package configuration metadata
 ├── drift_package.py         <-- Optional dynamic Python configuration hook
 ├── .drift_ignore            <-- PCRE patterns for files to exclude from deployment
+├── drift_hooks/             <-- Optional dedicated lifecycle scripts directory
+│   ├── pre_install.sh       <-- Compiles to .drift/hooks/; isolated from target deploy
+│   └── helper.sh            <-- Sibling helper library
 ├── init.lua                 <-- Static dotfile
 └── lua/
     └── config/
@@ -22,7 +25,7 @@ Each package is controlled by a dedicated configuration file named either `drift
 or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_package.py` or configured via `[package] hook_file`). This dictates:
 1.  **`install_method`**: How configurations are written to the host system:
     *   `stow`: Symmetric symlinking from `install/` state DB (uses GNU Stow logic).
-    *   `copy`: Secure, physical file copying.
+    *   `copy`: Secure, physical file copying with dotfile prefix translation.
 2.  **`target_directory`**: The physical destination where this package belongs on the host system 
     (e.g., `~/.config/nvim`).
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
@@ -31,7 +34,9 @@ or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_packag
 5.  **`Render Engines`**: Package-scoped template engine overrides and custom engines defined under `[render.<name>]` with field-level inheritance and `.drift/` internal sandboxing.
 6.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
     (`probe`, `pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
-    All lifecycle hooks always execute in user space without `sudo`, preserving all injected environment variables.
+    *   **Dedicated `drift_hooks/` Directory**: Hook scripts placed in `src/<pkg>/drift_hooks/` compile into `render/<pkg>/.drift/hooks/` and stage into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal sandbox directory, hooks are completely isolated and never deployed or symlinked to the target host.
+    *   **Unified Working Directory (`cwd`)**: All lifecycle hooks always execute with `cwd = hook_path.parent` (the directory of the script), allowing sibling helper scripts to be sourced naturally relative to the script. The target host directory is accessible via `$drift_package_target_dir`.
+    *   **User Space Privileges**: All hooks always execute in user space without `sudo`, preserving all injected environment variables.
 
 ---
 
@@ -41,7 +46,7 @@ Package configurations natively participate in Drift's 7-tier variable stitching
 *   **Package Fact Injections**: Automatically interpolate dynamic facts:
     *   `${drift_package_name}`: Active package name (e.g. `nvim`).
     *   `${drift_package_target_dir}`: Resolved destination target directory path.
-    *   `${drift_package_source_dir}`: Path to source templates in `src/`.
+    *   `${drift_package_source_dir}` / `${drift_package_src_dir}`: Path to source templates in `src/`.
     *   `${drift_package_render_dir}`: Path to rendered files in `render/`.
     *   `${drift_package_install_dir}`: Path to local state in `install/`.
 *   **Dual-Tier Package Scopes**:

@@ -466,7 +466,8 @@ Drift supports two deployment mechanisms declared in `drift_package.toml` (or de
 
 | Feature | `install_method = "stow"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
 | :--- | :--- | :--- |
-| **Mechanism** | Symlinks host files to `install/<pkg>/` | Copies physical file contents to host |
+| **Mechanism** | Symlinks host files to `install/<pkg>/` | Pure atomic physical file copy |
+| **Dot-Prefix Translation** | Automated `dot-` $\rightarrow$ `.` translation | Automated `dot-` $\rightarrow$ `.` translation |
 | **Storage Overhead** | Zero extra disk usage (symlink pointers) | Duplicate physical file on disk |
 | **Hot-Edits & Inotify** | Edits reflected instantly through symlink | Managed strictly via deploy passes |
 | **Windows Behavior** | Automatically falls back to safe copies | Native file copy |
@@ -479,7 +480,7 @@ Because Drift decouples template staging (Primitive 4: `render/` $\rightarrow$ `
 *   **`stow` (Symlink Pointers)**:
     Since the host file is a symlink directly targeting `install/<pkg>/`, updating file contents in `install/` during Staging (Primitive 4) makes those modifications immediately visible to the host **before** `pre_update` executes in Primitive 5. New file symlinks and deleted symlinks are still processed after `pre_update`.
 *   **`copy` (Discrete Physical Files — Recommended for Daemons)**:
-    Host files remain completely untouched at their previous version until Primitive 5 copies them over. This guarantees that `pre_update` runs while host files are **strictly in their old state**, followed by physical file delivery, and finally `post_update`.
+    Host files remain completely untouched at their previous version until Primitive 5 copies them over. This guarantees that `pre_update` runs while host files are **strictly in their old state**, followed by atomic physical file delivery, and finally `post_update`.
 
 > [!TIP]
 > **When to use `copy`**: If you are managing background services or daemons (e.g. `systemd` services with `inotify` watchers) that must be cleanly stopped in `pre_update` *before* configuration contents change on disk, configure the package with **`install_method = "copy"`**.
@@ -493,36 +494,43 @@ Packages can declare automated hook scripts inside `drift_package.toml` to integ
 install_method = "stow"
 
 [hooks]
-probe = "scripts/check_deps.sh"
-pre_source = "scripts/generate_dynamic_templates.sh"
-pre_install = "scripts/bootstrap.sh"
-post_update = "scripts/reload_plugins.sh"
-pre_uninstall = "scripts/stop_daemon.sh"
-health = "scripts/health_check.sh"
+probe = "drift_hooks/check_deps.sh"
+pre_source = "drift_hooks/generate_dynamic_templates.sh"
+pre_install = "drift_hooks/bootstrap.sh"
+post_update = "drift_hooks/reload_plugins.sh"
+pre_uninstall = "drift_hooks/stop_daemon.sh"
+health = "drift_hooks/health_check.sh"
 timeout = 60
 ```
 
-### Hook Reference & Working Directories (`cwd`)
-Drift executes all lifecycle hooks with predictable working directories and automatic environment variable injection (including host facts and package configs):
+### Hook Reference & Unified Working Directory (`cwd`)
+Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 7-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.
 
-| Hook Name | Lifecycle Trigger Stage | Working Directory (`cwd`) |
-| :--- | :--- | :--- |
-| `probe` | Pre-flight requirement checks (`deploy`, `render`, `status`) | `src/<pkg>` |
-| `pre_source` | Before reading templates (`render`, `adopt`, `add`, `deploy`) | `src/<pkg>` |
-| `post_render` | After sandbox compilation (`render`, `deploy`) | `render/<pkg>` |
-| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
-| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) | `target_directory` |
-| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) | `install/<pkg>` |
-| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) | `target_directory` |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `target_directory` |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) | `install/<pkg>` |
-| `health` | During `drift health` probe execution | `target_directory` |
+| Hook Name | Lifecycle Trigger Stage |
+| :--- | :--- |
+| `probe` | Pre-flight requirement checks (`deploy`, `render`, `status`) |
+| `pre_source` | Before reading/writing templates (`render`, `adopt`, `add`, `deploy`) |
+| `post_render` | After sandbox compilation (`render`, `deploy`) |
+| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) |
+| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) |
+| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) |
+| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) |
+| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
+| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
+| `health` | During `drift health` probe execution |
+
+> [!IMPORTANT]
+> **Unified Hook Working Directory (`cwd`)**: Across all lifecycle hooks, the execution working directory defaults to `hook_path.parent` (the directory containing the executed script). This allows sibling helper scripts (e.g., `. ./helper.sh` or `. ./lib/utils.sh`) to be sourced naturally relative to the script regardless of execution stage. The destination target directory is accessible via `$drift_package_target_dir`.
+
+> [!TIP]
+> **Dedicated `drift_hooks/` Directory & `.drift/hooks/` Isolation**:
+> Place lifecycle scripts inside `src/<pkg>/drift_hooks/` (e.g., `drift_hooks/bootstrap.sh`). Drift automatically compiles them into `render/<pkg>/.drift/hooks/` and stages them into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal Drift metadata directory, hook scripts and helper libraries are completely isolated from deployment and never deployed or symlinked to the host target directory.
 
 > [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script.
+> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.
 
 *   **Bypassing Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks on any deployment command (`deploy`, `apply`, `render`, `adopt`, `add`, `uninstall`, `rollback`, `gc`).
-*   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from <stage>]` (where stage is `source` or `install`).
+*   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from source|install]` (where stage is `source` or `install`).
 
 ---
 

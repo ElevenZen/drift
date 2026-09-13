@@ -107,13 +107,14 @@ _darcs
 ^/COPYING.*
 ```
 
-### 🔒 Single Source of Truth
+### 🔒 Single Source of Truth & Internal Metadata Isolation
 Drift strictly enforces that **only one `.drift_ignore` file** exists per package root:
 *   Nested ignore files in subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore`) are prohibited to maintain a clear, single source of ignore truth.
+*   **Internal `.drift/` Directory**: The internal Drift directory (`.drift/`, containing staged render engine inputs and compiled lifecycle hooks in `.drift/hooks/`) is hardcoded as permanently ignored and never deployed to the active host target.
 *   Managed metadata files (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`, `drift_package.local.toml`) are automatically protected and ignored from host linking.
 
 ### 📝 Automated `.stow-local-ignore` & Sub-Repo `.gitignore` Generation
-*   **`.stow-local-ignore`**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns together with `MANAGED_CONFIG_FILES` into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
+*   **`.stow-local-ignore`**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns together with `MANAGED_CONFIG_FILES` and internal directories into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
 *   **Sub-Repo `.gitignore`**: Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` databases to exclude synthetic files (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`: `*~`, `*#*#`, `*.swp`, `*.DS_Store`, etc.), keeping database Git repositories clean.
 
 ---
@@ -123,6 +124,7 @@ Drift strictly enforces that **only one `.drift_ignore` file** exists per packag
 ### 📦 Compilation & Deployment Pipelines (`drift deploy` / `drift stage` / `drift apply`)
 *   Files matching `.drift_ignore` are **skipped during sandbox compilation** (`render/`).
 *   They are never copied or symlinked onto your active host system.
+*   Internal `.drift/` directories and staged hooks (`.drift/hooks/`) are compiled/staged for engine execution but filtered completely from physical target deployment across both `stow` and `copy` deployment methods.
 *   They are excluded from staging diffs and state database tracking.
 
 ### 🔄 Fully-Controlled Directory (FCD) Reverse-Sync

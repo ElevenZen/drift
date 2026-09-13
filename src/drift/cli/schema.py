@@ -73,15 +73,16 @@ class CompletionSchema:
 # =============================================================================
 
 LIFECYCLE_HOOKS: List[Choice] = [
-    Choice("pre_source", "Run before reading source templates (CWD: src/<pkg>)"),
-    Choice("post_render", "Run after sandbox compilation (CWD: render/<pkg>)"),
-    Choice("pre_install", "Run before first-time installation (CWD: install/<pkg>)"),
-    Choice("post_install", "Run after successful first-time installation (CWD: target_dir)"),
-    Choice("pre_update", "Run before update deployment (CWD: install/<pkg>)"),
-    Choice("post_update", "Run after successful update deployment (CWD: target_dir)"),
-    Choice("pre_uninstall", "Run before uninstallation (CWD: target_dir)"),
-    Choice("post_uninstall", "Run after uninstallation (CWD: install/<pkg>)"),
-    Choice("health", "Run runtime health check probe (CWD: target_dir)"),
+    Choice("probe", "Run pre-flight dynamic requirement probe"),
+    Choice("pre_source", "Run before reading source templates"),
+    Choice("post_render", "Run after sandbox compilation"),
+    Choice("pre_install", "Run before first-time installation"),
+    Choice("post_install", "Run after successful first-time installation"),
+    Choice("pre_update", "Run before update deployment"),
+    Choice("post_update", "Run after successful update deployment"),
+    Choice("pre_uninstall", "Run before uninstallation"),
+    Choice("post_uninstall", "Run after uninstallation"),
+    Choice("health", "Run runtime health check probe"),
 ]
 
 HELP_TOPICS: List[Choice] = [

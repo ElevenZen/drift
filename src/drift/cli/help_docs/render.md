@@ -33,6 +33,7 @@ Drift executes rendering across two modular stages with dedicated `.drift/` inte
     *   Loads package configuration from `render/<pkg>/drift_package.toml`.
     *   Overlays package `[render.*]` engines onto workspace engines with **field-level inheritance** (overriding `input_file` relative to `src/<pkg>/` while inheriting unspecified `suffix` and `render_command`).
     *   Renders package-level input dependencies into `render/<pkg>/.drift/`.
+    *   Compiles dedicated lifecycle hook scripts from `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` (with template compilation support), keeping hooks sandboxed away from deployable dotfiles.
     *   Compiles package template files with the combined, effective render engines.
 
 
