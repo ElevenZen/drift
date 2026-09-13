@@ -5,7 +5,7 @@ import unittest
 import subprocess
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.rollback_repo import run_primitive_8_rollback_recovery
@@ -60,8 +60,8 @@ class TestRollback(unittest.TestCase):
 
         # 2. Setup initial committed state in install/
         self.pkg_a_install = self.install_dir / "pkg_a"
-        self.pkg_a_install.mkdir(parents=True, exist_ok=True)
-        with open(self.pkg_a_install / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        (self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(self.pkg_a_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "pkg_a"
@@ -141,8 +141,8 @@ class TestRollback(unittest.TestCase):
 
         # 2. Setup in install/ (uncommitted, first-time stage)
         pkg_install = self.install_dir / pkg_first
-        pkg_install.mkdir(parents=True, exist_ok=True)
-        with open(pkg_install / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_first}"
@@ -217,8 +217,8 @@ class TestRollback(unittest.TestCase):
         """, encoding="utf-8")
 
         pkg_install = self.install_dir / pkg_first
-        pkg_install.mkdir(parents=True, exist_ok=True)
-        (pkg_install / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg_first}"
         install_method = "copy"

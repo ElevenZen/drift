@@ -63,7 +63,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`check_sudo_privilege() -> bool`](../src/drift/file_utils.py#L40): Verifies sudo permissions without password prompts (`sudo -n true`).
 
 ### [`ignore.py`](../src/drift/ignore.py) (Ignore Engine & GNU Stow Rules)
-*   [`DriftIgnore.load_from_dir(render_pkg_dir) -> DriftIgnore`](../src/drift/ignore.py#L71): Loads `.drift_ignore` PCRE patterns (rejects nested ignore files).
+*   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/ignore.py#L71): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
 *   [`DriftIgnore.for_install_root() -> DriftIgnore`](../src/drift/ignore.py#L102): Creates ignore rules for `install/` root (`state.toml` guard).
 *   [`ignore.match_path(rel_path) -> bool`](../src/drift/ignore.py#L155): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` and `MANAGED_CONFIG_FILES` exclusion).
 *   [`ignore.filter_deployable_files(install_pkg_dir) -> List[Path]`](../src/drift/ignore.py#L141): Returns non-ignored deployable files.
@@ -77,8 +77,9 @@ This document provides a concise, high-density architecture reference, primitive
 
 ### [`workspace_config.py`](../src/drift/workspace_config.py) & [`package_config.py`](../src/drift/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/workspace_config.py#L210): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
-*   [`load_package_config(pkg_dir, workspace_config=None) -> PackageConfig`](../src/drift/package_config.py#L220): Loads package config, layered overrides, and renders package envs.
-*   [`config.is_package_enabled(pkg) -> bool`](../src/drift/workspace_config.py#L115): Checks if package is active in workspace.
+*   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/package_config.py#L1523): Loads, transforms, merges, and validates package configuration from source directory.
+*   [`load_package_config_rendered(package_toml_path, package_name, package_dir) -> PackageConfig`](../src/drift/package_config.py#L1355): Loads and parses package configuration strictly with explicit `package_dir`.
+*   [`config.is_package_enabled(pkg) -> bool`](../src/drift/workspace_config.py#L319): Checks if package is active in workspace.
 
 ### [`git_utils.py`](../src/drift/git_utils.py) (Sub-Repository Git Management)
 *   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/git_utils.py#L85): Scoped `git add` and `git commit`.
@@ -105,11 +106,11 @@ This document provides a concise, high-density architecture reference, primitive
     *   Format: `[filename].[engine_suffix].[target_ext]` (e.g. `dot-bashrc.envst.sh`, `home.mustache.nix`).
     *   Engine suffixes **cannot contain dots** (`.`). Reserved suffixes (`drift_package`, `drift_hook`, `drift_ignore`, `drift_workspace`, `drift_hooks`, `drift`) are prohibited.
 3.  **Ignore Engine Invariants (`.drift_ignore`)**:
-    *   Single file per package root. Nested `.drift_ignore` or `.driftignore` raise `ValueError`.
+    *   Single file per package root (`src/<pkg>/.drift_ignore`), rendered/staged to `.drift/.drift_ignore`. Nested `.drift_ignore` or `.driftignore` raise `ValueError`.
     *   Uses **PCRE Regex**, NOT glob patterns.
     *   `Group 1` (with `/`): matched against `/rel_path` (`^/sample\.txt$` for root).
     *   `Group 2` (no `/`): matched against `basename` (`\.bak$`).
-    *   Hardcoded exclusions: `.drift/` internal directory and `MANAGED_CONFIG_FILES` are never deployed.
+    *   Hardcoded exclusions: `.drift/` internal directory and `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are never deployed.
 4.  **Collision Guard & Safety**:
     *   **Nominal & Canonical Target Check**: Target cannot be inside `drift_root`.
     *   **Parent Symlink Guard**: Parent cannot be a symlink into workspace root (`InstallCollisionError`).
@@ -119,6 +120,10 @@ This document provides a concise, high-density architecture reference, primitive
 6.  **CLI Privilege & Sudo Guard**:
     *   Prohibits running CLI under `sudo` on user-owned workspaces to prevent target path mismatch (`$HOME`/`~` expanding to `/root`) and root-owned file corruption in `render/.git` and `install/.git`.
     *   Permitted only if running as true root (`SUDO_USER` unset) or workspace directory is root-owned (`uid == 0`). Elevated deployment is configured per-package via `sudo = true`.
+7.  **Stage Structural Fidelity Invariant**:
+    *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with 1:1 fidelity.
+    *   The only files in `install/` not originating from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
+    *   All package metadata and internal control plane files (`.drift/drift_package.toml`, `.drift/.drift_ignore`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
 
 ---
 

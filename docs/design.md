@@ -181,6 +181,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
+*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with 1:1 fidelity. The only permitted differences are synthetic files generated dynamically during staging (`DRIFT_GENERATED_FILES`, such as `.stow-local-ignore`). All other files (payloads, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
 *   **Mechanism**: Computes exactly which files and packages require redeployment. Moves deleted files in `install/` to `backup/<package>/deleted_files/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
@@ -510,8 +511,8 @@ Render engines often require dynamic input parameters (such as `mustache` needin
 *   **The Transitive Resolution Chain**: 
     If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first. This resolution is fully transitive/recursive: a multi-level dependency chain (e.g., Engine A -> Engine B -> Engine C -> Engine D) is allowed and gets compiled in topological order from leaf to root.
     *   *Example*: The `mustache` engine registers `input_file = "mustache.envst.json"`. Since `.envst.json` matches the `envsubst` suffix (`envst`), the compiler first renders `config/mustache.envst.json` via the `envsubst` engine.
-    *   The compiled static output is saved inside the sandbox under `render/.config/mustache.json`.
-    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/.config/mustache.json`).
+    *   The compiled static output is saved inside the sandbox under `render/.drift/render/mustache.json`.
+    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/.drift/render/mustache.json`).
 
 #### 3. Single-Dependency Constraint per Engine
 While multi-level transitive chains are fully supported, each engine's input file can match at most one other engine's suffix pattern. Thus, every engine is limited to a single direct dependency (a 1-to-1 matching relationship per level), forming a dependency tree/forest (without cycles) rather than a complex multi-parent DAG. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:
@@ -543,7 +544,7 @@ The primary motivation of **Package-Level Render Engine Configuration** (`[rende
    - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing.
 
 3. **Multi-Stage Compilation & Intermediate Sandboxing (`.drift/`)**:
-   - **Stage 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`).
+   - **Stage 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
    - **Stage 2 (Engine Overlay & Package Dependency Re-evaluation)**: Effective render engines re-evaluate their input dependency tree (`render_input_templates`) and compile package-specific input templates directly into the package intermediate sandbox `render/<pkg>/.drift/render/`.
    - **Stage 3 (Package File Compilation)**: Source templates under `src/<pkg>/` are compiled into `render/<pkg>/` using the effective engines under active package environment scope (`drift_package_*`, `[env.override]`, etc.).
    - **Stage 4 (Downstream Cooperation)**: Downstream primitives (`drift reverse-sync`, `drift adopt`, `drift add`) resolve template suffixes against these effective package engines, ensuring seamless two-way synchronization.
@@ -564,10 +565,10 @@ To handle machine-specific overrides and secrets at the package level, Drift imp
    - During rendering, the engine locates and reads the base configuration, locates and reads the local override configuration (if present), and recursively merges their dictionary trees.
 2. **On-the-Fly Template Rendering**:
    - For both the base and local configurations, if they are templates (e.g. `package.envst.toml`), they are rendered on-the-fly to temporary files before being parsed to dictionary structures.
-3. **Unified Render Target Name (`drift_package.toml`)**:
-   - Regardless of whether the original source files are named `drift_package.toml`, or their template/local override counterparts, the final merged TOML dictionary is **always serialized and rendered as `drift_package.toml`** inside the sandbox directory at `render/<package_name>/drift_package.toml`.
-   - All subsequent package inspections, change visualizations, and staging processes read from this standardized `render/<package_name>/drift_package.toml` file, ensuring perfect downstream modularity and zero ambiguity.
-4. **Exclusion Guard**: The final rendered `drift_package.toml` is strictly marked as a metadata file. It is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/drift_package.toml`.
+3. **Unified Render Target Name (`.drift/drift_package.toml`)**:
+   - Regardless of whether the original source files are named `drift_package.toml`, or their template/local override counterparts, the final merged TOML dictionary is **always serialized and rendered as `.drift/drift_package.toml`** inside the sandbox directory at `render/<package_name>/.drift/drift_package.toml`.
+   - All subsequent package inspections, change visualizations, and staging processes read from this standardized `render/<package_name>/.drift/drift_package.toml` file, ensuring perfect downstream modularity and zero ambiguity.
+4. **Exclusion Guard**: The final rendered `drift_package.toml` and `.drift_ignore` are strictly stored inside `.drift/`. The entire `.drift/` directory is marked as an internal control-plane directory and is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/.drift/`.
 
 #### Dynamic Package Python Hook: `src/<package_name>/drift_package.py`
 For complex packages requiring programmatic adjustments (such as dynamically calculating target directories, overriding deployment methods per OS, generating dynamic requirements, or injecting custom environment facts), Drift provides a **Dynamic Python Package Hook**.
@@ -599,11 +600,11 @@ For complex packages requiring programmatic adjustments (such as dynamically cal
 
 3. **Evaluation & Staging Model**:
    - Evaluated during Primitive 2 (Render) when loading the package source directory.
-   - The transformed configuration is processed by native variable stitching and serialized directly into `render/<package_name>/drift_package.toml` (and staged to `install/<package_name>/drift_package.toml`).
+   - The transformed configuration is processed by native variable stitching and serialized directly into `render/<package_name>/.drift/drift_package.toml` (and staged to `install/<package_name>/.drift/drift_package.toml`).
    - Downstream primitives (`stage`, `apply`, `uninstall`, `health`) read the compiled static TOML directly via `PackageConfig.from_render_dir` / `PackageConfig.from_install_dir`, ensuring zero re-execution overhead and complete determinism.
 
 4. **Control-Plane Exclusion**:
-   - `drift_package.py` and custom `hook_file` paths are automatically registered in `MANAGED_CONFIG_FILES` and excluded from host deployments.
+   - `drift_package.py` and custom `hook_file` paths are evaluated during render and excluded from host deployments (and stored under `.drift/hooks/` if hooks).
 
 #### Default Config Template:
 ```toml
@@ -849,10 +850,10 @@ Both `stow` and `copy` deployment strategies natively respect ignore files, pref
         *   The ignore engine evaluates patterns against native source filenames **before** `dot-` prefix translation or engine suffix extraction takes place.
         *   *Rule*: To ignore a template named `dot-bashrc.envst.sh`, the ignore pattern must match `dot-bashrc.envst.sh` (or `dot-bashrc.*`), not `.bashrc`.
     *   **Hardcoded Implicit Exclusions**:
-        *   **Internal `.drift` Directory**: The internal control plane directory (`.drift/`, containing staged compilation inputs and `.drift/hooks/`) is hardcoded as permanently ignored and is never deployed or symlinked onto active host systems.
-        *   **Managed Config & Hook Files**: Metadata files defined in `MANAGED_CONFIG_FILES` (`drift_package.toml`, `drift_package.local.toml`, `drift_package.py`, `.drift_ignore`, `.stow-local-ignore`) are permanently ignored by `match_path` and never linked to the host target.
+        *   **Internal `.drift` Directory**: The internal control plane directory (`.drift/`, containing package configuration `.drift/drift_package.toml`, ignore rules `.drift/.drift_ignore`, staged compilation inputs `.drift/render/`, and hooks `.drift/hooks/`) is hardcoded as permanently ignored and is never deployed or symlinked onto active host systems.
+        *   **Managed Config Files**: Root-level staging artifacts defined in `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are permanently ignored by `match_path` and never linked to the host target.
     *   **Automated `.stow-local-ignore` Generation**:
-        *   During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns plus `MANAGED_CONFIG_FILES` (with escaped dots, e.g. `^/drift_package\.toml$`) into `install/<package>/.stow-local-ignore`. This ensures GNU Stow fully respects all custom and default ignore rules without polluting host targets.
+        *   During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns (from `render/<package>/.drift/.drift_ignore` and default patterns) plus `MANAGED_CONFIG_FILES` (e.g. `^/\.stow-local-ignore$`) and internal control directories (`^/\.drift/.*$`) into `install/<package>/.stow-local-ignore`. This ensures GNU Stow fully respects all custom and default ignore rules without polluting host targets.
         *   **Install Root Stow Guard**: An extra `.stow-local-ignore` is generated at the root of `install/` via `DriftIgnore.for_install_root()` (containing `INSTALL_STOW_IGNORE_PATTERN = "^/state\\.toml"`), preventing GNU Stow from erroneously treating `state.toml` as an active package directory.
     *   **FCD Reverse-Sync & Adoption Integration**:
         *   Untracked host files in Fully-Controlled Directories (FCD) matching `.drift_ignore` are automatically skipped during `reverse-sync`.
@@ -1143,13 +1144,14 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
+    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 1:1 fidelity. The only files present in `install/` that do not originate from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
         1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
-        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/hooks/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications). This ensures that lifecycle hook scripts (e.g. `pre_install.sh`) and helper assets reside in `install/<package>/.drift/hooks/` where they can be executed by Drift during installation.
-        3. *Stow Ignore Generation & Internal Isolation*: Copies `.drift_ignore` and `drift_package.toml` to `install/<package>`. It automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the primary `.drift_ignore`, package config file, and the `.drift` internal directory so GNU Stow and copy deployments never deploy internal hooks or metadata to the active host.
+        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/`, `.drift/hooks/`, `.drift/render/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications).
+        3. *Ignore & Metadata Synchronization*: Synchronizes `.drift/` directory control plane metadata (`.drift/.drift_ignore` and `.drift/drift_package.toml`). Automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the `.drift` internal directory and `.stow-local-ignore` so GNU Stow and copy deployments never deploy internal hooks, render templates, or metadata to the active host.
     - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)

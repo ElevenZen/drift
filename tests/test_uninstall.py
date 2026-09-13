@@ -7,7 +7,7 @@ from pathlib import Path
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry, PackageState
 from drift.uninstall_repo import run_primitive_7_uninstall_packages
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
@@ -56,8 +56,9 @@ class TestUninstall(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/drift_package.toml
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        # 1. Setup install/pkg/.drift/drift_package.toml
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -104,9 +105,10 @@ class TestUninstall(unittest.TestCase):
         pkg = "pkg_copy"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/drift_package.toml
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        # 1. Setup install/pkg/.drift/drift_package.toml
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -185,9 +187,10 @@ class TestUninstall(unittest.TestCase):
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
-        # 1. Setup install/pkg/drift_package.toml
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        # 1. Setup install/pkg/.drift/drift_package.toml
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -272,7 +275,8 @@ fi
 """, encoding="utf-8")
         post_hook.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -316,8 +320,9 @@ fi
         pkg = "pkg_missing_hook"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -350,6 +355,7 @@ fi
         pkg = "pkg_failing_hook"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         scripts_dir = pkg_install_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
@@ -357,7 +363,7 @@ fi
         hook_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"

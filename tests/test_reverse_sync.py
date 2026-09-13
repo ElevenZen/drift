@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.package_config import PackageConfig
 from drift.ignore import DriftIgnore
@@ -52,10 +52,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if a symlink on the system is missing, its counterpart in install/ is deleted."""
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -81,10 +81,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if a symlink is replaced by a regular physical file containing edits, those contents are copied back."""
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -111,10 +111,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if a copied system file is missing, its counterpart in install/ is deleted."""
         pkg = "pkg_copy"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -140,10 +140,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if a copied system file is modified, its edits are synced back to install/."""
         pkg = "pkg_copy"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -170,10 +170,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that untracked files in FCD subdirectories are reverse-synchronized back to install/."""
         pkg = "pkg_fcd"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -200,10 +200,10 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if enable_install is False, reverse sync is completely skipped."""
         pkg = "pkg_disabled"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config with enable_install = false
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -230,9 +230,9 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if a system target becomes a directory, its contents are copied back recursively."""
         pkg = "pkg_dir_sync"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -261,9 +261,9 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that broken symlinks on system are copied back as broken symlinks to install/."""
         pkg = "pkg_broken_link"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -290,9 +290,9 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that if an FCD target path is a file or broken symlink (instead of dir), they are synced back."""
         pkg = "pkg_fcd_root"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -324,13 +324,12 @@ class TestReverseSync(unittest.TestCase):
 
     def test_reverse_sync_missing_target_managed_config_files_not_deleted(self) -> None:
         """Verifies that missing managed config files (drift_package.toml, .drift_ignore, .stow-local-ignore) on target system do NOT trigger deletion in install/."""
-        from drift.constants import DRIFT_IGNORE_FILE_NAME
         pkg = "pkg_managed_configs"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Setup install/ with managed config files and a regular file
-        pkg_config_path = pkg_install_dir / PACKAGE_CONFIG_FILE_NAME
+        pkg_config_path = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         pkg_config_path.write_text(f"""
         [package]
         name = "{pkg}"
@@ -338,7 +337,7 @@ class TestReverseSync(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        drift_ignore_path = pkg_install_dir / DRIFT_IGNORE_FILE_NAME
+        drift_ignore_path = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
         drift_ignore_path.write_text("*.tmp\n", encoding="utf-8")
 
         stow_ignore_path = pkg_install_dir / ".stow-local-ignore"
@@ -372,20 +371,19 @@ class TestReverseSync(unittest.TestCase):
         3. A non-ignored tracked file in install/ that is missing in target dir IS deleted.
         4. A non-ignored tracked file in install/ that is modified in target dir IS updated.
         """
-        from drift.constants import DRIFT_IGNORE_FILE_NAME
         pkg = "pkg_ignored_reverse"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Setup install/ with config, .drift_ignore, ignored scripts, and tracked files
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook_present.sh\nignored_hook_missing_on_target.sh\n", encoding="utf-8")
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook_present.sh\nignored_hook_missing_on_target.sh\n", encoding="utf-8")
         
         ignored_present_install = pkg_install_dir / "ignored_hook_present.sh"
         ignored_present_install.write_text("#!/bin/sh\necho 'hook present'\n", encoding="utf-8")
@@ -432,12 +430,11 @@ class TestReverseSync(unittest.TestCase):
         """Verifies that ignored files inside an FCD directory are NOT reverse-synced,
         while non-ignored wild files inside the FCD are reverse-synced.
         """
-        from drift.constants import DRIFT_IGNORE_FILE_NAME
         pkg = "pkg_fcd_ignores"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -446,7 +443,7 @@ class TestReverseSync(unittest.TestCase):
         """, encoding="utf-8")
 
         # Ignore .*\.log and themes/cache/ inside the package (Drift uses PCRE regex syntax)
-        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text(".*\\.log$\nthemes/cache/\n", encoding="utf-8")
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text(".*\\.log$\nthemes/cache/\n", encoding="utf-8")
 
         # Setup files on host system inside FCD
         host_themes = self.system_target_dir / "themes"
@@ -476,9 +473,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_fcd_dot_variants"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -514,9 +511,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_fcd_symlinks"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -558,9 +555,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_fcd_selective"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -601,9 +598,9 @@ class TestReverseSync(unittest.TestCase):
         from drift.install_repo import run_primitive_5_install_deployment
         pkg = "pkg_fcd_stow_lifecycle"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -647,9 +644,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_dot_tracked"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -808,9 +805,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_fcd_symlink_corner"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -840,9 +837,9 @@ class TestReverseSync(unittest.TestCase):
         """
         pkg = "pkg_fcd_type_changes"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"

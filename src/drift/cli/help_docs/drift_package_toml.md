@@ -171,7 +171,7 @@ health = "drift_hooks/health_check.ps1"
 # When overriding an existing engine from drift_workspace.toml, unspecified fields (suffix, render_command)
 # are inherited from workspace configuration, while input_file is overridden.
 # Relative input_file paths are resolved relative to this package's directory (src/<pkg>/).
-# Intermediate input file template outputs are rendered into render/<pkg>/.drift/ sandbox.
+# Intermediate input file template outputs are rendered into render/<pkg>/.drift/render/ sandbox.
 #
 # Note: 'input_file' fields in render engines are specified as names BEFORE rendering
 # (e.g. "config_data.envst.json" rather than "config_data.json"). Because input files frequently contain
@@ -269,7 +269,7 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment (`context.env`). The hook can inject `[env.override]`, customize `target_directory`, or set `enable_install = False`.
 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves `[env.override]` and `[env.fallback]` tables (including any injected by the hook) according to Drift's 7-tier precedence model and Kahn's topological sort algorithm.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`target_directory`, `requirements`, etc.).
-5. **Render Staging**: Writes the fully resolved, stitched configuration to `render/<pkg>/drift_package.toml`. Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
+5. **Render Staging**: Writes the fully resolved, stitched configuration to `render/<pkg>/.drift/drift_package.toml`. Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
 6. **Schema Validation & Model Construction**: Instantiates the strongly-typed `PackageConfig` object.
 
 ### `PackageHookContext` Reference
@@ -329,8 +329,8 @@ When a package defines a `[render.<name>]` table for an engine already defined i
 
 ### 2. Multi-Stage Compilation Chain & Sandbox Isolation
 Drift evaluates compilation pipelines across two distinct, isolated stages:
-1. **Stage 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`).
-2. **Stage 2 (Package Scope)**: Package configurations are loaded, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/`). Package files are then compiled using the effective engine registry.
+1. **Stage 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/render/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
+2. **Stage 2 (Package Scope)**: Package configurations are loaded from `render/<pkg>/.drift/drift_package.toml`, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/render/`). Package files are then compiled using the effective engine registry.
 
 ### 3. Reverse Sync, Add, & Adopt Integration
 All downstream primitives (`drift adopt`, `drift add`, `drift reverse-sync`) automatically respect package-level render engine definitions and suffix mappings when reconciling file modifications, renames, and imports.

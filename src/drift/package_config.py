@@ -1344,23 +1344,27 @@ class PackageConfig:
         cls,
         package_toml_path: Path,
         package_name: str,
+        package_dir: Path,
     ) -> "PackageConfig":
         """Loads package configuration directly from a rendered drift_package.toml file."""
         return load_package_config_rendered(
             package_toml_path=package_toml_path,
             package_name=package_name,
+            package_dir=package_dir,
         )
 
 
 def load_package_config_rendered(
     package_toml_path: Path,
     package_name: str,
+    package_dir: Path,
 ) -> PackageConfig:
     """Loads and parses a package configuration from drift_package.toml.
 
     Args:
         package_toml_path: Absolute path to the rendered drift_package.toml file.
         package_name: Required canonical name of the package.
+        package_dir: Required package root directory (e.g. render/<pkg> or install/<pkg>).
     """
     if not package_toml_path.exists():
         raise FileNotFoundError(f"Package configuration file not found: {package_toml_path}")
@@ -1371,7 +1375,7 @@ def load_package_config_rendered(
             data,
             package_name=package_name,
             source_files=[package_toml_path],
-            base_dir=package_toml_path.parent
+            base_dir=package_dir,
         )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{package_name}' in '{package_toml_path}': {e}") from e
@@ -1564,9 +1568,9 @@ def load_package_config_from_source_dir(
         workspace_config=workspace_config,
     )
 
-    # 2. Determine output path: render/<package_name>/drift_package.toml
+    # 2. Determine output path: render/<package_name>/.drift/drift_package.toml
     if workspace_config is not None:
-        output_file_path = workspace_config.render_path / pkg_name / PACKAGE_CONFIG_FILE_NAME
+        output_file_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         output_file_path.parent.mkdir(parents=True, exist_ok=True)
         toml_str = dump_toml(stitched_dict)
         output_file_path.write_text(toml_str, encoding="utf-8")
@@ -1590,11 +1594,11 @@ def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:
     The name of package_dir is treated as the package name.
     """
     pkg_name = package_dir.name
-    config_file = package_dir / PACKAGE_CONFIG_FILE_NAME
+    config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     if not config_file.exists():
-        raise RuntimeError(f"Failed to find drift_package.toml for '{pkg_name}' in render sandbox")
+        raise RuntimeError(f"Failed to find {PACKAGE_CONFIG_FILE_NAME} in .drift/ for '{pkg_name}' in render sandbox")
     try:
-        return load_package_config_rendered(package_toml_path=config_file, package_name=pkg_name)
+        return load_package_config_rendered(package_toml_path=config_file, package_name=pkg_name, package_dir=package_dir)
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from render sandbox: {e}")
 
@@ -1604,11 +1608,11 @@ def load_package_config_for_install(package_dir: Path) -> PackageConfig:
     The name of package_dir is treated as the package name.
     """
     pkg_name = package_dir.name
-    install_config_file = package_dir / PACKAGE_CONFIG_FILE_NAME
+    install_config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     if not install_config_file.exists():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg_name}'.")
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in .drift/ of install base for '{pkg_name}'.")
     try:
-        return load_package_config_rendered(package_toml_path=install_config_file, package_name=pkg_name)
+        return load_package_config_rendered(package_toml_path=install_config_file, package_name=pkg_name, package_dir=package_dir)
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from install base: {e}")
 

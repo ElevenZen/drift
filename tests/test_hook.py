@@ -7,6 +7,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
+from drift.constants import DRIFT_INTERNAL_DIR_NAME
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageHooks
 from drift.trigger_hook import run_primitive_trigger_hook
@@ -116,6 +117,8 @@ class TestPackageHook(unittest.TestCase):
         install_pkg_dir = self.drift_root / "install" / "pkg_hook"
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
+        (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME, install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME)
 
         # pre_install: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_install")
@@ -485,6 +488,8 @@ echo "VALUE=$DYNAMIC_VAL"
         install_pkg_dir = self.drift_root / "install" / "pkg_hook"
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
+        (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME, install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME)
 
         res_install = run_primitive_trigger_hook(
             self.workspace_config,

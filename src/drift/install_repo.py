@@ -608,7 +608,7 @@ def deploy_one_package_impl(
     flags: Optional[HookExecFlags] = None,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
+    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
     
     # 1. Collision Guard
     run_collision_guard(

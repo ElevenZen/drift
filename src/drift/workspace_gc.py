@@ -46,7 +46,7 @@ from typing import List, Optional, Sequence, Iterator, Iterable
 from .workspace_config import WorkspaceConfig
 from .state_registry import load_state_registry
 from .uninstall_repo import run_primitive_7_uninstall_packages
-from .constants import PACKAGE_CONFIG_FILE_NAME_LIST, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
+from .constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
 from .git_utils import commit_repo_changes
 from .lifecycle_hooks import HookExecFlags
 from .result_models import GcResult
@@ -65,8 +65,8 @@ def filter_candidate_package_dirs(base_path: Path, ignore_names: Iterable[str] =
 
 
 def is_zombie_package_dir(item: Path) -> bool:
-    """Returns True if the directory lacks any valid package config file."""
-    return not any((item / cfg_name).exists() for cfg_name in PACKAGE_CONFIG_FILE_NAME_LIST)
+    """Returns True if the directory lacks any valid package config file in .drift/."""
+    return not (item / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()
 
 
 def filter_zombie_package_dirs(items: Iterable[Path]) -> Iterator[Path]:

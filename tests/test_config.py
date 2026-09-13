@@ -11,6 +11,7 @@ from drift.constants import (
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
+    DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_HOOK_TIMEOUT,
     set_test_mode,
 )
@@ -730,14 +731,15 @@ class TestConfigClasses(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root_path = Path(temp_dir).resolve()
             
-            # Create directories
+            # Create directories            # pkg_a has drift_package.toml
             pkg_a_dir = root_path / "pkg_a"
-            pkg_a_dir.mkdir()
-            (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).touch()
+            (pkg_a_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_a_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
 
+            # pkg_b has drift_package.toml
             pkg_b_dir = root_path / "pkg_b"
-            pkg_b_dir.mkdir()
-            (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).touch()
+            (pkg_b_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_b_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
 
             # pkg_c has no config file, should not be discovered
             pkg_c_dir = root_path / "pkg_c"
@@ -781,15 +783,15 @@ class TestConfigClasses(unittest.TestCase):
 
             (src_dir / "pkg_c").mkdir()
 
-            # In render: pkg_a and pkg_b compiled with drift_package.toml
-            (render_dir / "pkg_a").mkdir()
-            (render_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
-            (render_dir / "pkg_b").mkdir()
-            (render_dir / "pkg_b" / PACKAGE_CONFIG_FILE_NAME).touch()
+            # In render: pkg_a and pkg_b compiled with drift_package.toml in .drift/
+            (render_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (render_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
+            (render_dir / "pkg_b" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (render_dir / "pkg_b" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
 
-            # In install: pkg_a staged with drift_package.toml
-            (install_dir / "pkg_a").mkdir()
-            (install_dir / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+            # In install: pkg_a staged with drift_package.toml in .drift/
+            (install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
 
             config = WorkspaceConfig(
                 drift_root=root,
@@ -1051,14 +1053,14 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Nonexistent file raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_default")
+            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_default", package_dir=self.drift_root)
 
         # Valid file without name field (derived from package_name parameter)
         pkg_config_path.write_text("""
             [package]
             install_method = "copy"
             """, encoding="utf-8")
-        config = PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package")
+        config = PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package", package_dir=self.drift_root)
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
 
@@ -1070,7 +1072,7 @@ class TestConfigLoaders(unittest.TestCase):
             pre_source = 12345
             """, encoding="utf-8")
         with self.assertRaises(ConfigError):
-            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package")
+            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package", package_dir=self.drift_root)
 
     def test_locate_package_config_file_and_load_from_dir(self) -> None:
         pkg_dir = self.drift_root / "my_pkg_folder"
@@ -1202,7 +1204,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(pkg_config.sudo, True)
 
         # Verify that the expected rendered config file exists inside the render/ sandbox
-        expected_rendered_path = self.drift_root / "my_render" / "my_pkg" / PACKAGE_CONFIG_FILE_NAME
+        expected_rendered_path = self.drift_root / "my_render" / "my_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(expected_rendered_path.is_file())
 
     def test_workspace_local_config_merge(self) -> None:
@@ -1292,7 +1294,7 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(pkg_config.sudo, True)
 
         # Ensure the combined file gets rendered correctly in render/ sandbox
-        expected_rendered_path = self.drift_root / "my_render" / "my_pkg_merge_ws" / PACKAGE_CONFIG_FILE_NAME
+        expected_rendered_path = self.drift_root / "my_render" / "my_pkg_merge_ws" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(expected_rendered_path.is_file())
 
     def test_workspace_config_env_loading(self) -> None:
@@ -2019,7 +2021,8 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             (render_dir / ".config").mkdir()
             (render_dir / ".git").mkdir()
             (render_dir / "pkg_one").mkdir()
-            (render_dir / "pkg_one" / "drift_package.toml").write_text("[package]\nname = 'pkg_one'\n")
+            (render_dir / "pkg_one" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (render_dir / "pkg_one" / DRIFT_INTERNAL_DIR_NAME / "drift_package.toml").write_text("[package]\nname = 'pkg_one'\n")
 
             ws_cfg = WorkspaceConfig(drift_root=drift_root, packages_enable_default=True)
             with patch("drift.workspace_config.logger.warning") as mock_warn:

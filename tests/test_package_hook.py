@@ -14,6 +14,7 @@ from drift.constants import (
     WORKSPACE_CONFIG_FILE_NAME,
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
 )
 from drift.exceptions import ConfigError
 from drift.workspace_config import load_workspace_config
@@ -326,7 +327,8 @@ def configure_package(context):
 
         rendered_pkg_dir = self.drift_root / "render" / "pkg1"
         self.assertTrue((rendered_pkg_dir / "app.conf").is_file())
-        self.assertTrue((rendered_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
+        self.assertTrue((rendered_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).is_file())
+        self.assertFalse((rendered_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
         # Hook file itself should NOT be copied into render/ as a deployable payload
         self.assertFalse((rendered_pkg_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME).is_file())
 
@@ -336,10 +338,10 @@ def configure_package(context):
         self.assertEqual(rendered_cfg.target_directory, Path("~/rendered_target").expanduser())
 
         # PackageConfig.from_install_dir from install/ state dir should also work once staged
-        (self.drift_root / "install" / "pkg1").mkdir(parents=True)
+        (self.drift_root / "install" / "pkg1" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
         shutil.copy2(
-            rendered_pkg_dir / PACKAGE_CONFIG_FILE_NAME,
-            self.drift_root / "install" / "pkg1" / PACKAGE_CONFIG_FILE_NAME
+            rendered_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
+            self.drift_root / "install" / "pkg1" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         )
         install_cfg = PackageConfig.from_install_dir(self.drift_root / "install" / "pkg1")
         self.assertEqual(install_cfg.install_method, "copy")

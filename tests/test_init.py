@@ -92,7 +92,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             stow_content = f.read()
         self.assertIn(INSTALL_STOW_IGNORE_PATTERN, stow_content)
         self.assertIn(r"\.git", stow_content)
-        self.assertIn(r"^/drift_package\.toml$", stow_content)
+        self.assertIn(r"^/\.drift/", stow_content)
 
         # Check config/drift_workspace.toml template was created
         config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")

@@ -14,6 +14,7 @@ from drift.constants import (
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
     INITIAL_ENV,
     set_test_mode,
@@ -1199,14 +1200,18 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(loaded_cfg.env_fallback["FALLBACK_SRC"], expected_src)
 
         # 2. Verify rendered file on disk in render/
-        rendered_toml_path = self.drift_root / "render" / "pkg_stitched_test" / "drift_package.toml"
+        rendered_toml_path = self.drift_root / "render" / "pkg_stitched_test" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(rendered_toml_path.exists())
         rendered_content = rendered_toml_path.read_text(encoding="utf-8")
         self.assertNotIn("${drift_package_source_dir}", rendered_content)
         self.assertIn(f"{expected_src}/my_target", rendered_content)
 
         # 3. Load from rendered file directly (without workspace config)
-        rendered_cfg = PackageConfig.from_rendered_file(rendered_toml_path, package_name="pkg_stitched_test")
+        rendered_cfg = PackageConfig.from_rendered_file(
+            rendered_toml_path,
+            package_name="pkg_stitched_test",
+            package_dir=self.drift_root / "render" / "pkg_stitched_test",
+        )
         self.assertEqual(str(rendered_cfg.target_directory), f"{expected_src}/my_target")
         self.assertEqual(rendered_cfg.env_fallback["FALLBACK_SRC"], expected_src)
 

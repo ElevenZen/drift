@@ -278,7 +278,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
         )
 
     # Load ignore patterns
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir)
+    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
 
     drifted_files: List[str] = []
     synced_files: List[str] = []

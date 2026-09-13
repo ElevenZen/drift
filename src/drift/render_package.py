@@ -235,10 +235,11 @@ def render_package_file_entry(
 
 
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
-    """Handles warning and copying of drift ignore files."""
+    """Handles warning and copying of drift ignore files into .drift/ control plane."""
     package_name = package_dir.name
     misspelled_path = package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME
     correct_path = package_dir / DRIFT_IGNORE_FILE_NAME
+    dest_correct = render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
 
     if correct_path.exists():
         if correct_path.is_dir():
@@ -248,7 +249,6 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
                 f"Both '{DRIFT_IGNORE_FILE_NAME}' and legacy '{DRIFT_IGNORE_LEGACY_FILE_NAME}' exist in package '{package_name}'. "
                 f"The misspelled file '{DRIFT_IGNORE_LEGACY_FILE_NAME}' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
             )
-        dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         atomic_copy_file(correct_path, dest_correct)
     elif misspelled_path.is_file():
@@ -256,7 +256,6 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
             f"Package '{package_name}' contains a misspelled ignore file '{DRIFT_IGNORE_LEGACY_FILE_NAME}'. "
             f"Please rename it to '{DRIFT_IGNORE_FILE_NAME}'."
         )
-        dest_correct = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
         atomic_copy_file(misspelled_path, dest_correct)
 
@@ -290,7 +289,7 @@ def render_package_files(
 
     # 3. Recursively process all other files inside the package source directory to render
     # Proactively check for nested ignore files and trigger clean validation
-    DriftIgnore.load_from_dir(package_dir)
+    DriftIgnore.load_from_dir(package_dir, is_source=True)
 
     src_dir_to_render = pkg_config.get_source_directory_to_render(package_dir)
     if not src_dir_to_render.exists() or not src_dir_to_render.is_dir():

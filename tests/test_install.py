@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PackageConfig, PackageHooks
 from drift.folder_diff import FolderDiff
@@ -165,10 +165,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies stow incremental file-by-file manual symlinking deployment."""
         pkg = "pkg_stow"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -200,10 +200,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies Stow Collision Guard backs up pre-existing physical files at target."""
         pkg = "pkg_stow"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -239,10 +239,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies copy deployment, lifecycle triggers, and copy collision guard."""
         pkg = "pkg_copy"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config with lifecycle hooks
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -319,10 +319,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that 'copy' installation method results in real physical files, not symlinks."""
         pkg = "pkg_copy_physical"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -508,10 +508,10 @@ class TestInstallRepo(unittest.TestCase):
 
         pkg = "pkg_env_hooks"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Do NOT specify target_directory in package config, so it falls back to workspace_config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -565,10 +565,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that 'copy' installation method respects .drift_ignore patterns."""
         pkg = "pkg_copy_ignore"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -582,8 +582,8 @@ class TestInstallRepo(unittest.TestCase):
         with open(os.path.join(pkg_install_dir, "ignore_me.txt"), "w", encoding="utf-8") as f:
             f.write("should be ignored")
         
-        # Add .drift_ignore
-        with open(os.path.join(pkg_install_dir, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
+        # Add .drift_ignore in .drift/
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
             f.write("ignore_me.txt\n")
 
         # Run full deployment (no package_changes passed)
@@ -604,13 +604,13 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that a symlinked parent directory outside the package's target_dir raises a RuntimeError to prevent deleting/recreating unrelated system folders."""
         pkg = "pkg_stow"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Setup target directory for the package inside system_target_dir
         pkg_target_dir = os.path.join(self.system_target_dir, "pkg_safety_target")
 
         # Write package config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -645,10 +645,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that a parent symlink situated INSIDE the package's target_dir is successfully backed up, deleted, and rebuilt as a physical folder."""
         pkg = "pkg_stow"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -751,10 +751,10 @@ class TestInstallRepo(unittest.TestCase):
         # 1. Create a package in install/ State Database
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -766,8 +766,8 @@ class TestInstallRepo(unittest.TestCase):
         with open(os.path.join(pkg_install_dir, "ignored_file.txt"), "w", encoding="utf-8") as f:
             f.write("should be ignored")
 
-        # Write .drift_ignore to install/pkg_stow telling it to ignore ignored_file.txt
-        with open(os.path.join(pkg_install_dir, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
+        # Write .drift_ignore to install/pkg_stow/.drift/ telling it to ignore ignored_file.txt
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME), "w", encoding="utf-8") as f:
             f.write("ignored_file.txt\n")
 
         # Create that file at system target (simulating it was previously deployed or exists there)
@@ -798,10 +798,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
         # 1. Setup two physical files under install/pkg_stow
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -858,10 +858,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
         # 1. Setup config with stow method
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -906,10 +906,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         
         # 1. Setup config with stow method
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -977,10 +977,10 @@ class TestInstallRepo(unittest.TestCase):
         from drift.exceptions import InstallCollisionError
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Setup config with target_directory equal to drift_root
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -995,7 +995,8 @@ class TestInstallRepo(unittest.TestCase):
 
         # 2. Setup config with target_directory INSIDE drift_root (e.g. self.drift_root / "polluted_dir")
         polluted_dir = self.drift_root / "polluted_dir"
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -1075,10 +1076,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that if deployment fails midway, the package state remains 'deploying' in state.toml."""
         pkg = "pkg_fail"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config with a post_install hook that will fail
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -1114,10 +1115,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that deployment aborts if a package is already in 'deploying' state."""
         pkg = "pkg_deploying"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
-        os.makedirs(pkg_install_dir, exist_ok=True)
+        os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
         # Write config
-        with open(os.path.join(pkg_install_dir, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
+        with open(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME), "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg}"
@@ -1150,13 +1151,13 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies that deploying/installing a package whose name starts with 'dot-' works exactly as expected and preserves files on the target."""
         pkg_name = "dot-my_pkg"
         pkg_install_dir = self.install_dir / pkg_name
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Enable in workspace
         self.workspace_config.packages_enable[pkg_name] = True
 
         # Write config and file
-        with open(pkg_install_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -1192,8 +1193,8 @@ class TestInstallRepo(unittest.TestCase):
         # 1. Test package with enable_install = false
         pkg_disabled = "pkg_disabled"
         pkg_dir = self.install_dir / pkg_disabled
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg_disabled}"
         install_method = "copy"
@@ -1231,8 +1232,8 @@ class TestInstallRepo(unittest.TestCase):
         # If install/pkg_missing_dir doesn't exist, PackageConfig.from_install_dir raises error before deploy_one_package
         # If install/pkg_missing_dir has a config file but is not a dir for files:
         pkg_missing_dir = self.install_dir / pkg_missing
-        pkg_missing_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_missing_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_missing_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_missing_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg_missing}"
         install_method = "copy"
@@ -1313,10 +1314,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_symlink_guard"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Package config
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -1324,8 +1325,8 @@ class TestInstallRepo(unittest.TestCase):
         """, encoding="utf-8")
 
         # 2. .drift_ignore and files
-        (pkg_install_dir / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook.sh\n", encoding="utf-8")
-        (pkg_install_dir / ".stow-local-ignore").write_text("ignored_hook.sh\n.drift_ignore\ndrift_package.toml\n", encoding="utf-8")
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook.sh\n", encoding="utf-8")
+        (pkg_install_dir / ".stow-local-ignore").write_text(".drift\n.stow-local-ignore\nignored_hook.sh\n", encoding="utf-8")
         (pkg_install_dir / "ignored_hook.sh").write_text("#!/bin/sh\n", encoding="utf-8")
         (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
         (pkg_install_dir / "rogue_link.txt").write_text("rogue target content", encoding="utf-8")
@@ -1376,9 +1377,9 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_switch_target_full"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -1412,9 +1413,9 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_switch_target_partial"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -1445,9 +1446,9 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_dir_symlink_guard"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1489,9 +1490,9 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_copy_symlink_update"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1545,10 +1546,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_stow_to_copy"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Initial deployment with 'stow'
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -1569,7 +1570,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(host_tool.is_symlink())
 
         # 2. Switch install_method to 'copy'
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1600,10 +1601,10 @@ class TestInstallRepo(unittest.TestCase):
         """
         pkg = "pkg_copy_to_stow"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # 1. Initial deployment with 'copy'
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1626,7 +1627,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse(host_data.is_symlink())
 
         # 2. Switch install_method to 'stow'
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "stow"
@@ -1658,8 +1659,8 @@ class TestInstallRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
 
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1680,11 +1681,11 @@ class TestInstallRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
 
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "scripts").mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1702,10 +1703,11 @@ class TestInstallRepo(unittest.TestCase):
         from drift.ignore import DriftIgnore
         pkg = "pkg_find_conflicts"
         pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "nested").mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "nested" / "app.conf").write_text("hello", encoding="utf-8")
         (pkg_install_dir / "root.conf").write_text("root", encoding="utf-8")
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -1740,6 +1742,7 @@ class TestInstallRepo(unittest.TestCase):
         from drift.ignore import DriftIgnore
         pkg = "pkg_resolve_conflict"
         pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "sub_dir").mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "sub_dir" / "file.txt").write_text("file content", encoding="utf-8")
 
@@ -1782,7 +1785,7 @@ class TestInstallRepo(unittest.TestCase):
         from drift.ignore import DriftIgnore
         pkg = "pkg_stow_valid"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
 
         config = PackageConfig(name=pkg, install_method="stow", target_directory=Path(self.system_target_dir))
@@ -1863,10 +1866,10 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies full copy deployment (initial deploy and full redeploy) translates dot- prefixes to leading dots."""
         pkg = "pkg_copy_dot"
         pkg_install_dir = self.install_dir / pkg
-        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "dot-config" / "app").mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"

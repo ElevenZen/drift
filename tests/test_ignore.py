@@ -19,32 +19,37 @@ class TestDriftIgnore(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_managed_config_files_always_ignored_even_without_ignore_file(self) -> None:
-        """Verifies that MANAGED_CONFIG_FILES are always ignored even if .drift_ignore is empty or missing."""
+        """Verifies that MANAGED_CONFIG_FILES and .drift/ control plane paths are always ignored."""
         # Create a DriftIgnore with no patterns
         ignore = DriftIgnore([])
 
-        # Check each managed config file is matched (ignored) by match_path
+        # Check each managed config file (.stow-local-ignore) is matched (ignored) by match_path
         for filename in MANAGED_CONFIG_FILES:
             self.assertTrue(ignore.match_path(Path(filename)))
             self.assertTrue(ignore.match_path(Path("subdir") / filename))
 
-        # Check that files like '.drift_ignore' are ignored, while 'xdrift_ignore' is NOT ignored
-        self.assertTrue(ignore.match_path(Path(".drift_ignore")))
-        self.assertTrue(ignore.match_path(Path("drift_package.toml")))
+        # Check that files in .drift/ are always ignored
+        self.assertTrue(ignore.match_path(Path(".drift/drift_package.toml")))
+        self.assertTrue(ignore.match_path(Path(".drift/.drift_ignore")))
+        self.assertTrue(ignore.match_path(Path(".drift/hooks/post_install.sh")))
+        self.assertTrue(ignore.match_path(Path(".drift/render/template.json")))
+
+        # Check that regular files resembling drift names outside .drift/ are NOT ignored
         self.assertFalse(ignore.match_path(Path("xdrift_ignore")))
         self.assertFalse(ignore.match_path(Path("xdrift_package.toml")))
         self.assertFalse(ignore.match_path(Path("x.stow-local-ignore")))
 
-        # Check a normal file is not ignored
+        # Check normal files are not ignored
         self.assertFalse(ignore.match_path(Path("normal_file.txt")))
         self.assertFalse(ignore.match_path(Path("subdir/normal_file.txt")))
 
     def test_filter_deployable_files_excludes_managed_config_files(self) -> None:
-        """Verifies that filter_deployable_files filters out MANAGED_CONFIG_FILES and ignores according to patterns."""
+        """Verifies that filter_deployable_files filters out MANAGED_CONFIG_FILES, .drift/, and ignored patterns."""
         # Setup files in pkg_dir
-        (self.pkg_dir / "drift_package.toml").touch()
-        (self.pkg_dir / ".drift_ignore").touch()
         (self.pkg_dir / ".stow-local-ignore").touch()
+        (self.pkg_dir / ".drift").mkdir(parents=True, exist_ok=True)
+        (self.pkg_dir / ".drift" / "drift_package.toml").touch()
+        (self.pkg_dir / ".drift" / ".drift_ignore").touch()
         (self.pkg_dir / "xdrift_ignore").touch()
         (self.pkg_dir / "xdrift_package.toml").touch()
         (self.pkg_dir / "allowed.txt").touch()
@@ -60,8 +65,8 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertIn("allowed.txt", deployable_set)
         self.assertIn("xdrift_ignore", deployable_set)
         self.assertIn("xdrift_package.toml", deployable_set)
-        self.assertNotIn("drift_package.toml", deployable_set)
-        self.assertNotIn(".drift_ignore", deployable_set)
+        self.assertNotIn(".drift/drift_package.toml", deployable_set)
+        self.assertNotIn(".drift/.drift_ignore", deployable_set)
         self.assertNotIn(".stow-local-ignore", deployable_set)
         self.assertNotIn("ignored_pattern.txt", deployable_set)
 
@@ -74,7 +79,7 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertEqual(DriftIgnore.strip_comments(""), "")
 
     def test_load_from_dir_exists(self) -> None:
-        """Verifies that load_from_dir correctly loads, parses, and strips patterns from .drift_ignore."""
+        """Verifies that load_from_dir correctly loads from root (source) and from .drift/ (compiled/staged)."""
         ignore_content = (
             "pattern1\n"
             "  # a full line comment  \n"
@@ -82,17 +87,27 @@ class TestDriftIgnore(unittest.TestCase):
             "escaped\\#hash\n"
             "\n"  # blank line
         )
+        # 1. Source package directory (is_source=True)
         ignore_file = self.pkg_dir / DRIFT_IGNORE_FILE_NAME
         ignore_file.write_text(ignore_content, encoding="utf-8")
 
-        ignore = DriftIgnore.load_from_dir(self.pkg_dir)
-        self.assertEqual(ignore.patterns, ["pattern1", "pattern2", "escaped\\#hash"])
+        ignore_src = DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
+        self.assertEqual(ignore_src.patterns, ["pattern1", "pattern2", "escaped\\#hash"])
+
+        # 2. Render / install package directory (is_source=False)
+        ignore_file.unlink()
+        dot_drift_dir = self.pkg_dir / ".drift"
+        dot_drift_dir.mkdir(parents=True, exist_ok=True)
+        (dot_drift_dir / DRIFT_IGNORE_FILE_NAME).write_text("internal_pattern\n", encoding="utf-8")
+
+        ignore_internal = DriftIgnore.load_from_dir(self.pkg_dir, is_source=False)
+        self.assertEqual(ignore_internal.patterns, ["internal_pattern"])
 
     def test_load_from_dir_missing_uses_default_stow_ignore_patterns(self) -> None:
         """Verifies that load_from_dir returns a DriftIgnore with default Stow ignore patterns if .drift_ignore doesn't exist."""
         from drift.constants import DEFAULT_STOW_IGNORE_PATTERNS
         # pkg_dir has no .drift_ignore
-        ignore = DriftIgnore.load_from_dir(self.pkg_dir)
+        ignore = DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
         self.assertEqual(ignore.patterns, DEFAULT_STOW_IGNORE_PATTERNS)
 
         # Ensure default patterns match common Stow ignored files
@@ -125,8 +140,10 @@ class TestDriftIgnore(unittest.TestCase):
         # Subdirectory README should NOT be ignored because pattern is ^/README.*
         self.assertFalse(ignore.match_path(Path("subdir/README.md")))
 
-        # Ensure MANAGED_CONFIG_FILES are ignored
-        (self.pkg_dir / "drift_package.toml").touch()
+        # Ensure .stow-local-ignore and .drift/ are ignored
+        (self.pkg_dir / ".stow-local-ignore").touch()
+        (self.pkg_dir / ".drift").mkdir(parents=True, exist_ok=True)
+        (self.pkg_dir / ".drift" / "drift_package.toml").touch()
         (self.pkg_dir / "normal.txt").touch()
         (self.pkg_dir / "README.md").touch()
 
@@ -134,7 +151,8 @@ class TestDriftIgnore(unittest.TestCase):
         deployable_set = {p.as_posix() for p in deployable}
 
         self.assertIn("normal.txt", deployable_set)
-        self.assertNotIn("drift_package.toml", deployable_set)
+        self.assertNotIn(".stow-local-ignore", deployable_set)
+        self.assertNotIn(".drift/drift_package.toml", deployable_set)
         self.assertNotIn("README.md", deployable_set)
 
     def test_export_stow_ignore_patterns_and_content(self) -> None:
@@ -143,8 +161,6 @@ class TestDriftIgnore(unittest.TestCase):
         exported = ignore.export_stow_ignore_patterns()
 
         # Verify MANAGED_CONFIG_FILES are present in exported list with escaped dots
-        self.assertIn(r"^/drift_package\.toml$", exported)
-        self.assertIn(r"^/\.drift_ignore$", exported)
         self.assertIn(r"^/\.stow-local-ignore$", exported)
 
         # Verify custom patterns are present
@@ -153,18 +169,14 @@ class TestDriftIgnore(unittest.TestCase):
 
         content = ignore.generate_stow_local_ignore_content()
         self.assertIn("# .stow-local-ignore - Generated by Drift", content)
-        self.assertIn(r"^/drift_package\.toml$", content)
-        self.assertIn(r"^/\.drift_ignore$", content)
+        self.assertIn(r"^/\.stow-local-ignore$", content)
         self.assertIn(r"^/custom_file\.txt$", content)
 
         # Check matching behavior of exported patterns with re.search
         import re
-        self.assertTrue(bool(re.search(r"^/\.drift_ignore$", "/.drift_ignore")))
-        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/xdrift_ignore")))
-        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/x.drift_ignore")))
-        self.assertFalse(bool(re.search(r"^/\.drift_ignore$", "/sub/.drift_ignore")))
-        self.assertTrue(bool(re.search(r"^/drift_package\.toml$", "/drift_package.toml")))
-        self.assertFalse(bool(re.search(r"^/drift_package\.toml$", "/xdrift_package.toml")))
+        self.assertTrue(bool(re.search(r"^/\.stow-local-ignore$", "/.stow-local-ignore")))
+        self.assertFalse(bool(re.search(r"^/\.stow-local-ignore$", "/x.stow-local-ignore")))
+        self.assertFalse(bool(re.search(r"^/\.stow-local-ignore$", "/sub/.stow-local-ignore")))
 
     def test_match_path_regex_matching_logic(self) -> None:
         """Verifies that step 1 (with slash) and step 2 (without slash) matching logic works correctly."""
@@ -195,10 +207,10 @@ class TestDriftIgnore(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
     def test_load_from_dir_rejects_nested_ignores(self) -> None:
-        """Verifies that load_from_dir raises ValueError when nested ignore files (.drift_ignore or .driftignore) are present in subdirectories."""
-        # 1. Root-only ignore works fine
+        """Verifies that load_from_dir raises ValueError when nested ignore files are present in unauthorized subdirectories."""
+        # 1. Root-only ignore in source mode works fine
         (self.pkg_dir / DRIFT_IGNORE_FILE_NAME).write_text("root_pattern", encoding="utf-8")
-        ignore = DriftIgnore.load_from_dir(self.pkg_dir)
+        ignore = DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
         self.assertEqual(ignore.patterns, ["root_pattern"])
 
         # 2. Add a nested .drift_ignore inside a subdirectory
@@ -208,20 +220,26 @@ class TestDriftIgnore(unittest.TestCase):
         nested_ignore.write_text("nested_pattern", encoding="utf-8")
 
         with self.assertRaises(ValueError) as ctx:
-            DriftIgnore.load_from_dir(self.pkg_dir)
+            DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
         self.assertIn("Nested ignore files are not allowed", str(ctx.exception))
         self.assertIn(f"Found nested '{DRIFT_IGNORE_FILE_NAME}'", str(ctx.exception))
 
-        # Clean up nested .drift_ignore and try with nested .driftignore
+        # 3. In non-source mode (is_source=False), .drift/.drift_ignore is valid
         nested_ignore.unlink()
+        (self.pkg_dir / DRIFT_IGNORE_FILE_NAME).unlink()
 
-        nested_driftignore = nested_dir / ".driftignore"
-        nested_driftignore.write_text("nested_pattern_2", encoding="utf-8")
+        dot_drift = self.pkg_dir / ".drift"
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / DRIFT_IGNORE_FILE_NAME).write_text("drift_pattern", encoding="utf-8")
+        ignore_compiled = DriftIgnore.load_from_dir(self.pkg_dir, is_source=False)
+        self.assertEqual(ignore_compiled.patterns, ["drift_pattern"])
 
+        # But a nested ignore inside another subdirectory in non-source mode raises ValueError
+        nested_sub_ignore = nested_dir / DRIFT_IGNORE_FILE_NAME
+        nested_sub_ignore.write_text("nested_drift", encoding="utf-8")
         with self.assertRaises(ValueError) as ctx:
-            DriftIgnore.load_from_dir(self.pkg_dir)
+            DriftIgnore.load_from_dir(self.pkg_dir, is_source=False)
         self.assertIn("Nested ignore files are not allowed", str(ctx.exception))
-        self.assertIn("Found nested '.driftignore'", str(ctx.exception))
 
     def test_ignore_handler_protocol_compliance(self) -> None:
         """Verifies that DriftIgnore and custom matchers satisfy the IgnoreHandler protocol."""
@@ -252,7 +270,7 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertTrue(stow_ignore_file.is_file())
         content = stow_ignore_file.read_text(encoding="utf-8")
         self.assertIn("^/custom_ignored\\.txt$", content)
-        self.assertIn(r"^/drift_package\.toml$", content)
+        self.assertIn(r"^/\.stow-local-ignore$", content)
 
         # Calling again when content is unchanged doesn't fail
         ignore.create_stow_ignore_file(target_dir)
@@ -276,7 +294,7 @@ class TestDriftIgnore(unittest.TestCase):
 
         content = get_default_install_stow_ignore_content()
         self.assertIn(INSTALL_STOW_IGNORE_PATTERN, content)
-        self.assertIn(r"^/drift_package\.toml$", content)
+        self.assertIn(r"^/\.stow-local-ignore$", content)
         self.assertIn(r"\.git", content)
 
 

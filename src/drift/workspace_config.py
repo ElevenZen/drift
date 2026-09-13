@@ -18,6 +18,7 @@ from .constants import (
         PACKAGE_CONFIG_FILE_NAME,
         SECRETS_ENV_FILE_NAME,
         FORBIDDEN_PACKAGE_NAMES,
+        DRIFT_INTERNAL_DIR_NAME,
         INITIAL_ENV,
         SYSTEM_FACT_KEYS,
         inject_system_facts,
@@ -304,7 +305,7 @@ class WorkspaceConfig:
     @classmethod
     def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:
         packages = [pkg for pkg in cls.get_package_names_from_dir(custom_dir)
-                    if (custom_dir / pkg / PACKAGE_CONFIG_FILE_NAME).exists()]
+                    if (custom_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()]
         return sorted(packages)
 
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:

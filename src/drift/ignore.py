@@ -68,27 +68,37 @@ class DriftIgnore(IgnoreHandler):
         return "".join(result).strip()
 
     @classmethod
-    def load_from_dir(cls, render_pkg_dir: Path) -> "DriftIgnore":
+    def load_from_dir(cls, package_dir: Path, is_source: bool) -> "DriftIgnore":
+        """Loads ignore PCRE regex patterns from .drift_ignore inside package_dir.
+
+        Args:
+            package_dir: Directory path of the package (source, render sandbox, or install base).
+            is_source: If True, loads .drift_ignore directly from package root (src/<pkg>/.drift_ignore).
+                If False, loads .drift_ignore from the internal control plane (.drift/.drift_ignore).
+
+        Returns:
+            An instance of DriftIgnore with loaded patterns, or default Stow ignore patterns if missing.
+
+        Raises:
+            ValueError: If a nested ignore file is detected in an unauthorized subdirectory.
         """
-        Loads ignore PCRE regex patterns from .drift_ignore inside render_pkg_dir.
-        Returns an instance of DriftIgnore with the loaded patterns.
-        If the file does not exist, returns an instance with the default Stow ignore patterns.
-        """
-        if not render_pkg_dir.exists() or not render_pkg_dir.is_dir():
+        if not package_dir.exists() or not package_dir.is_dir():
             return cls(None)
+
+        expected_parent = package_dir if is_source else (package_dir / DRIFT_INTERNAL_DIR_NAME)
 
         # Proactively check for nested ignore files in subdirectories
         for ignore_name in DRIFT_IGNORE_FILE_NAME_LIST:
-            for path in render_pkg_dir.rglob(ignore_name):
-                # Ensure the path is inside a subdirectory, not at the root
-                if path.parent != render_pkg_dir:
+            for path in package_dir.rglob(ignore_name):
+                # Ensure the path is at the expected location (package root for source, .drift/ for render/install)
+                if path.parent != expected_parent:
                     raise ValueError(
                         f"Nested ignore files are not allowed. "
                         f"Found nested '{ignore_name}' inside subdirectory: "
-                        f"{path.parent.relative_to(render_pkg_dir)}"
+                        f"{path.parent.relative_to(package_dir)}"
                     )
 
-        ignore_path = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
+        ignore_path = expected_parent / DRIFT_IGNORE_FILE_NAME
         if not ignore_path.exists() or not ignore_path.is_file():
             return cls(None)
         patterns = []

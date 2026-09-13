@@ -14,7 +14,7 @@ from drift.workspace_gc import (
     purge_install_folders,
     purge_zombie_folders,
 )
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME
 from drift.cli.actions import execute_gc
 
 
@@ -57,8 +57,8 @@ class TestWorkspaceGc(unittest.TestCase):
         (self.source_dir / pkg).mkdir(parents=True, exist_ok=True)
         (self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
 
-        (self.render_dir / pkg).mkdir(parents=True, exist_ok=True)
-        (self.render_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
         (self.render_dir / pkg / "rendered_file.txt").write_text("rendered", encoding="utf-8")
 
         # Create config/ directory in render/ which should be preserved
@@ -77,8 +77,8 @@ class TestWorkspaceGc(unittest.TestCase):
     def test_gc_purges_missing_source_package_from_render(self) -> None:
         """Verifies that packages in render/ whose source directory is deleted from src/ are purged."""
         pkg = "pkg_deleted_from_src"
-        (self.render_dir / pkg).mkdir(parents=True, exist_ok=True)
-        (self.render_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
 
         self.workspace_config.packages_enable_default = True
 
@@ -94,8 +94,8 @@ class TestWorkspaceGc(unittest.TestCase):
         (self.source_dir / pkg).mkdir(parents=True, exist_ok=True)
         (self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
 
-        (self.render_dir / pkg).mkdir(parents=True, exist_ok=True)
-        (self.render_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
         (self.render_dir / pkg / "file.txt").write_text("content", encoding="utf-8")
 
         self.workspace_config.packages_enable[pkg] = True
@@ -127,8 +127,8 @@ class TestWorkspaceGc(unittest.TestCase):
     def test_gc_dry_run(self) -> None:
         """Verifies that dry_run=True reports what would be purged without deleting."""
         pkg = "pkg_dry"
-        (self.render_dir / pkg).mkdir(parents=True, exist_ok=True)
-        (self.render_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
 
         self.workspace_config.packages_enable[pkg] = False
 

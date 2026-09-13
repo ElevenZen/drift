@@ -4,7 +4,7 @@ import unittest
 import logging
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
 from drift.workspace_config import WorkspaceConfig
 from drift.stage_repo import run_primitive_4_stage_render_to_install
 from drift.render_package import render_package
@@ -226,10 +226,7 @@ class TestStageRepo(unittest.TestCase):
         with open(os.path.join(ignored_sub_dir, "nested.txt"), "w") as f:
             f.write("ignored nested")
 
-        # Config files themselves are also automatically ignored
-        with open(os.path.join(pkg_ignored_render, PACKAGE_CONFIG_FILE_NAME), "w") as f:
-            f.write("[package]\nname = 'pkg_ignored'\n")
-
+        # Config files are written inside .drift/ during render
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_ignored")
 
         self.assertEqual(len(changes), 1)
@@ -239,26 +236,25 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes["pkg_ignored"].deployable_changes.deleted, [])
 
         # Check that all physical files (including ignored ones like hooks/logs) exist in install/
-        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", PACKAGE_CONFIG_FILE_NAME)))
+        self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME)))
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", "valid.txt")))
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_file.txt")))
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "error.log")))
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", "ignored_dir", "nested.txt")))
 
-        # Check .drift_ignore was copied to install
-        self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_IGNORE_FILE_NAME)))
+        # Check .drift_ignore was copied to install/.drift/
+        self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME)))
 
-        # Check .stow-local-ignore file was created and contains ^/\.drift_ignore and ^/drift_package\.toml
+        # Check .stow-local-ignore file was created and contains default patterns including ^/\.drift/
         stow_ignore_path = os.path.join(self.install_dir, "pkg_ignored", ".stow-local-ignore")
         self.assertTrue(os.path.isfile(stow_ignore_path))
-        self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn(r"^/\.drift_ignore", stow_content)
-        self.assertIn(r"^/drift_package\.toml", stow_content)
+        self.assertIn(r"^/\.stow-local-ignore$", stow_content)
+        self.assertIn("ignored_file.txt", stow_content)
 
     def test_stow_local_ignore_without_drift_ignore(self) -> None:
-        """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created to ignore drift_package.toml."""
+        """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created."""
         from drift.render_package import render_package
         from drift.stage_repo import run_primitive_4_stage_render_to_install
 
@@ -282,8 +278,8 @@ class TestStageRepo(unittest.TestCase):
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             content = f.read()
         
-        self.assertIn(r"^/\.drift_ignore", content)
-        self.assertIn(r"^/drift_package\.toml", content)
+        self.assertIn(r"^/\.stow-local-ignore$", content)
+        self.assertIn(r"^/\.drift/", content)
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
@@ -298,9 +294,9 @@ class TestStageRepo(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
-        # Check that it was written to render/pkg_misspelled as .drift_ignore, and .driftignore was skipped
+        # Check that it was written to render/pkg_misspelled/.drift/ as .drift_ignore, and .driftignore was skipped
         pkg_misspelled_render = os.path.join(self.render_dir, "pkg_misspelled")
-        self.assertTrue(os.path.isfile(os.path.join(pkg_misspelled_render, DRIFT_IGNORE_FILE_NAME)))
+        self.assertTrue(os.path.isfile(os.path.join(pkg_misspelled_render, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME)))
         self.assertFalse(os.path.exists(os.path.join(pkg_misspelled_render, ".driftignore")))
 
         # Create valid and ignored files
@@ -319,14 +315,15 @@ class TestStageRepo(unittest.TestCase):
         install_pkg_misspelled = os.path.join(self.install_dir, "pkg_misspelled")
         self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, "valid.txt")))
         self.assertTrue(os.path.exists(os.path.join(install_pkg_misspelled, "misspelled_ignored.txt")))
-        self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, DRIFT_IGNORE_FILE_NAME)))
+        self.assertTrue(os.path.isfile(os.path.join(install_pkg_misspelled, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME)))
         
         stow_ignore_path = os.path.join(install_pkg_misspelled, ".stow-local-ignore")
         self.assertTrue(os.path.isfile(stow_ignore_path))
         self.assertFalse(os.path.islink(stow_ignore_path))
         with open(stow_ignore_path, "r", encoding="utf-8") as f:
             stow_content = f.read()
-        self.assertIn(r"^/\.drift_ignore", stow_content)
+        self.assertIn(r"^/\.stow-local-ignore$", stow_content)
+        self.assertIn("misspelled_ignored.txt", stow_content)
 
     def test_tree_relative_files_utility(self) -> None:
         """Tests tree_relative_files utility function."""
@@ -423,8 +420,8 @@ class TestStageRepo(unittest.TestCase):
         run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
-        # 2. Now write a .drift_ignore inside render/pkg_a/ to ignore file1.txt
-        with open(os.path.join(pkg_a_render, DRIFT_IGNORE_FILE_NAME), "w") as f:
+        # 2. Now write a .drift_ignore inside render/pkg_a/.drift/ to ignore file1.txt
+        with open(os.path.join(pkg_a_render, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME), "w") as f:
             f.write("file1.txt\n")
 
         # 3. Stage again
@@ -446,14 +443,39 @@ class TestStageRepo(unittest.TestCase):
         backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
         self.assertTrue(os.path.isfile(backup_file))
 
+    def test_stage_deleting_drift_ignore_removes_it_from_install(self) -> None:
+        """Verifies that when .drift_ignore is removed from render/, it is unlinked from install/."""
+        pkg_render = self.render_dir / "pkg_del_ignore"
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text('[package]\nname = "pkg_del_ignore"\n', encoding="utf-8")
+        (pkg_render / "file.txt").write_text("Hello", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text(r"\.bak$\n", encoding="utf-8")
+
+        # 1. First stage: .drift_ignore should be copied to install/
+        run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_del_ignore")
+        pkg_install = self.install_dir / "pkg_del_ignore"
+        self.assertTrue((pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).is_file())
+        self.assertTrue((pkg_install / ".stow-local-ignore").is_file())
+
+        # 2. Delete .drift_ignore in render/
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).unlink()
+
+        # 3. Second stage: .drift_ignore should be removed from install/
+        changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_del_ignore")
+        self.assertIn("pkg_del_ignore", changes)
+        self.assertFalse((pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).exists())
+        # .stow-local-ignore should still exist with default patterns
+        self.assertTrue((pkg_install / ".stow-local-ignore").is_file())
+
+
     def test_stage_copies_hook_scripts_listed_in_drift_ignore(self) -> None:
         """Verifies that hook scripts in .drift_ignore are staged to install/ but excluded from deployable changes."""
         pkg = "pkg_hooks"
         pkg_render = self.render_dir / pkg
-        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         # Write config with hook
-        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -464,7 +486,7 @@ class TestStageRepo(unittest.TestCase):
         """, encoding="utf-8")
 
         # Write .drift_ignore ignoring the hook script
-        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("pre_install.sh\n", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("pre_install.sh\n", encoding="utf-8")
 
         # Write hook script and deployable file
         (pkg_render / "pre_install.sh").write_text("#!/bin/sh\necho 'running hook'\n", encoding="utf-8")
@@ -599,8 +621,8 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
         
         render_pkg_dir = self.render_dir / pkg_name
-        render_pkg_dir.mkdir(parents=True, exist_ok=True)
-        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -624,8 +646,8 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
 
         render_pkg_dir = self.render_dir / pkg_name
-        render_pkg_dir.mkdir(parents=True, exist_ok=True)
-        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -645,11 +667,11 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
 
         render_pkg_dir = self.render_dir / pkg_name
-        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (render_pkg_dir / "scripts").mkdir(parents=True, exist_ok=True)
         (render_pkg_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
 
-        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -671,11 +693,11 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
 
         render_pkg_dir = self.render_dir / pkg_name
-        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         install_pkg_dir = self.install_dir / pkg_name
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -717,11 +739,11 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
 
         render_pkg_dir = self.render_dir / pkg_name
-        render_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         install_pkg_dir = self.install_dir / pkg_name
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        with open(render_pkg_dir / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+        with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
             [package]
             name = "{pkg_name}"
@@ -940,9 +962,9 @@ class TestStageRepo(unittest.TestCase):
         """Verifies that modifying hook script or drift_package.toml produces stage changes with has_non_deployable_changes=True."""
         pkg = "pkg_hook_detect"
         pkg_render = self.render_dir / pkg
-        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -952,7 +974,7 @@ class TestStageRepo(unittest.TestCase):
         post_install = "post_install.sh"
         """, encoding="utf-8")
 
-        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("post_install.sh\n", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("post_install.sh\n", encoding="utf-8")
         (pkg_render / "post_install.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
         (pkg_render / "data.txt").write_text("static payload", encoding="utf-8")
 
@@ -985,9 +1007,9 @@ class TestStageRepo(unittest.TestCase):
         """Verifies staging when both deployable payload files and lifecycle hooks are modified together."""
         pkg = "pkg_mixed"
         pkg_render = self.render_dir / pkg
-        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -996,7 +1018,7 @@ class TestStageRepo(unittest.TestCase):
         [hooks]
         post_install = "post.sh"
         """, encoding="utf-8")
-        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("post.sh\n", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("post.sh\n", encoding="utf-8")
         (pkg_render / "post.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
         (pkg_render / "config.json").write_text('{"v": 1}', encoding="utf-8")
 

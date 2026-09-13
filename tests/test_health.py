@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.package_health import (
     run_single_package_health_probe,
@@ -85,7 +85,8 @@ exit 0
 """, encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -106,6 +107,7 @@ exit 0
         pkg_install_dir = self.install_dir / pkg
         scripts_dir = pkg_install_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
         hook_script.write_text("""#!/bin/sh
@@ -114,7 +116,7 @@ exit 2
 """, encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -136,6 +138,7 @@ exit 2
         pkg_install_dir = self.install_dir / pkg
         scripts_dir = pkg_install_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
         hook_script.write_text("""#!/bin/sh
@@ -144,7 +147,7 @@ exit 0
 """, encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -164,8 +167,9 @@ exit 0
         pkg = "pkg_missing"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -182,8 +186,9 @@ exit 0
         pkg = "pkg_no_hook"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -203,12 +208,13 @@ exit 0
         pkg_install_dir = self.install_dir / pkg
         scripts_dir = pkg_install_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
         hook_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -233,8 +239,9 @@ exit 0
         # 1. Setup pkg1: passing
         pkg1 = "pkg1"
         (self.install_dir / pkg1 / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.install_dir / pkg1 / "scripts" / "h.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-        (self.install_dir / pkg1 / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg1}"
         install_method = "copy"
@@ -245,8 +252,9 @@ exit 0
         # 2. Setup pkg2: failing
         pkg2 = "pkg2"
         (self.install_dir / pkg2 / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.install_dir / pkg2 / "scripts" / "h.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
-        (self.install_dir / pkg2 / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg2}"
         install_method = "copy"
@@ -256,8 +264,8 @@ exit 0
 
         # 3. Setup pkg3: no hook
         pkg3 = "pkg3"
-        (self.install_dir / pkg3).mkdir(parents=True, exist_ok=True)
-        (self.install_dir / pkg3 / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (self.install_dir / pkg3 / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.install_dir / pkg3 / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg3}"
         install_method = "copy"
@@ -299,12 +307,13 @@ exit 0
         pkg_install_dir = self.install_dir / pkg
         scripts_dir = pkg_install_dir / "scripts"
         scripts_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
         hook_script.write_text("#!/bin/sh\necho 'CLI Health OK'\nexit 0\n", encoding="utf-8")
         hook_script.chmod(0o755)
 
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -423,7 +432,8 @@ exit 0
             encoding="utf-8"
         )
         install_hook.chmod(0o755)
-        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"

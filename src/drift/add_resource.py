@@ -132,7 +132,7 @@ def run_primitive_11_add_resources(
     src_dir_to_render, target_base, render_engines = resolve_package_import_context(
         workspace_config, src_pkg_dir
     )
-    ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir)
+    ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir, is_source=True)
 
     # 3. Generate global worklist of files to import
     full_worklist = generate_import_worklist(workspace_config, target_base, import_paths, ignore_handler)

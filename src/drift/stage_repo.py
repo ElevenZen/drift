@@ -23,7 +23,7 @@ Layer 5: Primitive Entry Point
                 apply_package_stage_changes(pkg, ...) [Layer 3]
                     backup_and_delete_one_file (deletions with backup)
                     atomic_copy_file / copy_file_mode_with_sudo (additions & modifications)
-                    copy_ignore_and_config_files(render_dir, install_dir, ...) [Layer 1]
+                    generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
                 state_registry.set_package_state("staged") & save
         5. Return Summary Map of Changed Packages
 
@@ -31,7 +31,7 @@ Layer 5: Primitive Entry Point
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
         ensure_install_pkg_dir_clean
-        copy_ignore_and_config_files
+        generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
         compute_package_stage_diff
     Layer 3: Single Package Physical Staging
@@ -49,11 +49,7 @@ from pathlib import Path
 from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
 from dataclasses import dataclass, field
 
-from .constants import (
-    PACKAGE_CONFIG_FILE_NAME,
-    MANAGED_CONFIG_FILES,
-    DRIFT_IGNORE_FILE_NAME,
-)
+from .constants import DRIFT_GENERATED_FILES
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
 from .file_utils import (
@@ -143,26 +139,12 @@ def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
         )
 
 
-def copy_ignore_and_config_files(
-    render_pkg_dir: Path,
+def generate_stage_stow_ignore(
     install_pkg_dir: Path,
     ignore_handler: DriftIgnore,
 ) -> None:
-    """Copies ignore and package config files from render/ to install/ and sets up Stow ignores."""
-    # 1. Copy the physical .drift_ignore file to install/pkg dir if it was rendered in render/
-    render_ignore = render_pkg_dir / DRIFT_IGNORE_FILE_NAME
-    if render_ignore.is_file():
-        atomic_copy_file(render_ignore, install_pkg_dir / DRIFT_IGNORE_FILE_NAME)
-
-    # 2. Create physical .stow-local-ignore
+    """Generates the physical .stow-local-ignore file inside the install/ package directory."""
     ignore_handler.create_stow_ignore_file(install_pkg_dir)
-
-    # 3. Copy the drift_package.toml to install/pkg dir, this file must exist or an Error will be raised.
-    render_config = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
-    if not render_config.is_file():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in render sandbox of package.")
-
-    atomic_copy_file(render_config, install_pkg_dir / PACKAGE_CONFIG_FILE_NAME)
 
 
 # =====================================================================
@@ -187,7 +169,7 @@ def compute_package_stage_diff(
     if not render_pkg_dir.exists():
         raise RuntimeError(f"Render sandbox directory for package '{pkg}' does not exist. Please render first.")
 
-    ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir)
+    ignore_handler = DriftIgnore.load_from_dir(render_pkg_dir, is_source=False)
 
     # 1. Compute deployable changes with ignore_handler for the function output
     deploy_diff = compare_folders(
@@ -204,8 +186,9 @@ def compute_package_stage_diff(
         ignore_handler=None,
         resolve_symlinks=False,
     )
-    # Exclude MANAGED_CONFIG_FILES from deleted list as they are managed/generated in install/
-    all_diff.deleted = [p for p in all_diff.deleted if p.name not in MANAGED_CONFIG_FILES]
+
+    # Exclude DRIFT_GENERATED_FILES (.stow-local-ignore) from deleted list as they are generated directly in install/
+    all_diff.deleted = [p for p in all_diff.deleted if p.name not in DRIFT_GENERATED_FILES]
 
     stage_changes = PackageStageChanges(
         package_name=pkg,
@@ -236,8 +219,6 @@ def apply_package_stage_changes(
 
     # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)
     for rel_file in all_diff.deleted:
-        if rel_file.name in MANAGED_CONFIG_FILES:
-            continue
         install_file = install_pkg_dir / rel_file
         if not install_file.exists() and not install_file.is_symlink():
             continue
@@ -284,9 +265,8 @@ def apply_package_stage_changes(
         else:
             atomic_copy_file(src, dst)
 
-    # Copy ignore and config files (handles .stow-local-ignore and drift_package.toml)
-    copy_ignore_and_config_files(
-        render_pkg_dir=render_pkg_dir,
+    # Generate .stow-local-ignore for GNU Stow compatibility
+    generate_stage_stow_ignore(
         install_pkg_dir=install_pkg_dir,
         ignore_handler=ignore_handler,
     )

@@ -643,9 +643,9 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((render_pkg_dir / "templated.txt").is_file())
         self.assertEqual((render_pkg_dir / "templated.txt").read_text(encoding="utf-8"), "Rendered: drift_render_test")
 
-        # Verify drift_package.toml was dumped to drift_drift_package.toml since it is static
-        self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).is_file())
-        rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
+        # Verify drift_package.toml was dumped to .drift/drift_package.toml since it is static
+        self.assertTrue((render_pkg_dir / ".drift" / PACKAGE_CONFIG_FILE_NAME).is_file())
+        rendered_config = parse_toml((render_pkg_dir / ".drift" / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), True)
 
     def test_render_package_disabled(self) -> None:
@@ -681,10 +681,10 @@ class TestRenderPackage(unittest.TestCase):
         res = render_package(workspace_config, pkg_dir)
         self.assertEqual(res.status, "SUCCESS")
 
-        # Verify render dir contains config file, static.txt, and unrendered config.txt.envst
+        # Verify render dir contains config file in .drift/, static.txt, and unrendered config.txt.envst
         render_pkg_dir = drift_root / "render" / "my_pkg"
-        self.assertTrue((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).exists())
-        rendered_config = parse_toml((render_pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
+        self.assertTrue((render_pkg_dir / ".drift" / PACKAGE_CONFIG_FILE_NAME).exists())
+        rendered_config = parse_toml((render_pkg_dir / ".drift" / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"))
         self.assertEqual(rendered_config.get("package", {}).get("enable_render"), False)
 
         # Static file copied
@@ -823,8 +823,8 @@ class TestRenderPackage(unittest.TestCase):
         # Verify output in render/my_pkg/
         render_pkg_dir = drift_root / "render" / "my_pkg"
 
-        # drift_package.toml was rendered (loaded from package.envst.toml) and renamed to drift_drift_package.toml
-        rendered_config_path = render_pkg_dir / PACKAGE_CONFIG_FILE_NAME
+        # drift_package.toml was rendered (loaded from package.envst.toml) and placed into .drift/drift_package.toml
+        rendered_config_path = render_pkg_dir / ".drift" / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(rendered_config_path.is_file())
         content = rendered_config_path.read_text(encoding="utf-8")
         self.assertIn('name = "rendered_pkg_name"', content)
@@ -1204,8 +1204,8 @@ class TestRenderPackage(unittest.TestCase):
         render_pkg_dir = self.drift_root / "render" / "pkg_h"
         self.assertTrue(render_pkg_dir.is_dir())
 
-        # Verify .drift_ignore was processed/copied
-        self.assertTrue((render_pkg_dir / ".drift_ignore").is_file())
+        # Verify .drift_ignore was processed/copied into .drift/
+        self.assertTrue((render_pkg_dir / ".drift" / ".drift_ignore").is_file())
 
         # Verify normal file was processed/copied
         self.assertTrue((render_pkg_dir / "normal.txt").is_file())
@@ -1832,7 +1832,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertEqual(result.status, "SUCCESS")
 
         render_pkg_dir = self.drift_root / "render" / "pkg_subfolder"
-        self.assertTrue((render_pkg_dir / "drift_package.toml").exists())
+        self.assertTrue((render_pkg_dir / ".drift" / "drift_package.toml").exists())
         self.assertTrue((render_pkg_dir / "dot-config" / "app.conf").exists())
         self.assertTrue((render_pkg_dir / "dot-bashrc").exists())
         # README.md at root should not be rendered

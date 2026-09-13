@@ -298,8 +298,8 @@ class TestPackageRenderEngine(unittest.TestCase):
         res = run_primitive_2_render_packages(workspace_config, ["tmpl_pkg"])
         self.assertEqual(res.status, "SUCCESS")
 
-        # 3. Check rendered drift_package.toml in render/tmpl_pkg/
-        rendered_pkg_toml = self.drift_root / "render" / "tmpl_pkg" / PACKAGE_CONFIG_FILE_NAME
+        # 3. Check rendered drift_package.toml in render/tmpl_pkg/.drift/
+        rendered_pkg_toml = self.drift_root / "render" / "tmpl_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         self.assertTrue(rendered_pkg_toml.is_file())
         parsed = parse_toml(rendered_pkg_toml.read_text(encoding="utf-8"))
         self.assertEqual(parsed.get("package", {}).get("target_directory"), "~/custom_subdir")
@@ -356,8 +356,9 @@ class TestPackageRenderEngine(unittest.TestCase):
 
         install_pkg_dir = install_base / "pkg_rev"
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (install_pkg_dir / "config.ini").write_text("[section]\nkey=val\n", encoding="utf-8")
-        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+        (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
             (pkg_dir / PACKAGE_CONFIG_FILE_NAME).read_text(encoding="utf-8"),
             encoding="utf-8"
         )
