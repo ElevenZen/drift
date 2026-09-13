@@ -212,10 +212,38 @@ Removes or detaches a package from the system:
 Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure. Resets `install/` to HEAD, purges untracked files via `git clean -fd`, and executes a Full Package Redeploy with `force=True`.
 
 ### Primitive 9: Workspace Garbage Collection [High-level: `drift gc`]
-Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories:
-1.  **Orphan Package Uninstallation**: Automates uninstallation for packages that are registered as `"installed"` in `state.toml` but are no longer enabled/active in `drift_workspace.toml`.
-2.  **Zombie Folder Purge**: Scans `render/` and `install/` base directories, identifying and purging any subdirectories that do not contain a valid package configuration file (like `drift_package.toml`), preventing database pollution.
-3.  **Auto-Commit Database changes**: Auto-stages and commits zombie removal operations inside `render/` and `install/` databases.
+Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories across 3 structured stages:
+1.  **Orphan Package Uninstallation (Stage 1)**:
+    *   Scans `install/state.toml` for packages marked as `"installed"`.
+    *   Cross-references against `config/drift_workspace.toml` (`is_package_enabled(pkg)`). Packages present in state but disabled or removed from configuration declarations are identified as *orphans*.
+    *   Executes **Primitive 7 (Uninstall)** with `force=True`:
+        *   Triggers package `pre_uninstall` and `post_uninstall` lifecycle hooks (unless `--no-hooks` is active).
+        *   Unlinks symlinks or deletes physical files from active host targets.
+        *   Restores original backed-up host files from `backup/<package>/overwritten/`.
+        *   Removes `install/<pkg>/` and prunes empty `backup/<pkg>/` directories.
+        *   Deletes package records from `install/state.toml` and commits uninstallation to the `install/` Git repository.
+2.  **Database Folder Purge (Stage 2 - `render/` and `install/`)**:
+    *   **`render/` Purge Rules (`purge_render_folders`)**:
+        *   Scans visible subdirectories in `render/` (ignoring `.git`, `config/` via `CONFIG_DIR_NAME`, and `FORBIDDEN_PACKAGE_NAMES`).
+        *   Purges a package directory if:
+            1. *Zombie folder*: Lacks any valid package config file (`drift_package.toml`, `drift_package.yaml`, `drift_package.json`, `drift_package.yml`).
+            2. *Disabled package*: Package is disabled in workspace configuration (`packages.enable.<pkg> = false` or `packages.enable.default = false`).
+            3. *Source deleted*: The corresponding package source directory in `src/<pkg>` has been deleted.
+        *   Removes the directory via `shutil.rmtree` (or logs under `--dry-run`).
+    *   **`install/` Purge Rules (`purge_install_folders`)**:
+        *   Scans visible subdirectories in `install/` (ignoring `.git` and `FORBIDDEN_PACKAGE_NAMES`).
+        *   Queries `install/state.toml` to protect registered packages (registered packages undergo graceful Stage 1 uninstallation instead of direct disk deletion).
+        *   Purges an `install/` package directory if:
+            1. *Zombie folder*: Lacks any valid package config file.
+            2. *Unregistered & Obsolete*: Directory is **not** registered in `state.toml` AND (is disabled in workspace config OR missing from `src/`).
+        *   Removes the directory via `shutil.rmtree` (or logs under `--dry-run`).
+3.  **Scoped Database Git Commits (Stage 3)**:
+    *   When not running in `--dry-run` mode:
+        *   Auto-stages and commits purged folder deletions in the `render/` Git repository (scoped strictly to purged package names).
+        *   Auto-stages and commits purged folder deletions in the `install/` Git repository (scoped strictly to purged package names).
+4.  **Structured Observability & CLI Options**:
+    *   Returns strongly-typed `GcResult` dataclass with detailed uninstalled orphan results, purged zombie lists, and Git commit metadata.
+    *   Supports `--dry-run` for non-destructive inspection, `--no-hooks` for bypassing uninstall hooks, and `--json` for machine-readable output.
 
 ### Primitive 10: Package Creation [High-level: `drift new`]
 Scaffolds a new declarative package inside the `src/` directory:
@@ -285,7 +313,7 @@ The `drift` Python command provides a unified interface for all primitives and h
 *   **`drift rollback [packages...] [-f/--force] [--no-hooks] [--json]`**: Emergency recovery after midway failure (Primitive 8).
 *   **`drift status [packages...] [--json]`**: Audits and aggregates the alignment of templates, system drift, and pending deployments.
 *   **`drift diff [packages...] [-t/--template] [-s/--system] [--stat] [-y/--side-by-side] [--json]`**: Visualizes changes between layers (Diff A, Diff B, or Diff Δ).
-*   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages and purges zombie database directories (Primitive 9).
+*   **`drift gc [--dry-run] [--no-hooks] [--json]`**: Cleans orphan packages, purges disabled/missing/zombie database folders in `render/` and `install/`, and auto-commits database purges (Primitive 9).
 *   **`drift repair [--dry-run] [--json]`**: Audits and self-heals workspace structure, repositories, config templates, and secrets (Primitive 14).
 *   **`drift complete [<shell>] [--install] [--json]`**: Generates or installs native interactive shell tab-completion scripts (bash, zsh, fish, nu).
 *   **`drift help [topic]`**: Interactive mini user manual with pager fallback support (topics: `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`).
@@ -790,39 +818,69 @@ Upon completion of the package's render or deployment phase, these variables are
 This section defines the core architectural policies, safeguards, and customization guidelines required to maintain technical integrity.
 
 ### A. Ignored Files and Name Conversion Rules
-Both `stow` and `copy` deployment strategies must natively respect ignore files and name transformation specifications:
-1.  **Ignore Filter (`.drift_ignore`) Syntax & Rules**:
-    *   **Single File Restriction & Stow Compatibility**:
-        *   Exactly **one** `.drift_ignore` file is allowed at the root of each package directory. Nested subdirectory ignore files are strictly prohibited and will trigger execution aborts.
-        *   **Default Stow Ignore List**: If no `.drift_ignore` is provided for a package, Drift automatically applies GNU Stow's default ignore list (`RCS`, `\.+,v`, `CVS`, `\.\#.+=`, `\.cvsignore`, `\.svn`, `_darcs`, `\.hg`, `\.git`, `\.gitignore`, `.+~`, `\#.*\#`, `^/README.*`, `^/LICENSE.*`, `^/COPYING.*`) for complete compatibility.
-    *   **Syntax & Engine**:
-        *   The `.drift_ignore` matches the exact syntax and matching rules used by GNU Stow's `.stow-local-ignore`.
-        *   **No Globbing**: The ignore engine **does NOT use globbing**. Instead, it compiles and evaluates patterns as **PCRE Regular Expressions** (compiled in Python's `re` engine).
-        *   **Comments and Blank Lines**: Lines starting with `#` are treated as comments and stripped (unless escaped as `\#`), and empty lines are bypassed.
-    *   **Matching Algorithm**:
-        *   *With Slashes*: If a pattern contains a forward slash `/`, it is evaluated against the complete relative path of the file prefixed with a forward slash (e.g. `/dot-config/coc-settings.json`).
-        *   *Without Slashes*: If a pattern does not contain a slash, it is matched directly against the file's `basename` (e.g., `\.bak$`).
-    *   **Match Timing Guard**: The ignore engine matches file patterns against the native repository filenames **before** any prefix conversion or suffix extraction takes place.
-        *   *Important*: To ignore a file named `dot-bashrc`, your `.drift_ignore` file must list `dot-bashrc`, not `.bashrc`. Listing `.bashrc` will fail to match on disk, and the file will still be processed.
-    *   **Implicit Exclusions**: Package configurations (`drift_package.toml`, `.drift_ignore`, `.stow-local-ignore`, `drift_package.local.toml`) are automatically excluded by the compilation engine without requiring manual entries.
-    *   **Automated `.stow-local-ignore` Generation**: During staging and deployment, Drift exports all active `DriftIgnore` patterns plus `MANAGED_CONFIG_FILES` into `install/<package>/.stow-local-ignore`. This ensures GNU Stow respects both custom and default ignore rules without polluting host target directories.
-    *   An extra `.stow-local-ignore` is dynamically generated at the root of the `install/` directory to prevent GNU Stow from parsing the internal database file `state.toml` as an active package.
+Both `stow` and `copy` deployment strategies natively respect ignore files, prefix transformations, and metadata isolation rules:
+
+1.  **Ignore Filter (`.drift_ignore`) Syntax & Matching Rules**:
+    *   **Single Source of Truth & Nested Ignore Rejection**:
+        *   Exactly **one** `.drift_ignore` file is allowed at the root of each package directory (`src/<pkg>/.drift_ignore`).
+        *   Nested ignore files inside subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore` or `src/<pkg>/subfolder/.driftignore`) are **strictly prohibited** and immediately raise a `ValueError` during parsing to guarantee a single authoritative ignore configuration per package.
+    *   **Legacy Alias & Auto-Migration**:
+        *   `.driftignore` is recognized as a legacy alias of `.drift_ignore`. If `.driftignore` is detected at the package root without a `.drift_ignore`, the render engine logs a warning and automatically copies it to `.drift_ignore`.
+    *   **Default Stow Ignore List**:
+        If no `.drift_ignore` file is provided in a package, Drift automatically applies a comprehensive default ignore ruleset (`DEFAULT_STOW_IGNORE_PATTERNS` / `DEFAULT_DRIFT_IGNORE_CONTENT`) matching GNU Stow standards, development toolchains, and editor caches:
+        - **Python Bytecode, Virtual Environments & Caches**: `__pycache__`, `/__pycache__/`, `\.py[cod]$`, `\$py\.class$`, `\.pytest_cache`, `/\.pytest_cache/`, `\.mypy_cache`, `/\.mypy_cache/`, `\.ruff_cache`, `/\.ruff_cache/`, `\.venv`, `/\.venv/`, `^venv$`, `/venv/`
+        - **Version Control & Metadata**: `^/\.gitignore`, `\.gitignore`, `\.git`, `\.hg`, `\.svn`, `_darcs`, `CVS`, `\.cvsignore`, `RCS`, `\.+,v`, `\.\#.+`
+        - **Editor Backups & Temporary Files**: `.+~`, `\#.*\#`, `.*\.sw[a-p]$`, `.*\.swp$`, `.*\.swo$`, `.*\.un~$`
+        - **Operating System Metadata**: `^\.DS_Store$`, `^Thumbs\.db$`
+        - **Package Documentation & Licenses**: `^/README.*`, `^/LICENSE.*`, `^/COPYING.*`
+        - **Drift Internal Control Plane**: `^/\.drift/`, `^/\.drift$`
+    *   **PCRE Regular Expressions (No Globbing)**:
+        *   The ignore engine **does NOT use globbing syntax**. Instead, all patterns are parsed and evaluated as **Perl-Compatible Regular Expressions (PCRE)** using Python's `re` module.
+        *   Lines beginning with `#` are treated as comments (unless escaped with a backslash `\#`), and whitespace/blank lines are skipped.
+    *   **Two-Group Matching Algorithm**:
+        Drift divides loaded regex patterns into two groups based on whether a forward slash `/` is present:
+        *   *Group 1: Patterns Containing `/` (Relative Path Matching)*:
+            Matched against the file's normalized relative path prefixed with `/` (e.g., `/dot-config/nvim/init.lua`).
+            - To anchor a pattern strictly to the package root, start with `^/` (e.g. `^/sample\.txt$`, `^/install.*\.sh$`). Do **not** use `./`.
+            - To match a directory anywhere in the tree, use `/dirname/` (e.g., `/cache/`, `/build/`).
+        *   *Group 2: Patterns WITHOUT `/` (Basename Matching)*:
+            Matched against the file or directory `basename` anywhere within the package hierarchy (e.g. `\.bak$`, `^~`, `\.sw[p-z]$`).
+    *   **Match Timing Guard (Pre-Conversion Evaluation)**:
+        *   The ignore engine evaluates patterns against native source filenames **before** `dot-` prefix translation or engine suffix extraction takes place.
+        *   *Rule*: To ignore a template named `dot-bashrc.envst.sh`, the ignore pattern must match `dot-bashrc.envst.sh` (or `dot-bashrc.*`), not `.bashrc`.
+    *   **Hardcoded Implicit Exclusions**:
+        *   **Internal `.drift` Directory**: The internal control plane directory (`.drift/`, containing staged compilation inputs and `.drift/hooks/`) is hardcoded as permanently ignored and is never deployed or symlinked onto active host systems.
+        *   **Managed Config & Hook Files**: Metadata files defined in `MANAGED_CONFIG_FILES` (`drift_package.toml`, `drift_package.local.toml`, `drift_package.py`, `.drift_ignore`, `.stow-local-ignore`) are permanently ignored by `match_path` and never linked to the host target.
+    *   **Automated `.stow-local-ignore` Generation**:
+        *   During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns plus `MANAGED_CONFIG_FILES` (with escaped dots, e.g. `^/drift_package\.toml$`) into `install/<package>/.stow-local-ignore`. This ensures GNU Stow fully respects all custom and default ignore rules without polluting host targets.
+        *   **Install Root Stow Guard**: An extra `.stow-local-ignore` is generated at the root of `install/` via `DriftIgnore.for_install_root()` (containing `INSTALL_STOW_IGNORE_PATTERN = "^/state\\.toml"`), preventing GNU Stow from erroneously treating `state.toml` as an active package directory.
+    *   **FCD Reverse-Sync & Adoption Integration**:
+        *   Untracked host files in Fully-Controlled Directories (FCD) matching `.drift_ignore` are automatically skipped during `reverse-sync`.
+        *   During interactive adoption (`drift adopt -i`), selecting option `[2] Ignore` automatically appends the file's relative path pattern to the package's `.drift_ignore` file.
 
     #### PCRE `.drift_ignore` File Example:
     ```ini
-    # Ignore any files ending in '.bak' anywhere in the package
+    # =====================================================================
+    # .drift_ignore - Package Ignore Specification
+    # =====================================================================
+    # Ignore any files ending in '.bak' or '.tmp' anywhere in the package
     \.bak$
+    \.tmp$
 
-    # Ignore any files starting with a tilde (such as temp files)
+    # Ignore editor swap files
+    \.sw[p-z]$
+
+    # Ignore temporary files starting with a tilde
     ^~
 
-    # Ignore a specific directory named 'build' anywhere in the package path
+    # Ignore a specific directory named 'build' or 'cache' anywhere
     /build/
+    /cache/
 
-    # Ignore a specific path relative to the package root
+    # Ignore a specific path relative to package root
     ^/dot-config/coc-settings\.json$
 
-    # Ignore a specific directory under a subfolder, recursively
+    # Ignore a specific nested folder recursively
     ^/dot-config/nvim/tmp/
     ```
 
@@ -933,7 +991,8 @@ To maintain parity between declarations and system states, the deployer enforces
 1.  **Orphan Package Garbage Collection (Self-Cleaning)**:
     *   When executing a **Bulk All-Packages Deployment** (`drift deploy` with no targeted package), the system compares the state database `install/state.toml` with the active packages list in `config/drift_workspace.toml` (and respects `enable_install = false` in `drift_package.toml`).
     *   If a package is registered as `"installed"` in `install/state.toml`, but is **no longer active/enabled** in configuration declarations, the post-deployment GC step **automatically executes Primitive 7 (Uninstall) on this orphan package** during Stage 3.
-    *   This ensures decommissioned packages are automatically and cleanly purged from the host system.
+    *   This ensures decommissioned packages are automatically and cleanly purged from the host system, restoring overwritten original files from `backup/<package>/overwritten/`.
+    *   **Database Hygiene**: In addition to orphan uninstallation, GC purges disabled or missing package folders from `render/`, cleans unregistered obsolete folders from `install/`, purges zombie directories lacking valid package configurations, and auto-commits database changes into local Git repositories.
 2.  **Uninstall Protection Safeguard**:
     *   If a user tries to manually uninstall a package (e.g. `drift uninstall proxychains`), but that package is **still active/enabled** inside `config/drift_workspace.toml` (and has `enable_install != false`), this represents a direct contradiction because the package would simply be re-installed on the next bulk deploy.
     *   In this case, the uninstaller will **halt and print an error**, instructing the user to first disable the package in declarations, **unless a `--force` flag is supplied**.
@@ -1095,8 +1154,13 @@ For each redeployable package:
 *   The updated configurations and `state.toml` file are staged and committed into the local-only `install/` Git repository, locking the environment into a clean, reproducible state.
 
 #### 6. Stage 3: Post-Deployment Workspace Garbage Collection (Primitive 9 - Bulk Mode Only)
-*   **Workspace GC**: If a bulk deployment (all active packages) succeeds, the engine automatically triggers **Primitive 9: Workspace Garbage Collection**.
-*   This uninstalls orphan packages (previously installed but now disabled in workspace config) and purges "zombie" directory folders in `render/` and `install/` which lack valid package configuration files, auto-committing the database cleanup to lock in a clean workspace environment.
+*   **Bulk Deployment Automation**: If a bulk deployment (all active packages) succeeds, the engine automatically triggers **Primitive 9: Workspace Garbage Collection**.
+    *   *Note*: When running targeted deployments for specific packages (`drift deploy <pkg>`), Stage 3 GC is bypassed to keep surgical operations isolated.
+*   **Decomposed 4-Phase Execution Pipeline**:
+    1.  *Orphan Package Uninstallation*: Compares `install/state.toml` against active packages declared in `drift_workspace.toml`. Packages marked as `"installed"` in state but disabled or removed from configuration declarations are automatically uninstalled via **Primitive 7 (Uninstall)** with `force=True` (triggering lifecycle hooks, unlinking/deleting active host files, restoring original backups from `backup/<package>/overwritten/`, pruning package directories, and synchronizing `state.toml`).
+    2.  *Render Database Purge*: Traverses `render/` to identify and remove directories that are zombies (lacking valid config), disabled in workspace config, or whose source folder `src/<pkg>` was deleted. Internal directories (`.git`, `config/`) and forbidden names are strictly preserved.
+    3.  *Install Database Purge*: Traverses `install/` to identify and remove directories that are zombies or are not registered in `state.toml` while disabled/missing from `src/`. Registered packages are protected from raw filesystem removal and handled exclusively via graceful uninstallation in step 1.
+    4.  *Scoped Git Database Commits*: Auto-stages and commits purged folder deletions in `render/` and `install/` repositories, scoping commits specifically to purged package paths.
 
 ---
 
