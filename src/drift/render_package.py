@@ -21,6 +21,7 @@ from .constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
     INITIAL_ENV,
 )
 from .workspace_config import secrets_env_scope, WorkspaceConfig
@@ -347,13 +348,13 @@ def prepare_package_render_engines(
 ) -> RenderEngineRegistry:
     """
     Overlays package-level render engine configurations onto the workspace registry
-    and renders any input file templates into the package's internal sandbox (.drift/).
+    and renders any input file templates into the package's internal sandbox (.drift/render/).
     """
     effective_engines = pkg_config.package_render_engines(workspace_config)
     render_input_templates(
         engines=effective_engines,
         drift_root=workspace_config.drift_root,
-        output_dir=render_pkg_dir / DRIFT_INTERNAL_DIR_NAME,
+        output_dir=render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
     )
     return effective_engines
 
@@ -423,7 +424,7 @@ def run_primitive_2_render_packages(
         render_input_templates(
             engines=workspace_config.render_engine_configs,
             drift_root=workspace_config.drift_root,
-            output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME,
+            output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
         )
 
         # 2. Identify and render packages

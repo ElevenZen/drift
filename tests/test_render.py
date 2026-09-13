@@ -1048,7 +1048,7 @@ class TestRenderPackage(unittest.TestCase):
         run_primitive_2_render_packages(workspace_config)
 
         # 5. Verify engine input was rendered
-        rendered_mustache_json = drift_root / "render" / ".drift" / "mustache.json"
+        rendered_mustache_json = drift_root / "render" / ".drift" / "render" / "mustache.json"
         self.assertTrue(rendered_mustache_json.is_file())
         self.assertIn('"the_value": "orchestrated_value"', rendered_mustache_json.read_text(encoding="utf-8"))
 

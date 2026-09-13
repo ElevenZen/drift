@@ -133,7 +133,7 @@ def render_input_templates(
     Args:
         engines: The RenderEngineRegistry instance.
         drift_root: The root path of the drift workspace.
-        output_dir: Target destination directory for rendered input files (e.g. render/.drift or render/<pkg>/.drift).
+        output_dir: Target destination directory for rendered input files (e.g. render/.drift/render or render/<pkg>/.drift/render).
 
     Raises:
         ValueError: If a cyclic dependency is detected.

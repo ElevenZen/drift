@@ -1186,11 +1186,11 @@ class TestConfigLoaders(unittest.TestCase):
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
         from drift.render_input import render_input_templates
-        from drift.constants import DRIFT_INTERNAL_DIR_NAME
+        from drift.constants import DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_RENDER_DIR_NAME
         render_input_templates(
             workspace_config.render_engine_configs,
             workspace_config.drift_root,
-            workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME
+            workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
         )
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)

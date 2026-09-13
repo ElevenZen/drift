@@ -71,6 +71,7 @@ INSTALL_STOW_IGNORE_PATTERN = r"^/state\.toml"
 DRIFT_INTERNAL_DIR_NAME = ".drift"
 DRIFT_HOOKS_DIR_NAME = "drift_hooks"
 DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
+DRIFT_INTERNAL_RENDER_DIR_NAME = "render"
 FORBIDDEN_RENDER_ENGINE_SUFFIXES = (
     "drift_package",
     "drift_hook",
