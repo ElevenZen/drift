@@ -1088,6 +1088,26 @@ Developers reconcile discovered untracked FCD additions using `drift adopt`, whi
     2.  *Staging Delta Promotion*: On the subsequent `drift deploy` (Stage 2) run, because the file is tracked in `install/` but is completely absent from the newly compiled `render/` sandbox output, the staging promotion compiler (`drift stage` / Primitive 4) automatically flags it as an **orphaned deletion** (tracked in state, but missing from compiled declarations).
     3.  *The Result*: A delete instruction is generated for this file, and during the physical deployment phase (`drift apply` / Primitive 5), it is symmetrically and cleanly deleted from the active host system, restoring pristine configuration baseline alignment!
 
+### J. CLI Privilege Safeguards & Sudo Workspace Protection
+To prevent target directory mismatches and permission corruption across internal sub-repositories and state databases, Drift enforces strict privilege boundaries when executing workspace actions:
+
+1.  **Dual Hazards of Running Under `sudo`**:
+    *   *Hazard 1: Target Path Mismatch (`$HOME` / `~` Expansion)*:
+        Running the CLI under `sudo` causes environment variables such as `$HOME` and path expansion `~` to evaluate to `/root` instead of the invoking user's home directory. This causes relative or tilde-based deployment targets (e.g. `default_target_directory = "~"`) to resolve incorrectly to `/root`, unintentionally deploying user dotfiles into root's directory tree.
+    *   *Hazard 2: Root File Ownership Pollution*:
+        Executing compilation and staging under `sudo` creates internal database commits, lockfiles, rendered templates, and state metadata (`render/.git`, `install/.git`, `install/state.toml`, `.drift/`) with `root:root` ownership and restricted permissions. Subsequent non-sudo invocations by the regular user will fail with fatal `PermissionError` exceptions when attempting to write, lock, or update Git databases.
+
+2.  **Privilege Enforcement & Permitted Scenarios**:
+    When executing actions against a workspace directory (`drift_root`), `check_sudo_and_root` inspects execution privileges and directory ownership, permitting execution strictly under two valid scenarios:
+    *   *Scenario 1: True Root Session*: The current process is running as the actual root user (`os.getuid() == 0` without `SUDO_USER` set in environment variables, such as inside root containers or direct root logins).
+    *   *Scenario 2: Root-Owned Workspace*: The workspace root directory (`drift_root`) itself is owned by root (`uid == 0`). In this case, writing root-owned database artifacts causes no ownership mismatch.
+
+3.  **Remediation & Granular Elevation (`sudo = true`)**:
+    If a non-root workspace is invoked under `sudo`, Drift immediately halts with exit code `1` and outputs a clear multi-step guide:
+    *   *Granular Privilege Elevation (Recommended)*: If specific packages need elevated permissions to deploy files into system directories (e.g., `/etc/`), configure `sudo = true` inside the individual `src/<package>/drift_package.toml`. Drift will selectively elevate only the physical file copying, symlinking, and pruning operations via `sudo` while keeping workspace databases cleanly owned by the user and preserving correct `$HOME` target resolution.
+    *   *Dedicated Root Dotfiles*: If the workspace is specifically intended to manage root dotfiles, place the repository in root's home directory (e.g., `/root/...`).
+    *   *Explicit Override*: If the user intentionally wishes to manage a root-owned workspace, they can chown the workspace directory via `sudo chown -R root:root <drift_root>`.
+
 ---
 
 ## 7. Detailed Implementation Specifications

@@ -116,6 +116,9 @@ This document provides a concise, high-density architecture reference, primitive
     *   **Host Collisions**: Automatically backed up to `backup/<pkg>/overwritten/` (non-aborting).
 5.  **Sentinel Drift Alignment Guard**:
     *   If `reverse-sync` leaves uncommitted changes in `install/` repo (host drift), deployer **halts immediately** to prevent silent overwrites. User must `drift adopt` or `--force`.
+6.  **CLI Privilege & Sudo Guard**:
+    *   Prohibits running CLI under `sudo` on user-owned workspaces to prevent target path mismatch (`$HOME`/`~` expanding to `/root`) and root-owned file corruption in `render/.git` and `install/.git`.
+    *   Permitted only if running as true root (`SUDO_USER` unset) or workspace directory is root-owned (`uid == 0`). Elevated deployment is configured per-package via `sudo = true`.
 
 ---
 

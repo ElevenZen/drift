@@ -7,6 +7,7 @@
 * **Pure & Predictable Flow**: Strive for pure helpers with explicit inputs and outputs, isolating state mutations and file I/O to designated operational handlers.
 * **Structured & Typed Return Boundaries**: Use dataclasses or typed result containers (`PackageRenderResult`, `HookResult`, etc.) rather than raw dictionaries or arbitrary tuples across module interfaces to ensure strong type safety and explicit inspection.
 * **Boundary Normalization & Validation**: Normalize and validate inputs (e.g., resolving paths to absolute `Path` objects, validating enum keys) at ingestion entry points (`from_dict`, config loaders) so core primitives operate strictly on canonical, validated domain structures without defensive guessing.
+* **No Backward Compatibility Burden**: Backward compatibility is not considered at this early development stage. Obsolete arguments, dead functions, legacy aliases, and transitional optional inputs should be removed cleanly and directly rather than retaining compatibility layers or shims.
 
 ## 2. Architecture & Documentation Standards
 * **Layered Call Chain Overviews**: Preserve and maintain the `Architecture & Call Chain Overview` docstrings at the top of primitive modules (ordered by dependency layers).

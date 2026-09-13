@@ -1,6 +1,8 @@
 """Core action implementations for drift CLI backend triggers using pathlib."""
 
 import sys
+import os
+import getpass
 import logging
 from pathlib import Path
 from typing import Optional, List, Union, Any, Sequence
@@ -45,12 +47,94 @@ logger = logging.getLogger(__name__)
 _ = get_drift_root
 
 
+def is_directory_owned_by_root(path: Path) -> bool:
+    """Returns True if path (or its nearest existing ancestor) is owned by root (UID 0)."""
+    try:
+        cur = path.resolve()
+        while not cur.exists() and cur.parent != cur:
+            cur = cur.parent
+        if cur.exists():
+            return cur.stat().st_uid == 0
+    except Exception:
+        pass
+    return False
+
+
+def check_sudo_and_root(drift_root: Path) -> None:
+    """Ensures that the user does not run Drift under sudo or root privileges on a user-owned workspace.
+
+    Allowed scenarios:
+    1. The user is actual root (logged in as root, os.getuid() == 0 without sudo).
+    2. The drift workspace (drift_root) is owned by root (UID 0), meaning root file creation
+       will not corrupt regular user workspace file ownership.
+    """
+    if sys.platform == "win32":
+        # On Windows, elevated Administrator shell is allowed and sudo/root checks do not apply.
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        return
+
+    # 1. Check if running under sudo (SUDO_USER or SUDO_UID environment variables exist)
+    is_sudo = "SUDO_USER" in os.environ or "SUDO_UID" in os.environ
+
+    # 2. Check if running with root privilege (UID 0)
+    has_root_privilege = False
+    try:
+        has_root_privilege = (os.getuid() == 0)
+    except AttributeError:
+        # Non-POSIX platforms
+        pass
+
+    if not is_sudo and not has_root_privilege:
+        # Regular non-root user running without sudo
+        return
+
+    # Check Scenario 1: Actual root user without sudo
+    if has_root_privilege and not is_sudo:
+        try:
+            current_user = getpass.getuser()
+        except Exception:
+            current_user = os.environ.get("USER", "root")
+        if current_user == "root":
+            return
+
+    # Check Scenario 2: drift_root is owned by root (UID 0)
+    if is_directory_owned_by_root(drift_root):
+        return
+
+    # Neither scenario is satisfied: running under sudo / root on a user-owned workspace.
+    root_display = str(drift_root)
+    print(
+        f"❌ [ERROR] Running Drift under 'sudo' on a user-owned workspace is prohibited.\n\n"
+        f"Why this is prevented:\n"
+        f"  1. Target Path Mismatch: Running under sudo changes $HOME and '~' to expand to '/root' instead of\n"
+        f"     your user home directory, causing dotfiles to be deployed to the wrong target location.\n"
+        f"  2. File Permission Pollution: Running under sudo creates internal repository and staging files\n"
+        f"     (in render/, install/, backup/, and state.toml) with root ownership (root:root), breaking\n"
+        f"     file permissions when you later run Drift as a regular user.\n\n"
+        f"How to resolve:\n"
+        f"  1. [Recommended] Run Drift as your normal user without 'sudo'. If a specific package requires root\n"
+        f"     privileges to deploy files, set 'sudo = true' in that package's 'drift_package.toml'. Drift will\n"
+        f"     elevate only the file deployment step via sudo while keeping workspace databases user-owned.\n"
+        f"  2. If managing system-wide dotfiles for the root user, move the Drift workspace into root's home\n"
+        f"     directory (e.g. /root/drift) and run Drift as the actual 'root' user.\n"
+        f"  3. If you explicitly want to run this workspace under sudo, change the workspace ownership to root:\n"
+        f"     sudo chown -R root:root {root_display}",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def load_workspace_config_default(drift_root: Path) -> WorkspaceConfig:
+    check_sudo_and_root(drift_root)
     return WorkspaceConfig.from_workspace_dir(drift_root)
 
 
 def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False, json_mode: bool = False) -> None:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
+    check_sudo_and_root(drift_root)
     init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
     if json_mode:
         print(SerializableModel().to_json())
@@ -436,6 +520,8 @@ def execute_clone(
 ) -> None:
     """Core function to clone a git repository and bootstrap/repair the drift workspace."""
     from ..workspace_clone import run_primitive_clone
+
+    check_sudo_and_root(target_dir if target_dir is not None else Path.cwd().resolve())
 
     res = run_primitive_clone(
         git_url=git_url,

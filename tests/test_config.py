@@ -657,7 +657,7 @@ class TestConfigClasses(unittest.TestCase):
 
         with patch("sys.platform", "win32"):
             # Should not raise or exit
-            check_sudo_and_root()
+            check_sudo_and_root(Path.cwd())
 
     def test_package_hooks_check_hook_files(self) -> None:
         """Verifies check_hook_files validates existence and regular file status of configured hook files."""

@@ -363,37 +363,54 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
 
     @patch("os.environ", {"SUDO_USER": "testuser"})
     def test_cli_sudo_user_prohibited(self) -> None:
-        """Verifies that running under sudo is prohibited and exits with 1."""
+        """Verifies that running under sudo on a user-owned workspace is prohibited and exits with 1."""
         stderr = StringIO()
         original_stderr = sys.stderr
         sys.stderr = stderr
 
         try:
             with self.assertRaises(SystemExit) as cm:
-                main(["--help"])
+                main(["-C", self.drift_root, "render"])
             self.assertEqual(cm.exception.code, 1)
         finally:
             sys.stderr = original_stderr
 
-        self.assertIn("Running under 'sudo' is strictly prohibited", stderr.getvalue())
+        self.assertIn("Running Drift under 'sudo' on a user-owned workspace is prohibited", stderr.getvalue())
+        self.assertIn("Target Path Mismatch", stderr.getvalue())
+        self.assertIn("sudo chown -R root:root", stderr.getvalue())
+
+    @patch("os.environ", {"SUDO_USER": "testuser"})
+    @patch("drift.cli.actions.is_directory_owned_by_root", return_value=True)
+    def test_cli_sudo_user_allowed_when_workspace_owned_by_root(self, mock_is_root_owned) -> None:
+        """Verifies that running under sudo is allowed when the drift workspace is owned by root."""
+        stdout = StringIO()
+        original_stdout = sys.stdout
+        sys.stdout = stdout
+
+        try:
+            main(["-C", self.drift_root, "render"])
+        finally:
+            sys.stdout = original_stdout
+
+        self.assertIn("✨ Successfully rendered all enabled packages!", stdout.getvalue())
 
     @patch("os.getuid", return_value=0, create=True)
     @patch("getpass.getuser", return_value="testuser")
     @patch("os.environ", {})
     def test_cli_root_privilege_prohibited(self, mock_getuser, mock_getuid) -> None:
-        """Verifies that running with root privilege for a non-root user is prohibited."""
+        """Verifies that running with root privilege for a non-root user on user-owned workspace is prohibited."""
         stderr = StringIO()
         original_stderr = sys.stderr
         sys.stderr = stderr
 
         try:
             with self.assertRaises(SystemExit) as cm:
-                main(["--help"])
+                main(["-C", self.drift_root, "render"])
             self.assertEqual(cm.exception.code, 1)
         finally:
             sys.stderr = original_stderr
 
-        self.assertIn("Running with root privilege is prohibited unless you are the actual 'root' user.", stderr.getvalue())
+        self.assertIn("Running Drift under 'sudo' on a user-owned workspace is prohibited", stderr.getvalue())
 
     @patch("os.getuid", return_value=0, create=True)
     @patch("getpass.getuser", return_value="root")
@@ -405,13 +422,11 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         sys.stdout = stdout
 
         try:
-            with self.assertRaises(SystemExit) as cm:
-                main(["--help"])
-            self.assertEqual(cm.exception.code, 0)
+            main(["-C", self.drift_root, "render"])
         finally:
             sys.stdout = original_stdout
 
-        self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", stdout.getvalue())
+        self.assertIn("✨ Successfully rendered all enabled packages!", stdout.getvalue())
 
     def test_cli_no_hooks_flags_across_commands(self) -> None:
         """Verifies that both --no-hooks and --no-hook flags pass no_hooks=True to action handlers."""
