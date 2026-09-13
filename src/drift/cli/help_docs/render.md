@@ -23,18 +23,18 @@ Drift constructs a template dependency graph using engine configurations in `dri
 *   **Built-in TOML Variable Self-Referencing**: Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all standard `.toml` fields using Kahn's topological sort algorithm with cycle detection, requiring zero subprocesses or external dependencies.
 *   **External Render Engines**: Registered template engines (`[render.envsubst]`, `[render.mustache]`, `[render.jinja2]`) compile templated dotfiles (e.g., `.bashrc.envst`, `config.j2`) and can also compile dynamic TOML templates (e.g., `drift_workspace.local.envst.toml`, `drift_package.envst.toml`) when complex templating logic is desired.
 
-## 🎨 Package-Level Render Engines & 2-Stage Compilation Pipeline
-Drift executes rendering across two modular stages with dedicated `.drift/` internal sandboxes:
-1.  **Stage 1: Workspace Global Compilation Pipeline**:
+## 🎨 Package-Level Render Engines & 2-Phase Compilation Pipeline
+Drift executes rendering across two modular phases with dedicated `.drift/` internal sandboxes:
+1.  **Phase 1: Workspace Global Compilation Pipeline**:
     *   Evaluates global `[render.*]` engines defined in `drift_workspace.toml`.
     *   Compiles workspace-level input dependencies into `render/.drift/render/`.
-    *   Compiles templated package configurations (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
-2.  **Stage 2: Package-Scoped Compilation Pipeline**:
+    *   Compiles templated package configurations (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). *(Note: Only global workspace engines can compile package configuration templates).*
+2.  **Phase 2: Package-Scoped Compilation Pipeline**:
     *   Loads package configuration from `render/<pkg>/.drift/drift_package.toml`.
     *   Overlays package `[render.*]` engines onto workspace engines with **field-level inheritance** (overriding `input_file` relative to `src/<pkg>/` while inheriting unspecified `suffix` and `render_command`).
     *   Renders package-level input dependencies into `render/<pkg>/.drift/render/`.
     *   Copies `.drift_ignore` to `render/<pkg>/.drift/.drift_ignore` and excludes it from payload rendering.
     *   Compiles dedicated lifecycle hook scripts from `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` (with template compilation support), keeping hooks sandboxed away from deployable dotfiles.
-    *   Compiles package template files with the combined, effective render engines.
+    *   Compiles package template files with the combined, effective render engines. *(Note: Engines defined in package config apply exclusively to package source files and templates).*
 
 

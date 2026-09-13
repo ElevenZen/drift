@@ -543,11 +543,15 @@ The primary motivation of **Package-Level Render Engine Configuration** (`[rende
      - Package configuration: `base_dir = src/<package_name>/`
    - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing.
 
-3. **Multi-Stage Compilation & Intermediate Sandboxing (`.drift/`)**:
-   - **Stage 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
-   - **Stage 2 (Engine Overlay & Package Dependency Re-evaluation)**: Effective render engines re-evaluate their input dependency tree (`render_input_templates`) and compile package-specific input templates directly into the package intermediate sandbox `render/<pkg>/.drift/render/`.
-   - **Stage 3 (Package File Compilation)**: Source templates under `src/<pkg>/` are compiled into `render/<pkg>/` using the effective engines under active package environment scope (`drift_package_*`, `[env.override]`, etc.).
-   - **Stage 4 (Downstream Cooperation)**: Downstream primitives (`drift reverse-sync`, `drift adopt`, `drift add`) resolve template suffixes against these effective package engines, ensuring seamless two-way synchronization.
+3. **Multi-Phase Compilation & Intermediate Sandboxing (`.drift/`)**:
+   - **Phase 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
+   - **Phase 2 (Engine Overlay & Package Dependency Re-evaluation)**: Effective render engines re-evaluate their input dependency tree (`render_input_templates`) and compile package-specific input templates directly into the package intermediate sandbox `render/<pkg>/.drift/render/`.
+   - **Phase 3 (Package File Compilation)**: Source templates under `src/<pkg>/` are compiled into `render/<pkg>/` using the effective engines under active package environment scope (`drift_package_*`, `[env.override]`, etc.).
+   - **Phase 4 (Downstream Cooperation)**: Downstream primitives (`drift reverse-sync`, `drift adopt`, `drift add`) resolve template suffixes against these effective package engines, ensuring seamless two-way synchronization.
+
+4. **Engine Scope & Boundary Invariants**:
+   - **Global Engines Only for Package Config**: Only workspace-level global render engines defined in `config/drift_workspace.toml` can be used to compile package configuration templates (e.g. `src/<pkg>/drift_package.envst.toml`). This is because package configuration files must be rendered during Phase 1 (Workspace Bootstrap) *before* package-level `[render.<name>]` definitions can even be parsed.
+   - **Package-Level Engines Scope**: Render engines defined inside `drift_package.toml` (`[render.<name>]`) operate exclusively during Phase 3 on **package source dotfiles and templates** (under `src/<pkg>/`) and *cannot* be used to compile `drift_package.toml` itself.
 
 #### 7. Render Collision Prevention & Reserved Suffix Validation
 To prevent nondeterministic builds and accidental file clobbering:

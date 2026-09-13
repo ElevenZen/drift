@@ -124,6 +124,9 @@ This document provides a concise, high-density architecture reference, primitive
     *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with 1:1 fidelity.
     *   The only files in `install/` not originating from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
     *   All package metadata and internal control plane files (`.drift/drift_package.toml`, `.drift/.drift_ignore`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
+8.  **Render Engine Scope & Invariants**:
+    *   **Global Engines Only for Package Config**: Dynamic package configuration templates (`src/<pkg>/drift_package.envst.toml`) can only be compiled by global workspace render engines (`drift_workspace.toml`), evaluated during workspace bootstrap.
+    *   **Package-Level Engines Scope**: Render engines declared in `drift_package.toml` (`[render.<name>]`) operate strictly during package source compilation on **package source dotfiles/templates** (under `src/<pkg>/`) and cannot be used to compile `drift_package.toml` itself.
 
 ---
 

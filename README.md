@@ -246,10 +246,10 @@ A **single, unified dotfiles repository** can effortlessly power everything from
         return cfg
     ```
 
-*   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py`)**:
+*   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py` or `drift_hooks/`)**:
     Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`) defining `configure_package(context)` to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
     ```python
-    # src/my_app/drift_package.py
+    # src/my_app/drift_package.py (or src/my_app/drift_hooks/drift_package.py)
     def configure_package(context):
         """Dynamically configure package and disable installation on incompatible machines."""
         cfg = context.config
@@ -268,6 +268,7 @@ A **single, unified dotfiles repository** can effortlessly power everything from
 
         return cfg
     ```
+    > **Isolation in `drift_hooks/`**: If you prefer keeping the package root clean or want the Python configuration hook stored alongside other lifecycle scripts and automatically excluded from host deployment, you can place it inside `drift_hooks/` (e.g. `src/<pkg>/drift_hooks/drift_package.py` with `hook_file = "drift_hooks/drift_package.py"`). Anything inside `drift_hooks/` is compiled into `.drift/hooks/` and is permanently ignored during deployment.
 
 *   **Dynamic Host Profiling via Meta-Config Templating (`config/drift_workspace.local.envst.toml`)**:
     For automated fleet deployments across servers and laptops using shell environments, you can author a local configuration template:
@@ -322,6 +323,23 @@ render_command = "mustache %i %s"
 *   **Automatic Dependency Ordering**: Drift compiles `config/mustache.envst.json` into `mustache.json` using the `envsubst` engine first, then passes the compiled JSON file as `%i` to `mustache`.
 *   **Cycle Detection**: Drift validates the engine dependency graph to prevent infinite compilation loops, raising a clear `CyclicDependencyError` if circular references occur.
 *   **Deferred Compilation**: Compilation is only performed when an enabled package in your workspace actually relies on the template engine, preventing unnecessary bottlenecks.
+
+#### C. Package-Level Render Engines (Self-Contained Config Space & Portable Media)
+In addition to workspace-level engines, packages can define custom render engines or override workspace engines directly in `drift_package.toml` via `[render.<name>]` tables:
+```toml
+# src/nvim/drift_package.toml
+[render.custom_lua]
+suffix = "tmpl"
+input_file = "theme_vars.json"                             # Resolved relative to src/nvim/
+render_command = "python3 render_template.py %i %s"
+```
+*   **Self-Contained Portable Media**: By declaring custom template engines, rules, and localized input data (e.g. `src/<pkg>/theme_vars.json` or `src/<pkg>/env.sh`) directly inside the package boundary, each Drift package becomes a **self-contained, fully portable configuration medium**. Packages can be freely shared, copied, or migrated across different repositories without requiring global engine definitions in `drift_workspace.toml`.
+*   **Compilation Scope & Engine Rules**:
+    *   **Global Engines Only for Package Config**: Only global workspace engines defined in `drift_workspace.toml` can compile dynamic package configuration templates (e.g. `src/<pkg>/drift_package.envst.toml`). This is because package configuration must be compiled during workspace bootstrap *before* package-level `[render.<name>]` definitions can be discovered or parsed.
+    *   **Package-Level Engines Scope**: Render engines defined inside `drift_package.toml` (`[render.<name>]`) operate strictly during package source compilation on **package source dotfiles and templates** (under `src/<pkg>/`) and cannot be used to compile `drift_package.toml` itself.
+*   **Field-Level Inheritance**: When overriding a workspace engine, unspecified attributes (`suffix`, `render_command`) are inherited automatically from the workspace engine, allowing you to override only `input_file` for that specific package.
+*   **Intermediate Sandboxing (`.drift/render/`)**: Package-specific input templates compile into `render/<pkg>/.drift/render/`, keeping control plane compilation cleanly isolated from deployable dotfiles.
+*   **Two-Way Synchronization**: Downstream commands (`drift reverse-sync`, `drift adopt`, `drift add`) seamlessly resolve template suffixes against these package-level engines.
 
 ### 🛑 6. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
@@ -524,7 +542,7 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
 
 > [!TIP]
 > **Dedicated `drift_hooks/` Directory & `.drift/hooks/` Isolation**:
-> Place lifecycle scripts inside `src/<pkg>/drift_hooks/` (e.g., `drift_hooks/bootstrap.sh`). Drift automatically compiles them into `render/<pkg>/.drift/hooks/` and stages them into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal Drift metadata directory, hook scripts and helper libraries are completely isolated from deployment and never deployed or symlinked to the host target directory.
+> Place lifecycle scripts and Python package hooks inside `src/<pkg>/drift_hooks/` (e.g., `drift_hooks/bootstrap.sh`, `drift_hooks/drift_package.py`). Drift automatically compiles them into `render/<pkg>/.drift/hooks/` and stages them into `install/<pkg>/.drift/hooks/`. Because `.drift/` is an internal Drift metadata directory, hook scripts, Python configuration hooks, and helper libraries are completely isolated from deployment and never deployed or symlinked to the host target directory.
 
 > [!NOTE]
 > **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.

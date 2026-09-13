@@ -317,7 +317,7 @@ def configure_package(context):
 ```
 
 
-## 🎨 Package-Level Render Engines & 2-Stage Compilation
+## 🎨 Package-Level Render Engines & 2-Phase Compilation
 
 Packages can define custom render engines or override global workspace render engines via `[render.<name>]` in `drift_package.toml`.
 
@@ -327,10 +327,10 @@ When a package defines a `[render.<name>]` table for an engine already defined i
 * **`suffix`**: Inherited from the workspace engine if omitted in the package config.
 * **`render_command`**: Inherited from the workspace engine if omitted in the package config.
 
-### 2. Multi-Stage Compilation Chain & Sandbox Isolation
-Drift evaluates compilation pipelines across two distinct, isolated stages:
-1. **Stage 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/render/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
-2. **Stage 2 (Package Scope)**: Package configurations are loaded from `render/<pkg>/.drift/drift_package.toml`, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/render/`). Package files are then compiled using the effective engine registry.
+### 2. Multi-Phase Compilation Chain & Sandbox Isolation
+Drift evaluates compilation pipelines across two distinct, isolated phases:
+1. **Phase 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/render/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). *(Only global workspace engines can compile package configuration templates).*
+2. **Phase 2 (Package Scope)**: Package configurations are loaded from `render/<pkg>/.drift/drift_package.toml`, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/render/`). Package files and templates under `src/<pkg>/` are then compiled using the effective engine registry. *(Engines defined in `drift_package.toml` operate exclusively on package source files).*
 
 ### 3. Reverse Sync, Add, & Adopt Integration
 All downstream primitives (`drift adopt`, `drift add`, `drift reverse-sync`) automatically respect package-level render engine definitions and suffix mappings when reconciling file modifications, renames, and imports.
