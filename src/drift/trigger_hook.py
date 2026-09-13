@@ -5,24 +5,14 @@ from pathlib import Path
 from typing import Optional, Union
 
 from .workspace_config import WorkspaceConfig
-from .package_config import (
-    PackageConfig,
-    load_package_config_from_source_dir,
-    load_config_for_install,
-)
+from .package_config import PackageConfig
 from .lifecycle_hooks import (
     HookExecFlags,
     trigger_package_hook_with_render,
     trigger_package_hook,
 )
-from .file_utils import ensure_dir_exists_with_sudo
 from .constants import (
-    PACKAGE_CONFIG_FILE_NAME,
     LIFECYCLE_HOOK_NAMES,
-    SOURCE_CWD_HOOK_NAMES,
-    RENDER_CWD_HOOK_NAMES,
-    INSTALL_CWD_HOOK_NAMES,
-    TARGET_CWD_HOOK_NAMES,
     PackageStage,
 )
 from .exceptions import ConfigError
@@ -31,61 +21,18 @@ from .result_models import HookResult
 logger = logging.getLogger(__name__)
 
 
-def _resolve_hook_cwd(
-    workspace_config: WorkspaceConfig,
-    package_name: str,
-    hook_name: str,
-    pkg_config: PackageConfig,
-) -> Path:
-    """Resolves and validates the execution working directory (CWD) for a given lifecycle hook."""
-    if hook_name in RENDER_CWD_HOOK_NAMES:
-        render_pkg_dir = workspace_config.render_path / package_name
-        if not render_pkg_dir.exists() or not render_pkg_dir.is_dir():
-            raise FileNotFoundError(
-                f"Package '{package_name}' has not been rendered. Render directory not found: '{render_pkg_dir}'. "
-                f"Please run 'drift render {package_name}' first."
-            )
-        cwd = render_pkg_dir
-    elif hook_name in INSTALL_CWD_HOOK_NAMES:
-        install_pkg_dir = workspace_config.install_path / package_name
-        if not install_pkg_dir.exists() or not install_pkg_dir.is_dir():
-            raise FileNotFoundError(
-                f"Install directory not found: '{install_pkg_dir}'."
-            )
-        cwd = install_pkg_dir
-    elif hook_name in SOURCE_CWD_HOOK_NAMES:
-        src_pkg_dir = workspace_config.source_path / package_name
-        if not src_pkg_dir.exists() or not src_pkg_dir.is_dir():
-            raise FileNotFoundError(
-                f"Package '{package_name}' source directory not found: '{src_pkg_dir}'"
-            )
-        cwd = src_pkg_dir
-    else:  # TARGET_CWD_HOOK_NAMES
-        cwd = pkg_config.get_target_directory(workspace_config)
-
-    ensure_dir_exists_with_sudo(cwd, sudo=pkg_config.sudo)
-    return cwd
-
-
 def trigger_hook_from_source(
     workspace_config: WorkspaceConfig,
     package_name: str,
     hook_name: str,
     flags: Optional[HookExecFlags] = None,
+    cwd_override: Optional[Path] = None,
 ) -> HookResult:
     """Loads configuration and executes a lifecycle hook from the package source directory (rendering templates if needed)."""
     src_pkg_dir = workspace_config.source_path / package_name
 
-    if hook_name in RENDER_CWD_HOOK_NAMES:
-        render_pkg_dir = workspace_config.render_path / package_name
-        if not render_pkg_dir.exists() or not render_pkg_dir.is_dir():
-            raise FileNotFoundError(
-                f"Package '{package_name}' has not been rendered. Render directory not found: '{render_pkg_dir}'. "
-                f"Please run 'drift render {package_name}' first."
-            )
-
     try:
-        pkg_config = load_package_config_from_source_dir(
+        pkg_config = PackageConfig.from_source_dir(
             package_dir=src_pkg_dir,
             workspace_config=workspace_config
         )
@@ -94,13 +41,11 @@ def trigger_hook_from_source(
             f"Package '{package_name}' source directory not found: '{src_pkg_dir}'"
         ) from e
 
-    cwd = _resolve_hook_cwd(workspace_config, package_name, hook_name, pkg_config)
-
     res = trigger_package_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name=hook_name,
-        custom_cwd=cwd,
+        custom_cwd=cwd_override,
         flags=flags,
         pkg_config_override=pkg_config,
     )
@@ -116,12 +61,13 @@ def trigger_hook_from_install(
     package_name: str,
     hook_name: str,
     flags: Optional[HookExecFlags] = None,
+    cwd_override: Optional[Path] = None,
 ) -> HookResult:
     """Loads configuration and executes a lifecycle hook directly from the install state database directory."""
     install_pkg_dir = workspace_config.install_path / package_name
 
     try:
-        pkg_config = load_config_for_install(workspace_config.install_path, package_name)
+        pkg_config = PackageConfig.from_install_dir(install_pkg_dir)
     except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Package '{package_name}' is not installed in the state database. "
@@ -129,14 +75,12 @@ def trigger_hook_from_install(
             f"Please run 'drift deploy {package_name}' or 'drift apply {package_name}' first."
         ) from e
 
-    cwd = _resolve_hook_cwd(workspace_config, package_name, hook_name, pkg_config)
-
     with pkg_config.package_envs(workspace_config):
         res = trigger_package_hook(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,
-            cwd=cwd,
+            cwd=cwd_override,
             flags=flags,
         )
     if res.status == "SKIPPED":
@@ -152,6 +96,7 @@ def run_primitive_trigger_hook(
     hook_name: str,
     from_stage: Optional[Union[str, PackageStage]] = None,
     flags: Optional[HookExecFlags] = None,
+    cwd_override: Optional[Path] = None,
 ) -> HookResult:
     """Executes a single lifecycle hook for a specific package directly.
 
@@ -161,9 +106,10 @@ def run_primitive_trigger_hook(
         hook_name: The lifecycle hook name to execute (e.g. pre_source, post_render,
             pre_install, post_install, pre_update, post_update, pre_uninstall, post_uninstall, health).
         from_stage: Optional stage selector ('source' or 'install'). If omitted:
-            - Hooks 'pre_source', 'probe', 'post_render' default to 'source'.
+            - Hooks 'probe', 'pre_source', 'post_render' default to 'source'.
             - All other lifecycle hooks default to 'install'.
         flags: Optional HookExecFlags controlling execution options (e.g. streaming, no_hooks).
+        cwd_override: Optional working directory override.
 
     Returns:
         HookResult detailing execution status, duration, CWD, hook script path, and exit status.
@@ -177,11 +123,11 @@ def run_primitive_trigger_hook(
     if from_stage is not None:
         stage = PackageStage.from_str(from_stage)
     else:
-        if hook_name in SOURCE_CWD_HOOK_NAMES or hook_name in RENDER_CWD_HOOK_NAMES:
+        if hook_name in ("probe", "pre_source", "post_render"):
             stage = PackageStage.SOURCE
         else:
             stage = PackageStage.INSTALL
 
     if stage == PackageStage.SOURCE:
-        return trigger_hook_from_source(workspace_config, package_name, hook_name, flags=flags)
-    return trigger_hook_from_install(workspace_config, package_name, hook_name, flags=flags)
+        return trigger_hook_from_source(workspace_config, package_name, hook_name, flags=flags, cwd_override=cwd_override)
+    return trigger_hook_from_install(workspace_config, package_name, hook_name, flags=flags, cwd_override=cwd_override)

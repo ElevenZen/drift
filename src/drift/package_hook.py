@@ -44,6 +44,7 @@ class PackageHookContext:
         }
         if self.workspace_config is not None:
             facts["drift_package_source_dir"] = str(self.workspace_config.source_path / self.package_name)
+            facts["drift_package_src_dir"] = str(self.workspace_config.source_path / self.package_name)
             facts["drift_package_render_dir"] = str(self.workspace_config.render_path / self.package_name)
             facts["drift_package_install_dir"] = str(self.workspace_config.install_path / self.package_name)
         return facts

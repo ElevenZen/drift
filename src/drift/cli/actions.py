@@ -46,7 +46,7 @@ _ = get_drift_root
 
 
 def load_workspace_config_default(drift_root: Path) -> WorkspaceConfig:
-    return load_workspace_config(drift_root)
+    return WorkspaceConfig.from_workspace_dir(drift_root)
 
 
 def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False, json_mode: bool = False) -> None:

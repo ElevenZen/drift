@@ -29,7 +29,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Mapping
 
-from .constants import INTERNAL_RENDER_COMMAND
+from .constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from .exceptions import ConfigError
 
 logger = logging.getLogger(__name__)
@@ -60,6 +60,8 @@ class RenderEngineConfig:
             raise ConfigError("suffix must be a non-empty string.")
         if "." in self.suffix:
             raise ConfigError(f"Render engine suffix '{self.suffix}' cannot contain dots ('.').")
+        if self.suffix.lower() in FORBIDDEN_RENDER_ENGINE_SUFFIXES:
+            raise ConfigError(f"Render engine suffix '{self.suffix}' is a forbidden reserved keyword.")
         if not self.render_command or not isinstance(self.render_command, str):
             raise ConfigError("render_command must be a non-empty string.")
         if not self.is_internal:

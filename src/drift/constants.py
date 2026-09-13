@@ -69,6 +69,16 @@ STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
 INSTALL_STOW_IGNORE_PATTERN = r"^/state\.toml"
 DRIFT_INTERNAL_DIR_NAME = ".drift"
+DRIFT_HOOKS_DIR_NAME = "drift_hooks"
+DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
+FORBIDDEN_RENDER_ENGINE_SUFFIXES = (
+    "drift_package",
+    "drift_hook",
+    "drift_ignore",
+    "drift_workspace",
+    "drift_hooks",
+    "drift",
+)
 INTERNAL_RENDER_COMMAND = "internal"
 DRIFT_GENERATED_FILES = (STOW_LOCAL_IGNORE_FILE_NAME,)
 DEFAULT_PACKAGE_HOOK_FILE_NAME = "drift_package.py"
@@ -90,6 +100,7 @@ FORBIDDEN_PACKAGE_NAMES = (
     DRIFT_IGNORE_FILE_NAME,
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_HOOKS_DIR_NAME,
     ".git",
     ".gitignore",
 )
@@ -208,6 +219,10 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^/README.*\n"
     "^/LICENSE.*\n"
     "^/COPYING.*\n"
+    "\n"
+    "# Drift internal control plane and sandbox\n"
+    "^/\\.drift/\n"
+    "^/\\.drift$\n"
 )
 
 # Default list of ignore patterns generated from DEFAULT_DRIFT_IGNORE_CONTENT for GNU Stow matching
@@ -217,34 +232,18 @@ DEFAULT_STOW_IGNORE_PATTERNS: List[str] = [
     if line.strip() and not line.strip().startswith("#")
 ]
 
-# Lifecycle hooks categorized by their execution working directory (CWD)
-SOURCE_CWD_HOOK_NAMES = (
+# Supported package lifecycle hook event names
+LIFECYCLE_HOOK_NAMES = (
     "probe",
     "pre_source",
-)
-
-RENDER_CWD_HOOK_NAMES = (
     "post_render",
-)
-
-INSTALL_CWD_HOOK_NAMES = (
     "pre_install",
-    "pre_update",
-    "post_uninstall",
-)
-
-TARGET_CWD_HOOK_NAMES = (
     "post_install",
+    "pre_update",
     "post_update",
     "pre_uninstall",
+    "post_uninstall",
     "health",
-)
-
-LIFECYCLE_HOOK_NAMES = (
-    *SOURCE_CWD_HOOK_NAMES,
-    *RENDER_CWD_HOOK_NAMES,
-    *INSTALL_CWD_HOOK_NAMES,
-    *TARGET_CWD_HOOK_NAMES,
 )
 
 INSTALLATION_HOOK_NAMES = (

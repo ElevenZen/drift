@@ -123,10 +123,8 @@ def load_package_config_for_uninstall(
     pkg: str
 ) -> PackageConfig:
     """Loads package configuration from install base, or constructs a default configuration if missing or invalid."""
-    from .install_repo import load_config_for_install
-
     try:
-        return load_config_for_install(workspace_config.install_path, pkg)
+        return PackageConfig.from_install_dir(workspace_config.install_path / pkg)
     except Exception as e:
         logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
         return PackageConfig(name=pkg)
@@ -293,13 +291,13 @@ def uninstall_one_package(
 
     # Check uninstall hook files exist before attempting uninstallation
     if not dry_run and not hook_flags.no_hooks:
-        pkg_config.hooks.check_hook_files(install_pkg_dir, hook_names=UNINSTALL_HOOK_NAMES)
+        pkg_config.hooks.check_hook_files(install_pkg_dir, is_source=False, hook_names=UNINSTALL_HOOK_NAMES)
 
     with pkg_config.package_envs(workspace_config):
-        # 1. Trigger pre_uninstall hook (only if drift_package.toml is available, CWD is target_dir)
+        # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
         if not dry_run and pkg_config.hooks.pre_uninstall:
             pkg_config.hooks.trigger_pre_uninstall(
-                target_dir=target_dir, flags=hook_flags
+                flags=hook_flags
             )
 
         # 2. Remove deployed files
@@ -387,7 +385,7 @@ def run_primitive_7_uninstall_packages(
         if not detach and not hook_flags.no_hooks:
             for pkg, pkg_config in pkg_config_map.items():
                 pkg_config.hooks.check_hook_files(
-                    workspace_config.install_path / pkg, hook_names=UNINSTALL_HOOK_NAMES
+                    workspace_config.install_path / pkg, is_source=False, hook_names=UNINSTALL_HOOK_NAMES
                 )
 
     package_results: List[PackageUninstallResult] = []

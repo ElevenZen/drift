@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Union, Sequence
 
 from .workspace_config import WorkspaceConfig
-from .package_config import PackageConfig, load_config_for_install, load_package_config_from_source_dir
+from .package_config import PackageConfig
 from .state_registry import load_state_registry
 from .constants import PACKAGE_CONFIG_FILE_NAME, PackageStage
 from .result_models import (
@@ -107,7 +107,7 @@ def run_health_probe_from_source(
     )
 
     try:
-        pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(src_pkg_dir, workspace_config)
         target_dir = pkg_config.get_target_directory(workspace_config)
     except FileNotFoundError:
         return PackageHealthResult(
@@ -154,7 +154,7 @@ def run_health_probe_from_install(
     )
 
     try:
-        pkg_config = load_config_for_install(workspace_config.install_path, pkg)
+        pkg_config = PackageConfig.from_install_dir(workspace_config.install_path / pkg)
         target_dir = pkg_config.get_target_directory(workspace_config)
     except FileNotFoundError:
         return PackageHealthResult(

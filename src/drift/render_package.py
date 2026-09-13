@@ -19,16 +19,18 @@ from .constants import (
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
     DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
     INITIAL_ENV,
 )
 from .workspace_config import secrets_env_scope, WorkspaceConfig
-from .package_config import load_package_config_from_source_dir
+from .package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
 from .exceptions import ConfigError
 from .lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from .result_models import PackageRenderResult, RenderResult
-from .file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes
+from .file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes, is_relative_to
 
 logger = logging.getLogger(__name__)
 
@@ -63,82 +65,10 @@ def _validate_not_driftignore_target(
             )
 
 
-def render_or_copy_file(
-    file_path: Path,
-    package_dir: Path,
-    render_pkg_dir: Path,
-    workspace_config: WorkspaceConfig,
-    pkg_config: PackageConfig,
-    render_engines: RenderEngineRegistry,
-) -> Tuple[str, bool]:
-    """Renders a single file using a matched engine, or copies it if no engine matches or rendering is disabled.
-
-    Rendered files will have the engine suffix stripped in the output path.
-    Returns (relative_dest_path, is_rendered).
-    """
-    relative_path = file_path.relative_to(package_dir)
-
-    # If the item is a directory (e.g. empty directory or symlink to directory in source), create it in render/ without copying or rendering
-    if file_path.is_dir():
-        dest_path = render_pkg_dir / relative_path
-        logger.info(f"📁 Directory: {relative_path}")
-        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
-        dest_path.mkdir(parents=True, exist_ok=True)
-        return (relative_path.as_posix(), False)
-
-    engine: Optional[RenderEngineConfig] = None
-    if pkg_config.enable_render:
-        engine = render_engines.find_engine_for_file(relative_path.as_posix())
-
-    if engine:
-        stripped_relative_path = engine.strip_suffix(relative_path.as_posix())
-        _validate_not_driftignore_target(
-            file_path=file_path,
-            target_rel_path=stripped_relative_path,
-            package_name=package_dir.name,
-            is_template=True,
-        )
-        dest_path = render_pkg_dir / stripped_relative_path
-        logger.info(f"🎨 Rendering: {relative_path} ({engine.name})")
-        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
-        render_template_to_file(
-            engine_config=engine,
-            drift_root=workspace_config.drift_root,
-            template_file_path=file_path,
-            output_file_path=dest_path
-        )
-        dest_rel = stripped_relative_path
-        is_rendered = True
-    else:
-        _validate_not_driftignore_target(
-            file_path=file_path,
-            target_rel_path=relative_path.as_posix(),
-            package_name=package_dir.name,
-            is_template=False,
-        )
-        dest_path = render_pkg_dir / relative_path
-        logger.info(f"📄 Copying: {relative_path}")
-        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(file_path, dest_path)
-        dest_rel = relative_path.as_posix()
-        is_rendered = False
-
-    # Ensure hook permissions on POSIX for declared lifecycle hooks
-    ensure_rendered_file_hook_permissions(
-        src_path=file_path,
-        dest_path=dest_path,
-        dest_rel=dest_rel,
-        pkg_config=pkg_config,
-    )
-
-    return (dest_rel, is_rendered)
-
-
 def ensure_rendered_file_hook_permissions(
     src_path: Path,
     dest_path: Path,
-    dest_rel: str,
+    rel_path: Path,
     pkg_config: PackageConfig,
 ) -> None:
     """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
@@ -149,7 +79,9 @@ def ensure_rendered_file_hook_permissions(
     if sys.platform == "win32":
         return
 
-    if dest_rel not in pkg_config.hooks.configured_relative_paths:
+    rel_posix = rel_path.as_posix()
+    hook_rel_posix = (Path(DRIFT_HOOKS_DIR_NAME) / rel_path).as_posix()
+    if rel_posix not in pkg_config.hooks.configured_relative_paths and hook_rel_posix not in pkg_config.hooks.configured_relative_paths:
         return
 
     try:
@@ -163,6 +95,142 @@ def ensure_rendered_file_hook_permissions(
                 src_path.chmod(src_mode | 0o755)
     except Exception as e:
         logger.debug(f"Could not ensure executable permission for hook file '{dest_path}': {e}")
+
+
+def render_or_copy_file(
+    rel_path: Path,
+    src_dir: Path,
+    dest_dir: Path,
+    drift_root: Path,
+    pkg_config: PackageConfig,
+    render_engines: RenderEngineRegistry,
+) -> Tuple[str, bool]:
+    """Renders a single file using a matched engine, or copies it if no engine matches or rendering is disabled.
+
+    Rendered files will have the engine suffix stripped in the output path.
+    Returns (relative_dest_path, is_rendered).
+    """
+    file_path = src_dir / rel_path
+
+    # If the item is a directory (e.g. empty directory or symlink to directory in source), create it in dest_dir without copying or rendering
+    if file_path.is_dir():
+        dest_path = dest_dir / rel_path
+        logger.info(f"📁 Directory: {rel_path}")
+        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
+        dest_path.mkdir(parents=True, exist_ok=True)
+        return (rel_path.as_posix(), False)
+
+    engine: Optional[RenderEngineConfig] = None
+    if pkg_config.enable_render:
+        engine = render_engines.find_engine_for_file(rel_path.as_posix())
+
+    if engine:
+        stripped_relative_path = engine.strip_suffix(rel_path.as_posix())
+        _validate_not_driftignore_target(
+            file_path=file_path,
+            target_rel_path=stripped_relative_path,
+            package_name=pkg_config.name,
+            is_template=True,
+        )
+        dest_path = dest_dir / stripped_relative_path
+        logger.info(f"🎨 Rendering: {rel_path} ({engine.name})")
+        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
+        render_template_to_file(
+            engine_config=engine,
+            drift_root=drift_root,
+            template_file_path=file_path,
+            output_file_path=dest_path
+        )
+        dest_rel = stripped_relative_path
+        is_rendered = True
+    else:
+        _validate_not_driftignore_target(
+            file_path=file_path,
+            target_rel_path=rel_path.as_posix(),
+            package_name=pkg_config.name,
+            is_template=False,
+        )
+        dest_path = dest_dir / rel_path
+        logger.info(f"📄 Copying: {rel_path}")
+        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_copy_file(file_path, dest_path)
+        dest_rel = rel_path.as_posix()
+        is_rendered = False
+
+    # Ensure hook permissions on POSIX for declared lifecycle hooks
+    ensure_rendered_file_hook_permissions(
+        src_path=file_path,
+        dest_path=dest_path,
+        rel_path=Path(dest_rel),
+        pkg_config=pkg_config,
+    )
+
+    return (dest_rel, is_rendered)
+
+
+def render_package_file_entry(
+    rel_path: Path,
+    src_dir: Path,
+    dest_dir: Path,
+    drift_root: Path,
+    pkg_config: PackageConfig,
+    render_engines: RenderEngineRegistry,
+) -> Optional[Tuple[Path, bool]]:
+    """Renders or copies a package file entry, routing drift_hooks/ files into the .drift/hooks/ sandbox.
+
+    Filters out package config files, .drift_ignore, and unmapped hidden files.
+    Returns (rendered_subpath, was_rendered) where rendered_subpath is relative to dest_dir,
+    or None if the file should be skipped.
+    """
+    file_path = src_dir / rel_path
+
+    # 1. Skip if the file is the package config file or its template itself
+    if pkg_config.is_package_config_file(file_path):
+        return None
+
+    # 2. Skip any '.*' files (except .drift_ignore) in rendering process and print info
+    if rel_path.name.startswith(".") and rel_path.name not in DRIFT_IGNORE_FILE_NAME_LIST:
+        logger.info(
+            f"ℹ️  [SKIP] Skipping hidden file '{rel_path}' in package rendering. "
+            "All hidden files must use the 'dot-' prefix in source templates."
+        )
+        return None
+
+    # 3. Handle root .drift_ignore (already handled by handle_driftignore_file) or reject nested ignore files
+    if rel_path.name in DRIFT_IGNORE_FILE_NAME_LIST:
+        if file_path.parent != src_dir:
+            raise ValueError(
+                f"Ignore config '{DRIFT_IGNORE_FILE_NAME}' must be located at the root of the package directory."
+            )
+        return None
+
+    # 4. Route drift_hooks/ into .drift/hooks/
+    if is_relative_to(rel_path, Path(DRIFT_HOOKS_DIR_NAME)):
+        sub_rel = rel_path.relative_to(DRIFT_HOOKS_DIR_NAME)
+        hook_src_dir = src_dir / DRIFT_HOOKS_DIR_NAME
+        hook_dest_dir = dest_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        dest_rel_str, was_rendered = render_or_copy_file(
+            rel_path=sub_rel,
+            src_dir=hook_src_dir,
+            dest_dir=hook_dest_dir,
+            drift_root=drift_root,
+            pkg_config=pkg_config,
+            render_engines=render_engines,
+        )
+        rendered_subpath = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / dest_rel_str
+    else:
+        dest_rel_str, was_rendered = render_or_copy_file(
+            rel_path=rel_path,
+            src_dir=src_dir,
+            dest_dir=dest_dir,
+            drift_root=drift_root,
+            pkg_config=pkg_config,
+            render_engines=render_engines,
+        )
+        rendered_subpath = Path(dest_rel_str)
+
+    return rendered_subpath, was_rendered
 
 
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
@@ -234,34 +302,20 @@ def render_package_files(
     copied_files: List[str] = []
 
     for file in all_files:
-        file_path = src_dir_to_render / file
-
-        # Skip if the file is the package config file or its template itself
-        if pkg_config.is_package_config_file(file_path):
-            continue
-
-        # Skip any '.*' files (except .drift_ignore) in rendering process and print info
-        if file.name.startswith(".") and file.name not in DRIFT_IGNORE_FILE_NAME_LIST:
-            logger.info(f"ℹ️  [SKIP] Skipping hidden file '{file}' in package rendering. All hidden files must use the 'dot-' prefix in source templates.")
-            continue
-
-        if file.name in DRIFT_IGNORE_FILE_NAME_LIST:
-            if file_path.parent != package_dir:
-                raise ValueError(f"Ignore config '{DRIFT_IGNORE_FILE_NAME}' must be located at the root of the package directory.")
-            continue
-
-        dest_rel, was_rendered = render_or_copy_file(
-            file_path=file_path,
-            package_dir=src_dir_to_render,
-            render_pkg_dir=render_pkg_dir,
-            workspace_config=workspace_config,
+        res = render_package_file_entry(
+            rel_path=file,
+            src_dir=src_dir_to_render,
+            dest_dir=render_pkg_dir,
+            drift_root=workspace_config.drift_root,
             pkg_config=pkg_config,
             render_engines=render_engines,
         )
-        if was_rendered:
-            rendered_files.append(dest_rel)
-        else:
-            copied_files.append(dest_rel)
+        if res is not None:
+            rendered_subpath, was_rendered = res
+            if was_rendered:
+                rendered_files.append(rendered_subpath.as_posix())
+            else:
+                copied_files.append(rendered_subpath.as_posix())
 
     # Trigger post_render hook
     pkg_config.hooks.trigger_post_render(
@@ -309,7 +363,7 @@ def render_package(
 
     render_pkg_dir = workspace_config.render_path / package_name
 
-    pkg_config = load_package_config_from_source_dir(
+    pkg_config = PackageConfig.from_source_dir(
         package_dir=package_dir,
         workspace_config=workspace_config
     )

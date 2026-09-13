@@ -673,26 +673,45 @@ class TestConfigClasses(unittest.TestCase):
                 post_install=base / "scripts/post_install.sh"
             )
             # 1. Valid hook files pass
-            hooks.check_hook_files(base)
+            hooks.check_hook_files(base, is_source=False)
 
             # 2. Missing hook file raises FileNotFoundError
             hooks.post_update = base / "scripts/missing.sh"
             with self.assertRaises(FileNotFoundError) as cm:
-                hooks.check_hook_files(base)
+                hooks.check_hook_files(base, is_source=False)
             self.assertIn("missing.sh", str(cm.exception))
 
             # 3. Hook path pointing to directory raises ValueError
             (scripts_dir / "dir_hook").mkdir()
             hooks.post_update = base / "scripts/dir_hook"
             with self.assertRaises(ValueError) as cm:
-                hooks.check_hook_files(base)
+                hooks.check_hook_files(base, is_source=False)
             self.assertIn("not a regular file", str(cm.exception))
 
             # 4. Filtered hook_names ignores unrequested broken hooks
             (scripts_dir / "pre_uninstall.sh").write_text("#!/bin/bash\n", encoding="utf-8")
             hooks.pre_uninstall = base / "scripts/pre_uninstall.sh"
             # Checking only pre_uninstall passes even though post_update is broken
-            hooks.check_hook_files(base, hook_names=["pre_uninstall"])
+            hooks.check_hook_files(base, is_source=False, hook_names=["pre_uninstall"])
+
+            # 5. Check drift_hooks/ routing for is_source=True vs is_source=False
+            drift_hooks_src = base / "src_pkg" / "drift_hooks"
+            drift_hooks_src.mkdir(parents=True)
+            (drift_hooks_src / "post_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+
+            drift_hooks_rendered = base / "install_pkg" / ".drift" / "hooks"
+            drift_hooks_rendered.mkdir(parents=True)
+            (drift_hooks_rendered / "post_install.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+
+            hooks_dh = PackageHooks.from_dict(
+                {"post_install": "drift_hooks/post_install.sh"},
+                package_name="test_pkg",
+                base_dir=base / "src_pkg"
+            )
+            # is_source=True checks src_pkg/drift_hooks/post_install.sh
+            hooks_dh.check_hook_files(base / "src_pkg", is_source=True)
+            # is_source=False checks install_pkg/.drift/hooks/post_install.sh
+            hooks_dh.check_hook_files(base / "install_pkg", is_source=False)
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""
@@ -1030,20 +1049,16 @@ class TestConfigLoaders(unittest.TestCase):
     def test_load_package_config(self) -> None:
         pkg_config_path = self.drift_root / PACKAGE_CONFIG_FILE_NAME
 
-        # Nonexistent without package_name raises FileNotFoundError
+        # Nonexistent file raises FileNotFoundError
         with self.assertRaises(FileNotFoundError):
-            load_package_config_rendered(pkg_config_path)
-
-        # Nonexistent with package_name raises FileNotFoundError
-        with self.assertRaises(FileNotFoundError):
-            load_package_config_rendered(pkg_config_path, package_name_override="my_default")
+            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_default")
 
         # Valid file without name field (derived from package_name parameter)
         pkg_config_path.write_text("""
             [package]
             install_method = "copy"
             """, encoding="utf-8")
-        config = load_package_config_rendered(pkg_config_path, package_name_override="my_actual_package")
+        config = PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package")
         self.assertEqual(config.name, "my_actual_package")
         self.assertEqual(config.install_method, "copy")
 
@@ -1055,7 +1070,7 @@ class TestConfigLoaders(unittest.TestCase):
             pre_source = 12345
             """, encoding="utf-8")
         with self.assertRaises(ConfigError):
-            load_package_config_rendered(pkg_config_path, package_name_override="my_actual_package")
+            PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package")
 
     def test_locate_package_config_file_and_load_from_dir(self) -> None:
         pkg_dir = self.drift_root / "my_pkg_folder"
@@ -1063,7 +1078,7 @@ class TestConfigLoaders(unittest.TestCase):
 
         # No config file exists yet (raises FileNotFoundError)
         with self.assertRaises(FileNotFoundError):
-            load_package_config_from_source_dir(pkg_dir)
+            PackageConfig.from_source_dir(pkg_dir)
 
         # Creating drift_package.toml
         alt_config_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
@@ -1072,7 +1087,7 @@ class TestConfigLoaders(unittest.TestCase):
             install_method = "copy"
             """, encoding="utf-8")
         
-        config = load_package_config_from_source_dir(pkg_dir)
+        config = PackageConfig.from_source_dir(pkg_dir)
         self.assertEqual(config.name, "my_pkg_folder")
         self.assertEqual(config.install_method, "copy")
 
@@ -1084,7 +1099,7 @@ class TestConfigLoaders(unittest.TestCase):
             timeout = "not_an_int"
             """, encoding="utf-8")
         with self.assertRaises(ConfigError):
-            load_package_config_from_source_dir(pkg_dir)
+            PackageConfig.from_source_dir(pkg_dir)
 
     def test_get_package_config_file_info(self) -> None:
         from drift.workspace_config import RenderEngineConfig
@@ -1179,7 +1194,7 @@ class TestConfigLoaders(unittest.TestCase):
         )
 
         # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
-        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         # Verify fields and values
         self.assertEqual(pkg_config.name, "my_pkg")
@@ -1234,7 +1249,7 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
 
         # Passing workspace_config=None triggers static loading path
-        pkg_config = load_package_config_from_source_dir(pkg_dir)
+        pkg_config = PackageConfig.from_source_dir(pkg_dir)
         self.assertEqual(pkg_config.name, "my_pkg_merge")
         self.assertEqual(pkg_config.install_method, "stow")
         self.assertEqual(pkg_config.sudo, True)
@@ -1271,7 +1286,7 @@ class TestConfigLoaders(unittest.TestCase):
             sudo = true
             """, encoding="utf-8")
 
-        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_pkg_merge_ws")
         self.assertEqual(pkg_config.install_method, "stow")
         self.assertEqual(pkg_config.sudo, True)

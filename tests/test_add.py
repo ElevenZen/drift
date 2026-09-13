@@ -240,7 +240,7 @@ class TestAddResource(unittest.TestCase):
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # Hook must have run and generated add_hook_out.txt
-        hook_out = pkg_src_dir / "add_hook_out.txt"
+        hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text().strip(), "STATIC_HOOK_RAN")
 
@@ -277,7 +277,7 @@ class TestAddResource(unittest.TestCase):
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # Hook must have run and generated add_hook_out.txt
-        hook_out = pkg_src_dir / "add_hook_out.txt"
+        hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text().strip(), f"ADD_HOOK_RAN_{pkg}")
 

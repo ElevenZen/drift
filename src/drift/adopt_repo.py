@@ -75,6 +75,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Sequence
 
 from .workspace_config import WorkspaceConfig
+from .package_config import PackageConfig
 from .render_engine_config import RenderEngineRegistry
 from .constants import DRIFT_IGNORE_FILE_NAME
 from .result_models import AdoptResult, PackageAdoptResult
@@ -837,8 +838,7 @@ def adopt_one_package_drifts(
     src_pkg_dir = workspace_config.source_path / pkg
     render_engines = workspace_config.render_engine_configs
     try:
-        from .package_config import load_package_config_from_source_dir
-        pkg_config = load_package_config_from_source_dir(src_pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(src_pkg_dir, workspace_config)
         src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
         render_engines = pkg_config.package_render_engines(workspace_config)
     except Exception:

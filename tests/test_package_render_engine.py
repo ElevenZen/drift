@@ -17,7 +17,7 @@ from drift.constants import (
     DRIFT_INTERNAL_DIR_NAME,
 )
 from drift.workspace_config import WorkspaceConfig, load_workspace_config
-from drift.package_config import load_package_config_from_source_dir
+from drift.package_config import PackageConfig
 from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from drift.render_package import render_package, run_primitive_2_render_packages
 from drift.reverse_sync import run_primitive_1_reverse_sync
@@ -375,7 +375,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         )
 
         # Verify resolve_source_file_path uses overlaid package engines
-        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
         effective_engines = pkg_config.package_render_engines(workspace_config)
         src_path = resolve_source_file_path(effective_engines, pkg_dir, Path("config.ini"))
         self.assertIsNotNone(src_path)
@@ -447,7 +447,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         """, encoding="utf-8")
 
         workspace_config = load_workspace_config(self.drift_root)
-        pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         output_log = self.drift_root / "hook_output.log"
         with patch.dict(os.environ, {"DRIFT_HOOK_OUT": str(output_log)}):

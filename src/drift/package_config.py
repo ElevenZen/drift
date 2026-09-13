@@ -30,6 +30,9 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
     LIFECYCLE_HOOK_NAMES,
     INSTALLATION_HOOK_NAMES,
     HOOK_CONFIG_OPTION_SET,
@@ -406,20 +409,13 @@ class PackageHooks:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
-        # Determine package source base directory for normalizing inside-source absolute paths
-        package_src_dir: Optional[Path] = (
-            (workspace_config.source_path / package_name).resolve()
-            if (workspace_config is not None and package_name)
-            else (Path(base_dir).resolve() if base_dir is not None else None)
-        )
-
         if workspace_config is not None and package_name:
-            src_base = (workspace_config.source_path / package_name).resolve()
+            package_src_dir = (workspace_config.source_path / package_name).resolve()
             render_base = (workspace_config.render_path / package_name).resolve()
             install_base = (workspace_config.install_path / package_name).resolve()
             hook_base_map: Dict[str, Path] = {
-                "probe": src_base,
-                "pre_source": src_base,
+                "probe": render_base,
+                "pre_source": render_base,
                 "post_render": render_base,
                 "pre_install": install_base,
                 "post_install": install_base,
@@ -430,9 +426,10 @@ class PackageHooks:
                 "health": install_base,
             }
         elif base_dir is not None:
-            resolved_base = Path(base_dir).resolve()
-            hook_base_map = {hook_name: resolved_base for hook_name in LIFECYCLE_HOOK_NAMES}
+            package_src_dir = Path(base_dir).resolve()
+            hook_base_map = {hook_name: package_src_dir for hook_name in LIFECYCLE_HOOK_NAMES}
         else:
+            package_src_dir = None
             hook_base_map = {}
 
         def _process_hook(hook_name: str) -> Tuple[Optional[Path], Optional[Path]]:
@@ -445,19 +442,24 @@ class PackageHooks:
                 p_res = p.resolve()
                 if package_src_dir is not None and is_relative_to(p_res, package_src_dir):
                     rel = p_res.relative_to(package_src_dir)
-                    stage_base = hook_base_map.get(hook_name, package_src_dir)
-                    return (stage_base / rel).resolve(), rel
                 else:
                     return p_res, None
             else:
-                stage_base = hook_base_map.get(hook_name)
-                if stage_base is None:
+                if not hook_base_map:
                     name_str = f" for package '{package_name}'" if package_name else ""
                     raise ConfigError(
                         f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
                     )
                 rel = Path(os.path.normpath(str(norm_val)))
-                return (stage_base / rel).resolve(), rel
+
+            stage_base = hook_base_map[hook_name]
+            if is_relative_to(rel, Path(DRIFT_HOOKS_DIR_NAME)):
+                sub_rel = rel.relative_to(DRIFT_HOOKS_DIR_NAME)
+                canonical_path = (stage_base / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / sub_rel).resolve()
+            else:
+                canonical_path = (stage_base / rel).resolve()
+
+            return canonical_path, rel
 
         proc_results = {h: _process_hook(h) for h in LIFECYCLE_HOOK_NAMES}
         abs_hooks = {h: res[0] for h, res in proc_results.items()}
@@ -621,12 +623,11 @@ class PackageHooks:
 
     def trigger_post_install(
         self,
-        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
         cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_install hook in target directory."""
-        effective_cwd = cwd_override or target_dir
+        """Triggers the post_install hook with uniform script-parent working directory."""
+        effective_cwd = cwd_override or (self.post_install.parent if self.post_install else Path("."))
         return self.trigger(
             "post_install",
             cwd=effective_cwd,
@@ -648,12 +649,11 @@ class PackageHooks:
 
     def trigger_post_update(
         self,
-        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
         cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the post_update hook in target directory."""
-        effective_cwd = cwd_override or target_dir
+        """Triggers the post_update hook with uniform script-parent working directory."""
+        effective_cwd = cwd_override or (self.post_update.parent if self.post_update else Path("."))
         return self.trigger(
             "post_update",
             cwd=effective_cwd,
@@ -662,17 +662,16 @@ class PackageHooks:
 
     def trigger_pre_uninstall(
         self,
-        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
         cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the pre_uninstall hook in target directory.
+        """Triggers the pre_uninstall hook with uniform script-parent working directory.
 
         Note:
             Uninstall hooks are only triggered if the package-level configuration
             file ('drift_package.toml') is available in the install/ directory.
         """
-        effective_cwd = cwd_override or target_dir
+        effective_cwd = cwd_override or (self.pre_uninstall.parent if self.pre_uninstall else Path("."))
         return self.trigger(
             "pre_uninstall",
             cwd=effective_cwd,
@@ -699,12 +698,11 @@ class PackageHooks:
 
     def trigger_health(
         self,
-        target_dir: Path,
         flags: Optional["HookExecFlags"] = None,
         cwd_override: Optional[Path] = None,
     ) -> HookResult:
-        """Triggers the health probe hook in target directory."""
-        effective_cwd = cwd_override or target_dir
+        """Triggers the health probe hook with uniform script-parent working directory."""
+        effective_cwd = cwd_override or (self.health.parent if self.health else Path("."))
         return self.trigger(
             "health",
             cwd=effective_cwd,
@@ -713,13 +711,16 @@ class PackageHooks:
 
     def check_hook_files(
         self,
-        base_dir: Optional[Path] = None,
+        base_dir: Path,
+        is_source: bool,
         hook_names: Sequence[str] = ()
     ) -> None:
         """Checks that configured lifecycle hook files exist in base_dir and are regular files.
 
         Args:
-            base_dir: Directory containing package files (e.g. render/<pkg> or install/<pkg>).
+            base_dir: Directory containing package files (e.g. src/<pkg>, render/<pkg>, or install/<pkg>).
+            is_source: True if base_dir is the package source directory (src/<pkg>),
+                False if base_dir is a compiled/staged directory (render/<pkg> or install/<pkg>).
             hook_names: Sequence of hook names to check. If empty/omitted, all LIFECYCLE_HOOK_NAMES are checked.
 
         Raises:
@@ -733,10 +734,15 @@ class PackageHooks:
             if hook_val is None:
                 continue
             rel_hook = self.get_relative_path(hook_name)
-            if rel_hook is not None and base_dir is not None:
-                hook_path = base_dir / rel_hook
-            elif base_dir is not None:
-                hook_path = base_dir / hook_val
+            if rel_hook is not None:
+                if is_relative_to(rel_hook, Path(DRIFT_HOOKS_DIR_NAME)):
+                    sub_rel = rel_hook.relative_to(DRIFT_HOOKS_DIR_NAME)
+                    if is_source:
+                        hook_path = base_dir / DRIFT_HOOKS_DIR_NAME / sub_rel
+                    else:
+                        hook_path = base_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / sub_rel
+                else:
+                    hook_path = base_dir / rel_hook
             else:
                 hook_path = hook_val
 
@@ -815,6 +821,7 @@ def resolve_and_interpolate_package_config(
     }
     if workspace_config is not None:
         pkg_facts["drift_package_source_dir"] = str(workspace_config.source_path / package_name)
+        pkg_facts["drift_package_src_dir"] = str(workspace_config.source_path / package_name)
         pkg_facts["drift_package_render_dir"] = str(workspace_config.render_path / package_name)
         pkg_facts["drift_package_install_dir"] = str(workspace_config.install_path / package_name)
 
@@ -878,10 +885,11 @@ class PackageConfig:
     def check_hook_files(
         self,
         base_dir: Path,
+        is_source: bool,
         hook_names: Sequence[str] = ()
     ) -> None:
         """Checks that configured lifecycle hook files exist in base_dir and are regular files."""
-        self.hooks.check_hook_files(base_dir, hook_names=hook_names)
+        self.hooks.check_hook_files(base_dir, is_source=is_source, hook_names=hook_names)
 
     def __init__(
         self,
@@ -1079,7 +1087,7 @@ class PackageConfig:
         Variables loaded:
             drift_package_name: Name of the package (directory name).
             drift_package_target_dir: Resolved absolute target directory path on the host system.
-            drift_package_source_dir: Absolute path to the package's source directory in workspace.
+            drift_package_source_dir (alias: drift_package_src_dir): Absolute path to the package's source directory in workspace.
             drift_package_render_dir: Absolute path to the package's compiled sandbox directory.
             drift_package_install_dir: Absolute path to the package's state database directory.
             drift_package_install_method: Resolved install method ('stow' or 'copy').
@@ -1101,6 +1109,7 @@ class PackageConfig:
             "drift_package_name": self.name,
             "drift_package_target_dir": target_dir_str,
             "drift_package_source_dir": source_dir_str,
+            "drift_package_src_dir": source_dir_str,
             "drift_package_render_dir": render_dir_str,
             "drift_package_install_dir": install_dir_str,
             "drift_package_install_method": install_method_str,
@@ -1298,13 +1307,61 @@ class PackageConfig:
         config.validate()
         return config
 
+    @classmethod
+    def from_source_dir(
+        cls,
+        package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
+    ) -> "PackageConfig":
+        """Loads and resolves package configuration from a package source directory."""
+        return load_package_config_from_source_dir(
+            package_dir=package_dir,
+            workspace_config=workspace_config,
+        )
+
+    @classmethod
+    def from_render_dir(
+        cls,
+        package_dir: Path,
+    ) -> "PackageConfig":
+        """Loads package configuration strictly from the render/ sandbox package directory.
+        The name of package_dir is treated as the package name.
+        """
+        return load_package_config_from_render_dir(package_dir=package_dir)
+
+    @classmethod
+    def from_install_dir(
+        cls,
+        package_dir: Path,
+    ) -> "PackageConfig":
+        """Loads package configuration strictly from the install/ state database package directory.
+        The name of package_dir is treated as the package name.
+        """
+        return load_package_config_for_install(package_dir=package_dir)
+
+    @classmethod
+    def from_rendered_file(
+        cls,
+        package_toml_path: Path,
+        package_name: str,
+    ) -> "PackageConfig":
+        """Loads package configuration directly from a rendered drift_package.toml file."""
+        return load_package_config_rendered(
+            package_toml_path=package_toml_path,
+            package_name=package_name,
+        )
+
 
 def load_package_config_rendered(
     package_toml_path: Path,
-    package_name_override: Optional[str] = None
+    package_name: str,
 ) -> PackageConfig:
-    """Loads and parses a package configuration from drift_package.toml."""
-    pkg_name = package_name_override or package_toml_path.parent.name
+    """Loads and parses a package configuration from drift_package.toml.
+
+    Args:
+        package_toml_path: Absolute path to the rendered drift_package.toml file.
+        package_name: Required canonical name of the package.
+    """
     if not package_toml_path.exists():
         raise FileNotFoundError(f"Package configuration file not found: {package_toml_path}")
     content = package_toml_path.read_text(encoding="utf-8")
@@ -1312,12 +1369,12 @@ def load_package_config_rendered(
     try:
         config = PackageConfig.from_dict(
             data,
-            package_name=pkg_name,
+            package_name=package_name,
             source_files=[package_toml_path],
             base_dir=package_toml_path.parent
         )
     except (TypeError, ValueError) as e:
-        raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_toml_path}': {e}") from e
+        raise ConfigError(f"Invalid package configuration for '{package_name}' in '{package_toml_path}': {e}") from e
     return config
 
 
@@ -1386,6 +1443,7 @@ def render_or_load_toml(
     pkg_envs = {
         "drift_package_name": package_name,
         "drift_package_source_dir": str(workspace_config.source_path / package_name),
+        "drift_package_src_dir": str(workspace_config.source_path / package_name),
         "drift_package_render_dir": str(workspace_config.render_path / package_name),
         "drift_package_install_dir": str(workspace_config.install_path / package_name),
     }
@@ -1527,24 +1585,30 @@ def load_package_config_from_source_dir(
     return config
 
 
-def load_package_config_from_render_dir(render_base: Path, pkg: str) -> PackageConfig:
-    """Loads package configuration strictly from the render/ sandbox directory."""
-    config_file = render_base / pkg / PACKAGE_CONFIG_FILE_NAME
+def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:
+    """Loads package configuration strictly from the render/ sandbox package directory.
+    The name of package_dir is treated as the package name.
+    """
+    pkg_name = package_dir.name
+    config_file = package_dir / PACKAGE_CONFIG_FILE_NAME
     if not config_file.exists():
-        raise RuntimeError(f"Failed to find drift_package.toml for '{pkg}' in render sandbox")
+        raise RuntimeError(f"Failed to find drift_package.toml for '{pkg_name}' in render sandbox")
     try:
-        return load_package_config_rendered(config_file)
+        return load_package_config_rendered(package_toml_path=config_file, package_name=pkg_name)
     except Exception as e:
-        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from render sandbox: {e}")
+        raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from render sandbox: {e}")
 
 
-def load_config_for_install(install_base: Path, pkg: str) -> PackageConfig:
-    """Loads package configuration strictly from the install/ base directory."""
-    install_config_file = install_base / pkg / PACKAGE_CONFIG_FILE_NAME
+def load_package_config_for_install(package_dir: Path) -> PackageConfig:
+    """Loads package configuration strictly from the install/ base package directory.
+    The name of package_dir is treated as the package name.
+    """
+    pkg_name = package_dir.name
+    install_config_file = package_dir / PACKAGE_CONFIG_FILE_NAME
     if not install_config_file.exists():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg}'.")
+        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in install base of package '{pkg_name}'.")
     try:
-        return load_package_config_rendered(install_config_file)
+        return load_package_config_rendered(package_toml_path=install_config_file, package_name=pkg_name)
     except Exception as e:
-        raise RuntimeError(f"Failed to load package configuration for '{pkg}' from install base: {e}")
+        raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from install base: {e}")
 

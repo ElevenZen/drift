@@ -16,7 +16,7 @@ from .file_utils import (
 )
 from .folder_diff import compare_folders
 from .sync_ops import reverse_sync_file_or_dir
-from .install_repo import load_config_for_install
+from .package_config import PackageConfig
 from .result_models import PackageReverseSyncResult, ReverseSyncResult
 
 logger = logging.getLogger(__name__)
@@ -249,7 +249,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     """Performs the reverse sync process for a single package without scanning the entire target_dir."""
     install_pkg_dir = install_base / pkg
     try:
-        metadata = load_config_for_install(install_base, pkg)
+        metadata = PackageConfig.from_install_dir(install_pkg_dir)
     except Exception as e:
         logger.warning(f"Skipping package '{pkg}' during reverse sync: {e}")
         return PackageReverseSyncResult(

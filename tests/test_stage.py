@@ -822,11 +822,11 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("pkg_c", err_msg)
 
     def test_load_package_config_from_render_dir_missing_raises_error(self) -> None:
-        """Verifies that load_package_config_from_render_dir raises RuntimeError if drift_package.toml is missing."""
-        from drift.package_config import load_package_config_from_render_dir
+        """Verifies that PackageConfig.from_render_dir raises RuntimeError if drift_package.toml is missing."""
+        from drift.package_config import PackageConfig
         non_existent_pkg = "pkg_does_not_exist"
         with self.assertRaises(RuntimeError) as ctx:
-            load_package_config_from_render_dir(self.render_dir, non_existent_pkg)
+            PackageConfig.from_render_dir(self.render_dir / non_existent_pkg)
         self.assertIn("Failed to find drift_package.toml", str(ctx.exception))
 
     def test_compute_package_stage_diff_returns_stage_changes(self) -> None:

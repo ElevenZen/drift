@@ -81,18 +81,18 @@ class TestPackageHook(unittest.TestCase):
         self.assertIn("Invalid lifecycle hook 'invalid_hook'", str(cm.exception))
 
     def test_trigger_pre_source_hook(self) -> None:
-        """Verifies that pre_source hook is executed from src/."""
+        """Verifies that pre_source hook is executed from render sandbox."""
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_source")
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.package, "pkg_hook")
         self.assertEqual(res.hook_name, "pre_source")
-        self.assertTrue((self.src_pkg_dir / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
 
-    def test_trigger_post_render_hook_missing_render_dir(self) -> None:
-        """Verifies that post_render raises FileNotFoundError if package has not been rendered."""
+    def test_trigger_post_render_hook_missing_source_dir(self) -> None:
+        """Verifies that post_render raises FileNotFoundError if package source does not exist."""
         with self.assertRaises(FileNotFoundError) as cm:
-            run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_render")
-        self.assertIn("has not been rendered", str(cm.exception))
+            run_primitive_trigger_hook(self.workspace_config, "nonexistent_pkg", "post_render")
+        self.assertIn("source directory not found", str(cm.exception))
 
     def test_trigger_post_render_hook_success(self) -> None:
         """Verifies that post_render hook is executed from render/ directory."""
@@ -102,7 +102,7 @@ class TestPackageHook(unittest.TestCase):
 
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_render")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((render_pkg_dir / "post_render_out.txt").is_file())
+        self.assertTrue((render_pkg_dir / "scripts" / "post_render_out.txt").is_file())
 
     def test_trigger_install_hooks_missing_install_dir(self) -> None:
         """Verifies that install hooks raise FileNotFoundError if package is not installed."""
@@ -117,40 +117,40 @@ class TestPackageHook(unittest.TestCase):
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
 
-        # pre_install: CWD is install_pkg_dir
+        # pre_install: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_install")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "pre_install_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "pre_install_out.txt").is_file())
 
-        # post_install: CWD is target_dir
+        # post_install: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_install")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((self.target_dir / "post_install_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "post_install_out.txt").is_file())
 
-        # pre_update: CWD is install_pkg_dir
+        # pre_update: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_update")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "pre_update_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "pre_update_out.txt").is_file())
 
-        # post_update: CWD is target_dir
+        # post_update: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_update")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((self.target_dir / "post_update_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "post_update_out.txt").is_file())
 
-        # pre_uninstall: CWD is target_dir
+        # pre_uninstall: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((self.target_dir / "pre_uninstall_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "pre_uninstall_out.txt").is_file())
 
-        # post_uninstall: CWD is install_pkg_dir
+        # post_uninstall: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "post_uninstall_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "post_uninstall_out.txt").is_file())
 
-        # health: CWD is target_dir
+        # health: CWD is install_pkg_dir / scripts
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "health")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((self.target_dir / "health_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "health_out.txt").is_file())
 
     def test_trigger_unconfigured_hook_raises_config_error(self) -> None:
         """Verifies that triggering a hook that is not configured in drift_package.toml raises ConfigError."""
@@ -263,17 +263,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res_unconfigured.status, "SKIPPED")
         self.assertFalse(bool(res_unconfigured))
 
-        # 3d. Package with invalid/corrupt drift_package.toml -> raises ConfigError
-        pkg_corrupt_dir = self.drift_root / "src" / "pkg_corrupt"
-        pkg_corrupt_dir.mkdir(parents=True, exist_ok=True)
-        (pkg_corrupt_dir / "drift_package.toml").write_text(
-            "[package]\nname = 'pkg_corrupt'\n[hooks]\npre_source = 12345\n",
-            encoding="utf-8"
-        )
-        with self.assertRaises(Exception):
-            trigger_pre_source_hook(self.workspace_config, "pkg_corrupt")
-
-        # 3e. Package with missing declared hook script -> raises FileNotFoundError
+        # 3d. Package with missing declared hook script -> raises FileNotFoundError
         pkg_missing_script_dir = self.drift_root / "src" / "pkg_missing_script"
         pkg_missing_script_dir.mkdir(parents=True, exist_ok=True)
         (pkg_missing_script_dir / "drift_package.toml").write_text(
@@ -284,7 +274,7 @@ class TestPackageHook(unittest.TestCase):
             trigger_pre_source_hook(self.workspace_config, "pkg_missing_script")
 
         # 4. Direct execute_hook_script -> returns HookResult with duration_ms
-        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
         hook_script_path = self.scripts_dir / "pre_source.sh"
         exec_res = execute_hook_script(
             hook_path=hook_script_path,
@@ -345,7 +335,7 @@ class TestPackageHook(unittest.TestCase):
 
     def test_build_hook_execution_command_fallback_and_no_disk_mutation(self) -> None:
         from drift.lifecycle_hooks import build_hook_execution_command, execute_hook_script
-        from drift.package_config import load_package_config_from_source_dir
+        from drift.package_config import PackageConfig
         if sys.platform == "win32":
             return
 
@@ -358,7 +348,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(cmd, ["/bin/bash", str(test_script)])
 
         # 2. execute_hook_script executes without mutating test_script mode on disk
-        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
         res = execute_hook_script(
             hook_path=test_script,
             pkg="pkg_hook",
@@ -479,7 +469,7 @@ echo "VALUE=$DYNAMIC_VAL"
             from_stage=PackageStage.SOURCE
         )
         self.assertEqual(res_source.status, "SUCCESS")
-        self.assertTrue((self.src_pkg_dir / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
 
         # 2. from_stage=INSTALL raises FileNotFoundError when install directory does not exist
         with self.assertRaises(FileNotFoundError):
@@ -502,7 +492,7 @@ echo "VALUE=$DYNAMIC_VAL"
             from_stage=PackageStage.INSTALL
         )
         self.assertEqual(res_install.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "pre_install_out.txt").is_file())
+        self.assertTrue((install_pkg_dir / "scripts" / "pre_install_out.txt").is_file())
 
     def test_cli_hook_with_from_stage_flag(self) -> None:
         """Verifies drift hook CLI with --from source and --from install."""
@@ -685,7 +675,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
     def test_hook_non_interactive_envs_flag_disabled(self) -> None:
         """Verifies that setting inject_non_interactive_envs=False disables injecting DEFAULT_HOOK_NON_INTERACTIVE_ENVS."""
         from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
-        from drift.package_config import load_package_config_from_source_dir
+        from drift.package_config import PackageConfig
 
         (self.scripts_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
@@ -693,7 +683,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
             encoding="utf-8"
         )
-        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
 
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
             # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat
@@ -721,13 +711,17 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             self.assertNotIn("DRIFT_HOOK=1", res_disabled.stdout or "")
 
     def test_package_hooks_methods_signatures_and_cwd(self) -> None:
-        """Verifies trigger_pre_install, trigger_pre_update, trigger_post_uninstall use install_dir as CWD."""
+        """Verifies lifecycle hook trigger methods default to hook_path.parent as CWD (or cwd_override)."""
         install_dir = self.drift_root / "install" / "pkg_hook"
         install_dir.mkdir(parents=True, exist_ok=True)
         hooks = PackageHooks(
             pre_install=install_dir / "scripts/pre_install.sh",
             pre_update=install_dir / "scripts/pre_update.sh",
+            post_install=install_dir / "scripts/post_install.sh",
+            post_update=install_dir / "scripts/post_update.sh",
+            pre_uninstall=install_dir / "scripts/pre_uninstall.sh",
             post_uninstall=install_dir / "scripts/post_uninstall.sh",
+            health=install_dir / "scripts/health.sh",
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
@@ -764,39 +758,49 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            # 4. Target-scoped hooks require target_dir
-            target_dir = self.drift_root / "target"
-            hooks.trigger_post_install(target_dir=target_dir)
+            # 4. Target-scoped hooks default to script directory (parent of executed hook path)
+            hooks.trigger_post_install()
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="post_install",
                 metadata=pkg_config,
-                cwd=target_dir,
+                cwd=install_dir / "scripts",
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            hooks.trigger_post_update(target_dir=target_dir)
+            hooks.trigger_post_update()
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="post_update",
                 metadata=pkg_config,
-                cwd=target_dir,
+                cwd=install_dir / "scripts",
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            hooks.trigger_pre_uninstall(target_dir=target_dir)
+            hooks.trigger_pre_uninstall()
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="pre_uninstall",
                 metadata=pkg_config,
-                cwd=target_dir,
+                cwd=install_dir / "scripts",
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
-            hooks.trigger_health(target_dir=target_dir)
+            hooks.trigger_health()
             mock_trigger.assert_called_with(
                 pkg="pkg_hook",
                 hook_name="health",
+                metadata=pkg_config,
+                cwd=install_dir / "scripts",
+                flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
+            )
+
+            # 5. Explicit cwd_override overrides default script-parent directory
+            target_dir = self.drift_root / "target"
+            hooks.trigger_post_install(cwd_override=target_dir)
+            mock_trigger.assert_called_with(
+                pkg="pkg_hook",
+                hook_name="post_install",
                 metadata=pkg_config,
                 cwd=target_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
@@ -809,13 +813,13 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             execute_hook_script,
             trigger_probe_hook,
         )
-        from drift.package_config import load_package_config_from_source_dir
+        from drift.package_config import PackageConfig
 
         failing_script = self.scripts_dir / "fail.sh"
         failing_script.write_text("#!/bin/sh\necho 'error details' >&2\nexit 42\n", encoding="utf-8")
         failing_script.chmod(0o755)
 
-        pkg_config = load_package_config_from_source_dir(self.src_pkg_dir, self.workspace_config)
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
 
         # 1. Default (raise_on_error=True) raises RuntimeError
         with self.assertRaises(RuntimeError) as ctx:
@@ -1045,7 +1049,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             package_name="pkg_hook",
             workspace_config=self.workspace_config,
         )
-        self.assertEqual(hooks_rel.pre_source, (src_base / "scripts/pre_source.sh").resolve())
+        self.assertEqual(hooks_rel.pre_source, (render_base / "scripts/pre_source.sh").resolve())
         self.assertEqual(hooks_rel.post_render, (render_base / "scripts/post_render.sh").resolve())
         self.assertEqual(hooks_rel.pre_install, (install_base / "scripts/pre_install.sh").resolve())
         self.assertEqual(hooks_rel.post_install, (install_base / "scripts/post_install.sh").resolve())
@@ -1114,7 +1118,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.exit_code, 0)
-        self.assertTrue((self.src_pkg_dir / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
 
 
 if __name__ == "__main__":

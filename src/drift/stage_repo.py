@@ -8,7 +8,7 @@ Layer 5: Primitive Entry Point
     run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force)
         1. Package Discovery & Config Validation:
             workspace_config.get_rendered_packages
-            load_package_config_from_render_dir
+            PackageConfig.from_render_dir
         2. Transaction Safety & Sentinel Checks:
             state_registry.get_midway_packages
             ensure_install_pkg_dir_clean [Layer 1]
@@ -55,10 +55,7 @@ from .constants import (
     DRIFT_IGNORE_FILE_NAME,
 )
 from .workspace_config import WorkspaceConfig
-from .package_config import (
-    load_package_config_from_render_dir,
-    PackageConfig,
-)
+from .package_config import PackageConfig
 from .file_utils import (
     backup_and_delete_one_file,
     remove_file_or_dir,
@@ -381,11 +378,11 @@ def run_primitive_4_stage_render_to_install(
     # Filter out packages that are not enabled for installation/deployment.
     pkg_metadata = {}
     for pkg in active_packages:
-        metadata = load_package_config_from_render_dir(render_base, pkg)
+        metadata = PackageConfig.from_render_dir(render_base / pkg)
         if not metadata.enable_install:
             continue
         # Verify hook files exist and are regular files in render/ sandbox
-        metadata.hooks.check_hook_files(render_base / pkg)
+        metadata.hooks.check_hook_files(render_base / pkg, is_source=False)
         pkg_metadata[pkg] = metadata
 
     # Check if active_packages is empty after filtering by enable_install, and if so, raise an error

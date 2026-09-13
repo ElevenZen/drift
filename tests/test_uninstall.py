@@ -297,11 +297,11 @@ fi
         # 1. Target file was removed
         self.assertFalse(system_target.exists())
 
-        # 2. pre_uninstall executed before file removal with cwd=target_dir
+        # 2. pre_uninstall executed before file removal with cwd=hook_path.parent
         self.assertTrue(pre_hook_out.is_file())
         self.assertEqual(
             pre_hook_out.read_text(encoding="utf-8").strip(),
-            f"PRE_UNINSTALL_{pkg}_IN_{self.system_target_dir}"
+            f"PRE_UNINSTALL_{pkg}_IN_{pre_hook.parent}"
         )
 
         # 3. post_uninstall executed after file removal with cwd=install_dir

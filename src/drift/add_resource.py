@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
 from .workspace_config import WorkspaceConfig, RenderEngineConfig
+from .package_config import PackageConfig
 from .render_engine_config import RenderEngineRegistry
 from .result_models import AddResourceResult
 from .file_utils import (
@@ -26,9 +27,8 @@ def resolve_package_import_context(
     src_pkg_dir: Path,
 ) -> Tuple[Path, Path, RenderEngineRegistry]:
     """Resolves source directory to render, host target directory, and effective render engines for a package."""
-    from .package_config import load_package_config_from_source_dir
     try:
-        pkg_config = load_package_config_from_source_dir(
+        pkg_config = PackageConfig.from_source_dir(
             package_dir=src_pkg_dir,
             workspace_config=workspace_config
         )

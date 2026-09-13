@@ -1331,7 +1331,7 @@ class TestRenderPackage(unittest.TestCase):
         hook_script = scripts_dir / "gen_dynamic.sh"
         hook_script.write_text(
             "#!/bin/bash\n"
-            "echo 'DYNAMIC_OUTPUT=123' > dynamic_file.txt\n",
+            "echo 'DYNAMIC_OUTPUT=123' > \"$drift_package_source_dir/dynamic_file.txt\"\n",
             encoding="utf-8"
         )
         hook_script.chmod(0o755)
@@ -1574,13 +1574,13 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         self.assertTrue(copied_hook.is_file())
         self.assertIn("STATIC_PRE_SOURCE_RAN", copied_hook.read_text(encoding="utf-8"))
 
-        # 2. Output file from script execution should exist in src/pkg_static_hook (proving cwd was src/pkg_static_hook)
-        created_file = pkg_src_dir / "generated_static_file.txt"
+        # 2. Output file from script execution should exist in render/pkg_static_hook/scripts (proving cwd was hook_path.parent)
+        created_file = copied_hook.parent / "generated_static_file.txt"
         self.assertTrue(created_file.is_file())
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "STATIC_PRE_SOURCE_RAN")
 
     def test_pre_source_hook_rendered_in_render_dir_and_executed_with_src_cwd(self) -> None:
-        """Verifies that a pre_source hook located inside src/ is rendered into render/ before executing with cwd=src/."""
+        """Verifies that a pre_source hook located inside src/ is rendered into render/ before executing with cwd=hook_path.parent."""
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
@@ -1636,8 +1636,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertTrue(rendered_hook.is_file())
         self.assertIn("CREATED_BY_pkg_hook", rendered_hook.read_text(encoding="utf-8"))
 
-        # 2. Output file from script execution should exist in src/pkg_hook (proving cwd was src/pkg_hook)
-        created_file = pkg_src_dir / "generated_file.txt"
+        # 2. Output file from script execution should exist in render/pkg_hook/scripts (proving cwd was hook_path.parent)
+        created_file = rendered_hook.parent / "generated_file.txt"
         self.assertTrue(created_file.is_file())
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "CREATED_BY_pkg_hook")
 
@@ -1901,7 +1901,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_package_config_template_renders_with_drift_package_name_and_host_facts(self) -> None:
         """Verifies drift_package_name and host facts ($drift_os) are available when rendering drift_package.envst.toml."""
-        from drift.package_config import load_package_config_from_source_dir
+        from drift.package_config import PackageConfig
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1935,7 +1935,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         PKG_INSTALL_DIR = "$drift_package_install_dir"
         """, encoding="utf-8")
 
-        pkg_config = load_package_config_from_source_dir(pkg_src_dir, workspace_config)
+        pkg_config = PackageConfig.from_source_dir(pkg_src_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_templated_pkg")
         self.assertEqual(str(pkg_config.target_directory), "/custom/my_templated_pkg")
         self.assertIn("RESOLVED_OS", pkg_config.env_override)

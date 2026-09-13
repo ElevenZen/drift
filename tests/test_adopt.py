@@ -506,8 +506,8 @@ class TestAdopt(unittest.TestCase):
 
         adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
-        # Hook must have run and generated hook_executed.txt in src_pkg_dir
-        hook_out = src_pkg_dir / "hook_executed.txt"
+        # Hook must have run and generated hook_executed.txt in render pkg scripts dir
+        hook_out = self.workspace_path / "render" / pkg / "scripts" / "hook_executed.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "STATIC_HOOK_RAN")
 
@@ -548,8 +548,8 @@ class TestAdopt(unittest.TestCase):
 
         adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
-        # Hook must have run and generated hook_executed.txt in src_pkg_dir
-        hook_out = src_pkg_dir / "hook_executed.txt"
+        # Hook must have run and generated hook_executed.txt in render pkg scripts dir
+        hook_out = self.workspace_path / "render" / pkg / "scripts" / "hook_executed.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), f"HOOK_RAN_{pkg}")
 

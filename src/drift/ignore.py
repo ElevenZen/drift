@@ -9,6 +9,7 @@ from .constants import (
     MANAGED_CONFIG_FILES,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_STOW_IGNORE_PATTERNS,
     INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
@@ -145,13 +146,18 @@ class DriftIgnore(IgnoreHandler):
         The returned list excludes files that match the ignore patterns.
         """
         from .file_utils import tree_relative_files
-        return [ rel_file for rel_file in tree_relative_files(install_pkg_dir)
-                if rel_file.name not in MANAGED_CONFIG_FILES
-                    and not self.match_path(rel_file) ]
+        return [
+            rel_file
+            for rel_file in tree_relative_files(install_pkg_dir)
+            if not self.match_path(rel_file)
+        ]
 
     def match_path(self, rel_path: Path) -> bool:
         """Implements GNU Stow's ignore matching algorithm on a relative path."""
-        # Special exception: always ignore ignore-related files and config files
+        # Special exception: always ignore internal drift directories, ignore-related files, and config files
+        if rel_path.parts and rel_path.parts[0] == DRIFT_INTERNAL_DIR_NAME:
+            return True
+
         filename = rel_path.name
         if filename in MANAGED_CONFIG_FILES:
             return True

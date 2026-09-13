@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import List, Optional, Union, Tuple, Set, Sequence, Mapping
 
 from .workspace_config import WorkspaceConfig
-from .package_config import PackageConfig, load_config_for_install
+from .package_config import PackageConfig
 from .constants import (
     PACKAGE_CONFIG_FILE_NAME,
     MANAGED_CONFIG_FILES,
@@ -649,6 +649,7 @@ def deploy_one_package_impl(
     
     # Calculate current desired files list
     # Actually, this filter process is already done in stage_repo phase.
+    # TODO: maybe rename this var and args for it to 'pkg_items' ?
     current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
 
     if full_redeploy:
@@ -717,9 +718,9 @@ def deploy_one_package_impl(
     no_rollback_err = False
     try:
         if is_first_time:
-            metadata.hooks.trigger_post_install(target_dir=target_dir, flags=hook_flags)
+            metadata.hooks.trigger_post_install(flags=hook_flags)
         else:
-            metadata.hooks.trigger_post_update(target_dir=target_dir, flags=hook_flags)
+            metadata.hooks.trigger_post_update(flags=hook_flags)
         success = True
     except HookExecutionError as e:
         if not e.requires_rollback:
@@ -774,7 +775,7 @@ def deploy_one_package(
     install_base = workspace_config.install_path
     hook_flags = HookExecFlags.resolve(flags)
     
-    metadata = load_config_for_install(install_base, pkg)
+    metadata = PackageConfig.from_install_dir(install_base / pkg)
     if not metadata.enable_install:
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return PackageInstallResult(
@@ -835,7 +836,7 @@ def deploy_one_package(
 
     # Verify hook files exist and are regular files in install/
     if not hook_flags.no_hooks:
-        metadata.hooks.check_hook_files(install_pkg_dir)
+        metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
     
     # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
@@ -936,7 +937,7 @@ def run_primitive_5_install_deployment(
     )
 
     # Pre-check hook files in install/ for all packages before starting deployment
-    pkg_metadata_map = { pkg: load_config_for_install(install_base, pkg)
+    pkg_metadata_map = { pkg: PackageConfig.from_install_dir(install_base / pkg)
                         for pkg in discovered_packages
                         if (install_base / pkg).is_dir() }
 
@@ -949,7 +950,7 @@ def run_primitive_5_install_deployment(
     if not hook_flags.no_hooks:
         for pkg, metadata in pkg_metadata_map.items():
             if metadata.enable_install:
-                metadata.hooks.check_hook_files(install_base / pkg)
+                metadata.hooks.check_hook_files(install_base / pkg, is_source=False)
     
     changes_map = package_changes if package_changes is not None else {}
 

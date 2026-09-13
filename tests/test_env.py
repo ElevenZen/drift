@@ -1160,9 +1160,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
 
     def test_load_package_config_from_source_dir_writes_stitched_toml_and_renders(self) -> None:
-        """Verifies that load_package_config_from_source_dir writes out stitched TOML and load_package_config_rendered reads it."""
+        """Verifies that PackageConfig.from_source_dir writes out stitched TOML and PackageConfig.from_rendered_file reads it."""
         from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import load_package_config_from_source_dir, load_package_config_rendered
+        from drift.package_config import PackageConfig
         from drift.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
@@ -1193,7 +1193,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         """, encoding="utf-8")
 
         # 1. Load from source dir with workspace config
-        loaded_cfg = load_package_config_from_source_dir(pkg_src_dir, ws)
+        loaded_cfg = PackageConfig.from_source_dir(pkg_src_dir, ws)
         expected_src = str(self.drift_root / "src" / "pkg_stitched_test")
         self.assertEqual(str(loaded_cfg.target_directory), f"{expected_src}/my_target")
         self.assertEqual(loaded_cfg.env_fallback["FALLBACK_SRC"], expected_src)
@@ -1206,9 +1206,14 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertIn(f"{expected_src}/my_target", rendered_content)
 
         # 3. Load from rendered file directly (without workspace config)
-        rendered_cfg = load_package_config_rendered(rendered_toml_path)
+        rendered_cfg = PackageConfig.from_rendered_file(rendered_toml_path, package_name="pkg_stitched_test")
         self.assertEqual(str(rendered_cfg.target_directory), f"{expected_src}/my_target")
         self.assertEqual(rendered_cfg.env_fallback["FALLBACK_SRC"], expected_src)
+
+        # 4. Load from rendered package directory
+        rendered_dir_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg_stitched_test")
+        self.assertEqual(str(rendered_dir_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(rendered_dir_cfg.env_fallback["FALLBACK_SRC"], expected_src)
 
 
 if __name__ == "__main__":

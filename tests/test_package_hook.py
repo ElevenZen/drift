@@ -17,12 +17,7 @@ from drift.constants import (
 )
 from drift.exceptions import ConfigError
 from drift.workspace_config import load_workspace_config
-from drift.package_config import (
-    PackageConfig,
-    load_package_config_from_source_dir,
-    load_package_config_from_render_dir,
-    load_config_for_install,
-)
+from drift.package_config import PackageConfig
 from drift.package_hook import (
     PackageHookContext,
     resolve_package_hook_path,
@@ -77,7 +72,7 @@ PKG_PORT = "3000"
     def test_no_hook_file_loads_normally(self) -> None:
         """Packages without drift_package.py load static TOML normally."""
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.name, "pkg1")
         self.assertEqual(cfg.install_method, "stow")
         self.assertEqual(cfg.target_directory, Path("~/.config/pkg1").expanduser())
@@ -107,7 +102,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.install_method, "copy")
         self.assertEqual(cfg.target_directory, Path("~/custom/pkg1").expanduser())
         self.assertIsNotNone(cfg.requirements)
@@ -129,7 +124,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertFalse(cfg.enable_install)
 
     def test_hook_accesses_context_properties_and_facts(self) -> None:
@@ -160,7 +155,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("HOOK_ACCESSED_OS", cfg.env_override)
         self.assertEqual(cfg.env_override.get("HOOK_ACCESSED_PKG"), "pkg1")
 
@@ -185,7 +180,7 @@ hook_file = "hooks/custom_setup.py"
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.install_method, "copy")
         self.assertEqual(cfg.hook_file, (pkg_dir / "hooks/custom_setup.py").resolve())
 
@@ -208,7 +203,7 @@ hook_file = "{custom_hook_file.as_posix()}"
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.install_method, "copy")
 
     def test_custom_hook_file_not_found_raises_config_error(self) -> None:
@@ -222,7 +217,7 @@ hook_file = "non_existent_hook.py"
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         with self.assertRaises(ConfigError) as ctx:
-            load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+            PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("not found", str(ctx.exception))
 
     def test_missing_configure_package_function_raises_config_error(self) -> None:
@@ -235,7 +230,7 @@ def some_other_function(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         with self.assertRaises(ConfigError) as ctx:
-            load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+            PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("must define a callable 'configure_package(context)'", str(ctx.exception))
 
     def test_hook_returning_none_raises_config_error(self) -> None:
@@ -248,7 +243,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         with self.assertRaises(ConfigError) as ctx:
-            load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+            PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("returned None", str(ctx.exception))
 
     def test_hook_returning_non_dict_raises_config_error(self) -> None:
@@ -261,7 +256,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         with self.assertRaises(ConfigError) as ctx:
-            load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+            PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("must return a dictionary", str(ctx.exception))
 
     def test_hook_syntax_or_runtime_exception_raises_config_error(self) -> None:
@@ -274,7 +269,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         with self.assertRaises(ConfigError) as ctx:
-            load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+            PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertIn("Intentional hook runtime failure", str(ctx.exception))
 
     def test_fallback_mode_without_workspace_config(self) -> None:
@@ -289,7 +284,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, None)
+        cfg = PackageConfig.from_source_dir(pkg_dir, None)
         self.assertEqual(cfg.install_method, "copy")
         self.assertEqual(cfg.name, "pkg1")
 
@@ -302,7 +297,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertTrue(cfg.is_package_config_file(hook_file))
         self.assertTrue(cfg.is_package_config_file(pkg_dir / PACKAGE_CONFIG_FILE_NAME))
         self.assertFalse(cfg.is_package_config_file(pkg_dir / "dotfile.txt"))
@@ -336,17 +331,17 @@ def configure_package(context):
         self.assertFalse((rendered_pkg_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME).is_file())
 
         # Load rendered config
-        rendered_cfg = load_package_config_from_render_dir(self.drift_root / "render", "pkg1")
+        rendered_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg1")
         self.assertEqual(rendered_cfg.install_method, "copy")
         self.assertEqual(rendered_cfg.target_directory, Path("~/rendered_target").expanduser())
 
-        # load_config_for_install from install/ state dir should also work once staged
+        # PackageConfig.from_install_dir from install/ state dir should also work once staged
         (self.drift_root / "install" / "pkg1").mkdir(parents=True)
         shutil.copy2(
             rendered_pkg_dir / PACKAGE_CONFIG_FILE_NAME,
             self.drift_root / "install" / "pkg1" / PACKAGE_CONFIG_FILE_NAME
         )
-        install_cfg = load_config_for_install(self.drift_root / "install", "pkg1")
+        install_cfg = PackageConfig.from_install_dir(self.drift_root / "install" / "pkg1")
         self.assertEqual(install_cfg.install_method, "copy")
         self.assertEqual(install_cfg.target_directory, Path("~/rendered_target").expanduser())
 
@@ -367,7 +362,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_dir = self.drift_root / "src" / "pkg1"
-        cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.env_override.get("DYNAMIC_API"), "https://example.com/v1")
         self.assertEqual(cfg.target_directory, Path("~/.config/app_pkg1").expanduser())
 
@@ -388,7 +383,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         self.assertNotIn("drift_package_name", os.environ)
-        load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertNotIn("drift_package_name", os.environ)
 
     def test_resolve_package_hook_path_helper(self) -> None:

@@ -475,6 +475,20 @@ class WorkspaceConfig:
         config.validate()
         return config
 
+    @classmethod
+    def from_workspace_dir(
+        cls,
+        drift_root: Path,
+        check_legacy: bool = True,
+        config_files_override: Optional[Sequence[Path]] = None,
+    ) -> "WorkspaceConfig":
+        """Loads, transforms, and validates the workspace configuration from a drift workspace directory."""
+        return load_workspace_config(
+            drift_root=drift_root,
+            check_legacy=check_legacy,
+            config_files_override=config_files_override,
+        )
+
 
 def render_workspace_config_toml(envst_path: Path) -> str:
     """

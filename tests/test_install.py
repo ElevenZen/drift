@@ -260,9 +260,9 @@ class TestInstallRepo(unittest.TestCase):
 
         # Write hooks in src/pkg_copy/
         with open(os.path.join(pkg_install_dir, "on-install.sh"), "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\necho 'hook installed' > hook_ran.txt\n")
+            f.write("#!/bin/sh\necho 'hook installed' > \"$drift_package_target_dir/hook_ran.txt\"\n")
         with open(os.path.join(pkg_install_dir, "on-update.sh"), "w", encoding="utf-8") as f:
-            f.write("#!/bin/sh\necho 'hook updated' > hook_ran.txt\n")
+            f.write("#!/bin/sh\necho 'hook updated' > \"$drift_package_target_dir/hook_ran.txt\"\n")
 
         # Simulation 1: First-Time Deploy (triggers collision guard and post_install)
         # Create a pre-existing target file
@@ -537,10 +537,12 @@ class TestInstallRepo(unittest.TestCase):
             from unittest.mock import MagicMock
             res = MagicMock()
             res.returncode = 0
+            res.stdout = ""
+            res.stderr = ""
             return res
 
         from unittest.mock import patch
-        with patch("subprocess.run", side_effect=mock_run_cmd):
+        with patch("drift.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
             deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
@@ -1223,9 +1225,9 @@ class TestInstallRepo(unittest.TestCase):
 
         # 2. Test package with missing install directory (corrupted stage)
         pkg_missing = "pkg_missing_dir"
-        # Setup drift_package.toml in source only so load_config_for_install doesn't find it in install/
+        # Setup drift_package.toml in source only so PackageConfig.from_install_dir doesn't find it in install/
         # Or place drift_package.toml in a file instead of directory
-        # If install/pkg_missing_dir doesn't exist, load_config_for_install raises error before deploy_one_package
+        # If install/pkg_missing_dir doesn't exist, PackageConfig.from_install_dir raises error before deploy_one_package
         # If install/pkg_missing_dir has a config file but is not a dir for files:
         pkg_missing_dir = self.install_dir / pkg_missing
         pkg_missing_dir.mkdir(parents=True, exist_ok=True)
@@ -1241,7 +1243,7 @@ class TestInstallRepo(unittest.TestCase):
         # Mock config loading to return metadata for missing dir
         from drift.package_config import PackageConfig
         metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=self.system_target_dir)
-        with patch("drift.install_repo.load_config_for_install", return_value=metadata):
+        with patch("drift.install_repo.PackageConfig.from_install_dir", return_value=metadata):
             res_missing = deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
@@ -1855,6 +1857,45 @@ class TestInstallRepo(unittest.TestCase):
             sudo=False
         )
         self.assertEqual(mock_create_symlink.call_count, 1)
+
+    def test_full_copy_deployment_translates_dot_prefixes(self) -> None:
+        """Verifies full copy deployment (initial deploy and full redeploy) translates dot- prefixes to leading dots."""
+        pkg = "pkg_copy_dot"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config" / "app").mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "dot-bashrc").write_text("export FOO=1\n", encoding="utf-8")
+        (pkg_install_dir / "dot-config" / "app" / "dot-settings.ini").write_text("setting=dark\n", encoding="utf-8")
+        (pkg_install_dir / "normal.txt").write_text("plain text\n", encoding="utf-8")
+
+        # Run full deployment (no package_changes provided -> triggers run_full_copy_deployment)
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify translated paths exist on target
+        self.assertTrue((self.system_target_dir / ".bashrc").is_file())
+        self.assertEqual((self.system_target_dir / ".bashrc").read_text(encoding="utf-8"), "export FOO=1\n")
+
+        self.assertTrue((self.system_target_dir / ".config" / "app" / ".settings.ini").is_file())
+        self.assertEqual(
+            (self.system_target_dir / ".config" / "app" / ".settings.ini").read_text(encoding="utf-8"),
+            "setting=dark\n"
+        )
+
+        self.assertTrue((self.system_target_dir / "normal.txt").is_file())
+        self.assertEqual((self.system_target_dir / "normal.txt").read_text(encoding="utf-8"), "plain text\n")
+
+        # Verify untranslated dot- paths DO NOT exist on target
+        self.assertFalse((self.system_target_dir / "dot-bashrc").exists())
+        self.assertFalse((self.system_target_dir / "dot-config").exists())
 
 
 class TestStowVersionDetection(unittest.TestCase):
