@@ -13,7 +13,11 @@
 * **Decomposed Stage Pipelines**: Deconstruct complex multi-step workflows (e.g., rendering, lifecycle hooks, reverse sync, drift adoption) into discrete, self-contained sub-stages (e.g., config resolution -> engine/env preparation -> candidate filtering -> file transformation -> result assembly) that can each be reasoned about and unit-tested in isolation.
 * **Explicit Dependency Injection**: Pass configurations, registries, and path resolvers explicitly through function signatures; avoid relying on implicit globals, mutable default parameters, or ambient filesystem state.
 * **Side-Effect Isolation & Inspectable Operations**: Keep pure computation and transformation logic decoupled from filesystem I/O, subprocess execution, and git operations. Stateful operations should support structured dry-run execution or inspectable result summaries where applicable.
-* **Clickable File References**: In conversation summaries and documentation, provide clickable Markdown links to files and symbols.
+* **Privacy & User Information Protection**: Never hardcode or leak user-specific host paths (e.g., `/home/<username>`), usernames, personal IPs, or credentials in documentation, code comments, commit messages, or tests. Always use relative repository paths (e.g., `docs/ai_reference.md`, `src/drift/...`) for markdown links and generic placeholders (e.g., `~`, `$HOME`, `test_user`) in examples and test fixtures.
+* **Clickable File References**: In conversation summaries and documentation, provide clickable Markdown links to files and symbols using relative repository paths.
+* **Architecture & Reference Documentation**:
+  * Consult [`docs/ai_reference.md`](docs/ai_reference.md) as the primary, concise cheat-sheet for primitives, core helper functions, directory topology, and domain invariants.
+  * Consult [`docs/design.md`](docs/design.md) for full deep-dive architectural rationales, edge cases, and design specifications.
 
 ## 3. Testing & Validation
 * Always back new features and refactors with corresponding unit/integration tests in `tests/`.
