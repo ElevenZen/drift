@@ -224,12 +224,22 @@ class PackageHooks:
     health: Optional[Path] = None
     timeout: int = DEFAULT_HOOK_TIMEOUT
     rollback_on_failure: Union[bool, List[str]] = True
+    _relative_paths: Dict[str, Optional[Path]] = field(default_factory=dict, repr=False)
     _package_config: Optional["PackageConfig"] = field(default=None, repr=False, compare=False)
 
     def __setattr__(self, name: str, value: Any) -> None:
         if name in LIFECYCLE_HOOK_NAMES:
             value = normalize_hook_value(value)
         super().__setattr__(name, value)
+
+    def get_relative_path(self, hook_name: str) -> Optional[Path]:
+        """Returns the relative path of a package-internal hook, or None if external/unset."""
+        return self._relative_paths.get(hook_name)
+
+    @property
+    def configured_relative_paths(self) -> Set[str]:
+        """Returns the set of POSIX relative path strings for all package-internal hooks."""
+        return {p.as_posix() for p in self._relative_paths.values() if p is not None}
 
     @property
     def package_config(self) -> Optional["PackageConfig"]:
@@ -336,14 +346,33 @@ class PackageHooks:
     ) -> "PackageHooks":
         """Parses, validates, and resolves a PackageHooks instance from a hooks dictionary.
 
+        Relationship and Meaning of base_dir vs. workspace_config:
+            - workspace_config (Priority Context): When provided (with package_name), it supplies
+              the full multi-stage workspace directory layout (source_path, render_path, install_path).
+              Lifecycle hooks are bound to their respective canonical execution stage base directories:
+                * probe, pre_source -> source directory (<workspace.source_path>/<package_name>)
+                * post_render       -> render sandbox (<workspace.render_path>/<package_name>)
+                * pre_install, post_install, pre_update, post_update, pre_uninstall,
+                  post_uninstall, health -> install directory (<workspace.install_path>/<package_name>)
+              Additionally, <workspace.source_path>/<package_name> defines the package source directory
+              used to detect and normalize absolute hook paths pointing inside the package source tree into
+              package-relative paths.
+            - base_dir (Fallback Directory): Used as the fallback package directory when workspace_config
+              is None (e.g., during isolated testing or standalone package parsing). When workspace_config
+              is absent, all relative hook paths resolve uniformly against base_dir, and base_dir serves
+              as the reference directory for detecting package-internal absolute paths.
+            - Precedence: When both are provided, workspace_config takes precedence for multi-stage base
+              mapping, while base_dir acts as a secondary fallback. If neither is provided and any hook
+              specifies a relative path, a ConfigError is raised.
+
         Args:
             data: The [hooks] dictionary.
-            package_name: Optional name of the package for error messages.
-            base_dir: Optional base directory to resolve relative hook paths into absolute paths.
-            workspace_config: Optional parent WorkspaceConfig to resolve stage-specific hook base paths.
+            package_name: Optional name of the package for error messages and stage path resolution.
+            base_dir: Optional fallback package directory for resolving relative paths when workspace_config is absent.
+            workspace_config: Optional WorkspaceConfig providing multi-stage directory paths and layout.
 
         Returns:
-            A validated PackageHooks instance with absolute hook Paths.
+            A validated PackageHooks instance with canonical absolute execution Paths and auxiliary relative paths.
         """
         # Validate top-level hooks table and any nested platform sub-tables
         effective_hooks = data
@@ -377,17 +406,17 @@ class PackageHooks:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
-        def _is_relative_hook(h: str) -> bool:
-            v = effective_hooks.get(h)
-            if v is None or not str(v).strip():
-                return False
-            return not Path(v).is_absolute()
+        # Determine package source base directory for normalizing inside-source absolute paths
+        package_src_dir: Optional[Path] = (
+            (workspace_config.source_path / package_name).resolve()
+            if (workspace_config is not None and package_name)
+            else (Path(base_dir).resolve() if base_dir is not None else None)
+        )
 
-        has_relative_hooks = any(_is_relative_hook(h) for h in LIFECYCLE_HOOK_NAMES)
         if workspace_config is not None and package_name:
-            src_base = workspace_config.source_path / package_name
-            render_base = workspace_config.render_path / package_name
-            install_base = workspace_config.install_path / package_name
+            src_base = (workspace_config.source_path / package_name).resolve()
+            render_base = (workspace_config.render_path / package_name).resolve()
+            install_base = (workspace_config.install_path / package_name).resolve()
             hook_base_map: Dict[str, Path] = {
                 "probe": src_base,
                 "pre_source": src_base,
@@ -403,30 +432,51 @@ class PackageHooks:
         elif base_dir is not None:
             resolved_base = Path(base_dir).resolve()
             hook_base_map = {hook_name: resolved_base for hook_name in LIFECYCLE_HOOK_NAMES}
-        elif not has_relative_hooks:
-            hook_base_map = {}
         else:
-            name_str = f" for package '{package_name}'" if package_name else ""
-            raise ConfigError(f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}.")
+            hook_base_map = {}
 
-        def _resolve_hook(hook_name: str) -> Optional[Path]:
-            val = effective_hooks.get(hook_name)
-            target_base = hook_base_map.get(hook_name)
-            return normalize_hook_value(val, base_dir=target_base)
+        def _process_hook(hook_name: str) -> Tuple[Optional[Path], Optional[Path]]:
+            raw_val = effective_hooks.get(hook_name)
+            norm_val = normalize_hook_value(raw_val)
+            if norm_val is None:
+                return None, None
+            p = norm_val
+            if p.is_absolute():
+                p_res = p.resolve()
+                if package_src_dir is not None and is_relative_to(p_res, package_src_dir):
+                    rel = p_res.relative_to(package_src_dir)
+                    stage_base = hook_base_map.get(hook_name, package_src_dir)
+                    return (stage_base / rel).resolve(), rel
+                else:
+                    return p_res, None
+            else:
+                stage_base = hook_base_map.get(hook_name)
+                if stage_base is None:
+                    name_str = f" for package '{package_name}'" if package_name else ""
+                    raise ConfigError(
+                        f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
+                    )
+                rel = Path(os.path.normpath(str(norm_val)))
+                return (stage_base / rel).resolve(), rel
+
+        proc_results = {h: _process_hook(h) for h in LIFECYCLE_HOOK_NAMES}
+        abs_hooks = {h: res[0] for h, res in proc_results.items()}
+        rel_hooks = {h: res[1] for h, res in proc_results.items()}
 
         hooks = cls(
-            probe=_resolve_hook("probe"),
-            pre_source=_resolve_hook("pre_source"),
-            pre_install=_resolve_hook("pre_install"),
-            post_install=_resolve_hook("post_install"),
-            pre_update=_resolve_hook("pre_update"),
-            post_update=_resolve_hook("post_update"),
-            pre_uninstall=_resolve_hook("pre_uninstall"),
-            post_uninstall=_resolve_hook("post_uninstall"),
-            post_render=_resolve_hook("post_render"),
-            health=_resolve_hook("health"),
+            probe=abs_hooks.get("probe"),
+            pre_source=abs_hooks.get("pre_source"),
+            pre_install=abs_hooks.get("pre_install"),
+            post_install=abs_hooks.get("post_install"),
+            pre_update=abs_hooks.get("pre_update"),
+            post_update=abs_hooks.get("post_update"),
+            pre_uninstall=abs_hooks.get("pre_uninstall"),
+            post_uninstall=abs_hooks.get("post_uninstall"),
+            post_render=abs_hooks.get("post_render"),
+            health=abs_hooks.get("health"),
             timeout=raw_timeout,
             rollback_on_failure=resolved_rollback,
+            _relative_paths=rel_hooks,
         )
         hooks.validate(package_name)
         return hooks
@@ -678,11 +728,18 @@ class PackageHooks:
         """
         pkg_name = self._package_config.name if self._package_config else "unknown"
         target_hooks = hook_names if hook_names else LIFECYCLE_HOOK_NAMES
-        hook_rel_map = { hook_name: getattr(self, hook_name, None) for hook_name in target_hooks }
-        hook_rel_map = { k: v for k, v in hook_rel_map.items() if v }
-        for hook_name, hook_rel in hook_rel_map.items():
-            # handles absolute paths as well.
-            hook_path = base_dir / hook_rel
+        for hook_name in target_hooks:
+            hook_val = getattr(self, hook_name, None)
+            if hook_val is None:
+                continue
+            rel_hook = self.get_relative_path(hook_name)
+            if rel_hook is not None and base_dir is not None:
+                hook_path = base_dir / rel_hook
+            elif base_dir is not None:
+                hook_path = base_dir / hook_val
+            else:
+                hook_path = hook_val
+
             if not hook_path.exists():
                 raise FileNotFoundError(
                     f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'"
@@ -1097,7 +1154,32 @@ class PackageConfig:
         base_dir: Optional[Path] = None,
         workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
-        """Builds a PackageConfig instance from a parsed TOML dictionary and package name."""
+        """Builds a strongly-typed PackageConfig instance from a parsed TOML dictionary.
+
+        Relationship and Meaning of base_dir vs. workspace_config:
+            - workspace_config (Global Workspace Context): Supplies workspace-wide configuration,
+              multi-stage directory layouts (source_path, render_path, install_path), workspace defaults
+              (default_target_path, default_install_method), and workspace render engine registries.
+              When provided, it enables stage-specific lifecycle hook resolution (PackageHooks.from_dict)
+              and cross-package render engine inheritance.
+            - base_dir (Local Package Directory): Represents the local source directory of the package
+              (e.g., <source_path>/<package_name>). It is forwarded to sub-parsers such as RenderEngineRegistry.from_dict
+              to resolve relative template input_file paths, and serves as the fallback directory for hook resolution
+              when workspace_config is absent.
+            - Precedence: When workspace_config is provided, stage-specific directories are derived automatically
+              from the workspace layout and package name, while base_dir provides the concrete filesystem root
+              for local asset files.
+
+        Args:
+            data: Parsed configuration dictionary from drift_package.toml.
+            package_name: Unique name of the package.
+            source_files: Candidate or loaded source configuration files.
+            base_dir: Optional local source directory of the package for relative asset/engine resolution.
+            workspace_config: Optional WorkspaceConfig providing workspace layout, defaults, and stage paths.
+
+        Returns:
+            A validated and initialized PackageConfig instance.
+        """
         if not package_name or not isinstance(package_name, str):
             raise ConfigError("Package name must be provided when constructing PackageConfig.")
         if not isinstance(data, dict):

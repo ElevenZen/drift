@@ -1033,8 +1033,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(pkg_cfg.env_override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
         # Fallback filled unset blanks
         self.assertEqual(pkg_cfg.env_fallback["FALLBACK_VAR"], "fallback_val")
-        # Hook path was interpolated
-        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "src" / "my_pkg" / "scripts" / "post.sh"))
+        # Hook path was interpolated and normalized to stage base (install directory for post_install)
+        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "install" / "my_pkg" / "scripts" / "post.sh"))
+        self.assertEqual(pkg_cfg.hooks.get_relative_path("post_install"), Path("scripts/post.sh"))
 
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""

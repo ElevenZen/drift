@@ -130,9 +130,6 @@ def render_or_copy_file(
         dest_path=dest_path,
         dest_rel=dest_rel,
         pkg_config=pkg_config,
-        workspace_config=workspace_config,
-        package_dir=package_dir,
-        render_pkg_dir=render_pkg_dir,
     )
 
     return (dest_rel, is_rendered)
@@ -143,9 +140,6 @@ def ensure_rendered_file_hook_permissions(
     dest_path: Path,
     dest_rel: str,
     pkg_config: PackageConfig,
-    workspace_config: Optional[WorkspaceConfig] = None,
-    package_dir: Optional[Path] = None,
-    render_pkg_dir: Optional[Path] = None,
 ) -> None:
     """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
 
@@ -155,20 +149,7 @@ def ensure_rendered_file_hook_permissions(
     if sys.platform == "win32":
         return
 
-    rel_bases: List[Path] = []
-    if package_dir is not None:
-        rel_bases.append(package_dir)
-    if render_pkg_dir is not None:
-        rel_bases.append(render_pkg_dir)
-    if workspace_config is not None:
-        rel_bases.extend([
-            workspace_config.source_path / pkg_config.name,
-            workspace_config.render_path / pkg_config.name,
-            workspace_config.install_path / pkg_config.name,
-        ])
-
-    configured_hooks = pkg_config.hooks.get_configured_hook_paths(relative_to=rel_bases)
-    if dest_rel not in configured_hooks:
+    if dest_rel not in pkg_config.hooks.configured_relative_paths:
         return
 
     try:

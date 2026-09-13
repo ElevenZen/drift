@@ -1028,6 +1028,95 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertTrue(shared_out.is_file())
 
 
+    def test_package_hooks_dual_view_relative_and_absolute(self) -> None:
+        """Verifies PackageHooks dual-view architecture: canonical execution paths and auxiliary relative paths."""
+        src_base = self.drift_root / "src" / "pkg_hook"
+        install_base = self.drift_root / "install" / "pkg_hook"
+        render_base = self.drift_root / "render" / "pkg_hook"
+
+        # 1. Relative hook paths
+        hooks_rel = PackageHooks.from_dict(
+            {
+                "pre_source": "scripts/pre_source.sh",
+                "post_render": "scripts/post_render.sh",
+                "pre_install": "scripts/pre_install.sh",
+                "post_install": "scripts/post_install.sh",
+            },
+            package_name="pkg_hook",
+            workspace_config=self.workspace_config,
+        )
+        self.assertEqual(hooks_rel.pre_source, (src_base / "scripts/pre_source.sh").resolve())
+        self.assertEqual(hooks_rel.post_render, (render_base / "scripts/post_render.sh").resolve())
+        self.assertEqual(hooks_rel.pre_install, (install_base / "scripts/pre_install.sh").resolve())
+        self.assertEqual(hooks_rel.post_install, (install_base / "scripts/post_install.sh").resolve())
+
+        self.assertEqual(hooks_rel.get_relative_path("pre_source"), Path("scripts/pre_source.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("post_render"), Path("scripts/post_render.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("pre_install"), Path("scripts/pre_install.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("post_install"), Path("scripts/post_install.sh"))
+        self.assertIsNone(hooks_rel.get_relative_path("pre_update"))
+
+        self.assertEqual(
+            hooks_rel.configured_relative_paths,
+            {
+                "scripts/pre_source.sh",
+                "scripts/post_render.sh",
+                "scripts/pre_install.sh",
+                "scripts/post_install.sh",
+            }
+        )
+
+        # 2. Inside-source absolute hook paths
+        abs_in_src = (src_base / "scripts" / "pre_install.sh").resolve()
+        hooks_in_src = PackageHooks.from_dict(
+            {
+                "pre_install": str(abs_in_src),
+            },
+            package_name="pkg_hook",
+            workspace_config=self.workspace_config,
+        )
+        # Canonical execution path should bind to stage base (install_base)
+        self.assertEqual(hooks_in_src.pre_install, (install_base / "scripts/pre_install.sh").resolve())
+        self.assertEqual(hooks_in_src.get_relative_path("pre_install"), Path("scripts/pre_install.sh"))
+        self.assertEqual(hooks_in_src.configured_relative_paths, {"scripts/pre_install.sh"})
+
+        # 3. External absolute hook paths
+        external_abs = Path("/usr/local/bin/global_hook.sh").resolve()
+        hooks_ext = PackageHooks.from_dict(
+            {
+                "pre_install": str(external_abs),
+            },
+            package_name="pkg_hook",
+            workspace_config=self.workspace_config,
+        )
+        self.assertEqual(hooks_ext.pre_install, external_abs)
+        self.assertIsNone(hooks_ext.get_relative_path("pre_install"))
+        self.assertEqual(hooks_ext.configured_relative_paths, set())
+
+    def test_package_hooks_inside_source_absolute_path_trigger(self) -> None:
+        """Verifies that an absolute hook path inside source dir is normalized, rendered, and executed properly."""
+        from drift.lifecycle_hooks import trigger_pre_source_hook
+
+        abs_hook = (self.src_pkg_dir / "scripts" / "pre_source.sh").resolve()
+        (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_hook"
+        install_method = "copy"
+        target_directory = "{self.target_dir.as_posix()}"
+
+        [hooks]
+        pre_source = "{abs_hook.as_posix()}"
+        """, encoding="utf-8")
+
+        res = trigger_pre_source_hook(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.exit_code, 0)
+        self.assertTrue((self.src_pkg_dir / "pre_source_out.txt").is_file())
+
+
 if __name__ == "__main__":
     unittest.main()
 

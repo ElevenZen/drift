@@ -12,7 +12,6 @@ if TYPE_CHECKING:
     from .render_engine_config import RenderEngineRegistry
 
 from .package_config import PackageConfig
-from .file_utils import is_relative_to
 from .process_utils import run_command
 from .result_models import HookResult
 from .constants import DEFAULT_HOOK_NON_INTERACTIVE_ENVS, INITIAL_ENV
@@ -321,17 +320,8 @@ def trigger_package_hook_with_render(
 
     hook_file_path = Path(hook_file_val)
 
-    # Resolve hook file path relative to package source directory if not absolute
-    # Determine the relative subpath of the hook within the package hierarchy
-    rel_hook_path: Optional[Path] = None
-    for candidate_base in (
-        workspace_config.install_path / package_name,
-        workspace_config.render_path / package_name,
-        src_pkg_dir,
-    ):
-        if is_relative_to(hook_file_path, candidate_base):
-            rel_hook_path = hook_file_path.relative_to(candidate_base)
-            break
+    # Determine relative path if package-internal hook, otherwise treat as external hook
+    rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
 
     if rel_hook_path is None:
         # If hook is outside the package directory hierarchy, it is shared across packages and executed directly
@@ -369,7 +359,7 @@ def trigger_package_hook_with_render(
 
     def _execute() -> HookResult:
         # Check if nominal hook path is inside src_pkg_dir
-        if is_relative_to(nominal_hook_path, src_pkg_dir):
+        if rel_hook_path is not None:
             from .render_package import render_or_copy_file, prepare_package_render_engines
             target_render_dir = workspace_config.render_path / package_name
             if engines_override is not None:
