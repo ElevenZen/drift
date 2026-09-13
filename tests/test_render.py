@@ -1950,6 +1950,162 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertNotIn("drift_package_render_dir", os.environ)
         self.assertNotIn("drift_package_install_dir", os.environ)
 
+    def test_render_collision_template_and_template_raises_error(self) -> None:
+        """Verifies that multiple templates targeting the same destination raise RenderCollisionError."""
+        from drift.exceptions import RenderCollisionError
+        from drift.render_package import render_package
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
+        (config_dir / "mustache_in.json").write_text("{}", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            render_engine_configs=RenderEngineRegistry({
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command=INTERNAL_RENDER_COMMAND,
+                ),
+                "mustache": RenderEngineConfig(
+                    name="mustache",
+                    input_file=Path("mustache_in.json"),
+                    suffix="mustache",
+                    render_command=INTERNAL_RENDER_COMMAND,
+                ),
+            }),
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "collision_pkg"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text("[package]\nname = 'collision_pkg'\n", encoding="utf-8")
+
+        # Two templates that both render to 'config.json'
+        (pkg_src_dir / "config.json.envst").write_text('{"from": "envst"}', encoding="utf-8")
+        (pkg_src_dir / "config.json.mustache").write_text('{"from": "mustache"}', encoding="utf-8")
+
+        with self.assertRaises(RenderCollisionError) as ctx:
+            render_package(workspace_config=workspace_config, package_dir=pkg_src_dir)
+
+        self.assertIn("collision_pkg", str(ctx.exception))
+        self.assertIn("config.json", str(ctx.exception))
+        self.assertIn("config.json.envst", str(ctx.exception))
+        self.assertIn("config.json.mustache", str(ctx.exception))
+
+    def test_render_collision_static_and_template_raises_error(self) -> None:
+        """Verifies that a static file and a template targeting the same destination raise RenderCollisionError."""
+        from drift.exceptions import RenderCollisionError
+        from drift.render_package import render_package
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            render_engine_configs=RenderEngineRegistry({
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command=INTERNAL_RENDER_COMMAND,
+                )
+            }),
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "static_template_collision"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text("[package]\nname = 'static_template_collision'\n", encoding="utf-8")
+
+        # A static file and a template that both resolve to 'init.lua'
+        (pkg_src_dir / "init.lua").write_text("-- static content\n", encoding="utf-8")
+        (pkg_src_dir / "init.lua.envst").write_text("-- template content\n", encoding="utf-8")
+
+        with self.assertRaises(RenderCollisionError) as ctx:
+            render_package(workspace_config=workspace_config, package_dir=pkg_src_dir)
+
+        self.assertIn("static_template_collision", str(ctx.exception))
+        self.assertIn("init.lua", str(ctx.exception))
+        self.assertIn("init.lua.envst", str(ctx.exception))
+
+    def test_render_collision_drift_hooks_raises_error(self) -> None:
+        """Verifies that duplicate hook scripts in drift_hooks/ raise RenderCollisionError."""
+        from drift.exceptions import RenderCollisionError
+        from drift.render_package import render_package
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            render_engine_configs=RenderEngineRegistry({
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command=INTERNAL_RENDER_COMMAND,
+                )
+            }),
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "hook_collision_pkg"
+        hooks_dir = pkg_src_dir / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text("[package]\nname = 'hook_collision_pkg'\n", encoding="utf-8")
+
+        # Static hook and template hook in drift_hooks/ both resolving to '.drift/hooks/bootstrap.sh'
+        (hooks_dir / "bootstrap.sh").write_text("#!/bin/sh\necho static\n", encoding="utf-8")
+        (hooks_dir / "bootstrap.sh.envst").write_text("#!/bin/sh\necho template\n", encoding="utf-8")
+
+        with self.assertRaises(RenderCollisionError) as ctx:
+            render_package(workspace_config=workspace_config, package_dir=pkg_src_dir)
+
+        self.assertIn("hook_collision_pkg", str(ctx.exception))
+        self.assertIn(".drift/hooks/bootstrap.sh", str(ctx.exception))
+
+    def test_run_primitive_2_render_packages_handles_collision(self) -> None:
+        """Verifies that run_primitive_2_render_packages catches RenderCollisionError and reports FAILED."""
+        from drift.render_package import run_primitive_2_render_packages
+
+        config_dir = self.drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        (config_dir / "drift_workspace.toml").write_text("""
+        [workspace]
+        [packages.enable]
+        collision_pkg = true
+        """, encoding="utf-8")
+        (config_dir / "env.sh").write_text("# dummy env\n", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            packages_enable={"collision_pkg": True},
+            render_engine_configs=RenderEngineRegistry({
+                "envsubst": RenderEngineConfig(
+                    name="envsubst",
+                    input_file=Path("env.sh"),
+                    suffix="envst",
+                    render_command=INTERNAL_RENDER_COMMAND,
+                )
+            }),
+        )
+
+        pkg_src_dir = self.drift_root / "src" / "collision_pkg"
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text("[package]\nname = 'collision_pkg'\n", encoding="utf-8")
+        (pkg_src_dir / "app.yml").write_text("static: true\n", encoding="utf-8")
+        (pkg_src_dir / "app.yml.envst").write_text("templated: true\n", encoding="utf-8")
+
+        result = run_primitive_2_render_packages(workspace_config=workspace_config)
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.error_package, "collision_pkg")
+        pkg_res = result.packages[0]
+        self.assertEqual(pkg_res.status, "FAILED")
+        self.assertIn("Render collision", pkg_res.error or "")
+        self.assertIn("app.yml", pkg_res.error or "")
+
 
 if __name__ == "__main__":
     unittest.main()

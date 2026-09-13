@@ -7,7 +7,7 @@ import shutil
 import logging
 from dataclasses import replace
 from pathlib import Path
-from typing import List, Tuple, Optional, Sequence, TYPE_CHECKING
+from typing import List, Tuple, Optional, Sequence, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig, RenderEngineConfig
@@ -27,7 +27,7 @@ from .workspace_config import secrets_env_scope, WorkspaceConfig
 from .package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
-from .exceptions import ConfigError
+from .exceptions import ConfigError, RenderCollisionError
 from .lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from .result_models import PackageRenderResult, RenderResult
 from .file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes, is_relative_to
@@ -180,7 +180,7 @@ def render_package_file_entry(
     """Renders or copies a package file entry, routing drift_hooks/ files into the .drift/hooks/ sandbox.
 
     Filters out package config files, .drift_ignore, and unmapped hidden files.
-    Returns (rendered_subpath, was_rendered) where rendered_subpath is relative to dest_dir,
+    Returns (output_subpath, was_rendered) where output_subpath is relative to dest_dir,
     or None if the file should be skipped.
     """
     file_path = src_dir / rel_path
@@ -218,7 +218,7 @@ def render_package_file_entry(
             pkg_config=pkg_config,
             render_engines=render_engines,
         )
-        rendered_subpath = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / dest_rel_str
+        output_subpath = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / dest_rel_str
     else:
         dest_rel_str, was_rendered = render_or_copy_file(
             rel_path=rel_path,
@@ -228,9 +228,9 @@ def render_package_file_entry(
             pkg_config=pkg_config,
             render_engines=render_engines,
         )
-        rendered_subpath = Path(dest_rel_str)
+        output_subpath = Path(dest_rel_str)
 
-    return rendered_subpath, was_rendered
+    return output_subpath, was_rendered
 
 
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
@@ -300,6 +300,7 @@ def render_package_files(
 
     rendered_files: List[str] = []
     copied_files: List[str] = []
+    written_destinations: Dict[str, Path] = {}
 
     for file in all_files:
         res = render_package_file_entry(
@@ -311,11 +312,19 @@ def render_package_files(
             render_engines=render_engines,
         )
         if res is not None:
-            rendered_subpath, was_rendered = res
+            output_subpath, was_rendered = res
+            dest_key = output_subpath.as_posix()
+            if dest_key in written_destinations:
+                prev_file = written_destinations[dest_key]
+                raise RenderCollisionError(
+                    f"Multiple source files in package '{package_name}' render to the same destination path '{dest_key}': "
+                    f"'{prev_file}' and '{file}'."
+                )
+            written_destinations[dest_key] = file
             if was_rendered:
-                rendered_files.append(rendered_subpath.as_posix())
+                rendered_files.append(dest_key)
             else:
-                copied_files.append(rendered_subpath.as_posix())
+                copied_files.append(dest_key)
 
     # Trigger post_render hook
     pkg_config.hooks.trigger_post_render(
@@ -430,6 +439,8 @@ def run_primitive_2_render_packages(
                 logger.debug(f"Render exception for package '{package_name}':", exc_info=True)
                 if isinstance(e, FileNotFoundError):
                     err_msg = f"File not found: {e}"
+                elif isinstance(e, RenderCollisionError):
+                    err_msg = f"Render collision: {e}"
                 elif isinstance(e, RenderError):
                     err_msg = f"Render failed: {e}"
                 else:

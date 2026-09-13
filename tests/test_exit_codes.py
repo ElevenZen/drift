@@ -13,7 +13,7 @@ from drift.exceptions import (
     ConfigError,
     DriftDetectedError,
     RenderError,
-    CollisionError,
+    InstallCollisionError,
 )
 from drift.cli.error_boundary import cli_error_boundary
 from drift.cli.argparse_backend import run_argparse_cli
@@ -70,7 +70,7 @@ class TestExitCodes(unittest.TestCase):
         with patch("sys.stderr", stderr_buf):
             with self.assertRaises(SystemExit) as cm:
                 with cli_error_boundary(json_mode=False):
-                    raise CollisionError("Path collision abort")
+                    raise InstallCollisionError("Path collision abort")
             self.assertEqual(cm.exception.code, ExitCode.COLLISION_ERROR)
 
     def test_cli_error_boundary_general_error(self) -> None:

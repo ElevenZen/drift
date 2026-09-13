@@ -23,8 +23,13 @@ class RenderError(DriftError, RuntimeError):
     exit_code: int = ExitCode.RENDER_ERROR
 
 
-class CollisionError(DriftError, RuntimeError):
-    """Raised during install_repo collision guard safety aborts (untracked destination path collision or cross-package state collision)."""
+class RenderCollisionError(RenderError):
+    """Raised when multiple source files in a package render or copy to the same destination path in the render sandbox."""
+    exit_code: int = ExitCode.RENDER_ERROR
+
+
+class InstallCollisionError(DriftError, RuntimeError):
+    """Raised during install_repo collision guard safety aborts (e.g. target directory or parent symlink resolving inside drift_root)."""
     exit_code: int = ExitCode.COLLISION_ERROR
 
 

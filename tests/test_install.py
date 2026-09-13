@@ -973,7 +973,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_external_broken.is_symlink())
 
     def test_install_target_cannot_be_inside_drift_root(self) -> None:
-        """Verifies that the installation deployment raises ValueError if the target directory is inside or equal to drift_root."""
+        """Verifies that the installation deployment raises InstallCollisionError if the target directory is inside or equal to drift_root."""
+        from drift.exceptions import InstallCollisionError
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -987,8 +988,8 @@ class TestInstallRepo(unittest.TestCase):
             target_directory = "{self.drift_root}"
             """)
 
-        # Execute deployment and assert ValueError
-        with self.assertRaises(ValueError) as ctx:
+        # Execute deployment and assert InstallCollisionError
+        with self.assertRaises(InstallCollisionError) as ctx:
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
@@ -1002,8 +1003,8 @@ class TestInstallRepo(unittest.TestCase):
             target_directory = "{polluted_dir}"
             """)
 
-        # Execute deployment and assert ValueError
-        with self.assertRaises(ValueError) as ctx:
+        # Execute deployment and assert InstallCollisionError
+        with self.assertRaises(InstallCollisionError) as ctx:
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 

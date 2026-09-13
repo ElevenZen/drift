@@ -384,6 +384,7 @@ class TestPackageHook(unittest.TestCase):
         })
 
         # 1. Templated hook file (post_install configured as scripts/post_install.sh, source is scripts/post_install.envst.sh)
+        (self.scripts_dir / "post_install.sh").unlink(missing_ok=True)
         tmpl_hook = self.scripts_dir / "post_install.envst.sh"
         tmpl_hook.write_text("#!/bin/bash\necho ${DRIFT_SAMPLE_ENV_EDITOR}\n", encoding="utf-8")
         tmpl_hook.chmod(0o644)

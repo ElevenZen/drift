@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, List, Union, Any, Sequence
 
 from ..constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
-from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, CollisionError
+from ..exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, InstallCollisionError
 from ..workspace_config import WorkspaceConfig, load_workspace_config
 from ..workspace_init import init_drift_workspace
 from ..git_utils import get_drift_root

@@ -19,7 +19,7 @@ from .constants import (
     STOW_LOCAL_IGNORE_FILE_NAME,
     LineEnding,
 )
-from .exceptions import CollisionError, HookExecutionError
+from .exceptions import InstallCollisionError, HookExecutionError
 from .ignore import DriftIgnore
 from .lifecycle_hooks import HookExecFlags
 from .state_registry import load_state_registry, save_state_registry, StateRegistry
@@ -239,7 +239,7 @@ def handle_internal_symlink_conflicts(
     abs_drift_root = workspace_config.drift_root.resolve()
     resolved_target = target_dir.resolve()
     if resolved_target == abs_drift_root or is_relative_to(resolved_target, abs_drift_root):
-        raise CollisionError(
+        raise InstallCollisionError(
             f"Safety Abort: Target directory '{target_dir}' (resolved to '{resolved_target}') "
             f"points inside drift workspace root '{workspace_config.drift_root}'. "
             f"Resolving this automatically is unsafe. Please resolve manually."
@@ -261,7 +261,7 @@ def run_collision_guard(
     # This detects if our target base itself is a symlink into drift_root
     parent_symlink = get_symlinked_parent(target_dir, workspace_config.drift_root)
     if parent_symlink:
-         raise CollisionError(
+         raise InstallCollisionError(
             f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
             f"is a symlink pointing into drift workspace root '{workspace_config.drift_root}', "
             f"but lies outside the package target directory '{target_dir}'. "
@@ -448,7 +448,7 @@ def delete_single_system_file_or_dir(
 def reconcile_orphaned_files(
     pkg: str,
     target_dir: Path,
-    current_files: List[Path],
+    deployable_files: List[Path],
     state_registry: StateRegistry,
     workspace_config: WorkspaceConfig,
     metadata: PackageConfig,
@@ -456,7 +456,7 @@ def reconcile_orphaned_files(
 ) -> None:
     """Reconciles historical deployment files to prune orphaned files from active system target."""
     previous_files = state_registry.get_package_deployed_files(pkg)
-    orphaned_files = set(previous_files) - set(current_files)
+    orphaned_files = set(previous_files) - set(deployable_files)
     if not orphaned_files:
         return
     logger.info(f"🔍 Reconciling desired state: Pruning {len(orphaned_files)} orphaned files")
@@ -553,13 +553,13 @@ def run_incremental_file_delivery(
 def sync_deployed_files_manifest(
     state_registry: StateRegistry,
     pkg: str,
-    current_files: List[Path],
+    deployable_files: List[Path],
     full_redeploy: bool,
     package_changes: Optional[PackageStageChanges] = None
 ) -> None:
     """Updates the deployed_files manifest list for a package in the state registry."""
     if full_redeploy:
-        state_registry.set_package_deployed_files(pkg, current_files)
+        state_registry.set_package_deployed_files(pkg, deployable_files)
     else:
         new_deployed = set(state_registry.get_package_deployed_files(pkg))
         if package_changes:
@@ -574,7 +574,7 @@ def update_state_registry_post_deployment(
     state_registry: StateRegistry,
     pkg: str,
     install_method: str,
-    current_files: List[Path],
+    deployable_files: List[Path],
     full_redeploy: bool,
     package_changes: Optional[PackageStageChanges] = None
 ) -> None:
@@ -587,7 +587,7 @@ def update_state_registry_post_deployment(
     sync_deployed_files_manifest(
         state_registry=state_registry,
         pkg=pkg,
-        current_files=current_files,
+        deployable_files=deployable_files,
         full_redeploy=full_redeploy,
         package_changes=package_changes
     )
@@ -631,14 +631,13 @@ def deploy_one_package_impl(
     
     # Calculate current desired files list
     # Actually, this filter process is already done in stage_repo phase.
-    # TODO: maybe rename this var and args for it to 'pkg_items' ?
-    current_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir)
 
     if full_redeploy:
         reconcile_orphaned_files(
             pkg=pkg,
             target_dir=target_dir,
-            current_files=current_files,
+            deployable_files=deployable_files,
             state_registry=state_registry,
             workspace_config=workspace_config,
             metadata=metadata,
@@ -667,7 +666,7 @@ def deploy_one_package_impl(
     sync_deployed_files_manifest(
         state_registry=state_registry,
         pkg=pkg,
-        current_files=current_files,
+        deployable_files=deployable_files,
         full_redeploy=full_redeploy,
         package_changes=package_changes
     )
@@ -681,7 +680,7 @@ def deploy_one_package_impl(
             install_pkg_dir=install_pkg_dir,
             target_dir=target_dir,
             metadata=metadata,
-            deployable_files=current_files,
+            deployable_files=deployable_files,
         )
     else:
         assert package_changes is not None
@@ -715,7 +714,7 @@ def deploy_one_package_impl(
                 state_registry=state_registry,
                 pkg=pkg,
                 install_method=metadata.get_install_method(workspace_config),
-                current_files=current_files,
+                deployable_files=deployable_files,
                 full_redeploy=full_redeploy,
                 package_changes=package_changes
             )
@@ -728,7 +727,7 @@ def deploy_one_package_impl(
         ops.modified = [str(p) for p in package_changes.deployable_changes.modified]
         ops.deleted = [str(p) for p in package_changes.deployable_changes.deleted]
     else:
-        ops.added = [str(p) for p in current_files]
+        ops.added = [str(p) for p in deployable_files]
 
     return PackageInstallResult(
         package=pkg,
@@ -780,7 +779,7 @@ def deploy_one_package(
     abs_target = target_dir.absolute()
     abs_drift_root = workspace_config.drift_root.absolute()
     if abs_target == abs_drift_root or is_relative_to(abs_target, abs_drift_root):
-        raise ValueError(
+        raise InstallCollisionError(
             f"Safety Abort: The target directory written in config '{target_dir}' "
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
         )

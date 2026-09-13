@@ -169,7 +169,12 @@ Unconditionally pulls the current host configuration state into the `install/` s
     *   For directories configured under `fully_controlled_dirs` (FCD), comparisons are scoped strictly to those specific subdirectories (e.g. `~/.config/nvim`), reverse-syncing any wild/untracked files or deletions without traversing the rest of the host filesystem.
 
 ### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
-Processes files in `src/` (expanding templates via `envsubst`/`mustache` or custom configured engines) and places the results in `render/`. No live system files are altered. Triggers `pre_source` before reading source templates and `post_render` hook upon completion.
+Processes files in `src/` (expanding templates via `envsubst`/`mustache` or custom configured engines) and places the results in `render/`. No live system files are altered:
+*   **Lifecycle Hook Triggers**: Triggers `pre_source` before reading source templates and `post_render` hook upon successful compilation.
+*   **Intermediate Lifecycle Isolation**: Routes source scripts from `src/<pkg>/drift_hooks/` to internal sandbox directory `render/<pkg>/.drift/hooks/`, keeping them strictly isolated from host deployments.
+*   **Render Collision Detection (Strict Error)**:
+    *   Drift tracks destination output paths across all rendered templates and copied static files within each package.
+    *   If multiple source files in a package compile, template-expand, or copy to the same destination relative path in `render/<pkg>/` (e.g. `config.json.envst` and `config.json.mustache`, `init.lua` and `init.lua.envst`, or `drift_hooks/bootstrap.sh` and `drift_hooks/bootstrap.sh.envst`), the rendering pipeline immediately halts with a descriptive `RenderCollisionError` before staging or deployment, preventing silent data overwrite and non-deterministic precedence.
 
 ### Primitive 3: Render Repo Commit [Low-level: `drift render-commit`]
 Automatically commits any updates inside the `render/` sandbox Git repository.
@@ -432,6 +437,34 @@ To isolate secret tokens, private API keys, and work-specific emails from public
    - It records the original state of all loaded keys.
    - Once all rendering operations are finished, a secure `finally` block runs, unloading the secrets and completely restoring the parent shell's original environment variables. This guarantees zero credential contamination.
 
+#### Dynamic Workspace Python Hook: `config/drift_workspace.py`
+For advanced programmatic workspace configuration (such as dynamically toggling packages based on the operating system, Linux distribution, hostname, CPU architecture, or custom discovery logic), Drift provides a **Dynamic Python Workspace Hook**.
+
+1. **Convention & Entry Point**:
+   - By default, Drift looks for `config/drift_workspace.py` (or a custom path defined via `[workspace] hook_file = "..."`).
+   - The script defines an entry point:
+     ```python
+     from typing import Dict, Any
+     from drift import WorkspaceHookContext
+
+     def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
+         # Inspect system facts and environment
+         if context.os == "Linux" and context.distro == "arch":
+             context.config.setdefault("packages", {}).setdefault("enable", {})["hyprland"] = True
+         return context.config
+     ```
+
+2. **`WorkspaceHookContext` Properties**:
+   - `context.config`: The parsed TOML configuration dictionary.
+   - `context.drift_root`: Absolute path to the workspace root directory.
+   - `context.env`: Active environment variable dictionary snapshot.
+   - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+   - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
+
+3. **Lifecycle Execution**:
+   - Executed dynamically during workspace loading (`load_workspace_config`) before package scanning and rendering pipelines begin.
+   - The returned transformed configuration dictionary is validated and used to construct the canonical `WorkspaceConfig`.
+
 ### B. Custom Render Engines & Template Input Dependencies
 Rather than utilizing closed/hardcoded compilation scripts, the drift workspace supports registering flexible, custom-defined template render engines.
 
@@ -466,11 +499,31 @@ If a registered engine's `input_file` is not specified, is empty, or is missing 
 *   **Initialization Warning**: During the workspace bootstrapping phase (`render_input_templates`), instead of raising a fatal crash, the engine logs a clear, descriptive warning and sets the engine's resolved input file to `Path("")` (an empty path). This allows other independent render processes to initialize and compile normally.
 *   **Deferred Runtime Check**: The safety safeguard is deferred to actual template rendering. If any template file in the repository relies on a gracefully disabled engine, the core rendering pipeline (`resolve_render_template_args`) checks for the empty `Path("")` input path. If found, it halts compilation immediately with a descriptive `ValueError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
 
-#### 6. Package-Level Render Engines & Field-Level Inheritance
-Drift supports defining package-scoped render engines and overriding global workspace engines in `drift_package.toml` via `[render.<name>]`:
-*   **Field-Level Inheritance**: When overriding a workspace engine, unspecified fields (`suffix`, `render_command`) are inherited from the workspace configuration, while `input_file` is overridden by the package.
-*   **Relative Path Ingestion**: Package-level `input_file` paths are resolved relative to the package directory (`src/<pkg>/`) immediately upon TOML parsing.
-*   **Two-Stage Pipeline & Internal Sandboxing**: Workspace engines compile workspace inputs into `render/.drift/` and compile package configs (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`). In Stage 2, package engines compile intermediate package inputs into `render/<pkg>/.drift/` before compiling package templates. All downstream primitives (`adopt`, `add`, `reverse-sync`) resolve template suffixes against these effective package engines.
+#### 6. Package-Level Render Engines & Workspace Engine Cooperation
+The primary motivation of **Package-Level Render Engine Configuration** (`[render.<name>]` tables in `drift_package.toml`) is to provide a **self-contained configuration space** for each package. Rather than forcing packages to rely on ambient global workspace settings or shared external inputs, packages encapsulate their own render engines, custom template rules, and localized input files (e.g. `src/<pkg>/env.sh` or `src/<pkg>/data.json`) directly within their directory boundary, ensuring complete modularity and portability across diverse workspaces.
+
+1. **Workspace & Package Cooperation (Overlay & Field-Level Inheritance)**:
+   - Packages can define isolated, package-specific render engines or selectively patch global workspace engines.
+   - At render time, Drift creates an **effective engine registry** via `workspace_config.render_engine_configs.overlay(pkg_config.render_engine_configs)`:
+     - **Field-Level Patching/Inheritance**: When a package specifies an engine already registered at the workspace level, fields explicitly defined in the package (`input_file`, `suffix`, `render_command`) override workspace defaults, while any omitted fields are automatically inherited from the workspace configuration.
+     - **New Package Engines**: When a package defines a new engine name not present in the workspace, it registers as a standalone renderer with its own suffix and compilation command.
+
+2. **Early Absolute Path Resolution**:
+   - `RenderEngineRegistry.from_dict(render_data, base_dir: Path)` normalizes all relative `input_file` paths immediately upon ingestion:
+     - Workspace configuration: `base_dir = drift_root / "config"`
+     - Package configuration: `base_dir = src/<package_name>/`
+   - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing.
+
+3. **Multi-Stage Compilation & Intermediate Sandboxing (`.drift/`)**:
+   - **Stage 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/drift_package.toml`).
+   - **Stage 2 (Engine Overlay & Package Dependency Re-evaluation)**: Effective render engines re-evaluate their input dependency tree (`render_input_templates`) and compile package-specific input templates directly into the package intermediate sandbox `render/<pkg>/.drift/`.
+   - **Stage 3 (Package File Compilation)**: Source templates under `src/<pkg>/` are compiled into `render/<pkg>/` using the effective engines under active package environment scope (`drift_package_*`, `[env.override]`, etc.).
+   - **Stage 4 (Downstream Cooperation)**: Downstream primitives (`drift reverse-sync`, `drift adopt`, `drift add`) resolve template suffixes against these effective package engines, ensuring seamless two-way synchronization.
+
+#### 7. Render Collision Prevention & Reserved Suffix Validation
+To prevent nondeterministic builds and accidental file clobbering:
+*   **Compile-Time Render Collision Detection**: If multiple source files within a package directory evaluate to the same target output path inside `render/<package_name>/` (e.g. `config.json.envst` and `config.json.mustache`, or static `init.lua` and templated `init.lua.envst`), Drift immediately halts with a `RenderCollisionError` detailing the colliding source files.
+*   **Reserved Engine Suffixes**: Engine suffixes that clash with Drift configuration keywords (`drift_package`, `drift_hook`, `drift_ignore`) are strictly forbidden and rejected during engine configuration validation.
 
 ### C. Package Configuration: `drift_package.toml` Specification
 A package configuration file — named `drift_package.toml` — is **strictly required** for every active package and **must be located in the root of the package directory** (e.g. `src/<package_name>/drift_package.toml`). If a package configuration is missing, the engine throws a `FileNotFoundError` and halts to prevent unsafe actions or system corruption.
@@ -488,6 +541,42 @@ To handle machine-specific overrides and secrets at the package level, Drift imp
    - All subsequent package inspections, change visualizations, and staging processes read from this standardized `render/<package_name>/drift_package.toml` file, ensuring perfect downstream modularity and zero ambiguity.
 4. **Exclusion Guard**: The final rendered `drift_package.toml` is strictly marked as a metadata file. It is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/drift_package.toml`.
 
+#### Dynamic Package Python Hook: `src/<package_name>/drift_package.py`
+For complex packages requiring programmatic adjustments (such as dynamically calculating target directories, overriding deployment methods per OS, generating dynamic requirements, or injecting custom environment facts), Drift provides a **Dynamic Python Package Hook**.
+
+1. **Convention & Entry Point**:
+   - By default, Drift looks for `src/<package_name>/drift_package.py` (or a custom path defined via `[package] hook_file = "..."`).
+   - The script defines an entry point:
+     ```python
+     from typing import Dict, Any
+     from drift import PackageHookContext
+
+     def configure_package(context: PackageHookContext) -> Dict[str, Any]:
+         # Dynamically adjust target directory or install method
+         if context.os == "Darwin":
+             context.config.setdefault("package", {})["target_directory"] = "~/Library/Application Support/MyApp"
+         return context.config
+     ```
+
+2. **`PackageHookContext` Properties**:
+   - `context.config`: Parsed package configuration dictionary from `drift_package.toml` and local overrides.
+   - `context.package_name`: Name of the package.
+   - `context.package_dir`: Absolute path to `src/<package_name>/`.
+   - `context.drift_root`: Workspace root path (if present).
+   - `context.workspace_config`: Active `WorkspaceConfig` domain instance (if present).
+   - `context.env`: Active environment snapshot.
+   - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+   - `context.package_facts`: Dynamic package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_src_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
+   - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
+
+3. **Evaluation & Staging Model**:
+   - Evaluated during Primitive 2 (Render) when loading the package source directory.
+   - The transformed configuration is processed by native variable stitching and serialized directly into `render/<package_name>/drift_package.toml` (and staged to `install/<package_name>/drift_package.toml`).
+   - Downstream primitives (`stage`, `apply`, `uninstall`, `health`) read the compiled static TOML directly via `PackageConfig.from_render_dir` / `PackageConfig.from_install_dir`, ensuring zero re-execution overhead and complete determinism.
+
+4. **Control-Plane Exclusion**:
+   - `drift_package.py` and custom `hook_file` paths are automatically registered in `MANAGED_CONFIG_FILES` and excluded from host deployments.
+
 #### Default Config Template:
 ```toml
 # =====================================================================
@@ -496,6 +585,9 @@ To handle machine-specific overrides and secrets at the package level, Drift imp
 # =====================================================================
 
 [package]
+# Optional dynamic Python configuration hook file (defaults to "drift_package.py" if present)
+# hook_file = "drift_package.py"
+
 # ---------------------------------------------------------------------
 # Feature Flags (Default: true)
 # ---------------------------------------------------------------------
@@ -612,6 +704,20 @@ timeout = 120
 # post_install = "drift_hooks/setup.ps1"
 # post_update = "drift_hooks/reload_service.bat"
 # health = "drift_hooks/health_check.ps1"
+
+# ---------------------------------------------------------------------
+# Optional Package-Level Render Engines
+# ---------------------------------------------------------------------
+# Override workspace render engines or define package-specific engines.
+# Unspecified fields in workspace overrides inherit from drift_workspace.toml.
+# Relative input_file paths resolve relative to this package directory.
+# [render.envsubst]
+# input_file = "env.sh"
+#
+# [render.jinja2]
+# input_file = "data.json"
+# suffix = "j2"
+# render_command = "j2 %i %s"
 ```
 
 #### Lifecycle Hooks Execution Matrix
@@ -764,26 +870,32 @@ To minimize system disruption and application reloads, deployment is executed un
 The program ensures compatibility between these two modes. In either mode, the program verifies the package config has `enable_install=true` and loads the install method, install location, and sudo flag from it.
 
 ### D. Physical Conflict Prevention (Collision Guard)
-To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces four levels of audits using the centralized `compare_folders` tool. 
+To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces comprehensive audits using the centralized `compare_folders` tool before any physical deployment operations.
 
-#### 1. Target Parent Symlink Safety Abort (Pre-Check)
-Prior to running any folder comparisons, the system traverses up the target directory path. If it discovers that any parent directory of `target_dir` (at or above the target base) is a symlink pointing inside the workspace root (`drift_root`), it **aborts immediately** with a `RuntimeError`. Automatic cleanup/resolution of parent-level symlinks is highly risky and must be resolved manually by the user to avoid data loss.
+#### 1. Target Parent Symlink Nominal Safety Check (Pre-Check)
+Prior to running any file comparisons, the system performs a nominal check on the target directory path (`get_symlinked_parent(target_dir, workspace_config.drift_root)`). If any parent directory at or above the target base is a symlink pointing inside the workspace root (`drift_root`), Drift **aborts immediately** with an `InstallCollisionError` (Exit Code `5`). Setting an installation target inside `drift_root` is fundamentally forbidden behavior to protect the workspace repository from accidental corruption or circular deployment loops.
 
-#### 2. Unified Recursive Audit Flow
-If the parent symlink safety check passes, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically). 
+#### 2. Internal Symlink Conflicts Resolution & Canonical Path Check
+1.  **Internal Symlinks Backup & Replacement**:
+    *   The collision guard identifies any paths inside `target_dir` that are internal symlinks pointing into `drift_root` that conflict with files in `install/<pkg>/`.
+    *   The system backs up these symlinks to `backup/<package>/overwritten/<path>`, removes the links, and recreates physical parent directories.
+2.  **Resolved Canonical Path Check**:
+    *   After resolving and backing up conflicting internal symlinks inside `target_dir`, the system checks the resolved canonical path (`target_dir.resolve()`).
+    *   If the canonical path of `target_dir` still points inside the workspace root (`drift_root`), Drift **aborts immediately** with an `InstallCollisionError` (Exit Code `5`). Deploying into `drift_root` is strictly forbidden and requires updating `target_directory` in `drift_package.toml`.  
 
-Files are categorized and safely routed to prevent overwriting or data loss:
-1.  **Safety Aborts (`CollisionError` / Exit Code `5`)**:
-    *   *Path Collision Guard Abort*: When an untracked, external file or broken symlink exists at the target host destination and deployment is run without `--force`, the collision guard halts execution to prevent unintentional overwrites.
-    *   *State Ownership Collision*: If the target destination is already claimed and owned by a different Drift package in `state.toml`, deployment aborts immediately.
-2.  **Backup & Collision Routing (Non-Abort Operations)**:
-    *   *Internal Symlinks (`diff.internal_symlinks`)*: Any path discovered inside the target directory that is a symlink pointing inside the workspace root (`drift_root`) represents severe repo pollution. The system backs up this symlink to `backup/<package>/overwritten/<path>`, removes the link, and recreates physical parent directories.
-    *   *Type Mismatches (`diff.deleted`)*: If the type of a target path on the host differs from the repository (e.g. a physical file exists where the repo expects a folder), the system backs up the host item to `backup/<package>/overwritten/<path>` and clears the path.
-    *   *Modified paths (`diff.modified`)*:
-        *   *Stow Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
-        *   *Copy Mode Exemption*: If deployed via `copy` and already registered in `state.toml`, target files are overwritten with updated content.
-        *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and removed.
-    *   *Matches (`diff.matches` under Stow mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the Stow symlink.
+#### 3. Unified Recursive Audit Flow & Non-Abort Backup Routing
+If all safety checks pass, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically).
+
+For regular host file conflicts, Drift does **not** abort. Instead, files are categorized and safely backed up to `backup/<package>/overwritten/<path>` to protect pre-existing data:
+*   *Type Mismatches (`diff.deleted`)*: If the type of a target path on the host differs from the repository (e.g. a physical file exists where the repo expects a folder), the host item is backed up to `backup/<package>/overwritten/<path>` and cleared.
+*   *Modified Paths (`diff.modified`)*:
+    *   *Stow Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
+    *   *Copy Mode Exemption*: If deployed via `copy` and already registered in `state.toml`, target files are updated with new content.
+    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and replaced.
+*   *Content Matches (`diff.matches` under Stow mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the Stow symlink.
+
+#### 4. Planned Feature: Cross-Package Ownership Collision
+*(Future Capability)*: In future releases, Drift will detect when multiple active packages claim the exact same target path on the host system in `install/state.toml`, halting deployment with an `InstallCollisionError` before applying changes to prevent inter-package race conditions.
 
 > [!IMPORTANT]
 > **Transient `backup/` Directory Policy & User Responsibility**:

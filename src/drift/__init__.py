@@ -206,7 +206,8 @@ from .exceptions import (
     ConfigError,
     DriftDetectedError,
     RenderError,
-    CollisionError,
+    RenderCollisionError,
+    InstallCollisionError,
     HookExecutionError,
 )
 
