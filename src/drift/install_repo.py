@@ -363,30 +363,12 @@ def run_full_copy_deployment(
 ) -> None:
     """Executes copy deployment of deployable_files to target_dir.
 
-    On Windows, uses Python built-in file copy loop (shutil.copy2 in file_utils.py).
-    On POSIX, uses rsync --files-from if available, falling back to Python file copy loop.
+    Iterates through deployable_files and deploys each file using atomic copy
+    and system target dot-translation via deploy_single_copy_file.
     """
     ensure_dir_exists_with_sudo(target_dir, sudo)
     pkg = src_pkg_dir.name
-
-    if sys.platform == "win32":
-        logger.info(f"🚚 Syncing files: {pkg} (copy)")
-        for rel_file in deployable_files:
-            deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
-        return
-
-    # Optimized path on POSIX: use rsync --files-from to only copy deployable files.
-    # This automatically respects ignores because deployable_files is already filtered.
-    if shutil.which("rsync"):
-        rsync_cmd = ["rsync", "-av", "--files-from=-", str(src_pkg_dir) + "/", str(target_dir) + "/"]
-        try:
-            logger.info(f"🚚 Syncing files: {pkg} (copy)")
-            logger.debug(f"   Command: {shlex.join(rsync_cmd)}")
-            file_list = "\n".join(str(f) for f in deployable_files)
-            run_sudo_command(rsync_cmd, sudo=sudo, input=file_list, text=True)
-            return
-        except Exception as e:
-            logger.warning(f"Filtered rsync failed or not available, falling back to manual loop: {e}")
+    logger.info(f"🚚 Syncing files: {pkg} (copy)")
 
     for rel_file in deployable_files:
         deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
