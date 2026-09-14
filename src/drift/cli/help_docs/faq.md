@@ -161,5 +161,14 @@ drift diff -t -y shell
 
 ---
 
+### Q14: What does `❌ [ERROR] Given target packages not found in directory '<path>/install'` mean for an installed package?
+**Situation**: You run a command targeting an installed package (e.g. `drift reverse-sync <pkg>`, `drift diff -s <pkg>`, or `drift rollback <pkg>`), but Drift fails with `❌ [ERROR] Given target packages not found in directory '.../install': ['<pkg>']`.  
+**Why this happens**: Drift requires a valid package configuration file (`.drift/drift_package.toml` or `drift_package.toml`) inside `install/<pkg>/` to determine the target directory and ignore rules. If this configuration file inside `install/` is missing or corrupted, Drift cannot discover the package inside `install/`.  
+**Solution**:
+*   **Re-deploy**: Running **`drift deploy <pkg>`** will re-compile clean templates from `src/` and automatically re-stage/restore the missing package configuration file in `install/<pkg>/`.
+*   **Uninstall & Reinstall**: Alternatively, use **`drift uninstall <pkg> --force`** to remove the corrupted package from the state database and host system, and then run **`drift deploy <pkg>`** to install it cleanly from source templates.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.

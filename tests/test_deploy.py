@@ -526,10 +526,41 @@ target_directory = "{self.system_target_dir}"
         pkg_render.mkdir(parents=True, exist_ok=True)
         (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
 
-        with self.assertRaises(ConfigError) as ctx:
-            execute_deploy(self.drift_root)
-        self.assertIn("drift repair", str(ctx.exception))
-        self.assertIn("Package Metadata Structure", str(ctx.exception))
+    def test_deploy_warns_and_skips_reverse_sync_when_install_config_missing(self) -> None:
+        """Verifies that when install/<pkg> exists without a package config file, Stage 1 warns and skips reverse-sync without crashing."""
+        from drift.constants import set_test_mode, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME
+        from drift.deploy_repo import check_and_prevent_system_drifts
+
+        # 1. Initial deployment
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # 2. Corrupt install/pkg_a by deleting its package configuration file
+        pkg_install_dir = self.install_dir / "pkg_a"
+        config_path = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        if config_path.exists():
+            config_path.unlink()
+        root_config = pkg_install_dir / PACKAGE_CONFIG_FILE_NAME
+        if root_config.exists():
+            root_config.unlink()
+        subprocess.run(["git", "add", "-A"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Corrupt config"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 3. Running check_and_prevent_system_drifts should NOT crash with ValueError; it should warn and return clean drifts
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.deploy_repo", level="WARNING") as cm:
+                drifted_pkgs, drifted_files = check_and_prevent_system_drifts(
+                    self.workspace_config, target_pkgs=["pkg_a"]
+                )
+                self.assertEqual(drifted_pkgs, [])
+                self.assertTrue(any("missing its package configuration file" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # 4. Running full deploy repairs and restores package config file in install/
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], redeploy=True)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertTrue((pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
 
 
 if __name__ == "__main__":

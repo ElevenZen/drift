@@ -61,11 +61,29 @@ def check_and_prevent_system_drifts(
 
     logger.info("🔍 [STAGE 1] Triggering silent reverse synchronization audit...")
     
-    # We only reverse-sync packages that actually exist in install/, as first-time packages
-    # cannot have recorded drifts yet.
-    syncable_pkgs = [
+    # We only reverse-sync packages that actually exist in install/ with a valid package configuration file,
+    # as first-time packages cannot have recorded drifts yet, and packages missing config files
+    # cannot be reverse-synced.
+    valid_install_pkgs = set(
+        workspace_config.get_package_names_with_config_file_from_dir(workspace_config.install_path)
+    )
+    install_dirs_present = [
         pkg for pkg in target_pkgs
         if (workspace_config.install_path / pkg).is_dir()
+    ]
+    corrupted_install_pkgs = [
+        pkg for pkg in install_dirs_present
+        if pkg not in valid_install_pkgs
+    ]
+    for pkg in corrupted_install_pkgs:
+        logger.warning(
+            f"⚠️  Package '{pkg}' in install/ is missing its package configuration file. "
+            "Skipping reverse sync for this package."
+        )
+
+    syncable_pkgs = [
+        pkg for pkg in install_dirs_present
+        if pkg in valid_install_pkgs
     ]
     
     if syncable_pkgs:
