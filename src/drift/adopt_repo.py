@@ -52,8 +52,8 @@ Layer 2: Single-File Reconciliation Actions
     adopt_deletion(render_engines, src_dir_to_render, rel_path)
         Symmetrically deletes the matching source template/file from declarative source directory.
     patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor)
-        Unified patch application engine: applies unified diffs (clean or with --merge conflict markers),
-        synchronizes file mode/permissions from install_file, and optionally opens $EDITOR.
+        Unified patch application engine: applies unified content diffs (invoking patch only when '@@' diff hunks exist),
+        synchronizes file mode/permissions from install_file via _sync_file_mode, and optionally opens $EDITOR.
     adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file, accept_conflicts)
         Symmetrically renames template files in src/ using render engine suffix resolution, applies content patches,
         synchronizes permissions, and returns the resolved new_src_file Path.
@@ -74,9 +74,9 @@ Layer 1: Inspection & Git Patch Primitives
     generate_adjusted_patch
         Rewrites unified diff headers to align install/ file paths with target template paths in src/.
     check_patch_conflicts
-        Runs patch --dry-run to verify if a patch applies cleanly onto a source template.
+        Runs patch --dry-run for patches containing '@@' diff hunks (returns False early for hunkless/mode-only diffs).
     apply_source_patch
-        Executes patch tool against source files with optional --merge conflict marker support.
+        Executes patch tool against source files for patches containing '@@' diff hunks with optional --merge conflict support.
     test_file_conflict
         Convenience wrapper checking patch conflicts for a single modified file.
     resolve_source_file_path
@@ -246,8 +246,13 @@ def generate_adjusted_patch(
 
 
 def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
-    """Runs a dry-run of patch to determine if there are conflicts applying the patch to src_file."""
-    if not patch_content.strip():
+    """Runs a dry-run of patch to determine if there are conflicts applying the patch to src_file.
+
+    Note: The external patch tool (especially BSD patch on macOS) requires diff hunk blocks
+    (lines starting with '@@') and errors if passed a hunkless diff (e.g. mode-only git diffs).
+    If patch_content lacks '@@' hunks, returns False (no conflicts) immediately without calling patch.
+    """
+    if not any(line.startswith("@@") for line in patch_content.splitlines()):
         return False
     cmd = ["patch", "--dry-run", "--no-backup-if-mismatch", str(src_file)]
     try:
@@ -258,7 +263,15 @@ def check_patch_conflicts(src_file: Path, patch_content: str) -> bool:
 
 
 def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: bool = False) -> bool:
-    """Applies a patch to a source file, supporting merge markers if accept_conflicts is True."""
+    """Applies a patch to a source file, supporting merge markers if accept_conflicts is True.
+
+    Note: The external patch command operates strictly on text diff hunks ('@@' blocks).
+    If patch_content has no '@@' hunks (e.g. file mode/permission-only drift), this function
+    returns True immediately without executing the external patch binary, allowing file permissions
+    to be applied via _sync_file_mode.
+    """
+    if not any(line.startswith("@@") for line in patch_content.splitlines()):
+        return True
     cmd = ["patch", "--no-backup-if-mismatch"]
     if accept_conflicts:
         cmd.append("--merge")
@@ -276,7 +289,7 @@ def apply_source_patch(src_file: Path, patch_content: str, accept_conflicts: boo
 
 
 def test_file_conflict(src_file: Path, install_file: Path, install_base: Path, pkg_rel_path: Path) -> bool:
-    """Evaluates patch conflicts for a single modified file."""
+    """Evaluates patch conflicts for a single modified file against its '@@' diff hunks."""
     patch_content = generate_unified_patch(install_base, pkg_rel_path)
     return check_patch_conflicts(src_file, patch_content)
 
@@ -345,7 +358,11 @@ def patch_and_edit(
     accept_conflicts: bool = False,
     open_editor: bool = False
 ) -> bool:
-    """Applies a patch (clean or with merge markers) to a source file, synchronizes file permissions, and optionally opens $EDITOR."""
+    """Applies a patch (clean or with merge markers) to a source file, synchronizes file permissions, and optionally opens $EDITOR.
+
+    Note: The external patch tool is executed via apply_source_patch only when '@@' diff hunks exist.
+    File mode/permissions are synchronized separately via _sync_file_mode when install_file is provided.
+    """
     if patch_content.strip():
         success = apply_source_patch(src_file, patch_content, accept_conflicts=accept_conflicts)
         if not success:
