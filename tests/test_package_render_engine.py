@@ -24,6 +24,7 @@ from drift.render_package import render_package, run_primitive_2_render_packages
 from drift.reverse_sync import run_primitive_1_reverse_sync
 from drift.adopt_repo import resolve_source_file_path, adopt_one_package_drifts
 from drift.toml_utils import parse_toml
+from drift.exceptions import ConfigError
 
 
 class TestPackageRenderEngine(unittest.TestCase):
@@ -468,6 +469,54 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         log_content = output_log.read_text(encoding="utf-8")
         self.assertIn("HOOK_CHAINED_SUCCESS", log_content)
         self.assertIn("EXECUTED", log_content)
+
+    def test_from_dict_resolves_render_engine_base_dir_from_workspace_config(self) -> None:
+        """Verifies PackageConfig.from_dict prioritizes workspace_config.source_path / pkg over base_dir for render engine relative paths."""
+        workspace_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
+        workspace_toml.write_text("""
+            [workspace]
+            render_directory = "render"
+
+            [packages.enable]
+            pkg_engine_res = true
+        """, encoding="utf-8")
+
+        workspace_config = load_workspace_config(self.drift_root)
+        pkg_name = "pkg_engine_res"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        data = {
+            "package": {"name": pkg_name},
+            "render": {
+                "custom": {
+                    "input_file": "inputs/data.json",
+                    "suffix": "custom",
+                    "render_command": "cat %i %s"
+                }
+            }
+        }
+
+        # base_dir=None raises ConfigError
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict(
+                data,
+                package_name=pkg_name,
+                base_dir=None,  # type: ignore
+                workspace_config=workspace_config
+            )
+
+        # Construct PackageConfig with base_dir provided; workspace_config source_path takes precedence
+        pkg_config = PackageConfig.from_dict(
+            data,
+            package_name=pkg_name,
+            base_dir=self.drift_root,
+            workspace_config=workspace_config
+        )
+
+        custom_engine = pkg_config.render_engine_configs["custom"]
+        expected_input_file = (self.src_dir / pkg_name / "inputs/data.json").resolve()
+        self.assertEqual(custom_engine.input_file, expected_input_file)
 
 
 if __name__ == "__main__":

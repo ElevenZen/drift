@@ -974,21 +974,22 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             PackageHooks.from_dict({"pre_install": "scripts/pre_install.sh"}, package_name="test_pkg")
         self.assertIn("base_dir or workspace_config must be provided", str(ctx.exception))
 
-        # 5. PackageConfig without hooks requires no base_dir
-        pkg_cfg = PackageConfig.from_dict({"package": {"name": "test_pkg"}}, package_name="test_pkg")
-        self.assertEqual(pkg_cfg.name, "test_pkg")
-        self.assertIsNone(pkg_cfg.hooks.pre_install)
-
-        # 6. PackageConfig with relative hook without base_dir raises ConfigError
+        # 5. PackageConfig requires base_dir
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(
-                {
-                    "package": {"name": "test_pkg"},
-                    "hooks": {"pre_install": "scripts/pre_install.sh"}
-                },
-                package_name="test_pkg",
-            )
-        self.assertIn("base_dir or workspace_config must be provided", str(ctx.exception))
+            PackageConfig.from_dict({"package": {"name": "test_pkg"}}, package_name="test_pkg", base_dir=None)  # type: ignore
+        self.assertIn("base_dir must be provided", str(ctx.exception))
+
+        # 6. PackageConfig with base_dir resolves relative hooks
+        pkg_cfg = PackageConfig.from_dict(
+            {
+                "package": {"name": "test_pkg"},
+                "hooks": {"pre_install": "scripts/pre_install.sh"}
+            },
+            package_name="test_pkg",
+            base_dir=self.drift_root,
+        )
+        self.assertEqual(pkg_cfg.name, "test_pkg")
+        self.assertEqual(pkg_cfg.hooks.pre_install, (self.drift_root / "scripts/pre_install.sh").resolve())
 
     def test_external_shared_hook_trigger_with_render(self) -> None:
         """Verifies that an external hook outside the package directory is executed directly without rendering."""

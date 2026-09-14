@@ -1159,8 +1159,8 @@ class PackageConfig:
         cls,
         data: dict,
         package_name: str,
+        base_dir: Path,
         source_files: Sequence[Optional[Path]] = (),
-        base_dir: Optional[Path] = None,
         workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
         """Builds a strongly-typed PackageConfig instance from a parsed TOML dictionary.
@@ -1169,22 +1169,25 @@ class PackageConfig:
             - workspace_config (Global Workspace Context): Supplies workspace-wide configuration,
               multi-stage directory layouts (source_path, render_path, install_path), workspace defaults
               (default_target_path, default_install_method), and workspace render engine registries.
-              When provided, it enables stage-specific lifecycle hook resolution (PackageHooks.from_dict)
-              and cross-package render engine inheritance.
-            - base_dir (Local Package Directory): Represents the local source directory of the package
-              (e.g., <source_path>/<package_name>). It is forwarded to sub-parsers such as RenderEngineRegistry.from_dict
-              to resolve relative template input_file paths, and serves as the fallback directory for hook resolution
-              when workspace_config is absent.
-            - Precedence: When workspace_config is provided, stage-specific directories are derived automatically
-              from the workspace layout and package name, while base_dir provides the concrete filesystem root
-              for local asset files.
+              workspace_config is required for lifecycle hooks to bind and execute properly across stage sandboxes
+              (probe, pre_source, post_render in render/, pre_install, post_install, pre_update, post_update,
+              pre_uninstall, post_uninstall, health in install/).
+            - base_dir (Local Package Directory): Required concrete directory of the package (e.g., <source_path>/<package_name>
+              or <render_path>/<package_name>). It is forwarded to sub-parsers such as RenderEngineRegistry.from_dict
+              to resolve relative template input_file paths, and serves as the local package directory for hook_file resolution
+              and fallback hook resolution when workspace_config is absent.
+            - Precedence: When workspace_config is provided (with package_name), stage-specific directories
+              and the package source directory (<workspace.source_path>/<package_name>) are derived automatically
+              and take precedence for multi-stage hook binding and hook_file resolution. base_dir is always required
+              as the local package directory context.
 
         Args:
             data: Parsed configuration dictionary from drift_package.toml.
             package_name: Unique name of the package.
+            base_dir: Required local directory of the package for relative asset/engine resolution.
             source_files: Candidate or loaded source configuration files.
-            base_dir: Optional local source directory of the package for relative asset/engine resolution.
             workspace_config: Optional WorkspaceConfig providing workspace layout, defaults, and stage paths.
+                Required for lifecycle hooks to execute and bind properly across stages.
 
         Returns:
             A validated and initialized PackageConfig instance.
@@ -1193,6 +1196,10 @@ class PackageConfig:
             raise ConfigError("Package name must be provided when constructing PackageConfig.")
         if not isinstance(data, dict):
             raise ConfigError(f"Package configuration data must be a dictionary for package '{package_name}'.")
+        if base_dir is None or not isinstance(base_dir, (str, Path)):
+            raise ConfigError(f"base_dir must be provided as a Path or string when constructing PackageConfig for package '{package_name}'.")
+
+        base_dir_path = Path(base_dir).resolve()
 
         # Error for unknown top-level sections
         known_top_sections = {"package", "hooks", "env", "requirements", "render"}
@@ -1232,12 +1239,18 @@ class PackageConfig:
         if env_data:
             override_map, fallback_map = parse_package_env_tables(env_data, package_name=str(name))
 
+        # Resolve common package base directory for hooks and render engines
+        # workspace_config takes priority over base_dir, matching PackageHooks.from_dict() precedence
+        if workspace_config is not None and name:
+            common_base_dir = (workspace_config.source_path / name).resolve()
+        else:
+            common_base_dir = base_dir_path
+
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
-        resolved_base_dir = Path(base_dir) if base_dir is not None else None
         hooks = PackageHooks.from_dict(
             hooks_data,
             package_name=str(name),
-            base_dir=resolved_base_dir,
+            base_dir=common_base_dir,
             workspace_config=workspace_config,
         )
 
@@ -1246,10 +1259,9 @@ class PackageConfig:
         requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
 
         # Parse render engines configurations under [render.*]
-        render_engine_base_dir = resolved_base_dir if resolved_base_dir is not None else Path(".")
         render_engine_configs = RenderEngineRegistry.from_dict(
             render_data,
-            base_dir=render_engine_base_dir
+            base_dir=common_base_dir
         )
 
         fcd = package_data.get("fully_controlled_dirs", [])
@@ -1277,11 +1289,12 @@ class PackageConfig:
         )
         target_dir_windows = target_dir_windows_val and expand_user_and_env(target_dir_windows_val)
 
+        # resolve relative hook_file path to absolute path if common_base_dir is provided
         raw_hook_file = package_data.get("hook_file")
         if raw_hook_file is not None:
             resolved_hook_file = Path(raw_hook_file)
-            if not resolved_hook_file.is_absolute() and resolved_base_dir is not None:
-                resolved_hook_file = (resolved_base_dir / resolved_hook_file).resolve()
+            if not resolved_hook_file.is_absolute() and common_base_dir is not None:
+                resolved_hook_file = (common_base_dir / resolved_hook_file).resolve()
         else:
             resolved_hook_file = None
 

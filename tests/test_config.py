@@ -330,7 +330,7 @@ class TestConfigClasses(unittest.TestCase):
                 "timeout": "45"
             }
         }
-        config_str = PackageConfig.from_dict(data_str_timeout, package_name="my_pkg")
+        config_str = PackageConfig.from_dict(data_str_timeout, package_name="my_pkg", base_dir=base_dir)
         self.assertEqual(config_str.hooks.timeout, 45)
 
         data_no_name = {
@@ -338,9 +338,13 @@ class TestConfigClasses(unittest.TestCase):
                 "install_method": "stow"
             }
         }
-        config = PackageConfig.from_dict(data_no_name, package_name="fallback_name")
+        config = PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir=base_dir)
         self.assertEqual(config.name, "fallback_name")
         self.assertEqual(config.hooks.timeout, DEFAULT_HOOK_TIMEOUT)
+
+        # base_dir is required in PackageConfig.from_dict
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir=None)  # type: ignore
 
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ConfigError):
@@ -875,7 +879,7 @@ class TestConfigClasses(unittest.TestCase):
             "another_unknown_top_section": {"baz": "qux"}
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_top, package_name="my_pkg")
+            PackageConfig.from_dict(pkg_data_unknown_top, package_name="my_pkg", base_dir=Path("/test/pkg"))
         self.assertIn("Unknown top-level package config section: 'another_unknown_top_section'", str(ctx.exception))
 
         # 5. PackageConfig unknown package option
@@ -886,7 +890,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_opt, package_name="my_pkg")
+            PackageConfig.from_dict(pkg_data_unknown_opt, package_name="my_pkg", base_dir=Path("/test/pkg"))
         self.assertIn("Unknown package option: 'unknown_pkg_opt'", str(ctx.exception))
 
         # 6. PackageHooks unknown hook option
@@ -897,7 +901,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_hook, package_name="my_pkg")
+            PackageConfig.from_dict(pkg_data_unknown_hook, package_name="my_pkg", base_dir=Path("/test/pkg"))
         self.assertIn("Unknown hook option in package [hooks]: 'unknown_hook_opt'", str(ctx.exception))
 
         # 7. PackageHooks unknown platform sub-table hook option
@@ -910,7 +914,7 @@ class TestConfigClasses(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_data_unknown_subtable_hook, package_name="my_pkg")
+            PackageConfig.from_dict(pkg_data_unknown_subtable_hook, package_name="my_pkg", base_dir=Path("/test/pkg"))
         self.assertIn("Unknown hook option in platform hooks sub-table: 'unknown_win_hook'", str(ctx.exception))
 
     def test_package_config_get_install_method(self) -> None:
@@ -943,7 +947,7 @@ class TestConfigClasses(unittest.TestCase):
                     f"target_directory_{alias}": "%LOCALAPPDATA%/nvim"
                 }
             }
-            pkg_config = PackageConfig.from_dict(data, package_name="nvim")
+            pkg_config = PackageConfig.from_dict(data, package_name="nvim", base_dir=Path("/test/nvim"))
 
             # On Linux/POSIX, returns standard target_directory
             with patch("sys.platform", "linux"):
@@ -975,7 +979,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "%LOCALAPPDATA%/my_app/config"
                     }
                 }
-                cfg1 = PackageConfig.from_dict(data1, package_name="pkg1")
+                cfg1 = PackageConfig.from_dict(data1, package_name="pkg1", base_dir=Path("/test/pkg1"))
                 self.assertEqual(cfg1.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Local/my_app/config"))
 
                 # 2. Pure forward slashes with drive letter
@@ -985,7 +989,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "C:/Custom/Path/To/App"
                     }
                 }
-                cfg2 = PackageConfig.from_dict(data2, package_name="pkg2")
+                cfg2 = PackageConfig.from_dict(data2, package_name="pkg2", base_dir=Path("/test/pkg2"))
                 self.assertEqual(cfg2.get_target_directory(ws_config), Path("C:/Custom/Path/To/App"))
 
                 # 3. Pure forward slashes with ~ (tilde)
@@ -995,7 +999,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "~/AppData/Local/nvim"
                     }
                 }
-                cfg3 = PackageConfig.from_dict(data3, package_name="pkg3")
+                cfg3 = PackageConfig.from_dict(data3, package_name="pkg3", base_dir=Path("/test/pkg3"))
                 self.assertEqual(cfg3.get_target_directory(ws_config), home / "AppData" / "Local" / "nvim")
 
                 # 4. Mixed slashes
@@ -1005,7 +1009,7 @@ class TestConfigClasses(unittest.TestCase):
                         "target_directory_windows": "%USERPROFILE%\\AppData/Roaming\\alacritty/nested"
                     }
                 }
-                cfg4 = PackageConfig.from_dict(data4, package_name="pkg4")
+                cfg4 = PackageConfig.from_dict(data4, package_name="pkg4", base_dir=Path("/test/pkg4"))
                 self.assertEqual(cfg4.get_target_directory(ws_config), Path("C:/Users/testuser/AppData/Roaming/alacritty/nested"))
 
 
@@ -1743,13 +1747,13 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 "source_directory": "src_subfolder"
             }
         }
-        pkg_from_dict = PackageConfig.from_dict(data, package_name="parsed_pkg")
+        pkg_from_dict = PackageConfig.from_dict(data, package_name="parsed_pkg", base_dir=base_dir)
         self.assertEqual(pkg_from_dict.source_directory, Path("src_subfolder"))
         self.assertEqual(pkg_from_dict.get_source_directory_to_render(base_dir), base_dir / "src_subfolder")
 
         # 4. Type validation error on from_dict
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {"source_directory": 123}}, package_name="bad_pkg")
+            PackageConfig.from_dict({"package": {"source_directory": 123}}, package_name="bad_pkg", base_dir=base_dir)
 
         # 5. Absolute path rejected
         with self.assertRaises(ConfigError):
@@ -1771,7 +1775,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 "fallback": {"FALLBACK_KEY": "default_val"}
             }
         }
-        pkg = PackageConfig.from_dict(data, package_name="test_pkg")
+        pkg = PackageConfig.from_dict(data, package_name="test_pkg", base_dir=Path("/test/pkg"))
         self.assertEqual(pkg.env_override, {"THEME": "catppuccin", "DEBUG": "1"})
         self.assertEqual(pkg.env_fallback, {"FALLBACK_KEY": "default_val"})
 
@@ -1782,7 +1786,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 "overwrite": {"THEME": "nord"}
             }
         }
-        pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg")
+        pkg_alias = PackageConfig.from_dict(data_alias, package_name="test_pkg", base_dir=Path("/test/pkg"))
         self.assertEqual(pkg_alias.env_override, {"THEME": "nord"})
 
         # 3. Flat [env] keys raise ConfigError
@@ -1793,15 +1797,15 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             }
         }
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict(data_flat, package_name="test_pkg")
+            PackageConfig.from_dict(data_flat, package_name="test_pkg", base_dir=Path("/test/pkg"))
 
         # 4. Error on non-dict sub-tables
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"override": "not_a_dict"}}, package_name="err_pkg")
+            PackageConfig.from_dict({"package": {}, "env": {"override": "not_a_dict"}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"fallback": "not_a_dict"}}, package_name="err_pkg")
+            PackageConfig.from_dict({"package": {}, "env": {"fallback": "not_a_dict"}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
         with self.assertRaises(ConfigError):
-            PackageConfig.from_dict({"package": {}, "env": {"unknown_subtable": {"k": "v"}}}, package_name="err_pkg")
+            PackageConfig.from_dict({"package": {}, "env": {"unknown_subtable": {"k": "v"}}}, package_name="err_pkg", base_dir=Path("/test/pkg"))
 
     def test_seven_tier_variable_preemption_order(self) -> None:
         """Verifies the complete 7-tier environment variable preemption hierarchy."""

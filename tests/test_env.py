@@ -952,7 +952,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             }
         }
         with self.assertRaises(ConfigError) as ctx:
-            PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg")
+            PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg", base_dir=Path("/test/legacy_pkg"))
         self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported for package 'legacy_pkg'", str(ctx.exception))
         self.assertIn("Please define variables under [env.override] or [env.fallback]", str(ctx.exception))
 
@@ -1028,7 +1028,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         os.environ["OVERRIDDEN_BY_WORKSPACE"] = "workspace_val"
 
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_pkg", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", base_dir=self.drift_root / "src" / "my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
         self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
         self.assertEqual(pkg_cfg.env_override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
@@ -1073,7 +1073,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             }
         }
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="custom_pkg", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="custom_pkg")
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="custom_pkg", base_dir=self.drift_root / "custom_src" / "custom_pkg")
         self.assertEqual(pkg_cfg.env_override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
         self.assertEqual(pkg_cfg.env_override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
         self.assertEqual(pkg_cfg.env_override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
@@ -1095,7 +1095,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             }
         }
         stitched = resolve_and_interpolate_package_config(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg")
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", base_dir=self.drift_root / "src" / "my_pkg")
         self.assertEqual(pkg_cfg.env_override["NAME_REF"], "my_pkg")
 
         # Referencing dir facts without workspace_config raises ConfigError
@@ -1150,7 +1150,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
         # 1. When EXTERNAL_VAR is unset in os.environ, fallback takes effect
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="pkg_fallback_test")
+        pkg_cfg = PackageConfig.from_dict(stitched, package_name="pkg_fallback_test", base_dir=self.drift_root / "src" / "pkg_fallback_test")
         expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
         self.assertEqual(pkg_cfg.env_fallback["FALLBACK_SRC_DIR"], expected_src)
         self.assertEqual(pkg_cfg.env_fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
