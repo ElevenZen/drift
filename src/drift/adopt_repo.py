@@ -8,15 +8,13 @@ Layer 5: Primitive Entry Point
     run_primitive_adopt_drifts(workspace_config, package_names, interactive, accept_conflicts, force, dry_run, flags)
         1. Discover Drifted Packages:
             get_drifted_packages [Layer 1]
-        2. Cleanliness Verification:
-            check_source_cleanliness [Layer 1]
-        3. Single-Package Processing:
+        2. Single-Package Processing:
             adopt_one_package_drifts [Layer 4]
-        4. State Synchronization & Commit:
+        3. State Synchronization & Commit:
             commit_repo_changes (for install/ repo)
 
 Layer 4: Single-Package Drift Adoption
-    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, dry_run, flags)
+    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, force, dry_run, flags)
         1. Pre-stage and Drift Discovery:
             git add --all <pkg>
             get_package_drifts [Layer 1]
@@ -34,13 +32,13 @@ Layer 4: Single-Package Drift Adoption
 
 Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
     handle_single_addition
-        Evaluates collisions with existing source files and delegates to adopt_addition / ignore_addition / discard / skip.
+        Verifies target file cleanliness, evaluates collisions with existing source files, and delegates to adopt_addition / ignore_addition / discard / skip.
     handle_single_deletion
-        Validates target presence in source and delegates to adopt_deletion / discard / skip.
+        Verifies target file cleanliness, validates target presence in source, and delegates to adopt_deletion / discard / skip.
     handle_single_rename -> handle_rename_non_interactive / handle_rename_interactive
-        Generates adjusted patch headers, evaluates conflict status, and routes to adopt_rename / freeze / merge editor / side-by-side.
+        Verifies old source file cleanliness, generates adjusted patch headers, evaluates conflict status, and routes to adopt_rename / freeze / merge editor / side-by-side.
     handle_single_modification -> handle_modification_non_interactive / handle_modification_interactive
-        Evaluates template vs. static modifications, checks patch conflicts, logs/prints diffs, and routes to patch_and_edit / freeze / side-by-side.
+        Verifies target source file cleanliness, evaluates template vs. static modifications, checks patch conflicts, logs/prints diffs, and routes to patch_and_edit / freeze / side-by-side.
 
 Layer 2: Single-File Reconciliation Actions
     _sync_file_mode(src_file, install_file)
@@ -49,13 +47,13 @@ Layer 2: Single-File Reconciliation Actions
         Copies a wild host-side added file into the declarative source folder under src/.
     ignore_addition(pkg_dir, install_pkg_dir, rel_path)
         Unlinks file from install/ base, un-tracks it in install/ Git index, and registers pattern into .drift_ignore.
-    adopt_deletion(render_engines, src_dir_to_render, rel_path)
+    adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg)
         Symmetrically deletes the matching source template/file from declarative source directory.
     patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor)
         Unified patch application engine: applies unified content diffs (invoking patch only when '@@' diff hunks exist),
         synchronizes file mode/permissions from install_file via _sync_file_mode, and optionally opens $EDITOR.
-    adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file, accept_conflicts)
-        Symmetrically renames template files in src/ using render engine suffix resolution, applies content patches,
+    adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, has_patch_conflict, install_file, accept_conflicts)
+        Symmetrically renames template files in src/ using copy-and-patch with atomic cleanup, applies content patches,
         synchronizes permissions, and returns the resolved new_src_file Path.
     fallback_over_render(src_file, static_file)
         Backs up original template to .bak and overwrites it with static content from install/ (freezing template).
@@ -65,8 +63,8 @@ Layer 2: Single-File Reconciliation Actions
 Layer 1: Inspection & Git Patch Primitives
     get_drifted_packages
         Parses git status porcelain across install/ to discover all packages with local host modifications.
-    check_source_cleanliness
-        Enforces scoped Git cleanliness safeguard on src/<pkg>/ before applying modifications.
+    check_source_file_clean
+        Enforces scoped Git cleanliness safeguard on target source file before applying modifications.
     get_package_drifts
         Categorizes Git porcelain status into additions, deletions, modifications, and renames.
     generate_unified_patch
@@ -105,6 +103,7 @@ from .result_models import AdoptResult, PackageAdoptResult
 from .git_utils import (
     get_git_status_porcelain,
     has_uncommitted_modifications,
+    get_drift_root,
 )
 from .file_utils import remove_file_or_dir, atomic_copy_file
 from .lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
@@ -136,20 +135,40 @@ def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     return sorted(drifted)
 
 
-def check_source_cleanliness(workspace_config: WorkspaceConfig, pkg: str, force: bool) -> None:
-    """Verifies that the target package source directory is clean before adopting drifts."""
-    src_pkg_dir = workspace_config.source_path / pkg
-    # Scopes git check to src/<pkg> inside workspace git root
-    if has_uncommitted_modifications(workspace_config.drift_root, src_pkg_dir):
-        if force:
-            logger.warning(f"⚠️  [FORCE] Bypassing Git cleanliness safeguard. Overriding uncommitted changes in 'src/{pkg}/'.")
-            return
-        rel_dirty = src_pkg_dir.relative_to(workspace_config.drift_root)
-        raise RuntimeError(
-            f"The source directory of package '{pkg}' has uncommitted modifications!\n"
-            f"Adopting system configurations into a dirty package directory is unsafe.\n"
-            f"Please commit or stash your changes in '{rel_dirty}/' before running 'drift adopt {pkg}'."
+def check_source_file_clean(
+    src_file: Path,
+    pkg: str,
+    force: bool = False
+) -> None:
+    """Verifies that a target source file is clean before adopting drifts into it."""
+    if not src_file.exists():
+        return
+
+    try:
+        drift_root = get_drift_root(src_file.parent)
+    except Exception:
+        drift_root = src_file.parent
+
+    if not has_uncommitted_modifications(drift_root, src_file):
+        return
+
+    if force:
+        logger.warning(
+            f"⚠️  [FORCE] Bypassing Git cleanliness safeguard for '{src_file.name}'. Overwriting uncommitted modifications."
         )
+        return
+
+    try:
+        rel_dirty = src_file.relative_to(drift_root)
+    except ValueError:
+        rel_dirty = src_file
+
+    raise RuntimeError(
+        f"The source file '{rel_dirty}' has uncommitted local modifications!\n"
+        f"Adopting system drift would overwrite uncommitted changes in this file.\n\n"
+        f"👉 Run 'drift adopt {pkg} --force' (or -f) to overwrite existing file modifications.\n"
+        f"👉 Or commit / stash your changes before adopting."
+    )
 
 
 def get_package_drifts(install_base: Path, pkg: str) -> Tuple[List[Path], List[Path], List[Path], List[Tuple[Path, Path]]]:
@@ -344,7 +363,7 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
         f.write(f"\n{pattern}\n")
 
 
-def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path) -> None:
+def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path, pkg: str) -> None:
     """Symmetrically deletes the corresponding file from declarative source folder."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
@@ -385,31 +404,48 @@ def adopt_rename(
     old_rel_path: Path,
     new_rel_path: Path,
     patch_content: str,
+    has_patch_conflict: bool = False,
     install_file: Optional[Path] = None,
     accept_conflicts: bool = False
-) -> Path:
+) -> Optional[Path]:
     """Symmetrically renames the source template file and applies any content patch."""
     old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
+    file_name = old_src_file.name if old_src_file else old_rel_path.name
+
+    if has_patch_conflict:
+        if accept_conflicts:
+            logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{file_name}'")
+        else:
+            logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{file_name}'. Skipping.")
+            logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
+            return None
+
     if old_src_file and old_src_file.exists():
         new_src_name = render_engines.make_new_template_name(old_src_file.name,
                                                              new_rel_path.name)
         new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
 
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(old_src_file, new_src_file)
+        atomic_copy_file(old_src_file, new_src_file)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in source directory. Creating a new template file for '{new_rel_path}'.")
         new_src_file = src_dir_to_render / new_rel_path
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         new_src_file.touch()
-        
-    patch_and_edit(
+
+    success = patch_and_edit(
         new_src_file,
         patch_content,
         install_file=install_file,
         accept_conflicts=accept_conflicts,
         open_editor=False
     )
+    if not success:
+        new_src_file.unlink(missing_ok=True)
+        return None
+
+    if old_src_file and old_src_file.exists() and old_src_file != new_src_file:
+        old_src_file.unlink(missing_ok=True)
 
     return new_src_file
 
@@ -490,11 +526,12 @@ def dry_run_adopt(
 
 def handle_single_addition(
     render_engines: RenderEngineRegistry,
-    src_pkg_dir: Path,
-    src_dir_to_render: Path,
-    install_pkg_dir: Path,
-    rel_path: Path,
-    interactive: bool
+    src_pkg_dir: Path,       # to locate .drift_ignore
+    src_dir_to_render: Path, # add to this dir
+    install_pkg_dir: Path,   # add from this dir
+    rel_path: Path,          # rel path of the addition
+    interactive: bool,
+    force: bool = False
 ) -> bool:
     """Handles drift reconciliation for a single file addition."""
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
@@ -511,6 +548,9 @@ def handle_single_addition(
             if choice == "1":
                 return True
         return False
+
+    target_src_file = src_dir_to_render / rel_path
+    check_source_file_clean(target_src_file, force=force, pkg=install_pkg_dir.name)
 
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
@@ -537,9 +577,11 @@ def handle_single_addition(
 
 def handle_single_deletion(
     render_engines: RenderEngineRegistry,
+    pkg: str,
     src_dir_to_render: Path,
     rel_path: Path,
-    interactive: bool
+    interactive: bool,
+    force: bool = False
 ) -> bool:
     """Handles drift reconciliation for a single file deletion."""
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
@@ -550,8 +592,10 @@ def handle_single_deletion(
             print(f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
         return True
 
+    check_source_file_clean(target_existing_src, pkg=pkg, force=force)
+
     if not interactive:
-        adopt_deletion(render_engines, src_dir_to_render, rel_path)
+        adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
         return True
     else:
         print(f"\nFound host file deletion: {rel_path}")
@@ -561,7 +605,7 @@ def handle_single_deletion(
         print("[3] Skip file")
         choice = input("Select option [1-3]: ").strip()
         if choice == "1":
-            adopt_deletion(render_engines, src_dir_to_render, rel_path)
+            adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
             return True
         elif choice == "2":
             return True
@@ -574,7 +618,6 @@ def handle_rename_non_interactive(
     src_dir_to_render: Path,
     old_rel_path: Path,
     new_rel_path: Path,
-    old_src_file: Optional[Path],
     patch_content: str,
     has_patch_conflict: bool,
     accept_conflicts: bool,
@@ -583,18 +626,17 @@ def handle_rename_non_interactive(
     """Processes a rename drift non-interactively."""
     if patch_content and patch_content.strip():
         logger.debug(f"Diff for rename '{old_rel_path}' -> '{new_rel_path}':\n{patch_content.strip()}")
-    if not has_patch_conflict:
-        adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file=install_file)
-        return True
-    else:
-        if accept_conflicts:
-            logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{old_src_file.name if old_src_file else ''}'")
-            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file=install_file, accept_conflicts=True)
-            return True
-        else:
-            logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{old_src_file.name if old_src_file else ''}'. Skipping.")
-            logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
-            return False
+    new_src_file = adopt_rename(
+        render_engines,
+        src_dir_to_render,
+        old_rel_path,
+        new_rel_path,
+        patch_content,
+        has_patch_conflict=has_patch_conflict,
+        install_file=install_file,
+        accept_conflicts=accept_conflicts,
+    )
+    return new_src_file is not None
 
 
 def handle_rename_interactive(
@@ -604,7 +646,7 @@ def handle_rename_interactive(
     install_pkg_dir: Path,
     old_rel_path: Path,
     new_rel_path: Path,
-    old_src_file: Optional[Path],
+    old_src_file: Path,
     patch_content: str,
     has_patch_conflict: bool
 ) -> bool:
@@ -628,8 +670,12 @@ def handle_rename_interactive(
                 old_rel_path,
                 new_rel_path,
                 patch_content,
+                has_patch_conflict=False,
                 install_file=install_file,
+                accept_conflicts=False,
             )
+            if not new_src_file:
+                return False
             if choice == "2":
                 try:
                     launch_single_file_editor(new_src_file)
@@ -644,7 +690,7 @@ def handle_rename_interactive(
         else:
             return False
     else:
-        print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto renamed template file '{old_src_file.name if old_src_file else ''}'!")
+        print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto renamed template file '{old_src_file.name}'!")
         print("Choose fallback resolution strategy:")
         print("[1] Over-render & Freeze (overwrites template, original saved to .bak)")
         print("[2] Open Merge Conflict Editor (writes conflict markers and opens editor)")
@@ -653,15 +699,19 @@ def handle_rename_interactive(
         print("[5] Skip file")
         choice = input("Select option [1-5]: ").strip()
         if choice in ["1", "2", "3"]:
+            # note the patch_content is empty here because we only do rename in this function.
             new_src_file = adopt_rename(
                 render_engines,
                 src_dir_to_render,
                 old_rel_path,
                 new_rel_path,
                 patch_content="",
+                has_patch_conflict=False,
                 install_file=install_file,
                 accept_conflicts=False,
             )
+            if not new_src_file:
+                return False
 
             if choice == "1":
                 fallback_over_render(new_src_file, install_file)
@@ -701,7 +751,8 @@ def handle_single_rename(
     old_rel_path: Path,
     new_rel_path: Path,
     interactive: bool,
-    accept_conflicts: bool
+    accept_conflicts: bool,
+    force: bool = False
 ) -> bool:
     """Handles drift reconciliation for a single file/template rename."""
     # Check if the target already exists in source
@@ -722,6 +773,7 @@ def handle_single_rename(
     old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     has_patch_conflict = False
     if old_src_file and old_src_file.exists():
+        check_source_file_clean(old_src_file, force=force, pkg=pkg)
         patch_content = generate_adjusted_patch(
             install_base,
             pkg,
@@ -732,12 +784,14 @@ def handle_single_rename(
         has_patch_conflict = check_patch_conflicts(old_src_file, patch_content)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Treating as new file addition.")
-        return handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir, new_rel_path, interactive)
+        return handle_single_addition(
+            render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir, new_rel_path, interactive, force=force
+        )
 
     if not interactive:
         return handle_rename_non_interactive(
             render_engines, src_dir_to_render, old_rel_path, new_rel_path,
-            old_src_file, patch_content, has_patch_conflict, accept_conflicts,
+            patch_content, has_patch_conflict, accept_conflicts,
             install_file=(install_pkg_dir / new_rel_path)
         )
     else:
@@ -889,7 +943,8 @@ def handle_single_modification(
     install_base: Path,
     rel_path: Path,
     interactive: bool,
-    accept_conflicts: bool
+    accept_conflicts: bool,
+    force: bool = False
 ) -> bool:
     """Handles drift reconciliation for a single file/template modification."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
@@ -898,8 +953,12 @@ def handle_single_modification(
 
     if not src_file:
         # Symmetrically handle static file as an addition so the user has full choice in interactive mode.
-        return handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render,
-                                      install_pkg_dir, rel_path, interactive)
+        return handle_single_addition(
+            render_engines, src_pkg_dir, src_dir_to_render,
+            install_pkg_dir, rel_path, interactive, force=force
+        )
+
+    check_source_file_clean(src_file, force=force, pkg=pkg)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
     patch_content = generate_unified_patch(install_base, pkg_rel_path)
@@ -908,7 +967,6 @@ def handle_single_modification(
     has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
 
     if not is_templated:
-        # Because the src folder is git clean, so we can safely overwrite.
         # For static files, adopting simply overwrites src_file with install_file (including permissions)
         has_conflict = False
     elif not has_content_hunks:
@@ -937,12 +995,13 @@ def adopt_one_package_drifts(
     pkg: str,
     interactive: bool = False,
     accept_conflicts: bool = False,
+    force: bool = False,
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageAdoptResult:
     """Adopt drifts for a single package according to interactive or non-interactive choices.
 
-    Git cleanliness is handled by the caller, and this function assumes the package source directory is clean.
+    File-level Git cleanliness safeguards are enforced for each target source file before modification.
     """
     # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
     subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
@@ -990,7 +1049,10 @@ def adopt_one_package_drifts(
 
     # 1. Process Additions
     for rel_path in additions:
-        resolved = handle_single_addition(render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path, interactive)
+        resolved = handle_single_addition(
+            render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir,
+            rel_path, interactive, force=force
+        )
         if resolved:
             adopted_additions.append(str(rel_path))
         else:
@@ -998,7 +1060,9 @@ def adopt_one_package_drifts(
 
     # 2. Process Deletions
     for rel_path in deletions:
-        resolved = handle_single_deletion(render_engines, src_dir_to_render, rel_path, interactive)
+        resolved = handle_single_deletion(
+            render_engines, pkg, src_dir_to_render, rel_path, interactive, force=force
+        )
         if resolved:
             adopted_deletions.append(str(rel_path))
         else:
@@ -1008,7 +1072,7 @@ def adopt_one_package_drifts(
     for old_rel_path, new_rel_path in renames:
         resolved = handle_single_rename(
             render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
-            old_rel_path, new_rel_path, interactive, accept_conflicts
+            old_rel_path, new_rel_path, interactive, accept_conflicts, force=force
         )
         if resolved:
             adopted_renames.append(f"{old_rel_path} -> {new_rel_path}")
@@ -1020,7 +1084,7 @@ def adopt_one_package_drifts(
     for rel_path in modifications:
         resolved = handle_single_modification(
             render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
-            rel_path, interactive, accept_conflicts
+            rel_path, interactive, accept_conflicts, force=force
         )
         if resolved:
             adopted_modifications.append(str(rel_path))
@@ -1067,8 +1131,8 @@ def run_primitive_adopt_drifts(
         package_names: Specific package name(s) to adopt, or empty/omitted to discover all drifted packages.
         interactive: If True, interactively prompts for conflict resolution.
         accept_conflicts: If True, writes Git conflict merge markers directly into source template files.
-        force: If True, bypasses the Git cleanliness safeguard on package source directories (src/<pkg>/),
-            allowing adoption to proceed even if uncommitted modifications exist in source.
+        force: If True, bypasses the Git cleanliness safeguard on target source files,
+            allowing adoption to proceed even if uncommitted modifications exist in those files.
         dry_run: If True, previews drift adoption without writing patches to disk.
         flags: Optional HookExecFlags controlling hook execution options.
 
@@ -1082,11 +1146,7 @@ def run_primitive_adopt_drifts(
             logger.info("✨ No drifted packages found in local state database.")
             return AdoptResult(command="adopt", status="SUCCESS", packages=[])
 
-    # 2. Check cleanliness guard for each package
-    for pkg in package_names:
-        check_source_cleanliness(workspace_config, pkg, force=force)
-
-    # 3. Process each package
+    # 2. Process each package
     package_results: List[PackageAdoptResult] = []
     for pkg in package_names:
         pkg_res = adopt_one_package_drifts(
@@ -1094,6 +1154,7 @@ def run_primitive_adopt_drifts(
             pkg=pkg,
             interactive=interactive,
             accept_conflicts=accept_conflicts,
+            force=force,
             dry_run=dry_run,
             flags=flags,
         )
@@ -1101,7 +1162,7 @@ def run_primitive_adopt_drifts(
 
     resolved_packages = [p.package for p in package_results if p.status == "SUCCESS"]
 
-    # 4. Commit resolved packages in install base
+    # 3. Commit resolved packages in install base
     if resolved_packages and not dry_run:
         from .git_utils import commit_repo_changes
         commit_repo_changes(

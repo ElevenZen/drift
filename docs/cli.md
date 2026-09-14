@@ -177,7 +177,7 @@ Incorporate runtime system and GUI changes back into your declarative source tem
     - `packages...`: Optional package name(s) to adopt. If omitted, all drifted packages across the workspace are evaluated and adopted.
     - `--interactive / -i`: Enables interactive guided reconciliation for every modified, renamed, added, or deleted file.
     - `--accept-conflicts`: Non-interactive resolution that forces conflicting patches to apply directly into source templates with standard Git merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
-    - `--force / -f`: Bypasses the scoped Git cleanliness safeguard on package source directories (`src/<package>/`), allowing adoption even if `src/<package>/` has uncommitted local changes.
+    - `--force / -f`: Bypasses the file-level Git cleanliness safeguard on target source files (`src/<package>/...`), allowing adoption even if targeted source files have uncommitted local modifications.
     - `--dry-run`: Previews all pending additions, deletions, renames, and modifications (including conflict dry-run inspection) without writing changes to disk or advancing Git commits.
     - `--no-hooks / --no-hook`: Bypasses execution of `pre_source` package lifecycle hooks.
     - `--json`: Outputs a structured `AdoptResult` in JSON format containing lists of adopted additions, deletions, modifications, renames, and overall execution status.
@@ -321,7 +321,7 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | **`drift stage --force`** | Primitive 4 | • Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml`<br>• Ignores uncommitted modifications in `install/` | `enable_install = false` is strictly respected |
 | **`drift apply --force`** | Primitive 5 | Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml` | `enable_install = false` is strictly respected |
 | **`drift rollback --force`** | Primitive 8 | Bypasses conflict state check; forces hard reset to clean Git HEAD even for packages in `"installed"` state | Valid package tracking in `install/` |
-| **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on `src/<pkg>/` (adopts drifts despite dirty source tree) | Valid patch application |
+| **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on target source files in `src/<pkg>/` (adopts drifts despite dirty source files) | Valid patch application |
 | **`drift uninstall --force`** | Primitive 7 | Bypasses active package safeguard (uninstalls packages still enabled in `drift_workspace.toml`) | Only installed packages are uninstalled |
 | **`drift init --force`** | Workspace Init | Overwrites existing workspace templates and database configurations | Root path safety checks |
 

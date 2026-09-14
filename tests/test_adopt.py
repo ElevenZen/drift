@@ -15,7 +15,7 @@ from drift.render_engine_config import RenderEngineRegistry
 from drift.lifecycle_hooks import HookExecFlags
 from drift.adopt_repo import (
     get_drifted_packages,
-    check_source_cleanliness,
+    check_source_file_clean,
     get_package_drifts,
     generate_unified_patch,
     check_patch_conflicts,
@@ -128,24 +128,33 @@ class TestAdopt(unittest.TestCase):
         # Root metadata files must not appear in drifted packages
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg])
 
-    def test_check_source_cleanliness(self) -> None:
+    def test_check_source_file_clean(self) -> None:
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
 
-        # Clean source directory should pass
-        check_source_cleanliness(self.workspace_config, pkg, force=False)
+        # Non-existent file should pass
+        non_existent = src_pkg_dir / "non_existent.txt"
+        check_source_file_clean(non_existent, force=False, pkg=pkg)
 
-        # Create uncommitted dirty file in source
-        dirty_file = src_pkg_dir / "dirty.txt"
-        dirty_file.write_text("unstaged change", encoding="utf-8")
+        # Clean tracked file should pass
+        clean_file = src_pkg_dir / "clean.txt"
+        clean_file.write_text("tracked content", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add clean.txt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        check_source_file_clean(clean_file, force=False, pkg=pkg)
 
-        # Clean check should raise RuntimeError
-        with self.assertRaises(RuntimeError):
-            check_source_cleanliness(self.workspace_config, pkg, force=False)
+        # Modify file to make it dirty
+        clean_file.write_text("dirty uncommitted change", encoding="utf-8")
+
+        # Clean check should raise RuntimeError with guidance message
+        with self.assertRaises(RuntimeError) as ctx:
+            check_source_file_clean(clean_file, force=False, pkg=pkg)
+        self.assertIn("has uncommitted local modifications", str(ctx.exception))
+        self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
 
         # Passing force=True should bypass check without error
-        check_source_cleanliness(self.workspace_config, pkg, force=True)
+        check_source_file_clean(clean_file, force=True, pkg=pkg)
 
     def test_get_package_drifts(self) -> None:
         pkg = "pkg_a"
@@ -309,7 +318,7 @@ class TestAdopt(unittest.TestCase):
         src_file.write_text("bash", encoding="utf-8")
 
         # Run adopt deletion
-        adopt_deletion(self.workspace_config.render_engine_configs, src_pkg_dir, rel_path)
+        adopt_deletion(self.workspace_config.render_engine_configs, src_pkg_dir, rel_path, pkg=pkg)
 
         # File should be removed from src/
         self.assertFalse(src_file.exists())
@@ -394,6 +403,42 @@ class TestAdopt(unittest.TestCase):
         self.assertTrue(src_new_file.exists())
         self.assertEqual(src_new_file.read_text(encoding="utf-8"), "template content\ntemplate content modified\n")
 
+    def test_adopt_rename_rollback_on_patch_failure(self) -> None:
+        """Verifies that when a patch fails during adopt_rename, new_src_file is unlinked and old_src_file remains untouched."""
+        from drift.adopt_repo import adopt_rename
+
+        pkg = "pkg_rollback"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        old_file = src_pkg_dir / "dot-old.txt"
+        old_file.write_text("original content", encoding="utf-8")
+
+        # An unmatchable/corrupt patch that will fail to apply
+        invalid_patch = (
+            "--- a/dot-old.txt\n"
+            "+++ b/dot-new.txt\n"
+            "@@ -1,1 +1,1 @@\n"
+            "-nonexistent line that fails\n"
+            "+replacement\n"
+        )
+
+        res = adopt_rename(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            Path("dot-old.txt"),
+            Path("dot-new.txt"),
+            invalid_patch,
+            has_patch_conflict=False,
+            accept_conflicts=False,
+        )
+
+        self.assertIsNone(res)
+        # Old file must remain intact
+        self.assertTrue(old_file.exists())
+        self.assertEqual(old_file.read_text(encoding="utf-8"), "original content")
+        # New file must not exist
+        self.assertFalse((src_pkg_dir / "dot-new.txt").exists())
+
     def test_adopt_addition_conflict_target_exists(self) -> None:
         """Verifies that non-interactive adopt skips addition if the target already exists in source."""
         from drift.adopt_repo import handle_single_addition
@@ -437,6 +482,7 @@ class TestAdopt(unittest.TestCase):
 
         resolved = handle_single_deletion(
             self.workspace_config.render_engine_configs,
+            pkg,
             src_pkg_dir,
             rel_path,
             interactive=False
@@ -1330,6 +1376,87 @@ render_command = "bash -c 'cat %i %s'"
                 self.assertTrue(any("+changed_text" in log for log in cm.output))
         finally:
             set_test_mode(True, enable_logging=False)
+
+    def test_adopt_file_cleanliness_allows_clean_files_with_dirty_neighbor(self) -> None:
+        """Verifies that adopting a clean file succeeds even if a sibling file in the same package is dirty."""
+        pkg = "pkg_sibling"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "file_a.txt").write_text("orig_a\n", encoding="utf-8")
+        (src_pkg / "file_b.txt").write_text("orig_b\n", encoding="utf-8")
+        (install_pkg / "file_a.txt").write_text("orig_a\n", encoding="utf-8")
+        (install_pkg / "file_b.txt").write_text("orig_b\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_sibling"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_sibling"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 1. Dirty file_a in src/
+        (src_pkg / "file_a.txt").write_text("dirty_uncommitted_a\n", encoding="utf-8")
+
+        # 2. Modify only file_b in install/ (drift)
+        (install_pkg / "file_b.txt").write_text("drifted_b\n", encoding="utf-8")
+
+        # 3. Adopting without force should SUCCEED because file_b is clean in src/
+        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual((src_pkg / "file_b.txt").read_text(encoding="utf-8"), "drifted_b\n")
+        # file_a should remain untouched and dirty
+        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), "dirty_uncommitted_a\n")
+
+        # 4. Now modify file_a in install/ too (drift on dirty file)
+        (install_pkg / "file_a.txt").write_text("drifted_a\n", encoding="utf-8")
+
+        # 5. Adopting without force should FAIL with RuntimeError pointing to file_a.txt
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        self.assertIn("file_a.txt", str(ctx.exception))
+        self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
+
+        # 6. Adopting with force=True should SUCCEED and overwrite file_a.txt
+        res_force = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=True)
+        self.assertEqual(res_force.status, "SUCCESS")
+        self.assertEqual((src_pkg / "file_a.txt").read_text(encoding="utf-8"), "drifted_a\n")
+
+    def test_adopt_deletion_dirty_file_safeguard(self) -> None:
+        """Verifies that adopting a file deletion respects the file-level cleanliness safeguard."""
+        pkg = "pkg_del_dirty"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "del_me.txt").write_text("orig_del\n", encoding="utf-8")
+        (install_pkg / "del_me.txt").write_text("orig_del\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_del_dirty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_del_dirty"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Dirty del_me.txt in src/
+        (src_pkg / "del_me.txt").write_text("dirty_uncommitted_del\n", encoding="utf-8")
+
+        # Delete del_me.txt in install/
+        (install_pkg / "del_me.txt").unlink()
+
+        # Adopting deletion without force should fail
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=False)
+        self.assertIn("del_me.txt", str(ctx.exception))
+        self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
+        self.assertTrue((src_pkg / "del_me.txt").exists())
+
+        # Adopting deletion with force=True should succeed and delete source file
+        res = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False, force=True)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertFalse((src_pkg / "del_me.txt").exists())
 
 
 if __name__ == "__main__":
