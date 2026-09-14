@@ -140,7 +140,8 @@ Verifies Git committability on `render/` and `install/` and discovers target pac
 
 #### Stage 1: Safety Guard (Sentinel)
 1.  Pulls current host configuration state into `install/` (`Primitive 1`).
-2.  If uncommitted drift exists: **Aborts immediately** (exit code `3`) and guides the user to `drift diff -s` or `drift adopt`. Pass `--force` to override.
+2.  If uncommitted drift exists: **Aborts immediately** (exit code `3`) and guides the user to `drift diff -s` or `drift adopt`.
+3.  **Forced Deployment (`--force`)**: When `--force` is provided and host drift is detected, Drift immediately commits a **Drift Snapshot** into the `install/` Git history (`"Drift Snapshot: Capture host modifications for <pkgs> before forced deployment"`), preserving live host edits for disaster recovery and rollback auditing, before proceeding to Stage 2 to compile, stage, and overwrite active host configurations.
 
 #### Stage 2: Sequential Compile & Apply
 1.  **Render**: Sandbox-compiles `src/` templates into `render/` (`Primitive 2`).

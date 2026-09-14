@@ -37,6 +37,8 @@ def check_and_prevent_system_drifts(
     """Stage 1: Safety Guard (Sentinel)
     Runs pre-flight state checks and silent reverse-sync to verify if any targeted package has drifted.
     If a midway state or drift is detected and force is False, aborts execution instantly with instructions.
+    If drift is detected and force is True, captures and commits a drift snapshot into install/ repo
+    to ensure live system modifications are preserved in history and overwritten backups are accurate.
     Returns (drifted_packages, drifted_files).
     """
     # 0. Check if any targeted package is in a midway transaction state from a previous crash/failure
@@ -81,16 +83,24 @@ def check_and_prevent_system_drifts(
                 logger.debug(f"   Drift: {line}")
                 drifted_files.append(line)
 
-    if drifted_packages and not force:
-        pkg_cmd_str = shlex.join(drifted_packages)
-        err_msg = (
-            f"❌ [DEPLOY ABORTED] System drift detected in packages: {', '.join(drifted_packages)}!\n"
-            "Host configurations have drifted from the state database.\n\n"
-            f"👉 Run 'drift diff -s {pkg_cmd_str}' to view the active system modifications.\n"
-            f"👉 Run 'drift adopt {pkg_cmd_str}' to incorporate these modifications into your template.\n"
-            f"👉 Run 'drift deploy {pkg_cmd_str} --force' to discard system drifts and overwrite."
+    if drifted_packages:
+        if not force:
+            pkg_cmd_str = shlex.join(drifted_packages)
+            err_msg = (
+                f"❌ [DEPLOY ABORTED] System drift detected in packages: {', '.join(drifted_packages)}!\n"
+                "Host configurations have drifted from the state database.\n\n"
+                f"👉 Run 'drift diff -s {pkg_cmd_str}' to view the active system modifications.\n"
+                f"👉 Run 'drift adopt {pkg_cmd_str}' to incorporate these modifications into your template.\n"
+                f"👉 Run 'drift deploy {pkg_cmd_str} --force' to discard system drifts and overwrite."
+            )
+            raise RuntimeError(err_msg)
+
+        logger.info(f"💾 Capturing host drift snapshot in install/ repository for: {', '.join(drifted_packages)}")
+        run_primitive_6_commit_install_repo(
+            workspace_config,
+            commit_message=f"Drift Snapshot: Capture host modifications for {', '.join(drifted_packages)} before forced deployment",
+            target_pkgs=drifted_packages
         )
-        raise RuntimeError(err_msg)
 
     return drifted_packages, drifted_files
 
@@ -257,8 +267,8 @@ def run_primitive_deploy_pipeline(
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_deploy: Specific package name(s) to deploy, or empty/omitted for all active packages.
-        force: If True, bypasses the Sentinel Drift check (allowing deployment even if uncommitted
-            drifts exist in install/) and passes force to Primitive 4 (staging) and Primitive 5
+        force: If True, bypasses the Sentinel Drift check (capturing and committing a drift snapshot
+            in install/ before overwriting) and passes force to Primitive 4 (staging) and Primitive 5
             (install deployment) to bypass midway failed state checks and uncommitted modification safeguards.
             Note: Does NOT bypass 'enable_install = false' package configurations.
         flags: Optional HookExecFlags controlling hook execution options.

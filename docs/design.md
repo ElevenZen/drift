@@ -102,7 +102,7 @@ A GUI application (like qBittorrent, desktop theme manager, or IDE preferences) 
     *   **Visual Side-by-Side Diff**: Run `drift diff -s -y qbittorrent` to inspect changed file pairs side-by-side in your editor (`$VISUAL` / `$EDITOR`, such as Neovim, Vim, VS Code, or GNU Emacs).
 3.  **Reconciliation**:
     *   **Adopt**: Run `drift adopt qbittorrent` (or `drift adopt qbittorrent -i`) to incorporate modifications from `install/` back to your declarative templates under `src/`.
-    *   **Dismiss / Overwrite**: Run `drift deploy qbittorrent --force`. Stage 1 detects the drift, but `--force` bypasses the sentinel and restores the system with clean files compiled from `src/`.
+    *   **Dismiss / Overwrite**: Run `drift deploy qbittorrent --force`. Stage 1 detects the drift, commits a **Drift Snapshot** into the `install/` Git history (guaranteeing disaster recovery auditability), and proceeds to compile, stage, and overwrite active host configurations with clean templates from `src/`.
 
 #### Workflow 3: Full Recovery (The Rollback Loop)
 A deployment failed midway due to a permission error, or manual system edits corrupted a config directory.

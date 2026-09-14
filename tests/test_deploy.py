@@ -121,7 +121,7 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("[DEPLOY ABORTED] System drift detected", str(context.exception))
 
     def test_deploy_pipeline_overrides_drift_with_force(self) -> None:
-        """Verifies that passing force=True bypasses the drift guard and overwrites modifications."""
+        """Verifies that passing force=True bypasses the drift guard, commits a drift snapshot, and overwrites modifications."""
         # 1. Initially run a deploy to establish baseline tracking
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
@@ -133,6 +133,27 @@ target_directory = "{self.system_target_dir}"
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], force=True)
 
         self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello source config!")
+
+        # 4. Verify install/ git log contains both the drift snapshot commit and deploy install commit
+        git_log = subprocess.run(
+            ["git", "log", "--oneline", "-n", "3"],
+            cwd=str(self.install_dir),
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout
+        self.assertIn("Deploy Install: Automatically commit deployed changes for pkg_a", git_log)
+        self.assertIn("Drift Snapshot: Capture host modifications for pkg_a before forced deployment", git_log)
+
+        # 5. Verify the drift snapshot commit in install/ recorded the modified host content
+        snapshot_content = subprocess.run(
+            ["git", "show", "HEAD~1:pkg_a/file.txt"],
+            cwd=str(self.install_dir),
+            capture_output=True,
+            text=True,
+            check=True
+        ).stdout
+        self.assertEqual(snapshot_content, "Modified on host system directly!")
 
     @patch("drift.deploy_repo.run_primitive_5_install_deployment")
     def test_deploy_pipeline_midway_crash_prints_recovery_card(self, mock_install) -> None:
