@@ -1018,14 +1018,23 @@ If a configuration file, folder, or symlink is manually deleted, modified, or ad
         *   This commit serves as a formal **acknowledgement on system drift**, returning the `install/` repository status to clean/committed.
         *   Because the template file still exists in `src/`, running `drift deploy` (Stage 2) compiles the template into `render/`, sees that the compiled file is missing in the newly clean `install/` base (since we committed its deletion!), treats it as a brand-new **file addition**, stages it to `install/`, and deploys it back onto the system, perfectly restoring the missing resource!
 
-3.  **Adopting Host-Side Modifications & New Additions**:
-    When manual modifications or new file additions (within Fully-Controlled Directories or from type promotions) are reverse-synced back into `install/`:
-    *   **To Adopt a File Modification**:
-        1.  *Automated Adoption*: Run `drift adopt <package>` to programmatically apply unified patches onto template files in `src/` or launch interactive conflict resolution.
-        2.  *Declarative Backport*: Preserves changes permanently in the source repository for future builds.
-    *   **To Adopt a New File Addition**:
-        1.  *Commit the Drift*: Register and commit the new resource inside the local `install/` state database.
-        2.  *Declarative Alignment*: Copy the newly added file from `install/<package>/<path>` back into the matching folder under `src/<package>/<path>` (converting dot-prefixes to native names, and setting up template suffixes or config mappings if desired).
+3.  **Adopting Host-Side Modifications, Renames & New Additions (`drift adopt`)**:
+    When manual modifications, file renames, or new file additions (within Fully-Controlled Directories) are reverse-synced back into `install/`:
+    *   **Unified Patch Application & Suffix Resolution**:
+        `drift adopt` matches live files in `install/` to their source template counterparts in `src/` by querying active `RenderEngineRegistry` suffixes (e.g. `.envst`, `.mustache`, custom engines). Unified diffs are extracted via `git diff HEAD`, header paths are adjusted, and patches are applied directly to templates.
+    *   **Permission & Mode Synchronization**:
+        File mode bits (e.g. `chmod 0755` executable permissions) are automatically synchronized from `install/` onto the corresponding source file in `src/` during adoption.
+    *   **Interactive Guided Reconciliation (`drift adopt -i`)**:
+        - **Diff Inspection**: Shows clean unified diffs before presenting resolution options.
+        - **Clean Patches**: Supports direct adoption, immediate post-merge editing in `$EDITOR` (`Adopt and Edit in Editor`), or opening template and live files in side-by-side split view (`Open Side-by-Side Reference` supporting `nvim`, `vim`, `code`, and `emacs`).
+        - **Conflicted Patches**: Offers three robust fallback strategies:
+          1. *Over-render & Freeze*: Backs up original template to `.bak` and overwrites it with static live content.
+          2. *Merge Conflict Editor*: Injects standard merge conflict markers via `patch --merge` and opens `$EDITOR`.
+          3. *Side-by-Side Reference*: Opens template and live drift side-by-side for manual merge.
+    *   **Non-Interactive Automated Adoption (`drift adopt`)**:
+        - Adopts clean modifications, renames, and deletions automatically.
+        - Emits unified diffs via `logger.debug(...)` (visible with global `-v` / `--verbose`).
+        - Passing `--accept-conflicts` permits automated application of conflicting patches with merge conflict markers.
 
 ### H. State Registry Database (`install/state.toml`)
 To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.

@@ -85,6 +85,13 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/git_utils.py#L85): Scoped `git add` and `git commit`.
 *   [`is_repo_dirty(repo_path, target_pkgs=()) -> bool`](../src/drift/git_utils.py#L50): Checks porcelain status.
 
+### [`adopt_repo.py`](../src/drift/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
+*   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/adopt_repo.py#L965): Entry point reconciling drifts across packages.
+*   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/adopt_repo.py#L863): Reconciles single-package additions, deletions, renames, and modifications.
+*   [`patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor) -> bool`](../src/drift/adopt_repo.py#L317): Applies patch, syncs permissions, and optionally launches `$EDITOR`.
+*   [`adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, ...) -> Path`](../src/drift/adopt_repo.py#L338): Symmetrically renames template file in `src/` matching engine suffix, applies patch, and syncs permissions.
+*   [`fallback_side_by_side(src_file, install_file) -> bool`](../src/drift/adopt_repo.py#L380): Visual split-screen diff in `$EDITOR` (`nvim`, `vim`, `code`, `emacs`).
+
 ### [`lifecycle_hooks.py`](../src/drift/lifecycle_hooks.py) (Lifecycle Scripts & Python Hooks)
 *   [`HookExecFlags`](../src/drift/lifecycle_hooks.py#L40): Execution flags (`dry_run`, `no_hooks`, `force`).
 *   [`PackageHooks`](../src/drift/lifecycle_hooks.py#L110): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
