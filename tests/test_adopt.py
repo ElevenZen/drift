@@ -8,7 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from io import StringIO
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, set_test_mode
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_engine_config import RenderEngineRegistry
 from drift.lifecycle_hooks import HookExecFlags
@@ -24,18 +25,26 @@ from drift.adopt_repo import (
     adopt_addition,
     ignore_addition,
     adopt_deletion,
-    adopt_modification,
+    patch_and_edit,
+    adopt_rename,
     fallback_over_render,
-    fallback_conflict_editor,
     fallback_side_by_side,
     adopt_one_package_drifts,
     run_primitive_adopt_drifts,
 )
 
+set_test_mode(True)
+
 
 class TestAdopt(unittest.TestCase):
 
     def setUp(self) -> None:
+        set_test_mode(True)
+        self.stdout_patcher = patch("sys.stdout", StringIO())
+        self.stderr_patcher = patch("sys.stderr", StringIO())
+        self.stdout_patcher.start()
+        self.stderr_patcher.start()
+
         self.temp_dir = TemporaryDirectory()
         self.workspace_path = (Path(self.temp_dir.name) / "workspace").resolve()
         self.workspace_path.mkdir()
@@ -89,13 +98,10 @@ class TestAdopt(unittest.TestCase):
             render_engine_configs=RenderEngineRegistry({"envsubst": env_engine})
         )
 
-        from unittest.mock import patch
-        from io import StringIO
-        self.stdout_patcher = patch("sys.stdout", StringIO())
-        self.stdout_patcher.start()
-
     def tearDown(self) -> None:
         self.stdout_patcher.stop()
+        self.stderr_patcher.stop()
+        set_test_mode(True)
         self.temp_dir.cleanup()
 
     def test_get_drifted_packages(self) -> None:
@@ -824,8 +830,8 @@ class TestAdopt(unittest.TestCase):
         # Drift in install/
         (install_pkg / "notes.txt").write_text("notes v2", encoding="utf-8")
 
-        # Mock input to choose [3] Skip file
-        with patch("builtins.input", return_value="3"):
+        # Mock input to choose [5] Skip file
+        with patch("builtins.input", return_value="5"):
             resolved = run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=True)
 
         self.assertEqual(list(resolved), [])
@@ -1042,17 +1048,45 @@ class TestAdopt(unittest.TestCase):
 
     @patch("drift.adopt_repo.launch_single_file_editor")
     @patch("drift.adopt_repo.apply_source_patch")
-    def test_fallback_conflict_editor_success_and_failure(self, mock_apply: MagicMock, mock_launch: MagicMock) -> None:
-        """Verifies fallback_conflict_editor returns True on success and False on RuntimeError."""
+    def test_patch_and_edit_success_and_failure(self, mock_apply: MagicMock, mock_launch: MagicMock) -> None:
+        """Verifies patch_and_edit applies patch, syncs permissions, opens editor, and handles failures."""
+        mock_apply.return_value = True
         src_file = self.src_dir / "pkg_a" / "test.txt"
+        src_file.parent.mkdir(parents=True, exist_ok=True)
+        src_file.write_text("orig", encoding="utf-8")
+        src_file.chmod(0o644)
 
-        # Success
-        self.assertTrue(fallback_conflict_editor(src_file, "patch content"))
+        install_file = self.install_dir / "pkg_a" / "test.txt"
+        install_file.parent.mkdir(parents=True, exist_ok=True)
+        install_file.write_text("mod", encoding="utf-8")
+        install_file.chmod(0o755)
+
+        # 1. Clean patch without editor, with file mode sync
+        self.assertTrue(patch_and_edit(src_file, "patch content", install_file=install_file, accept_conflicts=False, open_editor=False))
+        mock_apply.assert_called_once_with(src_file, "patch content", accept_conflicts=False)
+        mock_launch.assert_not_called()
+        self.assertTrue(bool(src_file.stat().st_mode & 0o111))
+
+        # 2. Conflicted patch with editor
+        mock_apply.reset_mock()
+        mock_launch.reset_mock()
+        self.assertTrue(patch_and_edit(src_file, "conflict patch", install_file=install_file, accept_conflicts=True, open_editor=True))
+        mock_apply.assert_called_once_with(src_file, "conflict patch", accept_conflicts=True)
         mock_launch.assert_called_once_with(src_file)
 
-        # Failure when EDITOR is unset or invalid
+        # 3. Patch application failure returns False
+        mock_apply.reset_mock()
+        mock_launch.reset_mock()
+        mock_apply.return_value = False
+        self.assertFalse(patch_and_edit(src_file, "failing patch"))
+        mock_launch.assert_not_called()
+
+        # 4. Failure when EDITOR is unset or invalid
+        mock_apply.reset_mock()
+        mock_launch.reset_mock()
+        mock_apply.return_value = True
         mock_launch.side_effect = RuntimeError("Environment variable $EDITOR is not set")
-        self.assertFalse(fallback_conflict_editor(src_file, "patch content"))
+        self.assertFalse(patch_and_edit(src_file, "patch content", open_editor=True))
 
     @patch("drift.adopt_repo.launch_side_by_side_editor")
     def test_fallback_side_by_side_success_and_failure(self, mock_launch: MagicMock) -> None:
@@ -1182,6 +1216,122 @@ render_command = "bash -c 'cat %i %s'"
         self.assertTrue(new_src_doc.is_file())
         self.assertEqual(new_src_doc.read_text(encoding="utf-8"), "# Document Title\n")
 
+    def test_adopt_interactive_clean_modification_adopt_and_edit(self) -> None:
+        """Verifies choosing option [2] on clean modification applies patch and launches editor."""
+        from io import StringIO
+        pkg = "pkg_edit_opt"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "config.txt").write_text("line1\nline2\n", encoding="utf-8")
+        (install_pkg / "config.txt").write_text("line1\nline2\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_edit_opt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_edit_opt"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Modify install
+        (install_pkg / "config.txt").write_text("line1\nline2_modified\n", encoding="utf-8")
+
+        with patch("builtins.input", return_value="2"), \
+             patch("drift.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("sys.stdout", StringIO()) as mock_stdout:
+            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            self.assertEqual(res.status, "SUCCESS")
+            mock_editor.assert_called_once_with(src_pkg / "config.txt")
+            self.assertEqual((src_pkg / "config.txt").read_text(encoding="utf-8"), "line1\nline2_modified\n")
+            # Verify diff printed to stdout
+            self.assertIn("-line2", mock_stdout.getvalue())
+            self.assertIn("+line2_modified", mock_stdout.getvalue())
+
+    def test_adopt_interactive_clean_modification_side_by_side(self) -> None:
+        """Verifies choosing option [3] on clean modification launches side-by-side editor."""
+        pkg = "pkg_sbs_opt"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        (src_pkg / "config.txt").write_text("orig\n", encoding="utf-8")
+        (install_pkg / "config.txt").write_text("orig\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_sbs_opt"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_sbs_opt"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        (install_pkg / "config.txt").write_text("modified\n", encoding="utf-8")
+
+        with patch("builtins.input", return_value="3"), \
+             patch("drift.adopt_repo.launch_side_by_side_editor") as mock_sbs:
+            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            self.assertEqual(res.status, "SUCCESS")
+            mock_sbs.assert_called_once_with([(src_pkg / "config.txt", install_pkg / "config.txt")])
+
+    def test_adopt_interactive_clean_rename_adopt_and_edit(self) -> None:
+        """Verifies choosing option [2] on clean rename applies rename/patch and opens editor."""
+        pkg = "pkg_rename_edit"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        content_orig = "line 1\nline 2\nline 3\nline 4\nline 5\n"
+        content_mod = "line 1\nline 2\nline 3\nline 4\nline 5 updated\n"
+        (src_pkg / "old_name.txt").write_text(content_orig, encoding="utf-8")
+        (install_pkg / "old_name.txt").write_text(content_orig, encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src pkg_rename_edit"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install pkg_rename_edit"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        subprocess.run(["git", "mv", f"{pkg}/old_name.txt", f"{pkg}/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
+        (install_pkg / "new_name.txt").write_text(content_mod, encoding="utf-8")
+
+        with patch("builtins.input", return_value="2"), \
+             patch("drift.adopt_repo.launch_single_file_editor") as mock_editor:
+            res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
+            self.assertEqual(res.status, "SUCCESS")
+            mock_editor.assert_called_once_with(src_pkg / "new_name.txt")
+            self.assertTrue((src_pkg / "new_name.txt").is_file())
+            self.assertEqual((src_pkg / "new_name.txt").read_text(encoding="utf-8"), content_mod)
+
+    def test_adopt_non_interactive_logs_diff_debug(self) -> None:
+        """Verifies non-interactive adoption logs diffs at DEBUG level."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            pkg = "pkg_debug_log"
+            src_pkg = self.src_dir / pkg
+            src_pkg.mkdir(parents=True, exist_ok=True)
+            install_pkg = self.install_dir / pkg
+            install_pkg.mkdir(parents=True, exist_ok=True)
+
+            (src_pkg / "file.txt").write_text("initial\n", encoding="utf-8")
+            (install_pkg / "file.txt").write_text("initial\n", encoding="utf-8")
+
+            subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init src pkg_debug_log"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+            subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init install pkg_debug_log"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+            (install_pkg / "file.txt").write_text("changed_text\n", encoding="utf-8")
+
+            with self.assertLogs("drift.adopt_repo", level="DEBUG") as cm:
+                adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+                self.assertTrue(any("Diff for 'file.txt'" in log for log in cm.output))
+                self.assertTrue(any("+changed_text" in log for log in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
 
 if __name__ == "__main__":
     unittest.main()
+

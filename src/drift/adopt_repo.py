@@ -34,30 +34,53 @@ Layer 4: Single-Package Drift Adoption
 
 Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
     handle_single_addition
+        Evaluates collisions with existing source files and delegates to adopt_addition / ignore_addition / discard / skip.
     handle_single_deletion
+        Validates target presence in source and delegates to adopt_deletion / discard / skip.
     handle_single_rename -> handle_rename_non_interactive / handle_rename_interactive
+        Generates adjusted patch headers, evaluates conflict status, and routes to adopt_rename / freeze / merge editor / side-by-side.
     handle_single_modification -> handle_modification_non_interactive / handle_modification_interactive
+        Evaluates template vs. static modifications, checks patch conflicts, logs/prints diffs, and routes to patch_and_edit / freeze / side-by-side.
 
 Layer 2: Single-File Reconciliation Actions
-    adopt_addition
-    ignore_addition
-    adopt_deletion
-    adopt_modification
-    adopt_rename
-    fallback_over_render
-    fallback_conflict_editor
-    fallback_side_by_side
+    _sync_file_mode(src_file, install_file)
+        Synchronizes file permissions and executable bits from install/ onto src_file.
+    adopt_addition(pkg_dir, install_pkg_dir, rel_path)
+        Copies a wild host-side added file into the declarative source folder under src/.
+    ignore_addition(pkg_dir, install_pkg_dir, rel_path)
+        Unlinks file from install/ base, un-tracks it in install/ Git index, and registers pattern into .drift_ignore.
+    adopt_deletion(render_engines, src_dir_to_render, rel_path)
+        Symmetrically deletes the matching source template/file from declarative source directory.
+    patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor)
+        Unified patch application engine: applies unified diffs (clean or with --merge conflict markers),
+        synchronizes file mode/permissions from install_file, and optionally opens $EDITOR.
+    adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file, accept_conflicts)
+        Symmetrically renames template files in src/ using render engine suffix resolution, applies content patches,
+        synchronizes permissions, and returns the resolved new_src_file Path.
+    fallback_over_render(src_file, static_file)
+        Backs up original template to .bak and overwrites it with static content from install/ (freezing template).
+    fallback_side_by_side(src_file, install_file)
+        Launches visual side-by-side diff in $EDITOR (nvim, vim, code, emacs) between source template and live static drift.
 
 Layer 1: Inspection & Git Patch Primitives
     get_drifted_packages
+        Parses git status porcelain across install/ to discover all packages with local host modifications.
     check_source_cleanliness
+        Enforces scoped Git cleanliness safeguard on src/<pkg>/ before applying modifications.
     get_package_drifts
+        Categorizes Git porcelain status into additions, deletions, modifications, and renames.
     generate_unified_patch
+        Executes git diff HEAD to extract raw unified diff patches for drifted files in install/.
     generate_adjusted_patch
+        Rewrites unified diff headers to align install/ file paths with target template paths in src/.
     check_patch_conflicts
+        Runs patch --dry-run to verify if a patch applies cleanly onto a source template.
     apply_source_patch
+        Executes patch tool against source files with optional --merge conflict marker support.
     test_file_conflict
+        Convenience wrapper checking patch conflicts for a single modified file.
     resolve_source_file_path
+        Resolves physical source template paths using RenderEngineRegistry suffix mapping.
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
     Layer 1: Inspection & Git Patch Primitives
@@ -281,8 +304,8 @@ def _sync_file_mode(src_file: Path, install_file: Path) -> None:
     """Synchronizes file mode/permissions from install_file onto src_file."""
     try:
         src_file.chmod(install_file.stat().st_mode)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Failed to synchronize file permissions from '{install_file}' to '{src_file}': {e}")
 
 
 def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
@@ -315,12 +338,28 @@ def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path
         remove_file_or_dir(src_file)
 
 
-def adopt_modification(src_file: Path, patch_content: str) -> bool:
-    """Directly applies clean patch or overwrites the modified configuration file."""
-    success = apply_source_patch(src_file, patch_content, accept_conflicts=False)
-    if not success:
-        logger.error(f"Failed to apply patch to template file {src_file.name}. Please check manually.")
-    return success
+def patch_and_edit(
+    src_file: Path,
+    patch_content: str,
+    install_file: Optional[Path] = None,
+    accept_conflicts: bool = False,
+    open_editor: bool = False
+) -> bool:
+    """Applies a patch (clean or with merge markers) to a source file, synchronizes file permissions, and optionally opens $EDITOR."""
+    if patch_content.strip():
+        success = apply_source_patch(src_file, patch_content, accept_conflicts=accept_conflicts)
+        if not success:
+            logger.error(f"Failed to apply patch to template file {src_file.name}. Please check manually.")
+            return False
+    if install_file is not None and install_file.exists():
+        _sync_file_mode(src_file, install_file)
+    if open_editor:
+        try:
+            launch_single_file_editor(src_file)
+        except RuntimeError as e:
+            logger.warning(f"⚠️  Failed to open editor: {e}. Skipping file adoption.")
+            return False
+    return True
 
 
 def adopt_rename(
@@ -329,8 +368,9 @@ def adopt_rename(
     old_rel_path: Path,
     new_rel_path: Path,
     patch_content: str,
+    install_file: Optional[Path] = None,
     accept_conflicts: bool = False
-) -> None:
+) -> Path:
     """Symmetrically renames the source template file and applies any content patch."""
     old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     if old_src_file and old_src_file.exists():
@@ -346,9 +386,15 @@ def adopt_rename(
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
         new_src_file.touch()
         
-    if patch_content.strip():
-        if not apply_source_patch(new_src_file, patch_content, accept_conflicts=accept_conflicts):
-            logger.error(f"Failed to apply patch to renamed template file {new_src_file.name}. Please check manually.")
+    patch_and_edit(
+        new_src_file,
+        patch_content,
+        install_file=install_file,
+        accept_conflicts=accept_conflicts,
+        open_editor=False
+    )
+
+    return new_src_file
 
 
 def fallback_over_render(src_file: Path, static_file: Path) -> None:
@@ -357,17 +403,6 @@ def fallback_over_render(src_file: Path, static_file: Path) -> None:
     atomic_copy_file(src_file, bak_file)
     atomic_copy_file(static_file, src_file)
     logger.warning(f"⚠️  [FREEZE] Overwrote template '{src_file.name}' with static content. Original template backed up to '{bak_file.name}'.")
-
-
-def fallback_conflict_editor(src_file: Path, patch_content: str) -> bool:
-    """Uses patch --merge to write conflict markers into the template, then opens $EDITOR."""
-    try:
-        apply_source_patch(src_file, patch_content, accept_conflicts=True)
-        launch_single_file_editor(src_file)
-        return True
-    except RuntimeError as e:
-        logger.warning(f"⚠️  Failed to open conflict editor: {e}. Skipping file adoption.")
-        return False
 
 
 def fallback_side_by_side(src_file: Path, install_file: Path) -> bool:
@@ -525,16 +560,19 @@ def handle_rename_non_interactive(
     old_src_file: Optional[Path],
     patch_content: str,
     has_patch_conflict: bool,
-    accept_conflicts: bool
+    accept_conflicts: bool,
+    install_file: Optional[Path] = None
 ) -> bool:
     """Processes a rename drift non-interactively."""
+    if patch_content and patch_content.strip():
+        logger.debug(f"Diff for rename '{old_rel_path}' -> '{new_rel_path}':\n{patch_content.strip()}")
     if not has_patch_conflict:
-        adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content)
+        adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file=install_file)
         return True
     else:
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into renamed template file: '{old_src_file.name if old_src_file else ''}'")
-            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, accept_conflicts=True)
+            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content, install_file=install_file, accept_conflicts=True)
             return True
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto renamed template file '{old_src_file.name if old_src_file else ''}'. Skipping.")
@@ -555,16 +593,36 @@ def handle_rename_interactive(
 ) -> bool:
     """Processes a rename drift interactively."""
     print(f"\nFound host file rename: {old_rel_path} -> {new_rel_path}")
+    if patch_content and patch_content.strip():
+        print(f"{patch_content.strip()}\n")
+    install_file = install_pkg_dir / new_rel_path
     if not has_patch_conflict:
-        print("Reconciliation options:")
+        print("Reconciliation options (Patch applies cleanly):")
         print("[1] Adopt rename (renames template file and applies patch)")
-        print("[2] Discard rename / Restore (restores file rename in next deployment)")
-        print("[3] Skip file")
-        choice = input("Select option [1-3]: ").strip()
-        if choice == "1":
-            adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, patch_content)
+        print("[2] Adopt rename and Edit in Editor (renames, applies patch, then opens template in $EDITOR)")
+        print("[3] Open Side-by-Side Reference (renames template, opens template and live file side-by-side)")
+        print("[4] Discard rename / Restore (restores file rename in next deployment)")
+        print("[5] Skip file")
+        choice = input("Select option [1-5]: ").strip()
+        if choice in ["1", "2", "3"]:
+            new_src_file = adopt_rename(
+                render_engines,
+                src_dir_to_render,
+                old_rel_path,
+                new_rel_path,
+                patch_content,
+                install_file=install_file,
+            )
+            if choice == "2":
+                try:
+                    launch_single_file_editor(new_src_file)
+                except RuntimeError as e:
+                    logger.warning(f"⚠️  Failed to open editor: {e}.")
+                    return False
+            elif choice == "3":
+                return fallback_side_by_side(new_src_file, install_file)
             return True
-        elif choice == "2":
+        elif choice == "4":
             return True
         else:
             return False
@@ -578,20 +636,18 @@ def handle_rename_interactive(
         print("[5] Skip file")
         choice = input("Select option [1-5]: ").strip()
         if choice in ["1", "2", "3"]:
-            # Perform rename first
-            if old_src_file and old_src_file.exists():
-                new_src_name = render_engines.make_new_template_name(old_src_file.name,
-                                                                     new_rel_path.name)
-                new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
-                new_src_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(old_src_file, new_src_file)
-            else:
-                new_src_file = src_dir_to_render / new_rel_path
-                new_src_file.parent.mkdir(parents=True, exist_ok=True)
-                new_src_file.touch()
+            new_src_file = adopt_rename(
+                render_engines,
+                src_dir_to_render,
+                old_rel_path,
+                new_rel_path,
+                patch_content="",
+                install_file=install_file,
+                accept_conflicts=False,
+            )
 
             if choice == "1":
-                fallback_over_render(new_src_file, install_pkg_dir / new_rel_path)
+                fallback_over_render(new_src_file, install_file)
                 return True
             elif choice == "2":
                 # Adjust patch to new file name
@@ -602,9 +658,15 @@ def handle_rename_interactive(
                     old_rel_path=old_rel_path,
                     target_src_filename=new_src_file.name
                 )
-                return fallback_conflict_editor(new_src_file, adjusted_patch)
+                return patch_and_edit(
+                    new_src_file,
+                    adjusted_patch,
+                    install_file=install_file,
+                    accept_conflicts=True,
+                    open_editor=True,
+                )
             elif choice == "3":
-                return fallback_side_by_side(new_src_file, install_pkg_dir / new_rel_path)
+                return fallback_side_by_side(new_src_file, install_file)
 
         if choice == "4":
             return True
@@ -658,7 +720,8 @@ def handle_single_rename(
     if not interactive:
         return handle_rename_non_interactive(
             render_engines, src_dir_to_render, old_rel_path, new_rel_path,
-            old_src_file, patch_content, has_patch_conflict, accept_conflicts
+            old_src_file, patch_content, has_patch_conflict, accept_conflicts,
+            install_file=(install_pkg_dir / new_rel_path)
         )
     else:
         return handle_rename_interactive(
@@ -676,21 +739,31 @@ def handle_modification_non_interactive(
     accept_conflicts: bool
 ) -> bool:
     """Processes a modification drift non-interactively."""
+    if patch_content and patch_content.strip():
+        logger.debug(f"Diff for '{src_file.name}':\n{patch_content.strip()}")
     if not has_conflict:
         if is_templated:
-            has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
-            if has_content_hunks:
-                adopt_modification(src_file, patch_content)
-            _sync_file_mode(src_file, install_file)
+            return patch_and_edit(
+                src_file,
+                patch_content,
+                install_file=install_file,
+                accept_conflicts=False,
+                open_editor=False,
+            )
         else:
             atomic_copy_file(install_file, src_file)
-        return True
+            _sync_file_mode(src_file, install_file)
+            return True
     else:
         if accept_conflicts:
             logger.warning(f"⚠️  Applying conflicting patch into file: '{src_file.name}'")
-            apply_source_patch(src_file, patch_content, accept_conflicts=True)
-            _sync_file_mode(src_file, install_file)
-            return True
+            return patch_and_edit(
+                src_file,
+                patch_content,
+                install_file=install_file,
+                accept_conflicts=True,
+                open_editor=False,
+            )
         else:
             logger.error(f"❌ [CONFLICT] Cannot apply system diff cleanly onto file '{src_file.name}'. Skipping.")
             logger.error("   Run 'drift adopt --interactive' or pass '--accept-conflicts' to resolve.")
@@ -710,37 +783,60 @@ def handle_modification_interactive(
     if not has_conflict:
         if is_templated:
             print(f"\nFound modified templated file (Patch applies cleanly): {rel_path}")
+            if patch_content and patch_content.strip():
+                print(f"{patch_content.strip()}\n")
             print("Reconciliation options:")
             print("[1] Adopt modifications (applies patch cleanly to template)")
-            print("[2] Discard modifications / Restore (restores file in next deployment)")
-            print("[3] Skip file")
-            choice = input("Select option [1-3]: ").strip()
-            if choice == "1":
-                has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
-                if has_content_hunks:
-                    adopt_modification(src_file, patch_content)
-                _sync_file_mode(src_file, install_file)
-                return True
-            elif choice == "2":
+            print("[2] Adopt and Edit in Editor (applies patch, then opens template in $EDITOR)")
+            print("[3] Open Side-by-Side Reference (opens template and live file side-by-side for manual merge)")
+            print("[4] Discard modifications / Restore (restores file in next deployment)")
+            print("[5] Skip file")
+            choice = input("Select option [1-5]: ").strip()
+            if choice in ["1", "2"]:
+                return patch_and_edit(
+                    src_file,
+                    patch_content,
+                    install_file=install_file,
+                    accept_conflicts=False,
+                    open_editor=(choice == "2"),
+                )
+            elif choice == "3":
+                return fallback_side_by_side(src_file, install_file)
+            elif choice == "4":
                 return True
             else:
                 return False
         else:
             print(f"\nFound modified static config file (Patch applies cleanly): {rel_path}")
+            if patch_content and patch_content.strip():
+                print(f"{patch_content.strip()}\n")
             print("Reconciliation options:")
             print("[1] Adopt modifications (overwrites source file)")
-            print("[2] Discard modifications / Restore (restores file in next deployment)")
-            print("[3] Skip file")
-            choice = input("Select option [1-3]: ").strip()
-            if choice == "1":
+            print("[2] Adopt and Edit in Editor (overwrites source file, then opens in $EDITOR)")
+            print("[3] Open Side-by-Side Reference (opens source file and live file side-by-side for manual merge)")
+            print("[4] Discard modifications / Restore (restores file in next deployment)")
+            print("[5] Skip file")
+            choice = input("Select option [1-5]: ").strip()
+            if choice in ["1", "2"]:
                 atomic_copy_file(install_file, src_file)
+                _sync_file_mode(src_file, install_file)
+                if choice == "2":
+                    try:
+                        launch_single_file_editor(src_file)
+                    except RuntimeError as e:
+                        logger.warning(f"⚠️  Failed to open editor: {e}.")
+                        return False
                 return True
-            elif choice == "2":
+            elif choice == "3":
+                return fallback_side_by_side(src_file, install_file)
+            elif choice == "4":
                 return True
             else:
                 return False
     else:
         print(f"\n⚠️  [PATCH CONFLICT] Could not automatically apply system diff onto file '{src_file.name}'!")
+        if patch_content and patch_content.strip():
+            print(f"{patch_content.strip()}\n")
         print("Choose a fallback resolution strategy:")
         print("[1] Over-render & Freeze (overwrites template/file, original saved to .bak)")
         print("[2] Open Merge Conflict Editor (writes conflict markers and opens editor)")
@@ -752,7 +848,13 @@ def handle_modification_interactive(
             fallback_over_render(src_file, install_file)
             return True
         elif choice == "2":
-            return fallback_conflict_editor(src_file, patch_content)
+            return patch_and_edit(
+                src_file,
+                patch_content,
+                install_file=install_file,
+                accept_conflicts=True,
+                open_editor=True,
+            )
         elif choice == "3":
             return fallback_side_by_side(src_file, install_file)
         elif choice == "4":

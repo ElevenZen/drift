@@ -170,14 +170,46 @@ Reverts failed midway deployments and restores system files to the last committe
 ---
 
 ### H. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [options] [--json]`
-Incorporate runtime system/GUI changes back into your declarative templates under `src/`.
+Incorporate runtime system and GUI changes back into your declarative source templates under `src/`.
+
 *   **Command Options**:
-    - `packages...`: Optional package name(s) to adopt. If omitted, all drifted packages are adopted.
-    - `--interactive / -i`: Interactively prompt for each modified, added, or deleted file.
-    - `--accept-conflicts`: Apply conflicting patches, writing merge conflict markers directly into templates.
-    - `--force / -f`: Bypasses the Git cleanliness safeguard on package source directories (`src/<package>/`), allowing adoption to proceed even if the source directory has uncommitted modifications.
-    - `--dry-run`: Simulate adoption without writing changes to disk.
-    - `--no-hooks / --no-hook`: Bypass execution of `pre_source` lifecycle hooks.
+    - `packages...`: Optional package name(s) to adopt. If omitted, all drifted packages across the workspace are evaluated and adopted.
+    - `--interactive / -i`: Enables interactive guided reconciliation for every modified, renamed, added, or deleted file.
+    - `--accept-conflicts`: Non-interactive resolution that forces conflicting patches to apply directly into source templates with standard Git merge conflict markers (`<<<<<<<`, `=======`, `>>>>>>>`).
+    - `--force / -f`: Bypasses the scoped Git cleanliness safeguard on package source directories (`src/<package>/`), allowing adoption even if `src/<package>/` has uncommitted local changes.
+    - `--dry-run`: Previews all pending additions, deletions, renames, and modifications (including conflict dry-run inspection) without writing changes to disk or advancing Git commits.
+    - `--no-hooks / --no-hook`: Bypasses execution of `pre_source` package lifecycle hooks.
+    - `--json`: Outputs a structured `AdoptResult` in JSON format containing lists of adopted additions, deletions, modifications, renames, and overall execution status.
+
+*   **Diff Previews**:
+    - **Interactive Mode (`-i`)**: Prints unified diff snippets directly to `stdout` before prompting for reconciliation choices.
+    - **Non-Interactive Mode**: Logs unified diffs at `DEBUG` level (visible when running with global `-v` / `--verbose` flag).
+
+*   **Interactive Reconciliation Menus**:
+    - **Clean Modifications & Renames (Patch Applies Cleanly)**:
+      1. `[1] Adopt modifications / Adopt rename`: Directly applies patch to source template and synchronizes file permissions.
+      2. `[2] Adopt and Edit in Editor`: Applies patch/rename, synchronizes permissions, and immediately opens the template in `$EDITOR` / `$VISUAL` for fine-tuning.
+      3. `[3] Open Side-by-Side Reference`: Launches side-by-side visual diff (`nvim`, `vim`, `code`, `emacs`) between the template source and the compiled live file for manual review.
+      4. `[4] Discard modifications / Discard rename / Restore`: Discards the host drift; the original declarative version will be restored on the next deployment.
+      5. `[5] Skip file`: Leaves the file unmerged and unstaged in `install/` as uncommitted local drift.
+
+    - **Conflicted Modifications & Renames (Patch Has Conflicts)**:
+      1. `[1] Over-render & Freeze`: Backs up original template to `.bak` and overwrites it with static live content.
+      2. `[2] Open Merge Conflict Editor`: Writes merge conflict markers into the template using `patch --merge` and opens `$EDITOR`.
+      3. `[3] Open Side-by-Side Reference`: Opens the template alongside the live static drift in side-by-side split.
+      4. `[4] Discard / Restore`: Discards drift and restores original template on next deployment.
+      5. `[5] Skip file`: Leaves file unmerged and unstaged.
+
+    - **Additions (Inside Fully-Controlled Directories)**:
+      1. `[1] Adopt and copy into source package`: Copies the untracked host file into `src/<package>/`.
+      2. `[2] Ignore file`: Appends pattern to package `.drift_ignore` and unlinks from `install/` tracking.
+      3. `[3] Discard file`: Stages deletion in `install/` state database so it is pruned on next deployment.
+      4. `[4] Skip file`: Leaves untracked file as uncommitted drift.
+
+    - **Deletions**:
+      1. `[1] Adopt deletion`: Symmetrically deletes matching file/template from `src/<package>/`.
+      2. `[2] Discard deletion / Restore`: Restores the deleted file on next deployment.
+      3. `[3] Skip file`: Leaves deletion unstaged.
 
 ---
 
