@@ -304,8 +304,11 @@ class WorkspaceConfig:
 
     @classmethod
     def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:
-        packages = [pkg for pkg in cls.get_package_names_from_dir(custom_dir)
-                    if (custom_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()]
+        packages = [
+            pkg for pkg in cls.get_package_names_from_dir(custom_dir)
+            if (custom_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()
+            or (custom_dir / pkg / PACKAGE_CONFIG_FILE_NAME).exists()
+        ]
         return sorted(packages)
 
     def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:

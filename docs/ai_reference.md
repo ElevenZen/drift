@@ -140,6 +140,20 @@ This document provides a concise, high-density architecture reference, primitive
     ```bash
     python3 -m unittest discover -s tests
     ```
+*   **Log Output Testing (`set_test_mode`)**:
+    *   Test mode is enabled by default with logging silenced (`logging.disable(logging.CRITICAL)`).
+    *   **Use `set_test_mode(True, enable_logging=True)` to test log output** (with `assertLogs`):
+        ```python
+        from drift.constants import set_test_mode
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.module_name", level="WARNING") as cm:
+                # perform operation that emits logs/warnings
+                self.assertTrue(any("expected message" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+        ```
 *   **Coding Conventions (`GEMINI.md`)**:
     *   Functional constructs (`filter`, `map`, comprehensions, generators) preferred over procedural loops.
     *   Decouple data gathering/resolution from execution.

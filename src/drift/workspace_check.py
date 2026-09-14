@@ -24,7 +24,8 @@ Health Inspection Flow:
             ├── check_install_gitignore(drift_root, workspace_config)
             ├── check_install_stow_ignore(drift_root, workspace_config)
             ├── check_state_registry(drift_root, workspace_config)
-            └── check_engine_inputs(drift_root, workspace_config)
+            ├── check_engine_inputs(drift_root, workspace_config)
+            └── check_package_metadata_structure(drift_root, workspace_config)
 
 Status Aggregation Logic (3-Value Logic):
     - NOT_FOUND: Workspace config is NOT_FOUND and no workspace artifacts exist.
@@ -46,6 +47,7 @@ Layers (ordered bottom-up by dependency):
         check_install_stow_ignore
         check_state_registry
         check_engine_inputs
+        check_package_metadata_structure
     Layer 3: Inspection Orchestration & Report Models
         ComponentStatus
         CheckResult
@@ -74,6 +76,11 @@ from .constants import (
     STOW_LOCAL_IGNORE_FILE_NAME,
     DEFAULT_ROOT_GITIGNORE_ENTRIES,
     DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    FORBIDDEN_PACKAGE_NAMES,
 )
 from .git_utils import (
     is_git_tracked,
@@ -635,6 +642,60 @@ def check_engine_inputs(
     )
 
 
+def check_package_metadata_structure(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+) -> CheckResult:
+    """Checks that rendered and installed packages store metadata inside .drift/ instead of package root."""
+    render_dir = workspace_config.render_path
+    install_dir = workspace_config.install_path
+
+    legacy_files = (
+        PACKAGE_CONFIG_FILE_NAME,
+        DRIFT_IGNORE_FILE_NAME,
+    )
+    unmigrated: List[str] = []
+    forbidden_local_files: List[str] = []
+
+    for repo_dir in (render_dir, install_dir):
+        if not repo_dir.exists() or not repo_dir.is_dir():
+            continue
+        for pkg_dir in sorted(repo_dir.iterdir()):
+            if not pkg_dir.is_dir() or pkg_dir.name.startswith("."):
+                continue
+            # Check for forbidden local override files
+            if (pkg_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME).is_file():
+                forbidden_local_files.append(f"{repo_dir.name}/{pkg_dir.name}/{PACKAGE_CONFIG_LOCAL_FILE_NAME}")
+            if (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME).is_file():
+                forbidden_local_files.append(f"{repo_dir.name}/{pkg_dir.name}/{DRIFT_INTERNAL_DIR_NAME}/{PACKAGE_CONFIG_LOCAL_FILE_NAME}")
+
+            found = [f.name for f in (pkg_dir / name for name in legacy_files) if f.is_file()]
+            if found:
+                unmigrated.append(f"{repo_dir.name}/{pkg_dir.name} ({', '.join(found)})")
+
+    if forbidden_local_files:
+        return CheckResult(
+            name="Package Metadata Structure",
+            status=ComponentStatus.BROKEN,
+            details=f"Forbidden local configuration file '{PACKAGE_CONFIG_LOCAL_FILE_NAME}' found in: {', '.join(forbidden_local_files)}.",
+            fix_hint="Remove local override files from rendered/installed packages"
+        )
+
+    if unmigrated:
+        return CheckResult(
+            name="Package Metadata Structure",
+            status=ComponentStatus.BROKEN,
+            details=f"Legacy metadata files found at package root in: {', '.join(unmigrated)}.",
+            fix_hint="Run 'drift repair' to migrate package metadata into '.drift/'"
+        )
+
+    return CheckResult(
+        name="Package Metadata Structure",
+        status=ComponentStatus.GOOD,
+        details="All package metadata structures are up to date."
+    )
+
+
 # =====================================================================
 # Layer 3: Inspection Orchestration (Public Entry Point)
 # =====================================================================
@@ -700,6 +761,7 @@ def check_existing_workspace_status(
         check_install_stow_ignore(drift_root, workspace_config=ws_config),
         check_state_registry(drift_root, workspace_config=ws_config),
         check_engine_inputs(drift_root, workspace_config=ws_config),
+        check_package_metadata_structure(drift_root, workspace_config=ws_config),
     ]
 
     statuses = {c.status for c in checks}

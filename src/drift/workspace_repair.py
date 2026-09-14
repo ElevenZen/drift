@@ -22,7 +22,8 @@ Repair Pipeline Flow:
             ├── repair_install_stow_ignore(drift_root, workspace_config, dry_run)
             ├── repair_state_registry(drift_root, workspace_config, dry_run)
             ├── repair_secrets_env(drift_root, workspace_config, dry_run)
-            └── repair_engine_inputs(drift_root, workspace_config, dry_run)
+            ├── repair_engine_inputs(drift_root, workspace_config, dry_run)
+            └── repair_package_metadata_structure(drift_root, workspace_config, dry_run)
 
 Result Formatting:
     build_repair_result(report, actions, dry_run) [Layer 3: Pipeline Orchestration]
@@ -41,6 +42,7 @@ Layers (ordered bottom-up by dependency):
         repair_state_registry
         repair_secrets_env
         repair_engine_inputs
+        repair_package_metadata_structure
     Layer 3: Pipeline Orchestration & Reporting
         repair_drift_workspace
         build_repair_result
@@ -60,6 +62,10 @@ from .constants import (
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
     STOW_LOCAL_IGNORE_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
     get_default_drift_workspace_toml_content,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_secrets_env_content,
@@ -82,10 +88,13 @@ from .workspace_check import (
     check_install_stow_ignore,
     check_state_registry,
     check_workspace_config,
+    check_package_metadata_structure,
 )
 from .git_utils import (
     git_init_repo,
     append_to_gitignore,
+    commit_repo_changes,
+    is_git_tracked,
 )
 from .exceptions import ConfigError
 from .workspace_config import WorkspaceConfig, load_workspace_config
@@ -430,6 +439,103 @@ def repair_engine_inputs(
     return actions
 
 
+def migrate_single_package_metadata(
+    repo_dir: Path,
+    pkg_dir: Path,
+    dry_run: bool = False,
+) -> Tuple[List[str], bool]:
+    """Migrates legacy metadata files for a single package into its .drift/ subdirectory.
+
+    Returns:
+        A tuple of (actions_list, was_migrated_bool).
+    """
+    actions: List[str] = []
+    migrated = False
+
+    # Check for forbidden local override file
+    local_config_root = pkg_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
+    local_config_internal = pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
+    if local_config_root.exists() or local_config_internal.exists():
+        found_file = local_config_root if local_config_root.exists() else local_config_internal
+        raise ConfigError(
+            f"Forbidden local configuration file '{found_file.name}' detected in '{repo_dir.name}/{pkg_dir.name}'. "
+            f"Local package overrides are only allowed in source packages ('src/')."
+        )
+
+    legacy_files = (
+        PACKAGE_CONFIG_FILE_NAME,
+        DRIFT_IGNORE_FILE_NAME,
+    )
+    dot_drift_dir = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+
+    for filename in legacy_files:
+        legacy_file = pkg_dir / filename
+        if not legacy_file.is_file():
+            continue
+        target_file = dot_drift_dir / filename
+        if target_file.exists():
+            raise ConfigError(
+                f"Cannot migrate legacy file '{repo_dir.name}/{pkg_dir.name}/{filename}': "
+                f"Target '{repo_dir.name}/{pkg_dir.name}/{DRIFT_INTERNAL_DIR_NAME}/{filename}' already exists. "
+                f"Please manually inspect and merge."
+            )
+        actions.append(
+            f"Migrated legacy metadata '{repo_dir.name}/{pkg_dir.name}/{filename}' to "
+            f"'{repo_dir.name}/{pkg_dir.name}/{DRIFT_INTERNAL_DIR_NAME}/{filename}'."
+        )
+        if not dry_run:
+            dot_drift_dir.mkdir(parents=True, exist_ok=True)
+            legacy_file.rename(target_file)
+            migrated = True
+
+    return actions, migrated
+
+
+def repair_repo_package_metadata(
+    repo_dir: Path,
+    dry_run: bool = False,
+) -> List[str]:
+    """Migrates legacy package metadata across all packages in a repo directory (render/ or install/)."""
+    if not repo_dir.exists() or not repo_dir.is_dir():
+        return []
+
+    actions: List[str] = []
+    migrated_pkgs: List[str] = []
+
+    for pkg_dir in sorted(repo_dir.iterdir()):
+        if not pkg_dir.is_dir() or pkg_dir.name.startswith("."):
+            continue
+        pkg_actions, was_migrated = migrate_single_package_metadata(repo_dir, pkg_dir, dry_run=dry_run)
+        actions.extend(pkg_actions)
+        if was_migrated:
+            migrated_pkgs.append(pkg_dir.name)
+
+    if not dry_run and migrated_pkgs and is_git_tracked(repo_dir):
+        try:
+            commit_repo_changes(
+                repo_dir,
+                f"refactor(drift): migrate package metadata into {DRIFT_INTERNAL_DIR_NAME}/ for {', '.join(sorted(migrated_pkgs))}",
+                target_pkgs=migrated_pkgs,
+                repo_name=repo_dir.name,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to commit metadata migration in {repo_dir.name}: {e}")
+
+    return actions
+
+
+def repair_package_metadata_structure(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs package metadata structure by migrating root metadata files in render/ and install/ into .drift/."""
+    actions: List[str] = []
+    actions.extend(repair_repo_package_metadata(workspace_config.render_path, dry_run=dry_run))
+    actions.extend(repair_repo_package_metadata(workspace_config.install_path, dry_run=dry_run))
+    return actions
+
+
 # =====================================================================
 # Layer 3: Pipeline Orchestration & Reporting
 # =====================================================================
@@ -472,6 +578,7 @@ def repair_drift_workspace(
     actions.extend(repair_state_registry(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_secrets_env(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_engine_inputs(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_package_metadata_structure(drift_root, workspace_config=ws_config, dry_run=dry_run))
 
     return actions
 

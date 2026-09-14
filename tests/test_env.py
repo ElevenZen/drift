@@ -136,8 +136,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
 
     def test_load_env_settings_logs_only_new_or_overwritten(self) -> None:
         """Verifies that 'Environment variable loaded' is only logged for new or overwritten variables."""
-        import logging
-        logging.disable(logging.NOTSET)
+        set_test_mode(True, enable_logging=True)
         try:
             os.environ["TEST_UNCHANGED"] = "same_val"
             os.environ["TEST_OVERWRITTEN"] = "old_val"

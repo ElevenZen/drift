@@ -65,8 +65,16 @@ def filter_candidate_package_dirs(base_path: Path, ignore_names: Iterable[str] =
 
 
 def is_zombie_package_dir(item: Path) -> bool:
-    """Returns True if the directory lacks any valid package config file in .drift/."""
-    return not (item / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()
+    """Returns True if the directory lacks any valid package config file in .drift/ (or legacy root)."""
+    if (item / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists():
+        return False
+    if (item / PACKAGE_CONFIG_FILE_NAME).exists():
+        logger.warning(
+            f"⚠️ [DEPRECATION] Package directory '{item}' contains legacy root '{PACKAGE_CONFIG_FILE_NAME}'. "
+            f"Please run 'drift repair' to migrate metadata into '{DRIFT_INTERNAL_DIR_NAME}/'."
+        )
+        return False
+    return True
 
 
 def filter_zombie_package_dirs(items: Iterable[Path]) -> Iterator[Path]:

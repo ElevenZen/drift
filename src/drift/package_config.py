@@ -1596,7 +1596,15 @@ def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:
     pkg_name = package_dir.name
     config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     if not config_file.exists():
-        raise RuntimeError(f"Failed to find {PACKAGE_CONFIG_FILE_NAME} in .drift/ for '{pkg_name}' in render sandbox")
+        legacy_file = package_dir / PACKAGE_CONFIG_FILE_NAME
+        if legacy_file.exists():
+            logger.warning(
+                f"⚠️ [DEPRECATION] Package '{pkg_name}' in render/ contains legacy root '{PACKAGE_CONFIG_FILE_NAME}'. "
+                f"Please run 'drift repair' to migrate metadata into '{DRIFT_INTERNAL_DIR_NAME}/'."
+            )
+            config_file = legacy_file
+        else:
+            raise RuntimeError(f"Failed to find {PACKAGE_CONFIG_FILE_NAME} in .drift/ for '{pkg_name}' in render sandbox")
     try:
         return load_package_config_rendered(package_toml_path=config_file, package_name=pkg_name, package_dir=package_dir)
     except Exception as e:
@@ -1610,9 +1618,18 @@ def load_package_config_for_install(package_dir: Path) -> PackageConfig:
     pkg_name = package_dir.name
     install_config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     if not install_config_file.exists():
-        raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in .drift/ of install base for '{pkg_name}'.")
+        legacy_file = package_dir / PACKAGE_CONFIG_FILE_NAME
+        if legacy_file.exists():
+            logger.warning(
+                f"⚠️ [DEPRECATION] Package '{pkg_name}' in install/ contains legacy root '{PACKAGE_CONFIG_FILE_NAME}'. "
+                f"Please run 'drift repair' to migrate metadata into '{DRIFT_INTERNAL_DIR_NAME}/'."
+            )
+            install_config_file = legacy_file
+        else:
+            raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in .drift/ of install base for '{pkg_name}'.")
     try:
         return load_package_config_rendered(package_toml_path=install_config_file, package_name=pkg_name, package_dir=package_dir)
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from install base: {e}")
+
 

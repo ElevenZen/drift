@@ -148,6 +148,30 @@ class TestWorkspaceGc(unittest.TestCase):
         # Run execute_gc
         execute_gc(self.drift_root, dry_run=False, json_mode=False, no_hooks=True)
 
+    def test_gc_preserves_legacy_root_package_config_with_warning(self) -> None:
+        """Verifies that packages with legacy root drift_package.toml are not purged as zombies."""
+        from drift.constants import set_test_mode
+        pkg = "pkg_legacy"
+        (self.source_dir / pkg).mkdir(parents=True, exist_ok=True)
+        (self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        (self.render_dir / pkg).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / pkg / "file.txt").write_text("content", encoding="utf-8")
+
+        self.workspace_config.packages_enable[pkg] = True
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs(level="INFO") as cm:
+                result = run_primitive_9_purge_workspace_garbage(self.workspace_config)
+                self.assertEqual(result.status, "SUCCESS")
+                self.assertNotIn(pkg, result.purged_render_zombies)
+                self.assertTrue((self.render_dir / pkg).exists())
+                self.assertTrue(any("DEPRECATION" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
 
 if __name__ == "__main__":
     unittest.main()

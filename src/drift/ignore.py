@@ -8,6 +8,7 @@ from typing import List, Optional, Protocol, runtime_checkable, Sequence
 from .constants import (
     MANAGED_CONFIG_FILES,
     DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_STOW_IGNORE_PATTERNS,
@@ -31,7 +32,46 @@ class IgnoreHandler(Protocol):
         Returns:
             True if the path should be ignored, False otherwise.
         """
-        ...
+
+
+def _resolve_package_ignore_file(package_dir: Path, is_source: bool) -> Optional[Path]:
+    """Resolves the ignore configuration file path for a package directory."""
+    if is_source:
+        canonical_source = package_dir / DRIFT_IGNORE_FILE_NAME
+        if canonical_source.is_file():
+            return canonical_source
+        legacy_source = package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME
+        if legacy_source.is_file():
+            return legacy_source
+        return None
+
+    # For render sandbox / install state packages:
+    canonical_internal = package_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
+    if canonical_internal.is_file():
+        return canonical_internal
+
+    legacy_root = package_dir / DRIFT_IGNORE_FILE_NAME
+    if legacy_root.is_file():
+        logger.warning(
+            f"⚠️ [DEPRECATION] Package at '{package_dir}' contains legacy root ignore file '{DRIFT_IGNORE_FILE_NAME}'. "
+            f"Please run 'drift repair' to migrate metadata into '{DRIFT_INTERNAL_DIR_NAME}/'."
+        )
+        return legacy_root
+
+    return None
+
+
+def _validate_no_other_ignore_files(package_dir: Path, resolved_path: Optional[Path]) -> None:
+    """Validates that only the single resolved ignore file exists in the package."""
+    for name in DRIFT_IGNORE_FILE_NAME_LIST:
+        for path in package_dir.rglob(name):
+            if resolved_path is not None and path == resolved_path:
+                continue
+            raise ValueError(
+                f"Nested ignore files are not allowed. "
+                f"Found nested '{name}' inside subdirectory: "
+                f"{path.parent.relative_to(package_dir)}"
+            )
 
 
 class DriftIgnore(IgnoreHandler):
@@ -74,7 +114,8 @@ class DriftIgnore(IgnoreHandler):
         Args:
             package_dir: Directory path of the package (source, render sandbox, or install base).
             is_source: If True, loads .drift_ignore directly from package root (src/<pkg>/.drift_ignore).
-                If False, loads .drift_ignore from the internal control plane (.drift/.drift_ignore).
+                If False, loads .drift_ignore from the internal control plane (.drift/.drift_ignore)
+                with fallback to package root for backward compatibility.
 
         Returns:
             An instance of DriftIgnore with loaded patterns, or default Stow ignore patterns if missing.
@@ -85,28 +126,17 @@ class DriftIgnore(IgnoreHandler):
         if not package_dir.exists() or not package_dir.is_dir():
             return cls(None)
 
-        expected_parent = package_dir if is_source else (package_dir / DRIFT_INTERNAL_DIR_NAME)
-
-        # Proactively check for nested ignore files in subdirectories
-        for ignore_name in DRIFT_IGNORE_FILE_NAME_LIST:
-            for path in package_dir.rglob(ignore_name):
-                # Ensure the path is at the expected location (package root for source, .drift/ for render/install)
-                if path.parent != expected_parent:
-                    raise ValueError(
-                        f"Nested ignore files are not allowed. "
-                        f"Found nested '{ignore_name}' inside subdirectory: "
-                        f"{path.parent.relative_to(package_dir)}"
-                    )
-
-        ignore_path = expected_parent / DRIFT_IGNORE_FILE_NAME
-        if not ignore_path.exists() or not ignore_path.is_file():
+        ignore_path = _resolve_package_ignore_file(package_dir, is_source=is_source)
+        _validate_no_other_ignore_files(package_dir, resolved_path=ignore_path)
+        if not ignore_path:
             return cls(None)
-        patterns = []
+
         with ignore_path.open("r", encoding="utf-8") as f:
-            for line in f:
-                line_stripped = cls.strip_comments(line)
-                if line_stripped:
-                    patterns.append(line_stripped)
+            patterns = [
+                stripped
+                for line in f
+                if (stripped := cls.strip_comments(line))
+            ]
         return cls(patterns)
 
     @classmethod

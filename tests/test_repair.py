@@ -14,6 +14,9 @@ from drift.constants import (
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     set_test_mode,
@@ -33,6 +36,7 @@ from drift.workspace_check import (
     check_install_stow_ignore,
     check_core_dirs,
     check_engine_inputs,
+    check_package_metadata_structure,
     check_existing_workspace_status,
 )
 from drift.workspace_init import (
@@ -42,6 +46,7 @@ from drift.exceptions import ConfigError
 from drift.workspace_repair import (
     repair_drift_workspace,
     repair_workspace_config,
+    repair_package_metadata_structure,
 )
 from drift.workspace_config import (
     WorkspaceConfig,
@@ -610,6 +615,116 @@ DEFAULT = true
         self.assertTrue((self.drift_root / "custom_render" / ".git").is_dir())
         self.assertTrue((self.drift_root / "custom_install" / ".git").is_dir())
         self.assertTrue((self.drift_root / "custom_src").is_dir())
+
+
+class TestPackageMetadataStructureCheckAndRepair(unittest.TestCase):
+    """Tests for package metadata structure health check and automated migration in drift repair."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.drift_root = Path(self.temp_dir.name).resolve()
+        init_drift_workspace(self.drift_root)
+        self.ws_config = load_workspace_config(self.drift_root)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_check_good_when_metadata_in_dot_drift(self) -> None:
+        """Packages with metadata in .drift/ report ComponentStatus.GOOD."""
+        pkg_render = self.ws_config.render_path / "pkg1"
+        pkg_install = self.ws_config.install_path / "pkg1"
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("*.tmp\n", encoding="utf-8")
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        res = check_package_metadata_structure(self.drift_root, self.ws_config)
+        self.assertEqual(res.status, ComponentStatus.GOOD)
+
+    def test_check_broken_when_legacy_root_metadata_exists(self) -> None:
+        """Packages with root drift_package.toml or .drift_ignore report BROKEN."""
+        pkg_render = self.ws_config.render_path / "pkg_legacy"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        res = check_package_metadata_structure(self.drift_root, self.ws_config)
+        self.assertEqual(res.status, ComponentStatus.BROKEN)
+        self.assertIn("render/pkg_legacy (drift_package.toml)", res.details)
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertEqual(report.overall_status, ComponentStatus.BROKEN)
+
+    def test_check_broken_when_forbidden_local_config_exists(self) -> None:
+        """Packages with drift_package.local.toml in render/ or install/ report BROKEN."""
+        pkg_render = self.ws_config.render_path / "pkg_bad"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_LOCAL_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        res = check_package_metadata_structure(self.drift_root, self.ws_config)
+        self.assertEqual(res.status, ComponentStatus.BROKEN)
+        self.assertIn("Forbidden local configuration file", res.details)
+
+    def test_repair_migrates_legacy_metadata_and_commits(self) -> None:
+        """repair_drift_workspace moves root metadata to .drift/ and commits."""
+        pkg_render = self.ws_config.render_path / "pkg_legacy"
+        pkg_install = self.ws_config.install_path / "pkg_legacy"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        pkg_install.mkdir(parents=True, exist_ok=True)
+
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'pkg_legacy'\n", encoding="utf-8")
+        (pkg_render / DRIFT_IGNORE_FILE_NAME).write_text("*.tmp\n", encoding="utf-8")
+        (pkg_install / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'pkg_legacy'\n", encoding="utf-8")
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("Migrated legacy metadata 'render/pkg_legacy/drift_package.toml'" in a for a in actions))
+        self.assertTrue(any("Migrated legacy metadata 'render/pkg_legacy/.drift_ignore'" in a for a in actions))
+        self.assertTrue(any("Migrated legacy metadata 'install/pkg_legacy/drift_package.toml'" in a for a in actions))
+
+        # Check files migrated on disk
+        self.assertTrue((pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).is_file())
+        self.assertTrue((pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).is_file())
+        self.assertTrue((pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).is_file())
+        self.assertFalse((pkg_render / PACKAGE_CONFIG_FILE_NAME).exists())
+        self.assertFalse((pkg_render / DRIFT_IGNORE_FILE_NAME).exists())
+        self.assertFalse((pkg_install / PACKAGE_CONFIG_FILE_NAME).exists())
+
+        # Workspace health should now be GOOD
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertEqual(report.overall_status, ComponentStatus.GOOD)
+
+    def test_repair_dry_run_does_not_modify_files(self) -> None:
+        """Dry-run repair lists migrations without changing files on disk."""
+        pkg_render = self.ws_config.render_path / "pkg_legacy"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        actions = repair_drift_workspace(self.drift_root, dry_run=True)
+        self.assertTrue(any("Migrated legacy metadata 'render/pkg_legacy/drift_package.toml'" in a for a in actions))
+        self.assertTrue((pkg_render / PACKAGE_CONFIG_FILE_NAME).is_file())
+        self.assertFalse((pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
+
+    def test_repair_raises_on_destination_collision(self) -> None:
+        """Raises ConfigError if target .drift/ file already exists."""
+        pkg_render = self.ws_config.render_path / "pkg_legacy"
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            repair_drift_workspace(self.drift_root)
+        self.assertIn("already exists", str(ctx.exception))
+
+    def test_repair_raises_on_forbidden_local_config(self) -> None:
+        """Raises ConfigError if forbidden drift_package.local.toml exists in render/."""
+        pkg_render = self.ws_config.render_path / "pkg_legacy"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_LOCAL_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            repair_drift_workspace(self.drift_root)
+        self.assertIn("Forbidden local configuration file", str(ctx.exception))
 
 
 if __name__ == "__main__":

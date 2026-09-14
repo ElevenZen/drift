@@ -36,6 +36,8 @@ from drift.package_config import (
     PackageHooks,
     load_package_config_rendered,
     load_package_config_from_source_dir,
+    load_package_config_from_render_dir,
+    load_package_config_for_install,
     get_package_config_file_info,
     PackageConfigFileInfo,
 )
@@ -2093,5 +2095,75 @@ class TestPackageHooksConfiguredPaths(unittest.TestCase):
         })
 
 
+class TestLegacyPackageConfigFallback(unittest.TestCase):
+    """Tests backward-compatibility fallback for legacy root drift_package.toml in render/ and install/."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base_path = Path(self.temp_dir.name).resolve()
+        self.pkg_dir = self.base_path / "my_pkg"
+        self.pkg_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_load_from_render_dir_canonical_dot_drift(self) -> None:
+        """Loads canonical .drift/drift_package.toml without warnings."""
+        dot_drift = self.pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'my_pkg'\n", encoding="utf-8")
+
+        cfg = load_package_config_from_render_dir(self.pkg_dir)
+        self.assertEqual(cfg.name, "my_pkg")
+
+    def test_load_from_render_dir_legacy_root_fallback_with_warning(self) -> None:
+        """Loads legacy root drift_package.toml with deprecation warning."""
+        (self.pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'my_pkg'\n", encoding="utf-8")
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.package_config", level="WARNING") as cm:
+                cfg = load_package_config_from_render_dir(self.pkg_dir)
+                self.assertEqual(cfg.name, "my_pkg")
+                self.assertTrue(any("DEPRECATION" in msg and "render" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_load_from_render_dir_missing_raises(self) -> None:
+        """Raises RuntimeError when drift_package.toml is missing in both locations."""
+        with self.assertRaises(RuntimeError) as ctx:
+            load_package_config_from_render_dir(self.pkg_dir)
+        self.assertIn("Failed to find", str(ctx.exception))
+
+    def test_load_for_install_canonical_dot_drift(self) -> None:
+        """Loads canonical .drift/drift_package.toml without warnings."""
+        dot_drift = self.pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'my_pkg'\n", encoding="utf-8")
+
+        cfg = load_package_config_for_install(self.pkg_dir)
+        self.assertEqual(cfg.name, "my_pkg")
+
+    def test_load_for_install_legacy_root_fallback_with_warning(self) -> None:
+        """Loads legacy root drift_package.toml with deprecation warning."""
+        (self.pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname = 'my_pkg'\n", encoding="utf-8")
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.package_config", level="WARNING") as cm:
+                cfg = load_package_config_for_install(self.pkg_dir)
+                self.assertEqual(cfg.name, "my_pkg")
+                self.assertTrue(any("DEPRECATION" in msg and "install" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_load_for_install_missing_raises(self) -> None:
+        """Raises FileNotFoundError or RuntimeError when drift_package.toml is missing in both locations."""
+        with self.assertRaises((FileNotFoundError, RuntimeError)) as ctx:
+            load_package_config_for_install(self.pkg_dir)
+        self.assertIn("Missing required", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
+
