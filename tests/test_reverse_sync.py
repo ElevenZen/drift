@@ -882,6 +882,25 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue((pkg_install_dir / "plugins" / "file_to_tree" / "nested.txt").is_file())
         self.assertEqual((pkg_install_dir / "plugins" / "file_to_tree" / "nested.txt").read_text(encoding="utf-8"), "new nested content")
 
+    def test_execute_reverse_sync_fails_fast_when_workspace_structure_broken(self) -> None:
+        """Verifies execute_reverse_sync fails with ConfigError and hints 'drift repair' when workspace structure is broken."""
+        from drift.cli.actions import execute_reverse_sync
+        from drift.constants import PACKAGE_CONFIG_FILE_NAME
+        from drift.exceptions import ConfigError
+        from drift.workspace_init import init_drift_workspace
+
+        init_drift_workspace(self.drift_root, force=True)
+
+        # Put a legacy root metadata file in render/pkg_a
+        pkg_render = self.render_dir / "pkg_a"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            execute_reverse_sync(self.drift_root)
+        self.assertIn("drift repair", str(ctx.exception))
+        self.assertIn("Package Metadata Structure", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()

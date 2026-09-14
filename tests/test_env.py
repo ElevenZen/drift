@@ -666,6 +666,9 @@ pkg_cli = true
 
         self._setup_package_with_template("pkg_cli", f"VAL=${{{var_name}}}\n")
 
+        from drift.workspace_repair import repair_drift_workspace
+        repair_drift_workspace(self.drift_root)
+
         # Execute CLI render
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
             main(["-C", str(self.drift_root), "render", "pkg_cli"])

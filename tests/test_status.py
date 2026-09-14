@@ -165,5 +165,25 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(empty_res.format_text(), "")
         self.assertEqual(empty_res.overall_status, "CLEAN")
 
+    def test_execute_status_fails_fast_when_workspace_structure_broken(self) -> None:
+        """Verifies execute_status fails with ConfigError and hints 'drift repair' when workspace structure is broken."""
+        from drift.cli.actions import execute_status
+        from drift.constants import PACKAGE_CONFIG_FILE_NAME
+        from drift.exceptions import ConfigError
+        from drift.workspace_init import init_drift_workspace
+
+        init_drift_workspace(self.drift_root, force=True)
+
+        # Put a legacy root metadata file in render/pkg_a
+        pkg_render = self.render_dir / "pkg_a"
+        pkg_render.mkdir(parents=True, exist_ok=True)
+        (pkg_render / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+
+        with self.assertRaises(ConfigError) as ctx:
+            execute_status(self.drift_root)
+        self.assertIn("drift repair", str(ctx.exception))
+        self.assertIn("Package Metadata Structure", str(ctx.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

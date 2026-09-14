@@ -32,6 +32,7 @@ class IgnoreHandler(Protocol):
         Returns:
             True if the path should be ignored, False otherwise.
         """
+        return False
 
 
 def _resolve_package_ignore_file(package_dir: Path, is_source: bool) -> Optional[Path]:

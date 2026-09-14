@@ -145,6 +145,9 @@ class TestWorkspaceGc(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "drift_workspace.toml").write_text("[workspace]\n[packages.enable]\n", encoding="utf-8")
 
+        from drift.workspace_repair import repair_drift_workspace
+        repair_drift_workspace(self.drift_root)
+
         # Run execute_gc
         execute_gc(self.drift_root, dry_run=False, json_mode=False, no_hooks=True)
 
