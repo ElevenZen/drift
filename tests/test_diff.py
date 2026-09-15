@@ -6,7 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.workspace_diff import run_primitive_diff
+from drift.workspace_diff import run_primitive_15_workspace_diff
 
 # Disable interactive pagers during tests to prevent blocking and pop-up windows.
 os.environ["PAGER"] = "cat"
@@ -65,7 +65,7 @@ class TestDiff(unittest.TestCase):
         from drift.result_models import DiffType
         # 3. Run Diff A
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             self.assertIn("modified content", stdout.getvalue())
 
     def test_diff_system(self):
@@ -92,7 +92,7 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff B
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
             self.assertIn("drifted content", stdout.getvalue())
 
     def test_diff_pending(self):
@@ -119,7 +119,7 @@ class TestDiff(unittest.TestCase):
         
         # 3. Run Diff Δ
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             self.assertIn("new version content", stdout.getvalue())
 
     def test_diff_managed_config_files(self):
@@ -147,7 +147,7 @@ class TestDiff(unittest.TestCase):
 
         # 3. Diff A (Template Evolution) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
@@ -155,7 +155,7 @@ class TestDiff(unittest.TestCase):
 
         # 4. Diff Δ (Pending Delta) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
@@ -187,17 +187,17 @@ class TestDiff(unittest.TestCase):
 
         # 2. Diff Δ should be completely empty (no false positive deletion of .stow-local-ignore)
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertNotIn(".stow-local-ignore", out)
 
     def test_diff_enum_types(self):
-        """Verifies run_primitive_diff accepts DiffType enum members."""
+        """Verifies run_primitive_15_workspace_diff accepts DiffType enum members."""
         from drift.result_models import DiffType
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.SYSTEM)
 
     def test_invalid_diff_type_casting(self):
         """Verifies invalid diff_type strings fail with ValueError during cast."""
@@ -207,7 +207,7 @@ class TestDiff(unittest.TestCase):
 
     @patch("drift.workspace_diff.launch_side_by_side_editor")
     def test_diff_side_by_side_template_evolution(self, mock_launch: MagicMock) -> None:
-        """Verifies run_primitive_diff with side_by_side=True extracts HEAD and calls launch_side_by_side_editor."""
+        """Verifies run_primitive_15_workspace_diff with side_by_side=True extracts HEAD and calls launch_side_by_side_editor."""
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
@@ -233,7 +233,7 @@ class TestDiff(unittest.TestCase):
         mock_launch.side_effect = side_effect
 
         # 3. Run Diff A with side_by_side=True
-        run_primitive_diff(self.workspace_config, diff_type=DiffType.TEMPLATE, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.TEMPLATE, side_by_side=True)
         mock_launch.assert_called_once()
         self.assertEqual(len(captured_pairs), 1)
         left_content, right = captured_pairs[0]
@@ -242,7 +242,7 @@ class TestDiff(unittest.TestCase):
 
     @patch("drift.workspace_diff.launch_side_by_side_editor")
     def test_diff_side_by_side_pending_delta(self, mock_launch: MagicMock) -> None:
-        """Verifies run_primitive_diff with side_by_side=True pairs install and render files."""
+        """Verifies run_primitive_15_workspace_diff with side_by_side=True pairs install and render files."""
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
@@ -265,7 +265,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("content v2")
 
         # 3. Run Diff Δ with side_by_side=True
-        run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
         mock_launch.assert_called_once()
         pairs = mock_launch.call_args[0][0]
         self.assertEqual(len(pairs), 1)
@@ -274,7 +274,7 @@ class TestDiff(unittest.TestCase):
         self.assertEqual(right, self.render_dir / pkg / "file.txt")
 
     def test_diff_side_by_side_unset_editor_raises_error(self) -> None:
-        """Verifies run_primitive_diff with side_by_side=True raises RuntimeError if EDITOR is unset."""
+        """Verifies run_primitive_15_workspace_diff with side_by_side=True raises RuntimeError if EDITOR is unset."""
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
@@ -298,7 +298,7 @@ class TestDiff(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(RuntimeError) as ctx:
-                run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+                run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
             self.assertIn("Environment variable $VISUAL or $EDITOR is not set", str(ctx.exception))
 
 
@@ -334,7 +334,7 @@ class TestDiff(unittest.TestCase):
 
         # 4. Run Diff Δ
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
-            run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
             self.assertIn("v2", out)
             self.assertNotIn("#file.txt#", out)
@@ -372,7 +372,7 @@ class TestDiff(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("v2\n")
 
         # 4. Run Diff Δ with side_by_side=True
-        run_primitive_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
+        run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, side_by_side=True)
         mock_launch.assert_called_once()
         pairs = mock_launch.call_args[0][0]
         self.assertEqual(len(pairs), 1)

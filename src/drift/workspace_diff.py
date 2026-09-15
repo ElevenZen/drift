@@ -5,7 +5,7 @@ Architecture & Call Chain Overview
 ===============================================================================
 
 Layer 5: Primitive Entry Point
-    run_primitive_diff(workspace_config, package_names, diff_type, side_by_side, stat)
+    run_primitive_15_workspace_diff(workspace_config, package_names, diff_type, side_by_side, stat)
         State Synchronization:
             run_primitive_1_reverse_sync
             run_primitive_2_render_packages
@@ -37,7 +37,7 @@ Layers (ordered bottom-up by dependency):
         run_side_by_side_diff
         run_terminal_diff
     Layer 5: Public Primitive Entry Point
-        run_primitive_diff
+        run_primitive_15_workspace_diff
 ===============================================================================
 """
 
@@ -316,7 +316,7 @@ def run_terminal_diff(
 # Layer 5: Public Primitive Entry Point
 # =====================================================================
 
-def run_primitive_diff(
+def run_primitive_15_workspace_diff(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
     diff_type: DiffType = DiffType.PENDING,

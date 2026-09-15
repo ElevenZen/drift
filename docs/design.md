@@ -286,7 +286,7 @@ Compares configuration layers across templates, sandbox compilations, state data
     *   **Layer 2 (Diff Pair Collectors)**: `collect_repo_diff_pairs` and `collect_pending_delta_pairs` extract side-by-side file pairs (generating synthetic empty temp files for added/deleted items).
     *   **Layer 3 (Terminal Git Diff Runners)**: `run_repo_diff` and `run_pending_delta_diff` invoke `git diff --no-index` with `exclude_patterns = DEFAULT_DIFF_EXCLUDE_PATTERNS`.
     *   **Layer 4 (Diff Strategy Dispatchers)**: `run_side_by_side_diff` and `run_terminal_diff` route execution based on `-y` / `--side-by-side`.
-    *   **Layer 5 (Primitive Entry Point)**: `run_primitive_diff` coordinates state synchronization and dispatches to visual or terminal mode.
+    *   **Layer 5 (Primitive Entry Point)**: `run_primitive_15_workspace_diff` coordinates state synchronization and dispatches to visual or terminal mode.
 3.  **Interactive Side-by-Side Visual Diffing (`-y` / `--side-by-side`)**:
     *   Automatically probes user environment (`$VISUAL`, `$EDITOR`, Neovim, Vim, VS Code, GNU Emacs).
     *   Formulates editor-specific invocation flags (e.g. `nvim -p -d fileA fileB`, `vim -p -d fileA fileB`, `code --wait --diff fileA fileB`, `emacs -nw --eval '(ediff-files ...)'`) across multi-tab split viewports.

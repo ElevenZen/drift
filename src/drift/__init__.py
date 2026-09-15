@@ -191,7 +191,7 @@ from .workspace_status import (
     run_primitive_status,
 )
 from .workspace_diff import (
-    run_primitive_diff,
+    run_primitive_15_workspace_diff,
 )
 from .editor_utils import (
     get_configured_editor,

@@ -394,8 +394,8 @@ def execute_diff(
         print(status_res.to_diff_result(diff_type=diff_type_enum).to_json())
         return
 
-    from ..workspace_diff import run_primitive_diff
-    run_primitive_diff(workspace_config, package_names=package_names, diff_type=diff_type_enum, side_by_side=side_by_side, stat=stat)
+    from ..workspace_diff import run_primitive_15_workspace_diff
+    run_primitive_15_workspace_diff(workspace_config, package_names=package_names, diff_type=diff_type_enum, side_by_side=side_by_side, stat=stat)
 
 
 def execute_add(

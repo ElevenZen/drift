@@ -45,7 +45,7 @@ This document provides a concise, high-density architecture reference, primitive
 | **P12** | `drift health` | [`src/drift/health_check.py`](../src/drift/health_check.py) | [`run_primitive_12_package_health_checks`](../src/drift/health_check.py#L125) | `HealthResult` |
 | **P13** | `drift clone` | [`src/drift/clone_repo.py`](../src/drift/clone_repo.py) | [`run_primitive_13_clone_and_bootstrap`](../src/drift/clone_repo.py#L85) | `CloneResult` |
 | **P14** | `drift repair` | [`src/drift/repair.py`](../src/drift/repair.py) | [`run_primitive_14_repair_workspace`](../src/drift/repair.py#L180) | `RepairResult` |
-| **P15** | `drift diff` | [`src/drift/workspace_diff.py`](../src/drift/workspace_diff.py) | [`run_primitive_diff`](../src/drift/workspace_diff.py#L280) | `DiffResult` |
+| **P15** | `drift diff` | [`src/drift/workspace_diff.py`](../src/drift/workspace_diff.py) | [`run_primitive_15_workspace_diff`](../src/drift/workspace_diff.py#L319) | `DiffResult` |
 | **P16** | `drift status` | [`src/drift/workspace_status.py`](../src/drift/workspace_status.py) | [`run_primitive_16_workspace_status`](../src/drift/workspace_status.py#L185) | `StatusResult` |
 
 ---
