@@ -421,7 +421,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         # 2. Setup package with custom mustache engine whose input is a template
         pkg_dir = self.src_dir / "pkg_hook_chain"
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_dir / "scripts"
+        scripts_dir = pkg_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         # Template input for custom engine with shebang
@@ -443,7 +443,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
             enable_render = true
 
             [hooks]
-            pre_source = "scripts/setup.sh"
+            pre_source = "drift_hooks/setup.sh"
 
             [render.custom]
             input_file = "hook_data.envst.txt"

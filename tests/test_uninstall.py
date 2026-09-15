@@ -250,7 +250,7 @@ class TestUninstall(unittest.TestCase):
         pkg = "pkg_hooks"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         system_target = self.system_target_dir / "app.conf"
@@ -282,8 +282,8 @@ fi
         install_method = "copy"
 
         [hooks]
-        pre_uninstall = "scripts/pre_uninstall.sh"
-        post_uninstall = "scripts/post_uninstall.sh"
+        pre_uninstall = "drift_hooks/pre_uninstall.sh"
+        post_uninstall = "drift_hooks/post_uninstall.sh"
         """, encoding="utf-8")
 
         state_file = self.install_dir / "state.toml"
@@ -328,7 +328,7 @@ fi
         install_method = "copy"
 
         [hooks]
-        pre_uninstall = "scripts/non_existent.sh"
+        pre_uninstall = "drift_hooks/non_existent.sh"
         """, encoding="utf-8")
 
         system_target = self.system_target_dir / "sample.txt"
@@ -356,7 +356,7 @@ fi
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "failing.sh"
@@ -369,7 +369,7 @@ fi
         install_method = "copy"
 
         [hooks]
-        pre_uninstall = "scripts/failing.sh"
+        pre_uninstall = "drift_hooks/failing.sh"
         """, encoding="utf-8")
 
         system_target = self.system_target_dir / "sample.txt"

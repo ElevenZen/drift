@@ -6,7 +6,11 @@ from pathlib import Path
 from drift.workspace_config import WorkspaceConfig
 from drift.lifecycle_hooks import HookExecFlags
 from drift.add_resource import run_primitive_11_add_resources
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+)
 
 class TestAddResource(unittest.TestCase):
     def setUp(self):
@@ -221,7 +225,7 @@ class TestAddResource(unittest.TestCase):
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / "drift_hooks"
         scripts_dir.mkdir()
         hook_script = scripts_dir / "pre_add.sh"
         hook_script.write_text(
@@ -231,7 +235,7 @@ class TestAddResource(unittest.TestCase):
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.sh"\n'
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="drift_hooks/pre_add.sh"\n'
         )
 
         target_file = self.system_target_dir / "imported_file.txt"
@@ -240,12 +244,12 @@ class TestAddResource(unittest.TestCase):
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # Hook must have run and generated add_hook_out.txt
-        hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
+        hook_out = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "STATIC_HOOK_RAN")
 
-        # Copied static hook must exist in render/
-        rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
+        # Copied static hook must exist in render/.drift/hooks/
+        rendered_hook = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_add.sh"
         self.assertTrue(rendered_hook.is_file())
         self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text(encoding="utf-8"))
 
@@ -258,7 +262,7 @@ class TestAddResource(unittest.TestCase):
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / "drift_hooks"
         scripts_dir.mkdir()
         hook_script = scripts_dir / "pre_add.envst.sh"
         hook_script.write_text(
@@ -269,7 +273,7 @@ class TestAddResource(unittest.TestCase):
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/pre_add.envst.sh"\n',
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="drift_hooks/pre_add.sh"\n',
             encoding="utf-8"
         )
 
@@ -279,12 +283,12 @@ class TestAddResource(unittest.TestCase):
         run_primitive_11_add_resources(self.workspace_config, pkg, [target_file])
 
         # Hook must have run and generated add_hook_out.txt
-        hook_out = self.render_dir / pkg / "scripts" / "add_hook_out.txt"
+        hook_out = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "add_hook_out.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), f"ADD_HOOK_RAN_{pkg}")
 
-        # Rendered hook must exist in render/
-        rendered_hook = self.render_dir / pkg / "scripts" / "pre_add.sh"
+        # Rendered hook must exist in render/.drift/hooks/
+        rendered_hook = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_add.sh"
         self.assertTrue(rendered_hook.is_file())
         self.assertIn(f"ADD_HOOK_RAN_{pkg}", rendered_hook.read_text(encoding="utf-8"))
 
@@ -294,7 +298,7 @@ class TestAddResource(unittest.TestCase):
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / "drift_hooks"
         scripts_dir.mkdir()
         hook_script = scripts_dir / "failing.sh"
         hook_script.write_text(
@@ -305,7 +309,7 @@ class TestAddResource(unittest.TestCase):
         hook_script.chmod(0o755)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="scripts/failing.sh"\n'
+            f'[package]\nname="{pkg}"\n\n[hooks]\npre_source="drift_hooks/failing.sh"\n'
         )
 
         target_file = self.system_target_dir / "imported_file.txt"

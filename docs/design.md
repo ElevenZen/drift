@@ -687,11 +687,19 @@ fully_controlled_dirs = [
 # ---------------------------------------------------------------------
 # Lifecycle Hooks
 # ---------------------------------------------------------------------
-# Dedicated Lifecycle Directory (`drift_hooks/`):
-# Hook scripts placed in `src/<pkg>/drift_hooks/` (e.g. `drift_hooks/pre-install.bash`)
-# compile into `render/<pkg>/.drift/hooks/` and stage into `install/<pkg>/.drift/hooks/`.
-# Because `.drift/` is an internal sandbox directory, these scripts are strictly isolated
-# from target host deployment and never deployed or symlinked.
+# Strict Lifecycle Directory Invariant (`drift_hooks/`):
+# All package-internal hook scripts and their auxiliary dependencies MUST reside within `src/<pkg>/drift_hooks/`
+# (e.g. `drift_hooks/pre-install.bash`, `drift_hooks/lib/helper.sh`). Any relative hook path outside `drift_hooks/`
+# is rejected with a ConfigError.
+#
+# Hook files compile into `render/<pkg>/.drift/hooks/` and stage into `install/<pkg>/.drift/hooks/`.
+# Because `.drift/` is an internal sandbox directory, these scripts and dependencies are strictly isolated
+# from target host deployment and never deployed or symlinked to the host target.
+#
+# Deploying Hook Files or Sharing Dependencies:
+# - If a hook script or helper file also needs to be deployed to the host (e.g. a tool under `bin/`), create a
+#   symlink inside `drift_hooks/` pointing to the source directory file (e.g. `ln -s ../bin/my_tool src/<pkg>/drift_hooks/my_tool`).
+# - If sharing hook scripts across packages, create a symlink inside `drift_hooks/` pointing to the shared script.
 #
 # Working Directory (`cwd`) Semantics:
 # All lifecycle hooks always execute with `cwd = hook_path.parent` (the directory containing

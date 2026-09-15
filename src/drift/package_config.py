@@ -437,11 +437,11 @@ class PackageHooks:
             norm_val = normalize_hook_value(raw_val)
             if norm_val is None:
                 return None, None
-            p = norm_val
-            if p.is_absolute():
-                p_res = p.resolve()
+
+            if norm_val.is_absolute():
+                p_res = norm_val.resolve()
                 if package_src_dir is not None and is_relative_to(p_res, package_src_dir):
-                    rel = p_res.relative_to(package_src_dir)
+                    norm_val = p_res.relative_to(package_src_dir)
                 else:
                     return p_res, None
             else:
@@ -450,16 +450,19 @@ class PackageHooks:
                     raise ConfigError(
                         f"base_dir or workspace_config must be provided when constructing PackageHooks{name_str}."
                     )
-                rel = Path(os.path.normpath(str(norm_val)))
 
+            norm_val = Path(os.path.normpath(str(norm_val)))
+            if not is_relative_to(norm_val, Path(DRIFT_HOOKS_DIR_NAME)):
+                name_str = f" for package '{package_name}'" if package_name else ""
+                raise ConfigError(
+                    f"Lifecycle hook '{hook_name}' path '{raw_val}'{name_str} must be located within '{DRIFT_HOOKS_DIR_NAME}/' directory. "
+                    f"If sharing hooks across packages, create a symlink inside '{DRIFT_HOOKS_DIR_NAME}/'."
+                )
+
+            sub_rel = norm_val.relative_to(DRIFT_HOOKS_DIR_NAME)
             stage_base = hook_base_map[hook_name]
-            if is_relative_to(rel, Path(DRIFT_HOOKS_DIR_NAME)):
-                sub_rel = rel.relative_to(DRIFT_HOOKS_DIR_NAME)
-                canonical_path = (stage_base / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / sub_rel).resolve()
-            else:
-                canonical_path = (stage_base / rel).resolve()
-
-            return canonical_path, rel
+            canonical_path = (stage_base / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / sub_rel).resolve()
+            return canonical_path, norm_val
 
         proc_results = {h: _process_hook(h) for h in LIFECYCLE_HOOK_NAMES}
         abs_hooks = {h: res[0] for h, res in proc_results.items()}
@@ -976,6 +979,13 @@ class PackageConfig:
             raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
         if self.source_directory.is_absolute():
             raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
+        # Note: We validate using os.path.normpath rather than Path.resolve().
+        # On macOS (APFS firmlink architecture), calling .resolve() dereferences standard
+        # root paths like /home or /tmp into /System/Volumes/Data/home or /private/tmp,
+        # which mutates path prefixes unexpectedly and breaks prefix consistency.
+        norm_src = os.path.normpath(str(self.source_directory))
+        if norm_src == ".." or norm_src.startswith(".." + os.sep) or norm_src.startswith("../"):
+            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root.")
         if not isinstance(self.hooks, PackageHooks):
             raise ConfigError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
         self.hooks.validate(self.name)
@@ -1031,27 +1041,10 @@ class PackageConfig:
         """
         Returns the path of the subfolder to render within package_dir.
         The result is always a subdirectory of package_dir, and cannot escape it.
-
-        Raises:
-            ConfigError: If source_directory is absolute or escapes package_dir.
         """
         if not self.source_directory or self.source_directory == Path(".") or str(self.source_directory) in (".", ""):
             return package_dir
-        rel = self.source_directory
-        if rel.is_absolute():
-            raise ConfigError(
-                f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path, not absolute."
-            )
-        # Note: We validate using os.path.normpath rather than Path.resolve().
-        # On macOS (APFS firmlink architecture), calling .resolve() dereferences standard
-        # root paths like /home or /tmp into /System/Volumes/Data/home or /private/tmp,
-        # which mutates path prefixes unexpectedly and breaks prefix consistency.
-        norm_rel = os.path.normpath(str(rel))
-        if norm_rel == ".." or norm_rel.startswith(".." + os.sep) or norm_rel.startswith("../"):
-            raise ConfigError(
-                f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root '{package_dir}'."
-            )
-        return package_dir / rel
+        return package_dir / self.source_directory
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         if sys.platform == "win32"and self.target_directory_windows is not None:
@@ -1275,7 +1268,8 @@ class PackageConfig:
         if src_dir_val is not None:
             if not isinstance(src_dir_val, (str, Path)):
                 raise ConfigError(f"source_directory must be a string for package '{name}'.")
-            source_dir = Path(str(src_dir_val).strip())
+            raw_str = str(src_dir_val).strip()
+            source_dir = Path(raw_str) if raw_str and raw_str != "." else Path(".")
         else:
             source_dir = Path(".")
 

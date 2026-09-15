@@ -15,6 +15,9 @@ from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     INTERNAL_RENDER_COMMAND,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
 from drift.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_engine_config import RenderEngineRegistry
@@ -1325,9 +1328,8 @@ class TestRenderPackage(unittest.TestCase):
         """Verifies that pre_source hook executes in src/pkg before rendering and can dynamically generate source templates."""
         pkg_dir = self.drift_root / "src" / "pkg_dynamic"
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_dir / "scripts"
+        scripts_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir()
-
         hook_script = scripts_dir / "gen_dynamic.sh"
         hook_script.write_text(
             "#!/bin/bash\n"
@@ -1341,7 +1343,7 @@ class TestRenderPackage(unittest.TestCase):
             "[package]\n"
             "name = \"pkg_dynamic\"\n\n"
             "[hooks]\n"
-            "pre_source = \"scripts/gen_dynamic.sh\"\n",
+            "pre_source = \"drift_hooks/gen_dynamic.sh\"\n",
             encoding="utf-8"
         )
 
@@ -1365,7 +1367,7 @@ class TestRenderPackage(unittest.TestCase):
         """Verifies that an error in pre_source hook is not suppressed and aborts rendering."""
         pkg_dir = self.drift_root / "src" / "pkg_failing_hook"
         pkg_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_dir / "scripts"
+        scripts_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir()
 
         hook_script = scripts_dir / "failing.sh"
@@ -1382,7 +1384,7 @@ class TestRenderPackage(unittest.TestCase):
             "[package]\n"
             "name = \"pkg_failing_hook\"\n\n"
             "[hooks]\n"
-            "pre_source = \"scripts/failing.sh\"\n",
+            "pre_source = \"drift_hooks/failing.sh\"\n",
             encoding="utf-8"
         )
 
@@ -1546,7 +1548,7 @@ class TestRenderPackage(unittest.TestCase):
         # Setup pkg_static_hook with a static pre_source hook
         pkg_src_dir = self.drift_root / "src" / "pkg_static_hook"
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
@@ -1555,7 +1557,7 @@ class TestRenderPackage(unittest.TestCase):
         install_method = "copy"
 
         [hooks]
-        pre_source = "scripts/generate_static.sh"
+        pre_source = "drift_hooks/generate_static.sh"
         """, encoding="utf-8")
 
         hook_script = scripts_dir / "generate_static.sh"
@@ -1569,12 +1571,12 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
             package_name="pkg_static_hook",
         )
 
-        # 1. Copied script should exist in render/pkg_static_hook/scripts/generate_static.sh
-        copied_hook = self.drift_root / "render" / "pkg_static_hook" / "scripts" / "generate_static.sh"
+        # 1. Copied script should exist in render/pkg_static_hook/.drift/hooks/generate_static.sh
+        copied_hook = self.drift_root / "render" / "pkg_static_hook" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "generate_static.sh"
         self.assertTrue(copied_hook.is_file())
         self.assertIn("STATIC_PRE_SOURCE_RAN", copied_hook.read_text(encoding="utf-8"))
 
-        # 2. Output file from script execution should exist in render/pkg_static_hook/scripts (proving cwd was hook_path.parent)
+        # 2. Output file from script execution should exist in render/pkg_static_hook/.drift/hooks (proving cwd was hook_path.parent)
         created_file = copied_hook.parent / "generated_static_file.txt"
         self.assertTrue(created_file.is_file())
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "STATIC_PRE_SOURCE_RAN")
@@ -1608,7 +1610,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         # Setup pkg_hook with a templated pre_source hook
         pkg_src_dir = self.drift_root / "src" / "pkg_hook"
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -1617,7 +1619,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         install_method = "copy"
 
         [hooks]
-        pre_source = "scripts/generate.envst.sh"
+        pre_source = "drift_hooks/generate.sh"
         """, encoding="utf-8")
 
         hook_script = scripts_dir / "generate.envst.sh"
@@ -1631,12 +1633,12 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             package_name="pkg_hook",
         )
 
-        # 1. Rendered script should exist in render/pkg_hook/scripts/generate.sh
-        rendered_hook = self.drift_root / "render" / "pkg_hook" / "scripts" / "generate.sh"
+        # 1. Rendered script should exist in render/pkg_hook/.drift/hooks/generate.sh
+        rendered_hook = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "generate.sh"
         self.assertTrue(rendered_hook.is_file())
         self.assertIn("CREATED_BY_pkg_hook", rendered_hook.read_text(encoding="utf-8"))
 
-        # 2. Output file from script execution should exist in render/pkg_hook/scripts (proving cwd was hook_path.parent)
+        # 2. Output file from script execution should exist in render/pkg_hook/.drift/hooks (proving cwd was hook_path.parent)
         created_file = rendered_hook.parent / "generated_file.txt"
         self.assertTrue(created_file.is_file())
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "CREATED_BY_pkg_hook")
@@ -1767,7 +1769,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         pkg_src_dir = self.drift_root / "src" / "pkg_hooks_bypass"
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
@@ -1776,8 +1778,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         install_method = "copy"
 
         [hooks]
-        pre_source = "scripts/fail_pre.sh"
-        post_render = "scripts/fail_post.sh"
+        pre_source = "drift_hooks/fail_pre.sh"
+        post_render = "drift_hooks/fail_post.sh"
         """, encoding="utf-8")
 
         # Create failing scripts that would fail if executed
@@ -1875,9 +1877,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
             render_engine_configs=RenderEngineRegistry({
                 "envsubst": RenderEngineConfig(
                     name="envsubst",
-                    input_file=Path("env.sh"),
                     suffix="envst",
-                    render_command="bash -c 'source %i && envsubst < %s'"
+                    render_command=INTERNAL_RENDER_COMMAND,
                 )
             })
         )

@@ -127,12 +127,6 @@ def render_or_copy_file(
 
     if engine:
         stripped_relative_path = engine.strip_suffix(rel_path.as_posix())
-        _validate_not_driftignore_target(
-            file_path=file_path,
-            target_rel_path=stripped_relative_path,
-            package_name=pkg_config.name,
-            is_template=True,
-        )
         dest_path = dest_dir / stripped_relative_path
         logger.info(f"🎨 Rendering: {rel_path} ({engine.name})")
         logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
@@ -145,12 +139,6 @@ def render_or_copy_file(
         dest_rel = stripped_relative_path
         is_rendered = True
     else:
-        _validate_not_driftignore_target(
-            file_path=file_path,
-            target_rel_path=rel_path.as_posix(),
-            package_name=pkg_config.name,
-            is_template=False,
-        )
         dest_path = dest_dir / rel_path
         logger.info(f"📄 Copying: {rel_path}")
         logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
@@ -158,14 +146,6 @@ def render_or_copy_file(
         atomic_copy_file(file_path, dest_path)
         dest_rel = rel_path.as_posix()
         is_rendered = False
-
-    # Ensure hook permissions on POSIX for declared lifecycle hooks
-    ensure_rendered_file_hook_permissions(
-        src_path=file_path,
-        dest_path=dest_path,
-        rel_path=Path(dest_rel),
-        pkg_config=pkg_config,
-    )
 
     return (dest_rel, is_rendered)
 
@@ -177,10 +157,12 @@ def render_package_file_entry(
     drift_root: Path,
     pkg_config: PackageConfig,
     render_engines: RenderEngineRegistry,
+    skip_drift_hooks: bool = False,
 ) -> Optional[Tuple[Path, bool]]:
-    """Renders or copies a package file entry, routing drift_hooks/ files into the .drift/hooks/ sandbox.
+    """Renders or copies a package file entry.
 
-    Filters out package config files, .drift_ignore, and unmapped hidden files.
+    Filters out package config files, .drift_ignore, unmapped hidden files,
+    and optionally drift_hooks/ when rendering the payload pass.
     Returns (output_subpath, was_rendered) where output_subpath is relative to dest_dir,
     or None if the file should be skipped.
     """
@@ -200,38 +182,83 @@ def render_package_file_entry(
 
     # 3. Handle root .drift_ignore (already handled by handle_driftignore_file) or reject nested ignore files
     if rel_path.name in DRIFT_IGNORE_FILE_NAME_LIST:
-        if file_path.parent != src_dir:
-            raise ValueError(
-                f"Ignore config '{DRIFT_IGNORE_FILE_NAME}' must be located at the root of the package directory."
-            )
         return None
 
-    # 4. Route drift_hooks/ into .drift/hooks/
-    if is_relative_to(rel_path, Path(DRIFT_HOOKS_DIR_NAME)):
-        sub_rel = rel_path.relative_to(DRIFT_HOOKS_DIR_NAME)
-        hook_src_dir = src_dir / DRIFT_HOOKS_DIR_NAME
-        hook_dest_dir = dest_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-        dest_rel_str, was_rendered = render_or_copy_file(
-            rel_path=sub_rel,
-            src_dir=hook_src_dir,
-            dest_dir=hook_dest_dir,
-            drift_root=drift_root,
-            pkg_config=pkg_config,
-            render_engines=render_engines,
-        )
-        output_subpath = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / dest_rel_str
-    else:
-        dest_rel_str, was_rendered = render_or_copy_file(
-            rel_path=rel_path,
+    # 4. Skip drift_hooks/ if requested (e.g. during payload rendering pass)
+    # This flag is for allowing 'drift_hooks/drift_hooks' directory.
+    if skip_drift_hooks and is_relative_to(rel_path, Path(DRIFT_HOOKS_DIR_NAME)):
+        return None
+
+    dest_rel_str, was_rendered = render_or_copy_file(
+        rel_path=rel_path,
+        src_dir=src_dir,
+        dest_dir=dest_dir,
+        drift_root=drift_root,
+        pkg_config=pkg_config,
+        render_engines=render_engines,
+    )
+
+    _validate_not_driftignore_target(
+        file_path=file_path,
+        target_rel_path=dest_rel_str,
+        package_name=pkg_config.name,
+        is_template=was_rendered,
+    )
+
+    # Ensure hook permissions on POSIX for declared lifecycle hooks
+    ensure_rendered_file_hook_permissions(
+        src_path=file_path,
+        dest_path=dest_dir / dest_rel_str,
+        rel_path=Path(dest_rel_str),
+        pkg_config=pkg_config,
+    )
+
+    return Path(dest_rel_str), was_rendered
+
+
+def render_subfolder_entries(
+    src_dir: Path,
+    dest_dir: Path,
+    drift_root: Path,
+    pkg_config: PackageConfig,
+    render_engines: RenderEngineRegistry,
+    written_destinations: Optional[Dict[str, Path]] = None,
+    rendered_files: Optional[List[str]] = None,
+    copied_files: Optional[List[str]] = None,
+    dest_prefix: Path = Path("."),
+    skip_drift_hooks: bool = False,
+) -> None:
+    """Renders or copies all files in src_dir into dest_dir, tracking collisions and file manifests."""
+    from .folder_diff import list_folder_paths
+
+    written = written_destinations if written_destinations is not None else {}
+    files = list_folder_paths(src_dir, resolve_symlinks=True)
+    for file in files:
+        res = render_package_file_entry(
+            rel_path=file,
             src_dir=src_dir,
             dest_dir=dest_dir,
             drift_root=drift_root,
             pkg_config=pkg_config,
             render_engines=render_engines,
+            skip_drift_hooks=skip_drift_hooks,
         )
-        output_subpath = Path(dest_rel_str)
+        if res is None:
+            continue
 
-    return output_subpath, was_rendered
+        output_subpath, was_rendered = res
+        dest_key = (dest_prefix / output_subpath).as_posix() if dest_prefix != Path(".") else output_subpath.as_posix()
+        if dest_key in written:
+            prev_file = written[dest_key]
+            raise RenderCollisionError(
+                f"Multiple source files in package '{pkg_config.name}' render to the same destination path '{dest_key}': "
+                f"'{prev_file}' and '{src_dir / file}'."
+            )
+        written[dest_key] = src_dir / file
+        if rendered_files is not None and was_rendered:
+            rendered_files.append(dest_key)
+        elif copied_files is not None and not was_rendered:
+            copied_files.append(dest_key)
 
 
 def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
@@ -273,7 +300,6 @@ def render_package_files(
     Package-Level Env should be loaded by the caller of this function.
     """
     from .ignore import DriftIgnore
-    from .folder_diff import list_folder_paths
     package_name = package_dir.name
 
     # Trigger pre_source hook before reading / processing source files
@@ -295,36 +321,40 @@ def render_package_files(
     if not src_dir_to_render.exists() or not src_dir_to_render.is_dir():
         raise FileNotFoundError(f"Package '{package_name}' source directory not found: '{src_dir_to_render}'")
 
-    # Use list_folder_paths to walk every file in src_dir_to_render, resolving symlinks to directories
-    all_files = list_folder_paths(src_dir_to_render, resolve_symlinks=True)
-
     rendered_files: List[str] = []
     copied_files: List[str] = []
     written_destinations: Dict[str, Path] = {}
 
-    for file in all_files:
-        res = render_package_file_entry(
-            rel_path=file,
-            src_dir=src_dir_to_render,
-            dest_dir=render_pkg_dir,
+    # Pass 1: Render deployable payload from src_dir_to_render into render_pkg_dir
+    render_subfolder_entries(
+        src_dir=src_dir_to_render,
+        dest_dir=render_pkg_dir,
+        drift_root=workspace_config.drift_root,
+        pkg_config=pkg_config,
+        render_engines=render_engines,
+        written_destinations=written_destinations,
+        rendered_files=rendered_files,
+        copied_files=copied_files,
+        skip_drift_hooks=True,
+    )
+
+    # Pass 2: Render control plane lifecycle hooks from package_dir/drift_hooks into render_pkg_dir/.drift/hooks
+    hooks_src_dir = package_dir / DRIFT_HOOKS_DIR_NAME
+    if hooks_src_dir.is_dir():
+        hook_dest_dir = render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hook_dest_prefix = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        render_subfolder_entries(
+            src_dir=hooks_src_dir,
+            dest_dir=hook_dest_dir,
             drift_root=workspace_config.drift_root,
             pkg_config=pkg_config,
             render_engines=render_engines,
+            written_destinations=written_destinations,
+            rendered_files=rendered_files,
+            copied_files=copied_files,
+            dest_prefix=hook_dest_prefix,
+            skip_drift_hooks=False,
         )
-        if res is not None:
-            output_subpath, was_rendered = res
-            dest_key = output_subpath.as_posix()
-            if dest_key in written_destinations:
-                prev_file = written_destinations[dest_key]
-                raise RenderCollisionError(
-                    f"Multiple source files in package '{package_name}' render to the same destination path '{dest_key}': "
-                    f"'{prev_file}' and '{file}'."
-                )
-            written_destinations[dest_key] = file
-            if was_rendered:
-                rendered_files.append(dest_key)
-            else:
-                copied_files.append(dest_key)
 
     # Trigger post_render hook
     pkg_config.hooks.trigger_post_render(

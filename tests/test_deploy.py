@@ -245,7 +245,7 @@ target_directory = "{self.system_target_dir}"
 
         # 2. Add a failing post_update hook script and set rollback_on_failure = false
         pkg_dir = self.source_dir / "pkg_a"
-        scripts_dir = pkg_dir / "scripts"
+        scripts_dir = pkg_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         hook_file = scripts_dir / "post_update.sh"
         hook_file.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -258,7 +258,7 @@ target_directory = "{self.system_target_dir}"
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        post_update = "scripts/post_update.sh"
+        post_update = "drift_hooks/post_update.sh"
         rollback_on_failure = false
         """, encoding="utf-8")
 
@@ -298,7 +298,7 @@ target_directory = "{self.system_target_dir}"
 
         # 2. Add a failing post_update hook script with default rollback_on_failure = true
         pkg_dir = self.source_dir / "pkg_a"
-        scripts_dir = pkg_dir / "scripts"
+        scripts_dir = pkg_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
         hook_file = scripts_dir / "post_update.sh"
         hook_file.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -311,7 +311,7 @@ target_directory = "{self.system_target_dir}"
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        post_update = "scripts/post_update.sh"
+        post_update = "drift_hooks/post_update.sh"
         rollback_on_failure = true
         """, encoding="utf-8")
 
@@ -401,7 +401,9 @@ target_directory = "{self.system_target_dir}"
     def test_deploy_pipeline_redeploys_on_hook_modification(self) -> None:
         """Verifies that modifying a lifecycle hook script triggers redeployment even if deployable files are unchanged."""
         # 1. Setup hook script and configure it
-        hook_file = self.pkg_dir / "post_install.sh"
+        scripts_dir = self.pkg_dir / "drift_hooks"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        hook_file = scripts_dir / "post_install.sh"
         marker_file = self.drift_root / "hook_executed.txt"
         hook_file.write_text(f"#!/bin/sh\necho 'v1' > '{marker_file}'\n", encoding="utf-8")
         hook_file.chmod(0o755)
@@ -413,8 +415,8 @@ target_directory = "{self.system_target_dir}"
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        post_install = "post_install.sh"
-        post_update = "post_install.sh"
+        post_install = "drift_hooks/post_install.sh"
+        post_update = "drift_hooks/post_install.sh"
         """, encoding="utf-8")
 
         # Initial deploy: executes v1

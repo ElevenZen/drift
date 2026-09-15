@@ -246,17 +246,25 @@ post_install = "drift_hooks/post_install.sh"
         self.assertFalse((self.target_dir / "post_install.sh").exists())
 
     def test_backward_compatibility_non_drift_hooks_scripts(self) -> None:
-        """Verifies scripts outside drift_hooks/ (e.g. payload scripts in bin/) render and deploy normally."""
+        """Verifies scripts in payload (e.g. bin/) render and deploy normally, and can be hooked via symlink."""
         pkg_src = self.src_dir / "cli_tool"
         pkg_src.mkdir(parents=True)
         (pkg_src / "bin").mkdir(parents=True)
-        (pkg_src / "bin" / "my_cli").write_text("#!/bin/sh\necho 'cli running'\n", encoding="utf-8")
+        cli_script = pkg_src / "bin" / "my_cli"
+        cli_script.write_text("#!/bin/sh\necho 'cli running'\n", encoding="utf-8")
+        cli_script.chmod(0o755)
+
+        # Create symlink inside drift_hooks/ to payload script
+        dh_src = pkg_src / DRIFT_HOOKS_DIR_NAME
+        dh_src.mkdir(parents=True)
+        os.symlink("../bin/my_cli", dh_src / "post_install.sh")
+
         (pkg_src / "drift_package.toml").write_text(
             """[package]
 name = "cli_tool"
 
 [hooks]
-post_install = "bin/my_cli"
+post_install = "drift_hooks/post_install.sh"
 """,
             encoding="utf-8"
         )
@@ -266,6 +274,7 @@ post_install = "bin/my_cli"
 
         render_pkg = self.render_dir / "cli_tool"
         self.assertTrue((render_pkg / "bin" / "my_cli").exists())
+        self.assertTrue((render_pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh").exists())
 
         stage_res = run_primitive_4_stage_render_to_install(self.workspace_config)
         self.assertIn("cli_tool", stage_res)
@@ -277,8 +286,91 @@ post_install = "bin/my_cli"
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
 
-        # Non-drift_hooks script in bin/ IS deployed to target directory as a payload binary
+        # Payload script in bin/ IS deployed to target directory as a payload binary
         self.assertTrue((self.target_dir / "bin" / "my_cli").exists())
+        # .drift is NOT deployed
+        self.assertFalse((self.target_dir / ".drift").exists())
+
+    def test_source_directory_subfolder_rendering_and_deployment(self) -> None:
+        """End-to-end integration test with package source_directory subfolder:
+        1. Package defines source_directory = "dotfiles".
+        2. Payload resides in src/<pkg>/dotfiles/ (e.g. dot-config/app.conf, bin/tool).
+        3. Lifecycle hooks reside in src/<pkg>/drift_hooks/ (not inside dotfiles/).
+        4. render_package compiles dotfiles/ directly to render/<pkg>/ root and drift_hooks/ to .drift/hooks/.
+        5. Deployment applies payload without dotfiles/ prefix while running post_install hook.
+        """
+        pkg_src = self.src_dir / "custom_subfolder_pkg"
+        pkg_src.mkdir(parents=True)
+
+        # 1. Subfolder payload
+        dotfiles_dir = pkg_src / "dotfiles"
+        (dotfiles_dir / "dot-config").mkdir(parents=True)
+        (dotfiles_dir / "dot-config" / "sub_app.conf").write_text("mode=advanced\n", encoding="utf-8")
+        (dotfiles_dir / "bin").mkdir(parents=True)
+        (dotfiles_dir / "bin" / "sub_tool").write_text("#!/bin/sh\necho sub_tool\n", encoding="utf-8")
+
+        # 2. drift_hooks source directory with sibling helper
+        dh_src = pkg_src / DRIFT_HOOKS_DIR_NAME
+        (dh_src / "lib").mkdir(parents=True)
+        (dh_src / "lib" / "helper.sh").write_text(
+            '#!/bin/sh\nwrite_marker() {\n    echo "SUBFOLDER_HOOK_RAN" > "$drift_package_target_dir/sub_marker.txt"\n}\n',
+            encoding="utf-8"
+        )
+        (dh_src / "post_install.sh").write_text(
+            """#!/bin/sh
+. ./lib/helper.sh
+write_marker
+""",
+            encoding="utf-8"
+        )
+
+        # 3. drift_package.toml
+        (pkg_src / "drift_package.toml").write_text(
+            """[package]
+name = "custom_subfolder_pkg"
+source_directory = "dotfiles"
+
+[hooks]
+post_install = "drift_hooks/post_install.sh"
+""",
+            encoding="utf-8"
+        )
+
+        # Render
+        render_res = render_package(self.workspace_config, pkg_src)
+        self.assertEqual(render_res.status, "SUCCESS")
+
+        render_pkg = self.render_dir / "custom_subfolder_pkg"
+        self.assertTrue((render_pkg / "dot-config" / "sub_app.conf").exists())
+        self.assertTrue((render_pkg / "bin" / "sub_tool").exists())
+        self.assertFalse((render_pkg / "dotfiles").exists())
+        self.assertTrue((render_pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh").exists())
+        self.assertTrue((render_pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "lib" / "helper.sh").exists())
+
+        # Stage
+        stage_res = run_primitive_4_stage_render_to_install(self.workspace_config)
+        self.assertIn("custom_subfolder_pkg", stage_res)
+
+        install_pkg = self.install_dir / "custom_subfolder_pkg"
+        self.assertTrue((install_pkg / "dot-config" / "sub_app.conf").exists())
+        self.assertFalse((install_pkg / "dotfiles").exists())
+
+        # Deploy
+        deploy_res = run_primitive_5_install_deployment(
+            self.workspace_config,
+            packages_to_redeploy=["custom_subfolder_pkg"],
+            flags=HookExecFlags(streaming=False),
+        )
+        self.assertEqual(deploy_res.status, "SUCCESS")
+
+        # Verify deployed files in target_dir
+        self.assertTrue((self.target_dir / ".config" / "sub_app.conf").exists())
+        self.assertEqual((self.target_dir / ".config" / "sub_app.conf").read_text(encoding="utf-8"), "mode=advanced\n")
+        self.assertTrue((self.target_dir / "bin" / "sub_tool").exists())
+        self.assertTrue((self.target_dir / "sub_marker.txt").exists())
+        self.assertEqual((self.target_dir / "sub_marker.txt").read_text(encoding="utf-8").strip(), "SUBFOLDER_HOOK_RAN")
+        self.assertFalse((self.target_dir / "dotfiles").exists())
+        self.assertFalse((self.target_dir / ".drift").exists())
 
     def test_from_workspace_and_package_dir_factories(self) -> None:
         """Verifies WorkspaceConfig.from_workspace_dir and PackageConfig.from_*_dir factory classmethods."""

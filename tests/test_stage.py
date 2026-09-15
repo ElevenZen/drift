@@ -4,7 +4,12 @@ import unittest
 import logging
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+)
 from drift.workspace_config import WorkspaceConfig
 from drift.stage_repo import run_primitive_4_stage_render_to_install
 from drift.render_package import render_package
@@ -469,7 +474,7 @@ class TestStageRepo(unittest.TestCase):
 
 
     def test_stage_copies_hook_scripts_listed_in_drift_ignore(self) -> None:
-        """Verifies that hook scripts in .drift_ignore are staged to install/ but excluded from deployable changes."""
+        """Verifies that hook scripts are staged to install/ but excluded from deployable changes."""
         pkg = "pkg_hooks"
         pkg_render = self.render_dir / pkg
         (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -482,14 +487,13 @@ class TestStageRepo(unittest.TestCase):
         target_directory = "~/.config/test"
 
         [hooks]
-        pre_install = "pre_install.sh"
+        pre_install = "drift_hooks/pre_install.sh"
         """, encoding="utf-8")
 
-        # Write .drift_ignore ignoring the hook script
-        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("pre_install.sh\n", encoding="utf-8")
-
-        # Write hook script and deployable file
-        (pkg_render / "pre_install.sh").write_text("#!/bin/sh\necho 'running hook'\n", encoding="utf-8")
+        # Write hook script in .drift/hooks/ and deployable file
+        hooks_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "pre_install.sh").write_text("#!/bin/sh\necho 'running hook'\n", encoding="utf-8")
         (pkg_render / "app.json").write_text('{"name": "app"}', encoding="utf-8")
 
         # Stage package
@@ -498,14 +502,14 @@ class TestStageRepo(unittest.TestCase):
         # Return value must ONLY contain deployable files (app.json)
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes[pkg].deployable_changes.added, [Path("app.json")])
-        self.assertNotIn(Path("pre_install.sh"), changes[pkg].deployable_changes.added)
+        self.assertNotIn(Path(f"{DRIFT_INTERNAL_DIR_NAME}/{DRIFT_INTERNAL_HOOKS_DIR_NAME}/pre_install.sh"), changes[pkg].deployable_changes.added)
         self.assertTrue(changes[pkg].has_changes)
         self.assertTrue(changes[pkg].has_deployable_changes)
         self.assertTrue(changes[pkg].has_non_deployable_changes)
 
         # But physical install/ directory MUST contain the hook script
         pkg_install = self.install_dir / pkg
-        self.assertTrue((pkg_install / "pre_install.sh").is_file())
+        self.assertTrue((pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_install.sh").is_file())
         self.assertTrue((pkg_install / "app.json").is_file())
 
     def test_backup_and_delete_one_file_utility(self) -> None:
@@ -654,7 +658,7 @@ class TestStageRepo(unittest.TestCase):
             enable_install = true
 
             [hooks]
-            pre_install = "scripts/missing_hook.sh"
+            pre_install = "drift_hooks/missing_hook.sh"
             """)
 
         with self.assertRaises(FileNotFoundError) as cm:
@@ -667,9 +671,7 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_name] = True
 
         render_pkg_dir = self.render_dir / pkg_name
-        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        (render_pkg_dir / "scripts").mkdir(parents=True, exist_ok=True)
-        (render_pkg_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
+        (render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_dir").mkdir(parents=True, exist_ok=True)
 
         with open(render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
             f.write(f"""
@@ -678,7 +680,7 @@ class TestStageRepo(unittest.TestCase):
             enable_install = true
 
             [hooks]
-            post_install = "scripts/hook_dir"
+            post_install = "drift_hooks/hook_dir"
             """)
 
         with self.assertRaises(ValueError) as cm:
@@ -932,7 +934,7 @@ class TestStageRepo(unittest.TestCase):
         hook_change = PackageStageChanges(
             package_name="hook_pkg",
             deployable_changes=FolderDiff(),
-            physical_changes=FolderDiff(modified=[Path("drift_package.toml"), Path("hooks/post_install.sh")]),
+            physical_changes=FolderDiff(modified=[Path(".drift/drift_package.toml"), Path(".drift/hooks/post_install.sh")]),
         )
         self.assertTrue(hook_change.has_changes)
         self.assertFalse(hook_change.has_deployable_changes)
@@ -940,22 +942,22 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(hook_change.deployable_changes.added, [])
         self.assertEqual(hook_change.deployable_changes.modified, [])
         self.assertEqual(hook_change.deployable_changes.deleted, [])
-        self.assertEqual(hook_change.non_deployable_changes.modified, [Path("drift_package.toml"), Path("hooks/post_install.sh")])
+        self.assertEqual(hook_change.non_deployable_changes.modified, [Path(".drift/drift_package.toml"), Path(".drift/hooks/post_install.sh")])
 
         # Mixed deployable and metadata/hook change
         mixed_change = PackageStageChanges(
             package_name="mixed_pkg",
             deployable_changes=FolderDiff(added=[Path("payload.txt")]),
             physical_changes=FolderDiff(
-                added=[Path("payload.txt"), Path("hooks/pre_install.sh")],
-                modified=[Path("drift_package.toml")],
+                added=[Path("payload.txt"), Path(".drift/hooks/pre_install.sh")],
+                modified=[Path(".drift/drift_package.toml")],
             ),
         )
         self.assertTrue(mixed_change.has_changes)
         self.assertTrue(mixed_change.has_deployable_changes)
         self.assertTrue(mixed_change.has_non_deployable_changes)
-        self.assertEqual(mixed_change.non_deployable_changes.added, [Path("hooks/pre_install.sh")])
-        self.assertEqual(mixed_change.non_deployable_changes.modified, [Path("drift_package.toml")])
+        self.assertEqual(mixed_change.non_deployable_changes.added, [Path(".drift/hooks/pre_install.sh")])
+        self.assertEqual(mixed_change.non_deployable_changes.modified, [Path(".drift/drift_package.toml")])
         self.assertEqual(mixed_change.non_deployable_changes.deleted, [])
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
@@ -971,11 +973,12 @@ class TestStageRepo(unittest.TestCase):
         target_directory = "~/.config/test"
 
         [hooks]
-        post_install = "post_install.sh"
+        post_install = "drift_hooks/post_install.sh"
         """, encoding="utf-8")
 
-        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("post_install.sh\n", encoding="utf-8")
-        (pkg_render / "post_install.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
+        hooks_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "post_install.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
         (pkg_render / "data.txt").write_text("static payload", encoding="utf-8")
 
         # First stage
@@ -989,7 +992,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes2, {})
 
         # Modify ONLY post_install.sh in render/
-        (pkg_render / "post_install.sh").write_text("#!/bin/sh\necho 'v2 updated'\n", encoding="utf-8")
+        (hooks_dir / "post_install.sh").write_text("#!/bin/sh\necho 'v2 updated'\n", encoding="utf-8")
 
         # Third stage: should detect metadata/hook change
         changes3 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
@@ -999,7 +1002,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue(changes3[pkg].has_non_deployable_changes)
 
         # Verify post_install.sh was copied into install/
-        install_hook = self.install_dir / pkg / "post_install.sh"
+        install_hook = self.install_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh"
         self.assertTrue(install_hook.is_file())
         self.assertIn("v2 updated", install_hook.read_text(encoding="utf-8"))
 
@@ -1016,10 +1019,11 @@ class TestStageRepo(unittest.TestCase):
         target_directory = "~/.config/test"
 
         [hooks]
-        post_install = "post.sh"
+        post_install = "drift_hooks/post.sh"
         """, encoding="utf-8")
-        (pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("post.sh\n", encoding="utf-8")
-        (pkg_render / "post.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
+        hooks_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "post.sh").write_text("#!/bin/sh\necho 'v1'\n", encoding="utf-8")
         (pkg_render / "config.json").write_text('{"v": 1}', encoding="utf-8")
 
         # Initial stage
@@ -1028,7 +1032,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Modify both config.json (deployable) and post.sh (hook)
         (pkg_render / "config.json").write_text('{"v": 2}', encoding="utf-8")
-        (pkg_render / "post.sh").write_text("#!/bin/sh\necho 'v2'\n", encoding="utf-8")
+        (hooks_dir / "post.sh").write_text("#!/bin/sh\necho 'v2'\n", encoding="utf-8")
 
         changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
         self.assertIn(pkg, changes2)
@@ -1037,7 +1041,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue(stage_pkg.has_deployable_changes)
         self.assertTrue(stage_pkg.has_non_deployable_changes)
         self.assertEqual(stage_pkg.deployable_changes.modified, [Path("config.json")])
-        self.assertEqual(stage_pkg.non_deployable_changes.modified, [Path("post.sh")])
+        self.assertEqual(stage_pkg.non_deployable_changes.modified, [Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post.sh"])
 
     def test_stage_unchanged_package_retains_installed_state(self) -> None:
         """Verifies that packages with no physical changes keep their existing state in state.toml."""

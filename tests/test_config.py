@@ -312,13 +312,13 @@ class TestConfigClasses(unittest.TestCase):
                 "install_method": "stow"
             },
             "hooks": {
-                "pre_source": "scripts/gen.sh",
+                "pre_source": "drift_hooks/gen.sh",
                 "timeout": 60
             }
         }
         config = PackageConfig.from_dict(data, base_dir=base_dir, package_name="my_pkg")
         self.assertEqual(config.name, "my_pkg")
-        self.assertEqual(config.hooks.pre_source, base_dir / "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_source, base_dir / ".drift/hooks/gen.sh")
         self.assertEqual(config.hooks.timeout, 60)
 
         # Test string casting for timeout
@@ -367,32 +367,32 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_hooks_dataclass(self) -> None:
         base = Path("/workspace/test_pkg")
         hooks = PackageHooks(
-            pre_source=base / "scripts/gen.sh",
-            pre_install=base / "scripts/pre.sh",
-            post_install=base / "scripts/post.sh",
+            pre_source=base / ".drift/hooks/gen.sh",
+            pre_install=base / ".drift/hooks/pre.sh",
+            post_install=base / ".drift/hooks/post.sh",
             timeout=30
         )
         config = PackageConfig(name="test_pkg", hooks=hooks)
-        self.assertEqual(config.hooks.pre_source, base / "scripts/gen.sh")
+        self.assertEqual(config.hooks.pre_source, base / ".drift/hooks/gen.sh")
         self.assertEqual(config.hooks.timeout, 30)
         self.assertIs(config.hooks.package_config, config)
 
         # Direct property modification on hooks
-        config.hooks.post_render = base / "scripts/render.sh"
-        self.assertEqual(config.hooks.post_render, base / "scripts/render.sh")
+        config.hooks.post_render = base / ".drift/hooks/render.sh"
+        self.assertEqual(config.hooks.post_render, base / ".drift/hooks/render.sh")
 
     def test_package_hooks_from_dict_and_validation(self) -> None:
         """Verifies PackageHooks.from_dict method, validation, and error handling."""
         # 1. Valid dict parsing
         raw = {
-            "pre_source": "scripts/gen.sh",
-            "post_install": "scripts/post.sh",
+            "pre_source": "drift_hooks/gen.sh",
+            "post_install": "drift_hooks/post.sh",
             "timeout": "60"
         }
         base = Path("/workspace/my_pkg")
         hooks = PackageHooks.from_dict(raw, package_name="my_pkg", base_dir=base)
-        self.assertEqual(hooks.pre_source, base / "scripts/gen.sh")
-        self.assertEqual(hooks.post_install, base / "scripts/post.sh")
+        self.assertEqual(hooks.pre_source, base / ".drift/hooks/gen.sh")
+        self.assertEqual(hooks.post_install, base / ".drift/hooks/post.sh")
         self.assertEqual(hooks.timeout, 60)
 
         # 2. Non-string hook value raises ConfigError
@@ -417,15 +417,15 @@ class TestConfigClasses(unittest.TestCase):
                 "target_directory": "~/.config/test"
             },
             "hooks": {
-                "pre_source": "scripts/gen.sh",
-                "pre_install": "scripts/pre_install.sh",
-                "post_install": "scripts/post_install.sh",
-                "pre_update": "scripts/pre_update.sh",
-                "post_update": "scripts/post_update.sh",
-                "pre_uninstall": "scripts/pre_uninstall.sh",
-                "post_uninstall": "scripts/post_uninstall.sh",
-                "post_render": "scripts/post_render.sh",
-                "health": "scripts/health_check.sh",
+                "pre_source": "drift_hooks/gen.sh",
+                "pre_install": "drift_hooks/pre_install.sh",
+                "post_install": "drift_hooks/post_install.sh",
+                "pre_update": "drift_hooks/pre_update.sh",
+                "post_update": "drift_hooks/post_update.sh",
+                "pre_uninstall": "drift_hooks/pre_uninstall.sh",
+                "post_uninstall": "drift_hooks/post_uninstall.sh",
+                "post_render": "drift_hooks/post_render.sh",
+                "health": "drift_hooks/health_check.sh",
                 "timeout": 45
             }
         }
@@ -433,15 +433,15 @@ class TestConfigClasses(unittest.TestCase):
         config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks", base_dir=base)
         self.assertEqual(config.name, "pkg_with_hooks")
         self.assertEqual(config.install_method, "copy")
-        self.assertEqual(config.hooks.pre_source, base / "scripts/gen.sh")
-        self.assertEqual(config.hooks.pre_install, base / "scripts/pre_install.sh")
-        self.assertEqual(config.hooks.post_install, base / "scripts/post_install.sh")
-        self.assertEqual(config.hooks.pre_update, base / "scripts/pre_update.sh")
-        self.assertEqual(config.hooks.post_update, base / "scripts/post_update.sh")
-        self.assertEqual(config.hooks.pre_uninstall, base / "scripts/pre_uninstall.sh")
-        self.assertEqual(config.hooks.post_uninstall, base / "scripts/post_uninstall.sh")
-        self.assertEqual(config.hooks.post_render, base / "scripts/post_render.sh")
-        self.assertEqual(config.hooks.health, base / "scripts/health_check.sh")
+        self.assertEqual(config.hooks.pre_source, base / ".drift/hooks/gen.sh")
+        self.assertEqual(config.hooks.pre_install, base / ".drift/hooks/pre_install.sh")
+        self.assertEqual(config.hooks.post_install, base / ".drift/hooks/post_install.sh")
+        self.assertEqual(config.hooks.pre_update, base / ".drift/hooks/pre_update.sh")
+        self.assertEqual(config.hooks.post_update, base / ".drift/hooks/post_update.sh")
+        self.assertEqual(config.hooks.pre_uninstall, base / ".drift/hooks/pre_uninstall.sh")
+        self.assertEqual(config.hooks.post_uninstall, base / ".drift/hooks/post_uninstall.sh")
+        self.assertEqual(config.hooks.post_render, base / ".drift/hooks/post_render.sh")
+        self.assertEqual(config.hooks.health, base / ".drift/hooks/health_check.sh")
         self.assertEqual(config.hooks.timeout, 45)
 
     def test_load_package_config_with_hooks_windows_and_aliases(self) -> None:
@@ -452,12 +452,12 @@ class TestConfigClasses(unittest.TestCase):
                     "install_method": "copy",
                 },
                 "hooks": {
-                    "pre_install": "scripts/bootstrap.sh",
-                    "post_install": "scripts/setup.sh",
+                    "pre_install": "drift_hooks/bootstrap.sh",
+                    "post_install": "drift_hooks/setup.sh",
                     alias: {
-                        "pre_install": "scripts/bootstrap.ps1",
-                        "post_install": "scripts/setup.ps1",
-                        "post_update": "scripts/update.bat",
+                        "pre_install": "drift_hooks/bootstrap.ps1",
+                        "post_install": "drift_hooks/setup.ps1",
+                        "post_update": "drift_hooks/update.bat",
                     }
                 }
             }
@@ -465,16 +465,16 @@ class TestConfigClasses(unittest.TestCase):
             # On POSIX (Linux/macOS), windows subtable is ignored
             with patch("sys.platform", "linux"):
                 config_linux = PackageConfig.from_dict(toml_dict, package_name="my_pkg", base_dir=base)
-                self.assertEqual(config_linux.hooks.pre_install, base / "scripts/bootstrap.sh")
-                self.assertEqual(config_linux.hooks.post_install, base / "scripts/setup.sh")
+                self.assertEqual(config_linux.hooks.pre_install, base / ".drift/hooks/bootstrap.sh")
+                self.assertEqual(config_linux.hooks.post_install, base / ".drift/hooks/setup.sh")
                 self.assertIsNone(config_linux.hooks.post_update)
 
             # On Windows, windows subtable overrides default hooks
             with patch("sys.platform", "win32"):
                 config_win = PackageConfig.from_dict(toml_dict, package_name="my_pkg", base_dir=base)
-                self.assertEqual(config_win.hooks.pre_install, base / "scripts/bootstrap.ps1")
-                self.assertEqual(config_win.hooks.post_install, base / "scripts/setup.ps1")
-                self.assertEqual(config_win.hooks.post_update, base / "scripts/update.bat")
+                self.assertEqual(config_win.hooks.pre_install, base / ".drift/hooks/bootstrap.ps1")
+                self.assertEqual(config_win.hooks.post_install, base / ".drift/hooks/setup.ps1")
+                self.assertEqual(config_win.hooks.post_update, base / ".drift/hooks/update.bat")
 
     def test_package_hooks_disabled_values_in_base_and_subtables(self) -> None:
         """Verifies that 'disable' and 'disabled' (case-insensitive) in base [hooks] or platform tables turn off hooks."""
@@ -490,7 +490,7 @@ class TestConfigClasses(unittest.TestCase):
                 "pre_update": "DISABLE",
                 "post_update": "",
                 "pre_uninstall": "   ",
-                "post_uninstall": "scripts/uninstall.sh",
+                "post_uninstall": "drift_hooks/uninstall.sh",
             }
         }
         base = Path("/workspace/pkg_disabled")
@@ -501,7 +501,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertIsNone(config.hooks.pre_update)
         self.assertIsNone(config.hooks.post_update)
         self.assertIsNone(config.hooks.pre_uninstall)
-        self.assertEqual(config.hooks.post_uninstall, base / "scripts/uninstall.sh")
+        self.assertEqual(config.hooks.post_uninstall, base / ".drift/hooks/uninstall.sh")
 
         # 2. [hooks.windows] disabling a base hook on Windows
         override_dict = {
@@ -509,7 +509,7 @@ class TestConfigClasses(unittest.TestCase):
                 "install_method": "copy",
             },
             "hooks": {
-                "post_install": "scripts/posix_post.sh",
+                "post_install": "drift_hooks/posix_post.sh",
                 "windows": {
                     "post_install": "disable",
                 }
@@ -517,7 +517,7 @@ class TestConfigClasses(unittest.TestCase):
         }
         with patch("sys.platform", "linux"):
             config_linux = PackageConfig.from_dict(override_dict, package_name="pkg_override", base_dir=base)
-            self.assertEqual(config_linux.hooks.post_install, base / "scripts/posix_post.sh")
+            self.assertEqual(config_linux.hooks.post_install, base / ".drift/hooks/posix_post.sh")
 
         with patch("sys.platform", "win32"):
             config_win = PackageConfig.from_dict(override_dict, package_name="pkg_override", base_dir=base)
@@ -526,14 +526,61 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_hooks_property_setters_with_disabled(self) -> None:
         """Verifies that setting a hook property to 'disable' or 'disabled' normalizes to None."""
         base = Path("/workspace/my_pkg")
-        hooks = PackageHooks(post_install=base / "scripts/post.sh")
-        self.assertEqual(hooks.post_install, base / "scripts/post.sh")
+        hooks = PackageHooks(post_install=base / ".drift/hooks/post.sh")
+        self.assertEqual(hooks.post_install, base / ".drift/hooks/post.sh")
 
         hooks.post_install = Path("disabled")
         self.assertIsNone(hooks.post_install)
 
         hooks.pre_install = Path("disable")
         self.assertIsNone(hooks.pre_install)
+
+    def test_package_source_directory_parsing_and_validation(self) -> None:
+        """Verifies parsing, normalization, and validation of package source_directory."""
+        base = Path("/workspace/my_pkg")
+
+        # 1. Default (omitted) defaults to Path(".")
+        cfg_default = PackageConfig.from_dict({"package": {"install_method": "stow"}}, base_dir=base, package_name="my_pkg")
+        self.assertEqual(cfg_default.source_directory, Path("."))
+        self.assertEqual(cfg_default.get_source_directory_to_render(base), base)
+
+        # 2. Valid relative subfolder
+        cfg_sub = PackageConfig.from_dict({"package": {"source_directory": "dotfiles"}}, base_dir=base, package_name="my_pkg")
+        self.assertEqual(cfg_sub.source_directory, Path("dotfiles"))
+        self.assertEqual(cfg_sub.get_source_directory_to_render(base), base / "dotfiles")
+
+        # 3. Nested subfolder with trailing slash normalization
+        cfg_nested = PackageConfig.from_dict({"package": {"source_directory": "src/nested/"}}, base_dir=base, package_name="my_pkg")
+        self.assertEqual(cfg_nested.source_directory, Path("src/nested"))
+        self.assertEqual(cfg_nested.get_source_directory_to_render(base), base / "src/nested")
+
+        # 4. Dot or empty string resolves to Path(".")
+        cfg_dot = PackageConfig.from_dict({"package": {"source_directory": "."}}, base_dir=base, package_name="my_pkg")
+        self.assertEqual(cfg_dot.source_directory, Path("."))
+
+        # 5. Escaping package root raises ConfigError
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict({"package": {"source_directory": "../outside"}}, base_dir=base, package_name="my_pkg")
+
+        # 6. Absolute path raises ConfigError
+        with self.assertRaises(ConfigError):
+            PackageConfig.from_dict({"package": {"source_directory": "/etc/shadow"}}, base_dir=base, package_name="my_pkg")
+
+    def test_package_hooks_drift_hooks_isolation_and_symlink_guidance(self) -> None:
+        """Verifies hook path resolution enforcing drift_hooks/ and error advice."""
+        base = Path("/workspace/my_pkg")
+
+        # 1. Hook outside drift_hooks/ raises ConfigError with symlink guidance
+        with self.assertRaises(ConfigError) as ctx:
+            PackageHooks.from_dict({"pre_install": "scripts/install.sh"}, package_name="my_pkg", base_dir=base)
+        self.assertIn("must be located within 'drift_hooks/' directory", str(ctx.exception))
+        self.assertIn("create a symlink inside 'drift_hooks/'", str(ctx.exception))
+
+        # 2. External absolute hook executable is allowed without drift_hooks/ restriction
+        ext_path = Path("/usr/local/bin/my_hook")
+        hooks_ext = PackageHooks.from_dict({"post_install": str(ext_path)}, package_name="my_pkg", base_dir=base)
+        self.assertEqual(hooks_ext.post_install, ext_path.resolve())
+        self.assertIsNone(hooks_ext.get_relative_path("post_install"))
 
     def test_build_hook_execution_command(self) -> None:
         """Verifies cross-platform command building for lifecycle hook dispatch."""
@@ -1761,9 +1808,9 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             pkg_abs.validate()
 
         # 6. Path traversal escaping package dir rejected
-        pkg_escape = PackageConfig(name="escape_pkg", source_directory=Path("../other_pkg"))
         with self.assertRaises(ConfigError):
-            pkg_escape.get_source_directory_to_render(base_dir)
+            pkg_escape = PackageConfig(name="escape_pkg", source_directory=Path("../other_pkg"))
+            pkg_escape.validate()
 
     def test_package_env_override_and_fallback_parsing(self) -> None:
         """Verifies parsing of [env.override], [env.overwrite], [env.fallback] and flat [env] tables."""

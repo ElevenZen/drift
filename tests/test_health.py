@@ -10,7 +10,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+)
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.package_health import (
     run_single_package_health_probe,
@@ -75,7 +80,7 @@ DEFAULT = true
         """Verifies that a passing health probe hook returns HEALTHY status with output and correct CWD."""
         pkg = "pkg_healthy"
         pkg_install_dir = self.install_dir / pkg
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
@@ -92,7 +97,7 @@ exit 0
         install_method = "copy"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         res = run_single_package_health_probe(self.workspace_config, pkg)
@@ -105,7 +110,7 @@ exit 0
         """Verifies that a failing health probe hook returns UNHEALTHY status with stderr."""
         pkg = "pkg_unhealthy"
         pkg_install_dir = self.install_dir / pkg
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -122,7 +127,7 @@ exit 2
         install_method = "copy"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         res = run_single_package_health_probe(
@@ -136,7 +141,7 @@ exit 2
         """Verifies that a probe exceeding its timeout returns TIMEOUT status."""
         pkg = "pkg_timeout"
         pkg_install_dir = self.install_dir / pkg
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -153,7 +158,7 @@ exit 0
         install_method = "copy"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         res = run_single_package_health_probe(self.workspace_config, pkg, custom_timeout=1)
@@ -175,7 +180,7 @@ exit 0
         install_method = "copy"
 
         [hooks]
-        health = "scripts/non_existent.sh"
+        health = "drift_hooks/non_existent.sh"
         """, encoding="utf-8")
 
         res = run_single_package_health_probe(self.workspace_config, pkg)
@@ -206,7 +211,7 @@ exit 0
         """Verifies that a health probe runs without sudo even if sudo = true on the package."""
         pkg = "pkg_sudo_health"
         pkg_install_dir = self.install_dir / pkg
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -221,7 +226,7 @@ exit 0
         sudo = true
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         with patch("drift.lifecycle_hooks.run_command") as mock_run:
@@ -238,28 +243,28 @@ exit 0
         """Verifies multi-package health check aggregation across passing, failing, and skipped packages."""
         # 1. Setup pkg1: passing
         pkg1 = "pkg1"
-        (self.install_dir / pkg1 / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        (self.install_dir / pkg1 / "scripts" / "h.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "h.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         (self.install_dir / pkg1 / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg1}"
         install_method = "copy"
         [hooks]
-        health = "scripts/h.sh"
+        health = "drift_hooks/h.sh"
         """, encoding="utf-8")
 
         # 2. Setup pkg2: failing
         pkg2 = "pkg2"
-        (self.install_dir / pkg2 / "scripts").mkdir(parents=True, exist_ok=True)
+        (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        (self.install_dir / pkg2 / "scripts" / "h.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "h.sh").write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         (self.install_dir / pkg2 / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg2}"
         install_method = "copy"
         [hooks]
-        health = "scripts/h.sh"
+        health = "drift_hooks/h.sh"
         """, encoding="utf-8")
 
         # 3. Setup pkg3: no hook
@@ -305,7 +310,7 @@ exit 0
         """Verifies CLI execution with --json output mode."""
         pkg = "cli_pkg"
         pkg_install_dir = self.install_dir / pkg
-        scripts_dir = pkg_install_dir / "scripts"
+        scripts_dir = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         scripts_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -319,7 +324,7 @@ exit 0
         install_method = "copy"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         state_file = self.install_dir / "state.toml"
@@ -342,7 +347,7 @@ exit 0
         """Verifies that a templated health hook (e.g. health.sh.envst) is automatically rendered before execution."""
         pkg = "pkg_templated_health"
         pkg_src_dir = self.source_dir / pkg
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         # Templated health script
@@ -361,7 +366,7 @@ exit 0
         APP_PORT = "9090"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         res = run_single_package_health_probe(self.workspace_config, pkg, from_stage="source")
@@ -373,7 +378,7 @@ exit 0
         """Verifies CLI execution with --from source and --from install."""
         pkg = "pkg_cli_from_stage"
         pkg_src_dir = self.source_dir / pkg
-        scripts_dir = pkg_src_dir / "scripts"
+        scripts_dir = pkg_src_dir / "drift_hooks"
         scripts_dir.mkdir(parents=True, exist_ok=True)
 
         hook_script = scripts_dir / "health_check.sh"
@@ -386,7 +391,7 @@ exit 0
         install_method = "copy"
 
         [hooks]
-        health = "scripts/health_check.sh"
+        health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
         # 1. From source succeeds when package exists only in src/
@@ -411,8 +416,8 @@ exit 0
         pkg_install_dir = self.install_dir / pkg
         
         # Source has template
-        (pkg_src_dir / "scripts").mkdir(parents=True, exist_ok=True)
-        (pkg_src_dir / "scripts" / "health.sh.envst").write_text(
+        (pkg_src_dir / "drift_hooks").mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_hooks" / "health.sh.envst").write_text(
             '#!/bin/sh\necho "SRC_OUTPUT_${drift_package_name}"\nexit 0\n',
             encoding="utf-8"
         )
@@ -421,12 +426,12 @@ exit 0
         name = "{pkg}"
         install_method = "copy"
         [hooks]
-        health = "scripts/health.sh"
+        health = "drift_hooks/health.sh"
         """, encoding="utf-8")
 
         # Install has static script with different text
-        (pkg_install_dir / "scripts").mkdir(parents=True, exist_ok=True)
-        install_hook = pkg_install_dir / "scripts" / "health.sh"
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        install_hook = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "health.sh"
         install_hook.write_text(
             '#!/bin/sh\necho "INSTALL_STATIC_OUTPUT"\nexit 0\n',
             encoding="utf-8"
@@ -438,7 +443,7 @@ exit 0
         name = "{pkg}"
         install_method = "copy"
         [hooks]
-        health = "scripts/health.sh"
+        health = "drift_hooks/health.sh"
         """, encoding="utf-8")
 
         # 1. from_stage="install" -> executes static file directly

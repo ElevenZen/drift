@@ -14,7 +14,13 @@ if TYPE_CHECKING:
 from .package_config import PackageConfig
 from .process_utils import run_command
 from .result_models import HookResult
-from .constants import DEFAULT_HOOK_NON_INTERACTIVE_ENVS, INITIAL_ENV
+from .constants import (
+    DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
+    INITIAL_ENV,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+)
 from .env_utils import env_scope
 from .exceptions import HookExecutionError
 
@@ -321,15 +327,15 @@ def trigger_package_hook_with_render(
     rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
 
     if rel_hook_path is None:
-        # If hook is outside the package directory hierarchy, it is shared across packages and executed directly
-        nominal_hook_path = Path(hook_file_val)
+        # If hook is an external absolute path outside package hierarchy, execute it directly
+        source_hook_path = Path(hook_file_val)
     else:
         # If hook is inside the package directory hierarchy, check if it exists in the source directory first
         # If not, check if it can be rendered from the source directory using the package's render engines
         hook_parent_in_src = src_pkg_dir / rel_hook_path.parent
         static_candidate = hook_parent_in_src / rel_hook_path.name
         if static_candidate.exists():
-            nominal_hook_path = static_candidate
+            source_hook_path = static_candidate
         else:
             if engines_override is not None:
                 hook_engines = engines_override
@@ -340,23 +346,24 @@ def trigger_package_hook_with_render(
                 hook_parent_in_src,
                 [rel_hook_path.name]
             )
-            nominal_hook_path = match_info.path if match_info else None
+            source_hook_path = match_info.path if match_info else None
 
-    if not nominal_hook_path or not nominal_hook_path.exists():
-        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {nominal_hook_path}"
+    if not source_hook_path or not source_hook_path.exists():
+        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {source_hook_path}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
 
-    if not nominal_hook_path.is_file():
-        err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {nominal_hook_path}"
+    if not source_hook_path.is_file():
+        err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {source_hook_path}"
         logger.error(err_msg)
         raise FileNotFoundError(err_msg)
 
     def _execute() -> HookResult:
-        # Check if nominal hook path is inside src_pkg_dir
+        # Check if source hook path is inside src_pkg_dir
         if rel_hook_path is not None:
-            from .render_package import render_package_file_entry, prepare_package_render_engines
+            from .render_package import render_subfolder_entries, prepare_package_render_engines
             target_render_dir = workspace_config.render_path / package_name
+            hook_dest_dir = target_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
             if engines_override is not None:
                 effective_engines = engines_override
             else:
@@ -365,24 +372,24 @@ def trigger_package_hook_with_render(
                     pkg_config=pkg_config,
                     render_pkg_dir=target_render_dir,
                 )
-            # Use the physical on-disk relative path from nominal_hook_path (e.g. drift_hooks/pre.envst.sh)
-            # rather than rel_hook_path (drift_hooks/pre.sh), because templated hook files have render engine
-            # suffixes on disk in src/ that render_package_file_entry needs to locate and compile.
-            rel_in_src = nominal_hook_path.relative_to(src_pkg_dir)
-            res = render_package_file_entry(
-                rel_path=rel_in_src,
-                src_dir=src_pkg_dir,
-                dest_dir=target_render_dir,
-                drift_root=workspace_config.drift_root,
-                pkg_config=pkg_config,
-                render_engines=effective_engines,
-            )
-            if res is None:
-                raise RuntimeError(f"Lifecycle hook file '{rel_in_src}' was skipped during rendering.")
-            dest_rel_path, _ = res
-            hook_exec_path = target_render_dir / dest_rel_path
+            hooks_src_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
+            if hooks_src_dir.is_dir():
+                render_subfolder_entries(
+                    src_dir=hooks_src_dir,
+                    dest_dir=hook_dest_dir,
+                    drift_root=workspace_config.drift_root,
+                    pkg_config=pkg_config,
+                    render_engines=effective_engines,
+                    skip_drift_hooks=False,
+                )
+            sub_rel = rel_hook_path.relative_to(DRIFT_HOOKS_DIR_NAME)
+            hook_exec_path = hook_dest_dir / sub_rel
+            if not hook_exec_path.exists():
+                raise RuntimeError(
+                    f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering."
+                )
         else:
-            hook_exec_path = nominal_hook_path
+            hook_exec_path = source_hook_path
 
         effective_cwd = custom_cwd or hook_exec_path.parent
 

@@ -134,6 +134,10 @@ This document provides a concise, high-density architecture reference, primitive
 8.  **Render Engine Scope & Invariants**:
     *   **Global Engines Only for Package Config**: Dynamic package configuration templates (`src/<pkg>/drift_package.envst.toml`) can only be compiled by global workspace render engines (`drift_workspace.toml`), evaluated during workspace bootstrap.
     *   **Package-Level Engines Scope**: Render engines declared in `drift_package.toml` (`[render.<name>]`) operate strictly during package source compilation on **package source dotfiles/templates** (under `src/<pkg>/`) and cannot be used to compile `drift_package.toml` itself.
+9.  **Lifecycle Hooks & `source_directory` Isolation**:
+    *   **Strict `drift_hooks/` Placement & Dependencies**: All package lifecycle scripts and auxiliary helper dependencies must reside within `src/<pkg>/drift_hooks/` (or be absolute external system binaries). Relative hook paths outside `drift_hooks/` raise `ConfigError`.
+    *   **Host Installation & Shared Dependencies via Symlinks**: If a hook script or a file needed by a hook must also be installed to the host target, or if sharing scripts across packages, place a symlink inside `src/<pkg>/drift_hooks/` pointing to the source directory file (or shared script).
+    *   **Subfolder `source_directory` Payload Isolation**: If `source_directory` is configured (e.g. `source_directory = "dotfiles"`), source templates render from `src/<pkg>/<source_directory>/` directly to the package root in `render/<pkg>/`, while `src/<pkg>/drift_hooks/` is rendered into `render/<pkg>/.drift/hooks/` and completely excluded from host deployment.
 
 ---
 

@@ -7,7 +7,13 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_IGNORE_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRIFT_HOOKS_DIR_NAME,
+)
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PackageConfig, PackageHooks
 from drift.folder_diff import FolderDiff
@@ -250,18 +256,20 @@ class TestInstallRepo(unittest.TestCase):
             target_directory = "{self.system_target_dir}"
 
             [hooks]
-            post_install = "on-install.sh"
-            post_update = "on-update.sh"
+            post_install = "drift_hooks/on-install.sh"
+            post_update = "drift_hooks/on-update.sh"
             """)
 
         # Add physical file in install
         with open(os.path.join(pkg_install_dir, "test.txt"), "w", encoding="utf-8") as f:
             f.write("hello copy")
 
-        # Write hooks in src/pkg_copy/
-        with open(os.path.join(pkg_install_dir, "on-install.sh"), "w", encoding="utf-8") as f:
+        # Write hooks in install/pkg_copy/.drift/hooks/
+        hooks_dir = os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_HOOKS_DIR_NAME)
+        os.makedirs(hooks_dir, exist_ok=True)
+        with open(os.path.join(hooks_dir, "on-install.sh"), "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\necho 'hook installed' > \"$drift_package_target_dir/hook_ran.txt\"\n")
-        with open(os.path.join(pkg_install_dir, "on-update.sh"), "w", encoding="utf-8") as f:
+        with open(os.path.join(hooks_dir, "on-update.sh"), "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\necho 'hook updated' > \"$drift_package_target_dir/hook_ran.txt\"\n")
 
         # Simulation 1: First-Time Deploy (triggers collision guard and post_install)
@@ -518,10 +526,12 @@ class TestInstallRepo(unittest.TestCase):
             install_method = "copy"
 
             [hooks]
-            post_install = "hook.sh"
+            post_install = "drift_hooks/hook.sh"
             """)
 
-        hook_path = os.path.join(pkg_install_dir, "hook.sh")
+        hooks_dir = os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_HOOKS_DIR_NAME)
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_path = os.path.join(hooks_dir, "hook.sh")
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("#!/bin/bash\n")
         os.chmod(hook_path, 0o755)
@@ -1087,7 +1097,7 @@ class TestInstallRepo(unittest.TestCase):
             target_directory = "{self.system_target_dir}"
 
             [hooks]
-            post_install = "fail.sh"
+            post_install = "drift_hooks/fail.sh"
             """)
 
         # Add physical file in install
@@ -1095,7 +1105,9 @@ class TestInstallRepo(unittest.TestCase):
             f.write("hello fail")
             
         # Write failing hook script
-        hook_path = os.path.join(pkg_install_dir, "fail.sh")
+        hooks_dir = os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_HOOKS_DIR_NAME)
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_path = os.path.join(hooks_dir, "fail.sh")
         with open(hook_path, "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\nexit 1\n")
         os.chmod(hook_path, 0o755)
@@ -1276,14 +1288,14 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        pre_install = "pre_hook.sh"
+        pre_install = "drift_hooks/pre_hook.sh"
         """, encoding="utf-8")
 
-        # 2. .drift_ignore ignoring the hook script
-        (pkg_src / DRIFT_IGNORE_FILE_NAME).write_text("pre_hook.sh\n", encoding="utf-8")
-
-        # 3. Hook script and valid config file
-        (pkg_src / "pre_hook.sh").write_text(f"#!/bin/sh\necho 'hook executed successfully' > '{marker_file}'\n", encoding="utf-8")
+        # 2. Hook script in drift_hooks/ and valid config file
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        (hooks_dir / "pre_hook.sh").write_text(f"#!/bin/sh\necho 'hook executed successfully' > '{marker_file}'\n", encoding="utf-8")
+        (hooks_dir / "pre_hook.sh").chmod(0o755)
         (pkg_src / "app_setting.conf").write_text("setting = 42\n", encoding="utf-8")
 
         self.workspace_config.packages_enable[pkg] = True
@@ -1667,7 +1679,7 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        pre_install = "scripts/missing.sh"
+        pre_install = "drift_hooks/missing.sh"
         """, encoding="utf-8")
         (pkg_install_dir / "app.conf").write_text("hello", encoding="utf-8")
 
@@ -1682,8 +1694,7 @@ class TestInstallRepo(unittest.TestCase):
 
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        (pkg_install_dir / "scripts").mkdir(parents=True, exist_ok=True)
-        (pkg_install_dir / "scripts" / "hook_dir").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_dir").mkdir(parents=True, exist_ok=True)
 
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
@@ -1692,7 +1703,7 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
 
         [hooks]
-        post_install = "scripts/hook_dir"
+        post_install = "drift_hooks/hook_dir"
         """, encoding="utf-8")
         with self.assertRaises(ValueError) as cm:
             run_primitive_5_install_deployment(self.workspace_config, [pkg])

@@ -111,7 +111,9 @@ class TestExitCodes(unittest.TestCase):
 
         # Configure a failing health probe
         pkg_src = self.drift_root / "src" / "failing_pkg"
-        probe_file = pkg_src / "probe.sh"
+        hooks_dir = pkg_src / "drift_hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+        probe_file = hooks_dir / "probe.sh"
         probe_file.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         probe_file.chmod(0o755)
 
@@ -125,7 +127,7 @@ install_method = "copy"
 target_directory = "{custom_target}"
 
 [hooks]
-health = "probe.sh"
+health = "drift_hooks/probe.sh"
 """, encoding="utf-8")
 
         from drift.cli.actions import execute_deploy

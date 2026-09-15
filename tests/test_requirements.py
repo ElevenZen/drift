@@ -13,6 +13,11 @@ from drift.workspace_config import WorkspaceConfig
 from drift.render_package import render_package
 from drift.exceptions import ConfigError
 from drift.toml_utils import parse_toml
+from drift.constants import (
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+)
 
 
 class TestPackageRequirements(unittest.TestCase):
@@ -255,8 +260,10 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
     def test_render_package_probe_hook_success(self) -> None:
         pkg_dir = self.drift_root / "src" / "probe_pkg"
         pkg_dir.mkdir(parents=True)
+        hooks_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True)
 
-        probe_script = pkg_dir / "probe.sh"
+        probe_script = hooks_dir / "probe.sh"
         probe_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         probe_script.chmod(0o755)
 
@@ -265,7 +272,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         install_method = "stow"
 
         [hooks]
-        probe = "probe.sh"
+        probe = "drift_hooks/probe.sh"
         """, encoding="utf-8")
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
@@ -279,8 +286,10 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
     def test_render_package_probe_hook_failure_skips_package(self) -> None:
         pkg_dir = self.drift_root / "src" / "failed_probe_pkg"
         pkg_dir.mkdir(parents=True)
+        hooks_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True)
 
-        probe_script = pkg_dir / "probe.sh"
+        probe_script = hooks_dir / "probe.sh"
         probe_script.write_text("#!/bin/sh\necho 'Wayland session not found' >&2\nexit 1\n", encoding="utf-8")
         probe_script.chmod(0o755)
 
@@ -289,7 +298,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         install_method = "stow"
 
         [hooks]
-        probe = "probe.sh"
+        probe = "drift_hooks/probe.sh"
         """, encoding="utf-8")
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
@@ -309,8 +318,10 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
     def test_no_hooks_flag_bypasses_probe_hook(self) -> None:
         pkg_dir = self.drift_root / "src" / "bypassed_probe_pkg"
         pkg_dir.mkdir(parents=True)
+        hooks_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True)
 
-        probe_script = pkg_dir / "probe.sh"
+        probe_script = hooks_dir / "probe.sh"
         probe_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         probe_script.chmod(0o755)
 
@@ -319,7 +330,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         install_method = "stow"
 
         [hooks]
-        probe = "probe.sh"
+        probe = "drift_hooks/probe.sh"
         """, encoding="utf-8")
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
@@ -338,9 +349,11 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         pkg_dir = self.drift_root / "src" / "templated_probe_pkg"
         pkg_dir.mkdir(parents=True)
+        hooks_dir = pkg_dir / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True)
 
         # Template probe script checking injected variable
-        probe_template = pkg_dir / "check.sh.envst"
+        probe_template = hooks_dir / "check.sh.envst"
         probe_template.write_text("""#!/bin/sh
 if [ "$PROBE_EXPECTED" = "allow" ]; then
     exit 0
@@ -359,7 +372,7 @@ fi
         PROBE_EXPECTED = "allow"
 
         [hooks]
-        probe = "check.sh"
+        probe = "drift_hooks/check.sh"
         """, encoding="utf-8")
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
@@ -368,7 +381,7 @@ fi
         self.assertEqual(res.status, "SUCCESS")
 
         # Verify rendered probe script exists in render directory
-        render_probe = self.drift_root / "render" / "templated_probe_pkg" / "check.sh"
+        render_probe = self.drift_root / "render" / "templated_probe_pkg" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "check.sh"
         self.assertTrue(render_probe.exists())
         self.assertIn('"allow" = "allow"', render_probe.read_text(encoding="utf-8"))
 

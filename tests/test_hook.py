@@ -36,8 +36,8 @@ class TestPackageHook(unittest.TestCase):
         # Setup source pkg
         self.src_pkg_dir = self.drift_root / "src" / "pkg_hook"
         self.src_pkg_dir.mkdir(parents=True, exist_ok=True)
-        self.scripts_dir = self.src_pkg_dir / "scripts"
-        self.scripts_dir.mkdir(parents=True, exist_ok=True)
+        self.drift_hooks_dir = self.src_pkg_dir / "drift_hooks"
+        self.drift_hooks_dir.mkdir(parents=True, exist_ok=True)
 
         # Config with various hooks
         (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -47,29 +47,29 @@ class TestPackageHook(unittest.TestCase):
         target_directory = "{self.target_dir.as_posix()}"
 
         [hooks]
-        pre_source = "scripts/pre_source.sh"
-        post_render = "scripts/post_render.sh"
-        pre_install = "scripts/pre_install.sh"
-        post_install = "scripts/post_install.sh"
-        pre_update = "scripts/pre_update.sh"
-        post_update = "scripts/post_update.sh"
-        pre_uninstall = "scripts/pre_uninstall.sh"
-        post_uninstall = "scripts/post_uninstall.sh"
-        health = "scripts/health.sh"
+        pre_source = "drift_hooks/pre_source.sh"
+        post_render = "drift_hooks/post_render.sh"
+        pre_install = "drift_hooks/pre_install.sh"
+        post_install = "drift_hooks/post_install.sh"
+        pre_update = "drift_hooks/pre_update.sh"
+        post_update = "drift_hooks/post_update.sh"
+        pre_uninstall = "drift_hooks/pre_uninstall.sh"
+        post_uninstall = "drift_hooks/post_uninstall.sh"
+        health = "drift_hooks/health.sh"
         """, encoding="utf-8")
 
         # Create all hook scripts
-        (self.scripts_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'PRE_SOURCE' > pre_source_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "post_render.sh").write_text("#!/bin/sh\necho 'POST_RENDER' > post_render_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "pre_install.sh").write_text("#!/bin/sh\necho 'PRE_INSTALL' > pre_install_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "post_install.sh").write_text("#!/bin/sh\necho 'POST_INSTALL' > post_install_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "pre_update.sh").write_text("#!/bin/sh\necho 'PRE_UPDATE' > pre_update_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "post_update.sh").write_text("#!/bin/sh\necho 'POST_UPDATE' > post_update_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "pre_uninstall.sh").write_text("#!/bin/sh\necho 'PRE_UNINSTALL' > pre_uninstall_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "post_uninstall.sh").write_text("#!/bin/sh\necho 'POST_UNINSTALL' > post_uninstall_out.txt\n", encoding="utf-8")
-        (self.scripts_dir / "health.sh").write_text("#!/bin/sh\necho 'HEALTH' > health_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'PRE_SOURCE' > pre_source_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "post_render.sh").write_text("#!/bin/sh\necho 'POST_RENDER' > post_render_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_install.sh").write_text("#!/bin/sh\necho 'PRE_INSTALL' > pre_install_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "post_install.sh").write_text("#!/bin/sh\necho 'POST_INSTALL' > post_install_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_update.sh").write_text("#!/bin/sh\necho 'PRE_UPDATE' > pre_update_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "post_update.sh").write_text("#!/bin/sh\necho 'POST_UPDATE' > post_update_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_uninstall.sh").write_text("#!/bin/sh\necho 'PRE_UNINSTALL' > pre_uninstall_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "post_uninstall.sh").write_text("#!/bin/sh\necho 'POST_UNINSTALL' > post_uninstall_out.txt\n", encoding="utf-8")
+        (self.drift_hooks_dir / "health.sh").write_text("#!/bin/sh\necho 'HEALTH' > health_out.txt\n", encoding="utf-8")
 
-        for s in self.scripts_dir.glob("*.sh"):
+        for s in self.drift_hooks_dir.glob("*.sh"):
             s.chmod(0o755)
 
     def tearDown(self) -> None:
@@ -87,7 +87,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.package, "pkg_hook")
         self.assertEqual(res.hook_name, "pre_source")
-        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_source_out.txt").is_file())
 
     def test_trigger_post_render_hook_missing_source_dir(self) -> None:
         """Verifies that post_render raises FileNotFoundError if package source does not exist."""
@@ -100,10 +100,14 @@ class TestPackageHook(unittest.TestCase):
         render_pkg_dir = self.drift_root / "render" / "pkg_hook"
         render_pkg_dir.mkdir(parents=True, exist_ok=True)
         shutil.copytree(self.src_pkg_dir, render_pkg_dir, dirs_exist_ok=True)
+        # Mirror drift_hooks into .drift/hooks/ in render
+        render_hooks_dir = render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        render_hooks_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.drift_hooks_dir, render_hooks_dir, dirs_exist_ok=True)
 
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_render")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((render_pkg_dir / "scripts" / "post_render_out.txt").is_file())
+        self.assertTrue((render_hooks_dir / "post_render_out.txt").is_file())
 
     def test_trigger_install_hooks_missing_install_dir(self) -> None:
         """Verifies that install hooks raise FileNotFoundError if package is not installed."""
@@ -119,41 +123,44 @@ class TestPackageHook(unittest.TestCase):
         shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
         (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME, install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME)
+        install_hooks_dir = install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        install_hooks_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.drift_hooks_dir, install_hooks_dir, dirs_exist_ok=True)
 
-        # pre_install: CWD is install_pkg_dir / scripts
+        # pre_install: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_install")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "pre_install_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "pre_install_out.txt").is_file())
 
-        # post_install: CWD is install_pkg_dir / scripts
+        # post_install: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_install")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "post_install_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "post_install_out.txt").is_file())
 
-        # pre_update: CWD is install_pkg_dir / scripts
+        # pre_update: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_update")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "pre_update_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "pre_update_out.txt").is_file())
 
-        # post_update: CWD is install_pkg_dir / scripts
+        # post_update: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_update")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "post_update_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "post_update_out.txt").is_file())
 
-        # pre_uninstall: CWD is install_pkg_dir / scripts
+        # pre_uninstall: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "pre_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "pre_uninstall_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "pre_uninstall_out.txt").is_file())
 
-        # post_uninstall: CWD is install_pkg_dir / scripts
+        # post_uninstall: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "post_uninstall")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "post_uninstall_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "post_uninstall_out.txt").is_file())
 
-        # health: CWD is install_pkg_dir / scripts
+        # health: CWD is install_pkg_dir / .drift / hooks
         res = run_primitive_trigger_hook(self.workspace_config, "pkg_hook", "health")
         self.assertEqual(res.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "health_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "health_out.txt").is_file())
 
     def test_trigger_unconfigured_hook_raises_config_error(self) -> None:
         """Verifies that triggering a hook that is not configured in drift_package.toml raises ConfigError."""
@@ -270,7 +277,7 @@ class TestPackageHook(unittest.TestCase):
         pkg_missing_script_dir = self.drift_root / "src" / "pkg_missing_script"
         pkg_missing_script_dir.mkdir(parents=True, exist_ok=True)
         (pkg_missing_script_dir / "drift_package.toml").write_text(
-            "[package]\nname = 'pkg_missing_script'\n[hooks]\npre_source = 'non_existent.sh'\n",
+            "[package]\nname = 'pkg_missing_script'\n[hooks]\npre_source = 'drift_hooks/non_existent.sh'\n",
             encoding="utf-8"
         )
         with self.assertRaises(FileNotFoundError):
@@ -278,7 +285,7 @@ class TestPackageHook(unittest.TestCase):
 
         # 4. Direct execute_hook_script -> returns HookResult with duration_ms
         pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
-        hook_script_path = self.scripts_dir / "pre_source.sh"
+        hook_script_path = self.drift_hooks_dir / "pre_source.sh"
         exec_res = execute_hook_script(
             hook_path=hook_script_path,
             pkg="pkg_hook",
@@ -320,7 +327,7 @@ class TestPackageHook(unittest.TestCase):
         if sys.platform == "win32":
             return
 
-        post_render_file = self.scripts_dir / "post_render.sh"
+        post_render_file = self.drift_hooks_dir / "post_render.sh"
         post_render_file.write_text("#!/bin/bash\necho post_render\n", encoding="utf-8")
         post_render_file.chmod(0o644)  # Explicitly non-executable
 
@@ -332,7 +339,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertTrue(bool(post_render_file.stat().st_mode & 0o111))
 
         # Verify render copy is 0755
-        render_hook_file = self.workspace_config.render_path / "pkg_hook" / "scripts" / "post_render.sh"
+        render_hook_file = self.workspace_config.render_path / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_render.sh"
         self.assertTrue(render_hook_file.exists())
         self.assertTrue(bool(render_hook_file.stat().st_mode & 0o111))
 
@@ -386,9 +393,9 @@ class TestPackageHook(unittest.TestCase):
             )
         })
 
-        # 1. Templated hook file (post_install configured as scripts/post_install.sh, source is scripts/post_install.envst.sh)
-        (self.scripts_dir / "post_install.sh").unlink(missing_ok=True)
-        tmpl_hook = self.scripts_dir / "post_install.envst.sh"
+        # 1. Templated hook file (post_install configured as drift_hooks/post_install.sh, source is drift_hooks/post_install.envst.sh)
+        (self.drift_hooks_dir / "post_install.sh").unlink(missing_ok=True)
+        tmpl_hook = self.drift_hooks_dir / "post_install.envst.sh"
         tmpl_hook.write_text("#!/bin/bash\necho ${DRIFT_SAMPLE_ENV_EDITOR}\n", encoding="utf-8")
         tmpl_hook.chmod(0o644)
 
@@ -399,8 +406,8 @@ class TestPackageHook(unittest.TestCase):
 
         render_package(self.workspace_config, self.src_pkg_dir)
 
-        # Output rendered hook file in render/ got chmod 0755
-        rendered_hook = self.workspace_config.render_path / "pkg_hook" / "scripts" / "post_install.sh"
+        # Output rendered hook file in render/.drift/hooks/ got chmod 0755
+        rendered_hook = self.workspace_config.render_path / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_install.sh"
         self.assertTrue(rendered_hook.exists())
         self.assertTrue(bool(rendered_hook.stat().st_mode & 0o111))
 
@@ -428,10 +435,10 @@ class TestPackageHook(unittest.TestCase):
         # Create package with templated pre_source hook
         pkg_b_dir = self.drift_root / "src" / "pkg_templated_pre_source"
         pkg_b_dir.mkdir(parents=True)
-        scripts_b = pkg_b_dir / "scripts"
-        scripts_b.mkdir(parents=True)
+        drift_hooks_b = pkg_b_dir / "drift_hooks"
+        drift_hooks_b.mkdir(parents=True)
 
-        pre_source_tmpl = scripts_b / "gen.sh.envst"
+        pre_source_tmpl = drift_hooks_b / "gen.sh.envst"
         pre_source_tmpl.write_text("""#!/bin/sh
 echo "VALUE=$DYNAMIC_VAL"
 """, encoding="utf-8")
@@ -445,7 +452,7 @@ echo "VALUE=$DYNAMIC_VAL"
         DYNAMIC_VAL = "rendered_at_runtime"
 
         [hooks]
-        pre_source = "scripts/gen.sh"
+        pre_source = "drift_hooks/gen.sh"
         """, encoding="utf-8")
 
         # Trigger pre_source hook
@@ -456,8 +463,8 @@ echo "VALUE=$DYNAMIC_VAL"
         )
         self.assertEqual(res.status, "SUCCESS")
 
-        # Verify gen.sh was rendered into render/pkg_templated_pre_source/scripts/gen.sh
-        rendered_script = self.workspace_config.render_path / "pkg_templated_pre_source" / "scripts" / "gen.sh"
+        # Verify gen.sh was rendered into render/pkg_templated_pre_source/.drift/hooks/gen.sh
+        rendered_script = self.workspace_config.render_path / "pkg_templated_pre_source" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "gen.sh"
         self.assertTrue(rendered_script.exists())
         self.assertIn('VALUE=rendered_at_runtime', rendered_script.read_text(encoding="utf-8"))
 
@@ -473,7 +480,7 @@ echo "VALUE=$DYNAMIC_VAL"
             from_stage=PackageStage.SOURCE
         )
         self.assertEqual(res_source.status, "SUCCESS")
-        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_source_out.txt").is_file())
 
         # 2. from_stage=INSTALL raises FileNotFoundError when install directory does not exist
         with self.assertRaises(FileNotFoundError):
@@ -490,6 +497,9 @@ echo "VALUE=$DYNAMIC_VAL"
         shutil.copytree(self.src_pkg_dir, install_pkg_dir, dirs_exist_ok=True)
         (install_pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         shutil.copy2(self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME, install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME)
+        install_hooks_dir = install_pkg_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        install_hooks_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.drift_hooks_dir, install_hooks_dir, dirs_exist_ok=True)
 
         res_install = run_primitive_trigger_hook(
             self.workspace_config,
@@ -498,7 +508,7 @@ echo "VALUE=$DYNAMIC_VAL"
             from_stage=PackageStage.INSTALL
         )
         self.assertEqual(res_install.status, "SUCCESS")
-        self.assertTrue((install_pkg_dir / "scripts" / "pre_install_out.txt").is_file())
+        self.assertTrue((install_hooks_dir / "pre_install_out.txt").is_file())
 
     def test_cli_hook_with_from_stage_flag(self) -> None:
         """Verifies drift hook CLI with --from source and --from install."""
@@ -515,7 +525,7 @@ echo "VALUE=$DYNAMIC_VAL"
     def test_hook_execution_streaming(self) -> None:
         """Verifies hook streaming outputs to stdout in real time."""
         from drift.lifecycle_hooks import HookExecFlags
-        (self.scripts_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'LIVE_HOOK_STREAM'\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'LIVE_HOOK_STREAM'\n", encoding="utf-8")
         stdout = StringIO()
         with patch("sys.stdout", stdout):
             res = run_primitive_trigger_hook(
@@ -532,16 +542,16 @@ echo "VALUE=$DYNAMIC_VAL"
         from drift.package_config import PackageConfig, PackageHooks
         from drift.lifecycle_hooks import HookExecFlags
         hooks = PackageHooks(
-            probe=self.drift_root / "scripts/probe.sh",
-            pre_source=self.drift_root / "scripts/pre_source.sh",
-            post_render=self.drift_root / "scripts/post_render.sh",
-            pre_install=self.drift_root / "scripts/pre_install.sh",
-            post_install=self.drift_root / "scripts/post_install.sh",
-            pre_update=self.drift_root / "scripts/pre_update.sh",
-            post_update=self.drift_root / "scripts/post_update.sh",
-            pre_uninstall=self.drift_root / "scripts/pre_uninstall.sh",
-            post_uninstall=self.drift_root / "scripts/post_uninstall.sh",
-            health=self.drift_root / "scripts/health.sh",
+            probe=self.drift_root / ".drift/hooks/probe.sh",
+            pre_source=self.drift_root / ".drift/hooks/pre_source.sh",
+            post_render=self.drift_root / ".drift/hooks/post_render.sh",
+            pre_install=self.drift_root / ".drift/hooks/pre_install.sh",
+            post_install=self.drift_root / ".drift/hooks/post_install.sh",
+            pre_update=self.drift_root / ".drift/hooks/pre_update.sh",
+            post_update=self.drift_root / ".drift/hooks/post_update.sh",
+            pre_uninstall=self.drift_root / ".drift/hooks/pre_uninstall.sh",
+            post_uninstall=self.drift_root / ".drift/hooks/post_uninstall.sh",
+            health=self.drift_root / ".drift/hooks/health.sh",
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
@@ -568,7 +578,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_hook_non_interactive_envs_injected(self) -> None:
         """Verifies hook execution injects anti-pager and non-interactive envs, then cleans up."""
-        (self.scripts_dir / "pre_source.sh").write_text(
+        (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
             "echo \"PAGER=$PAGER\"\n"
             "echo \"GIT_PAGER=$GIT_PAGER\"\n"
@@ -641,8 +651,8 @@ echo "VALUE=$DYNAMIC_VAL"
         # Package with custom env override
         pkg_env_dir = self.drift_root / "src" / "pkg_env_test"
         pkg_env_dir.mkdir(parents=True, exist_ok=True)
-        scripts_dir = pkg_env_dir / "scripts"
-        scripts_dir.mkdir(parents=True, exist_ok=True)
+        drift_hooks_dir = pkg_env_dir / "drift_hooks"
+        drift_hooks_dir.mkdir(parents=True, exist_ok=True)
 
         (pkg_env_dir / "drift_package.toml").write_text("""
         [package]
@@ -652,13 +662,13 @@ echo "VALUE=$DYNAMIC_VAL"
         CUSTOM_PKG_VAR = "loaded_by_drift"
 
         [hooks]
-        pre_source = "scripts/check_env.sh"
+        pre_source = "drift_hooks/check_env.sh"
         """, encoding="utf-8")
 
-        (scripts_dir / "check_env.sh").write_text("""#!/bin/sh
+        (drift_hooks_dir / "check_env.sh").write_text("""#!/bin/sh
 echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 """, encoding="utf-8")
-        (scripts_dir / "check_env.sh").chmod(0o755)
+        (drift_hooks_dir / "check_env.sh").chmod(0o755)
 
         # 1. load_envs=True (default) -> CUSTOM_PKG_VAR is loaded
         res_loaded = trigger_pre_source_hook(
@@ -683,7 +693,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
         from drift.package_config import PackageConfig
 
-        (self.scripts_dir / "pre_source.sh").write_text(
+        (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
             "echo \"PAGER=$PAGER\"\n"
             "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
@@ -694,7 +704,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
             # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat
             res_default = execute_hook_script(
-                hook_path=self.scripts_dir / "pre_source.sh",
+                hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
                 hook_name="pre_source",
                 metadata=pkg_config,
@@ -706,7 +716,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
             # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, DRIFT_HOOK not injected
             res_disabled = execute_hook_script(
-                hook_path=self.scripts_dir / "pre_source.sh",
+                hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
                 hook_name="pre_source",
                 metadata=pkg_config,
@@ -720,14 +730,16 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         """Verifies lifecycle hook trigger methods default to hook_path.parent as CWD (or cwd_override)."""
         install_dir = self.drift_root / "install" / "pkg_hook"
         install_dir.mkdir(parents=True, exist_ok=True)
+        hooks_dir = install_dir / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        hooks_dir.mkdir(parents=True, exist_ok=True)
         hooks = PackageHooks(
-            pre_install=install_dir / "scripts/pre_install.sh",
-            pre_update=install_dir / "scripts/pre_update.sh",
-            post_install=install_dir / "scripts/post_install.sh",
-            post_update=install_dir / "scripts/post_update.sh",
-            pre_uninstall=install_dir / "scripts/pre_uninstall.sh",
-            post_uninstall=install_dir / "scripts/post_uninstall.sh",
-            health=install_dir / "scripts/health.sh",
+            pre_install=hooks_dir / "pre_install.sh",
+            pre_update=hooks_dir / "pre_update.sh",
+            post_install=hooks_dir / "post_install.sh",
+            post_update=hooks_dir / "post_update.sh",
+            pre_uninstall=hooks_dir / "pre_uninstall.sh",
+            post_uninstall=hooks_dir / "post_uninstall.sh",
+            health=hooks_dir / "health.sh",
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
@@ -740,7 +752,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg="pkg_hook",
                 hook_name="pre_install",
                 metadata=pkg_config,
-                cwd=install_dir / "scripts",
+                cwd=hooks_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
@@ -770,7 +782,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg="pkg_hook",
                 hook_name="post_install",
                 metadata=pkg_config,
-                cwd=install_dir / "scripts",
+                cwd=hooks_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
@@ -779,7 +791,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg="pkg_hook",
                 hook_name="post_update",
                 metadata=pkg_config,
-                cwd=install_dir / "scripts",
+                cwd=hooks_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
@@ -788,7 +800,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg="pkg_hook",
                 hook_name="pre_uninstall",
                 metadata=pkg_config,
-                cwd=install_dir / "scripts",
+                cwd=hooks_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
@@ -797,7 +809,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg="pkg_hook",
                 hook_name="health",
                 metadata=pkg_config,
-                cwd=install_dir / "scripts",
+                cwd=hooks_dir,
                 flags=HookExecFlags(no_hooks=False, streaming=True, inject_non_interactive_envs=True),
             )
 
@@ -821,7 +833,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         from drift.package_config import PackageConfig
 
-        failing_script = self.scripts_dir / "fail.sh"
+        failing_script = self.drift_hooks_dir / "fail.sh"
         failing_script.write_text("#!/bin/sh\necho 'error details' >&2\nexit 42\n", encoding="utf-8")
         failing_script.chmod(0o755)
 
@@ -854,7 +866,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 3. trigger_probe_hook defaults to raise_on_error=False
         (self.src_pkg_dir / "drift_package.toml").write_text(
-            '[package]\nname = "pkg_hook"\n[hooks]\nprobe = "scripts/fail.sh"\n',
+            '[package]\nname = "pkg_hook"\n[hooks]\nprobe = "drift_hooks/fail.sh"\n',
             encoding="utf-8"
         )
         probe_res = trigger_probe_hook(
@@ -910,7 +922,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         from drift.package_config import PackageConfig, PackageHooks
         from drift.exceptions import HookExecutionError
 
-        failing_script = self.scripts_dir / "fail.sh"
+        failing_script = self.drift_hooks_dir / "fail.sh"
         failing_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
         failing_script.chmod(0o755)
 
@@ -971,7 +983,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 4. Relative hook path without base_dir raises ConfigError
         with self.assertRaises(ConfigError) as ctx:
-            PackageHooks.from_dict({"pre_install": "scripts/pre_install.sh"}, package_name="test_pkg")
+            PackageHooks.from_dict({"pre_install": "drift_hooks/pre_install.sh"}, package_name="test_pkg")
         self.assertIn("base_dir or workspace_config must be provided", str(ctx.exception))
 
         # 5. PackageConfig requires base_dir
@@ -983,13 +995,13 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         pkg_cfg = PackageConfig.from_dict(
             {
                 "package": {"name": "test_pkg"},
-                "hooks": {"pre_install": "scripts/pre_install.sh"}
+                "hooks": {"pre_install": "drift_hooks/pre_install.sh"}
             },
             package_name="test_pkg",
             base_dir=self.drift_root,
         )
         self.assertEqual(pkg_cfg.name, "test_pkg")
-        self.assertEqual(pkg_cfg.hooks.pre_install, (self.drift_root / "scripts/pre_install.sh").resolve())
+        self.assertEqual(pkg_cfg.hooks.pre_install, (self.drift_root / ".drift/hooks/pre_install.sh").resolve())
 
     def test_external_shared_hook_trigger_with_render(self) -> None:
         """Verifies that an external hook outside the package directory is executed directly without rendering."""
@@ -1048,37 +1060,37 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         # 1. Relative hook paths
         hooks_rel = PackageHooks.from_dict(
             {
-                "pre_source": "scripts/pre_source.sh",
-                "post_render": "scripts/post_render.sh",
-                "pre_install": "scripts/pre_install.sh",
-                "post_install": "scripts/post_install.sh",
+                "pre_source": "drift_hooks/pre_source.sh",
+                "post_render": "drift_hooks/post_render.sh",
+                "pre_install": "drift_hooks/pre_install.sh",
+                "post_install": "drift_hooks/post_install.sh",
             },
             package_name="pkg_hook",
             workspace_config=self.workspace_config,
         )
-        self.assertEqual(hooks_rel.pre_source, (render_base / "scripts/pre_source.sh").resolve())
-        self.assertEqual(hooks_rel.post_render, (render_base / "scripts/post_render.sh").resolve())
-        self.assertEqual(hooks_rel.pre_install, (install_base / "scripts/pre_install.sh").resolve())
-        self.assertEqual(hooks_rel.post_install, (install_base / "scripts/post_install.sh").resolve())
+        self.assertEqual(hooks_rel.pre_source, (render_base / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_source.sh").resolve())
+        self.assertEqual(hooks_rel.post_render, (render_base / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_render.sh").resolve())
+        self.assertEqual(hooks_rel.pre_install, (install_base / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_install.sh").resolve())
+        self.assertEqual(hooks_rel.post_install, (install_base / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_install.sh").resolve())
 
-        self.assertEqual(hooks_rel.get_relative_path("pre_source"), Path("scripts/pre_source.sh"))
-        self.assertEqual(hooks_rel.get_relative_path("post_render"), Path("scripts/post_render.sh"))
-        self.assertEqual(hooks_rel.get_relative_path("pre_install"), Path("scripts/pre_install.sh"))
-        self.assertEqual(hooks_rel.get_relative_path("post_install"), Path("scripts/post_install.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("pre_source"), Path("drift_hooks/pre_source.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("post_render"), Path("drift_hooks/post_render.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("pre_install"), Path("drift_hooks/pre_install.sh"))
+        self.assertEqual(hooks_rel.get_relative_path("post_install"), Path("drift_hooks/post_install.sh"))
         self.assertIsNone(hooks_rel.get_relative_path("pre_update"))
 
         self.assertEqual(
             hooks_rel.configured_relative_paths,
             {
-                "scripts/pre_source.sh",
-                "scripts/post_render.sh",
-                "scripts/pre_install.sh",
-                "scripts/post_install.sh",
+                "drift_hooks/pre_source.sh",
+                "drift_hooks/post_render.sh",
+                "drift_hooks/pre_install.sh",
+                "drift_hooks/post_install.sh",
             }
         )
 
         # 2. Inside-source absolute hook paths
-        abs_in_src = (src_base / "scripts" / "pre_install.sh").resolve()
+        abs_in_src = (src_base / "drift_hooks" / "pre_install.sh").resolve()
         hooks_in_src = PackageHooks.from_dict(
             {
                 "pre_install": str(abs_in_src),
@@ -1087,9 +1099,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             workspace_config=self.workspace_config,
         )
         # Canonical execution path should bind to stage base (install_base)
-        self.assertEqual(hooks_in_src.pre_install, (install_base / "scripts/pre_install.sh").resolve())
-        self.assertEqual(hooks_in_src.get_relative_path("pre_install"), Path("scripts/pre_install.sh"))
-        self.assertEqual(hooks_in_src.configured_relative_paths, {"scripts/pre_install.sh"})
+        self.assertEqual(hooks_in_src.pre_install, (install_base / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_install.sh").resolve())
+        self.assertEqual(hooks_in_src.get_relative_path("pre_install"), Path("drift_hooks/pre_install.sh"))
+        self.assertEqual(hooks_in_src.configured_relative_paths, {"drift_hooks/pre_install.sh"})
 
         # 3. External absolute hook paths
         external_abs = Path("/usr/local/bin/global_hook.sh").resolve()
@@ -1108,7 +1120,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         """Verifies that an absolute hook path inside source dir is normalized, rendered, and executed properly."""
         from drift.lifecycle_hooks import trigger_pre_source_hook
 
-        abs_hook = (self.src_pkg_dir / "scripts" / "pre_source.sh").resolve()
+        abs_hook = (self.src_pkg_dir / "drift_hooks" / "pre_source.sh").resolve()
         (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "pkg_hook"
@@ -1125,7 +1137,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.exit_code, 0)
-        self.assertTrue((self.drift_root / "render" / "pkg_hook" / "scripts" / "pre_source_out.txt").is_file())
+        self.assertTrue((self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_source_out.txt").is_file())
 
 
 if __name__ == "__main__":

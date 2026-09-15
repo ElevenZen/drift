@@ -223,7 +223,9 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
 
     def test_deploy_with_hook_json_does_not_pollute_stdout(self) -> None:
         """Verifies that hook stdout is NOT streamed to sys.stdout in --json mode, maintaining clean JSON output."""
-        hook_script = os.path.join(self.src_dir, "pkg_a", "post_render.sh")
+        hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_script = os.path.join(hooks_dir, "post_render.sh")
         with open(hook_script, "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\necho 'RAW_HOOK_OUTPUT_SHOULD_NOT_POLLUTE_JSON'\n")
         os.chmod(hook_script, 0o755)
@@ -231,7 +233,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         # Update pkg_a config to enable post_render hook
         cfg_path = os.path.join(self.src_dir, "pkg_a", "drift_package.toml")
         with open(cfg_path, "a", encoding="utf-8") as f:
-            f.write("\n[hooks]\npost_render = 'post_render.sh'\n")
+            f.write("\n[hooks]\npost_render = 'drift_hooks/post_render.sh'\n")
 
         stdout = StringIO()
         old_stdout = sys.stdout
@@ -254,7 +256,9 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
             main(["-C", self.drift_root, "--no-git-root", "deploy", "pkg_a", "--json"])
 
         # 2. Add failing post_update hook with rollback_on_failure = false
-        hook_script = os.path.join(self.src_dir, "pkg_a", "post_update.sh")
+        hooks_dir = os.path.join(self.src_dir, "pkg_a", "drift_hooks")
+        os.makedirs(hooks_dir, exist_ok=True)
+        hook_script = os.path.join(hooks_dir, "post_update.sh")
         with open(hook_script, "w", encoding="utf-8") as f:
             f.write("#!/bin/sh\nexit 1\n")
         os.chmod(hook_script, 0o755)
@@ -266,7 +270,7 @@ name = "pkg_a"
 install_method = "copy"
 target_directory = "{self.target_dir}"
 [hooks]
-post_update = "post_update.sh"
+post_update = "drift_hooks/post_update.sh"
 rollback_on_failure = false
 """)
 

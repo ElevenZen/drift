@@ -9,7 +9,13 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 from io import StringIO
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, set_test_mode
+from drift.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    set_test_mode,
+)
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.render_engine_config import RenderEngineRegistry
 from drift.lifecycle_hooks import HookExecFlags
@@ -537,7 +543,7 @@ class TestAdopt(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = src_pkg_dir / "scripts"
+        scripts_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir()
         hook_script = scripts_dir / "prepare_src.sh"
         hook_script.write_text(
@@ -549,7 +555,7 @@ class TestAdopt(unittest.TestCase):
 
         pkg_toml = src_pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
-            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/prepare_src.sh\"\n",
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"drift_hooks/prepare_src.sh\"\n",
             encoding="utf-8"
         )
 
@@ -558,13 +564,13 @@ class TestAdopt(unittest.TestCase):
 
         adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
-        # Hook must have run and generated hook_executed.txt in render pkg scripts dir
-        hook_out = self.workspace_path / "render" / pkg / "scripts" / "hook_executed.txt"
+        # Hook must have run and generated hook_executed.txt in render pkg .drift/hooks dir
+        hook_out = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_executed.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), "STATIC_HOOK_RAN")
 
         # Copied static hook must exist in render/
-        rendered_hook = self.workspace_path / "render" / pkg / "scripts" / "prepare_src.sh"
+        rendered_hook = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "prepare_src.sh"
         self.assertTrue(rendered_hook.is_file())
         self.assertIn("STATIC_HOOK_RAN", rendered_hook.read_text(encoding="utf-8"))
 
@@ -579,7 +585,7 @@ class TestAdopt(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = src_pkg_dir / "scripts"
+        scripts_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir()
         hook_script = scripts_dir / "prepare_src.envst.sh"
         hook_script.write_text(
@@ -591,7 +597,7 @@ class TestAdopt(unittest.TestCase):
 
         pkg_toml = src_pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
-            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/prepare_src.envst.sh\"\n",
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"drift_hooks/prepare_src.sh\"\n",
             encoding="utf-8"
         )
 
@@ -600,13 +606,13 @@ class TestAdopt(unittest.TestCase):
 
         adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
 
-        # Hook must have run and generated hook_executed.txt in render pkg scripts dir
-        hook_out = self.workspace_path / "render" / pkg / "scripts" / "hook_executed.txt"
+        # Hook must have run and generated hook_executed.txt in render pkg .drift/hooks dir
+        hook_out = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "hook_executed.txt"
         self.assertTrue(hook_out.is_file())
         self.assertEqual(hook_out.read_text(encoding="utf-8").strip(), f"HOOK_RAN_{pkg}")
 
         # Rendered hook must exist in render/
-        rendered_hook = self.workspace_path / "render" / pkg / "scripts" / "prepare_src.sh"
+        rendered_hook = self.workspace_path / "render" / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "prepare_src.sh"
         self.assertTrue(rendered_hook.is_file())
         self.assertIn(f"HOOK_RAN_{pkg}", rendered_hook.read_text(encoding="utf-8"))
 
@@ -618,7 +624,7 @@ class TestAdopt(unittest.TestCase):
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
 
-        scripts_dir = src_pkg_dir / "scripts"
+        scripts_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
         scripts_dir.mkdir()
         hook_script = scripts_dir / "failing.sh"
         hook_script.write_text(
@@ -631,7 +637,7 @@ class TestAdopt(unittest.TestCase):
 
         pkg_toml = src_pkg_dir / "drift_package.toml"
         pkg_toml.write_text(
-            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"scripts/failing.sh\"\n",
+            f"[package]\nname = \"{pkg}\"\n\n[hooks]\npre_source = \"drift_hooks/failing.sh\"\n",
             encoding="utf-8"
         )
 
@@ -642,6 +648,59 @@ class TestAdopt(unittest.TestCase):
                 self.workspace_config, pkg, interactive=False, flags=HookExecFlags(streaming=False)
             )
         self.assertIn("failed with exit code 1", str(ctx.exception))
+
+    def test_adopt_with_package_source_directory_subfolder(self) -> None:
+        """Verifies drift adopt properly routes additions and modifications into subfolder source_directory."""
+        pkg = "pkg_sub_adopt"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        dotfiles_dir = src_pkg_dir / "dotfiles"
+        (dotfiles_dir / "dot-config").mkdir(parents=True, exist_ok=True)
+        (dotfiles_dir / "dot-config" / "app.conf").write_text("setting=original\n", encoding="utf-8")
+
+        (src_pkg_dir / "drift_package.toml").write_text(
+            f"[package]\nname = \"{pkg}\"\nsource_directory = \"dotfiles\"\n",
+            encoding="utf-8"
+        )
+
+        # Commit initial files in workspace source repo
+        subprocess.run(["git", "-C", str(self.workspace_path), "add", "."], check=True, capture_output=True)
+        subprocess.run(["git", "-C", str(self.workspace_path), "commit", "-m", "add pkg_sub_adopt source"], check=True, capture_output=True)
+
+        # Stage / install structure
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config" / "app.conf").write_text("setting=original\n", encoding="utf-8")
+
+        # Initial commit in install repo
+        subprocess.run(["git", "-C", str(self.install_dir), "add", "."], capture_output=True)
+        subprocess.run(["git", "-C", str(self.install_dir), "commit", "-m", "init"], capture_output=True)
+
+        # Create drifts in install/
+        # 1. Modify app.conf
+        (pkg_install_dir / "dot-config" / "app.conf").write_text("setting=modified_in_install\n", encoding="utf-8")
+        # 2. Add new file
+        (pkg_install_dir / "new_tool.sh").write_text("#!/bin/sh\necho new_tool\n", encoding="utf-8")
+
+        adopt_res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
+        self.assertEqual(adopt_res.status, "SUCCESS")
+        self.assertIn("dot-config/app.conf", adopt_res.adopted_modifications)
+        self.assertIn("new_tool.sh", adopt_res.adopted_additions)
+
+        # Verify adopted into dotfiles/ subfolder
+        self.assertEqual(
+            (dotfiles_dir / "dot-config" / "app.conf").read_text(encoding="utf-8"),
+            "setting=modified_in_install\n"
+        )
+        self.assertTrue((dotfiles_dir / "new_tool.sh").is_file())
+        self.assertEqual(
+            (dotfiles_dir / "new_tool.sh").read_text(encoding="utf-8"),
+            "#!/bin/sh\necho new_tool\n"
+        )
+
+        # Verify root of package does not contain new_tool.sh
+        self.assertFalse((src_pkg_dir / "new_tool.sh").exists())
 
     def test_adopt_permission_only_drift_applies_cleanly(self) -> None:
         """Verifies that adopting a file mode/permission drift updates source file permissions cleanly."""

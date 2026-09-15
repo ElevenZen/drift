@@ -924,7 +924,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             },
             "hooks": {
-                "post_install": "scripts/start_${drift_package_name}.sh",
+                "post_install": "drift_hooks/start_${drift_package_name}.sh",
                 "timeout": 45,
             }
         }
@@ -935,7 +935,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(pkg_cfg.name, "my_daemon")
         self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
         self.assertEqual(pkg_cfg.env_override["SERVICE_URL"], "http://127.0.0.1:8000")
-        self.assertEqual(pkg_cfg.hooks.post_install, base_dir / "scripts/start_my_daemon.sh")
+        self.assertEqual(pkg_cfg.hooks.post_install, base_dir / ".drift/hooks/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
 
     def test_package_config_with_direct_env_raises_error(self) -> None:
@@ -1021,7 +1021,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             },
             "hooks": {
-                "post_install": "${SRC_DIR_REF}/scripts/post.sh",
+                "post_install": "${SRC_DIR_REF}/drift_hooks/post.sh",
             }
         }
         # Simulate workspace environment variable in os.environ (Tier 6)
@@ -1037,8 +1037,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         # Fallback filled unset blanks
         self.assertEqual(pkg_cfg.env_fallback["FALLBACK_VAR"], "fallback_val")
         # Hook path was interpolated and normalized to stage base (install directory for post_install)
-        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "install" / "my_pkg" / "scripts" / "post.sh"))
-        self.assertEqual(pkg_cfg.hooks.get_relative_path("post_install"), Path("scripts/post.sh"))
+        self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "install" / "my_pkg" / ".drift" / "hooks" / "post.sh"))
+        self.assertEqual(pkg_cfg.hooks.get_relative_path("post_install"), Path("drift_hooks/post.sh"))
 
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
