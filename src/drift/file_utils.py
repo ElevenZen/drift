@@ -331,23 +331,28 @@ def unlock_file_or_dir_if_windows(path: Path) -> None:
     if sys.platform != "win32":
         return
     try:
-        if not path.exists() and not path.is_symlink():
-            return
-        if path.is_dir() and not path.is_symlink():
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-            for root, dirs, files in os.walk(path):
-                for d in dirs:
-                    try:
-                        os.chmod(os.path.join(root, d), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-                    except Exception:
-                        pass
-                for f in files:
-                    try:
-                        os.chmod(os.path.join(root, f), stat.S_IWRITE | stat.S_IREAD)
-                    except Exception:
-                        pass
-        else:
+        if path.is_symlink():
             os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            return
+        if not path.exists():
+            return
+        if not path.is_dir():
+            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+            return
+
+        # walk in given dir.
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+        for root, dirs, files in os.walk(path):
+            for d in dirs:
+                try:
+                    os.chmod(os.path.join(root, d), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
+                except Exception:
+                    pass
+            for f in files:
+                try:
+                    os.chmod(os.path.join(root, f), stat.S_IWRITE | stat.S_IREAD)
+                except Exception:
+                    pass
     except Exception:
         pass
 
