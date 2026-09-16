@@ -33,33 +33,17 @@ Drift commands are categorized into **8 distinct positional argument patterns**:
 
 ## 3. End-to-End System Architecture
 
-```mermaid
-graph TD
-    Schema["src/drift/cli/schema.py<br/>(Single Source of Truth Schema)"]
-    
-    subgraph "CLI Parsers"
-        Schema --> Argparse["src/drift/cli/argparse_backend.py<br/>(generate_argparse_parser)"]
-        Schema --> Typer["src/drift/cli/typer_backend.py<br/>(generate_typer_app)"]
-    end
-
-    subgraph "Router Layer"
-        Argparse --> Handlers["src/drift/cli/cli_handlers.py<br/>(DriftCLIContext & handle_*)"]
-        Typer --> Handlers
-        Handlers --> Actions["src/drift/cli/actions.py<br/>(execute_*)"]
-    end
-
-    subgraph "Shell Completion Generators"
-        Schema --> BashGen["src/drift/cli/completion/bash.py<br/>(BashGenerator)"]
-        Schema --> ZshGen["src/drift/cli/completion/zsh.py<br/>(ZshGenerator)"]
-        Schema --> FishGen["src/drift/cli/completion/fish.py<br/>(FishGenerator)"]
-        
-        BashGen --> CompInit["src/drift/cli/completion/__init__.py<br/>(generate_completion_script)"]
-        ZshGen --> CompInit
-        FishGen --> CompInit
-    end
-
-    Actions --> CompInit
-```
+* **Single Source of Truth**: [`src/drift/cli/schema.py`](src/drift/cli/schema.py) (`CommandSpec`, `OptionSpec`, `CompletionSchema`)
+  * **CLI Parser Layer**:
+    * [`src/drift/cli/argparse_backend.py`](src/drift/cli/argparse_backend.py) (`generate_argparse_parser`)
+    * [`src/drift/cli/typer_backend.py`](src/drift/cli/typer_backend.py) (`generate_typer_app`)
+    * $\rightarrow$ **Router / Dispatcher**: [`src/drift/cli/cli_handlers.py`](src/drift/cli/cli_handlers.py) (`DriftCLIContext & handle_*`)
+    * $\rightarrow$ **Action Execution**: [`src/drift/cli/actions.py`](src/drift/cli/actions.py) (`execute_*`)
+  * **Shell Completion Generators**:
+    * [`src/drift/cli/completion/bash.py`](src/drift/cli/completion/bash.py) (`BashGenerator`)
+    * [`src/drift/cli/completion/zsh.py`](src/drift/cli/completion/zsh.py) (`ZshGenerator`)
+    * [`src/drift/cli/completion/fish.py`](src/drift/cli/completion/fish.py) (`FishGenerator`)
+    * $\rightarrow$ **Facade**: [`src/drift/cli/completion/__init__.py`](src/drift/cli/completion/__init__.py) (`generate_completion_script`)
 
 ---
 

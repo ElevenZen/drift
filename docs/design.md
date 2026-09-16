@@ -125,36 +125,21 @@ You no longer want a package active on this machine.
 
 All high-level workflows in drift are composed of fourteen atomic, sequential primitives:
 
-```
-                          [ Execution: drift deploy ]
-                                       │
-                                       ▼
-                       ┌───────────────────────────────┐
-                       │ Stage 1: Primitive 1 (Reverse)│
-                       └───────────────┬───────────────┘
-                                       ▼
-                       ┌───────────────────────────────┐
-                       │    Is git -C install clean?   │
-                       └───────────────┬───────────────┘
-                                       │
-                      ┌────────────────┴────────────────┐
-                      ▼ (No: Drift detected)            ▼ (Yes: Clean Slate)
-               [ ABORT DEPLOY ]                  ┌───────────────────────────────┐
-            - Show Diff B                        │ Stage 2 Sequential Flow:      │
-            - Guide adopt / force                │ 2. Render Packages            │
-                                                 │ 3. Render Repo Commit         │
-                                                 │ 4. Stage Render to Install    │
-                                                 │ 5. Install Repo Deployment    │
-                                                 │ 6. Install Repo Commit        │
-                                                 └───────────────┬───────────────┘
-                                                                 ▼
-                                                 ┌───────────────────────────────┐
-                                                 │ Stage 3: Post-Deployment GC   │
-                                                 │ 9. Workspace GC (Bulk Only)   │
-                                                 └───────────────┬───────────────┘
-                                                                 ▼
-                                                         [ Deploy Success ]
-```
+* **Execution Flow (`drift deploy`)**:
+  * **Stage 1: Pre-Flight Safety (Reverse Sync & Audit)**:
+    * Primitive 1: Reverse Sync (`drift reverse-sync`).
+    * Drift Audit: Check `git -C install status --porcelain`.
+      * *If Drift Detected (Dirty)*: **ABORT DEPLOY** (Display Diff B, guide `drift adopt` or `--force`).
+      * *If Clean Slate*: Proceed to Stage 2.
+  * **Stage 2: Core Staged Pipeline**:
+    * Primitive 2: Render Packages (`src/` $\rightarrow$ `render/`).
+    * Primitive 3: Render Repo Commit (`git -C render commit`).
+    * Primitive 4: Stage Render to Install (`render/` $\rightarrow$ `install/`).
+    * Primitive 5: Install Repo Deployment (Deploy to host system targets via Stow symlinks or physical copy).
+    * Primitive 6: Install Repo Commit (`git -C install commit`).
+  * **Stage 3: Post-Deployment Maintenance**:
+    * Primitive 9: Workspace GC (Bulk unused repo cleanup).
+  * **Deploy Success**
 
 ### Primitive 1: Reverse Sync (System $\rightarrow$ `install/` [Low-level: `drift reverse-sync`])
 Unconditionally pulls the current host configuration state into the `install/` state Git repository using targeted, $O(N_{\text{pkg}})$ comparisons rather than scanning the entire target host directory (`$HOME`):

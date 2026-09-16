@@ -24,23 +24,15 @@ Operating systems use different security abstractions to control file access. Wh
 
 The fundamental difference between Windows and Unix begins at the lowest filesystem metadata layer:
 
-```mermaid
-flowchart TD
-    subgraph DOS["MS-DOS / FAT 32-Byte Entry"]
-        AttrByte["Attribute Byte (8-bit)"]
-        AttrByte --> A1["0x01: READONLY (State flag)"]
-        AttrByte --> A2["0x02: HIDDEN (Listing flag)"]
-        AttrByte --> A3["0x04: SYSTEM (System flag)"]
-        AttrByte --> A4["0x20: ARCHIVE (Backup flag)"]
-    end
-
-    subgraph Unix["Unix Inode Mode Word (16-bit)"]
-        ModeWord["st_mode Integer"]
-        ModeWord --> U1["Bits 12-15: File Type (REG, DIR, LNK, FIFO, SOCK, CHR, BLK)"]
-        ModeWord --> U2["Bits 9-11: Special Flags (setuid, setgid, sticky)"]
-        ModeWord --> U3["Bits 0-8: Access Control Permissions (rwxrwxrwx)"]
-    end
-```
+* **MS-DOS / FAT 32-Byte Entry (8-bit Attribute Byte)**:
+  * `0x01`: `READONLY` (State flag)
+  * `0x02`: `HIDDEN` (Listing filter flag)
+  * `0x04`: `SYSTEM` (Operating system flag)
+  * `0x20`: `ARCHIVE` (Backup dirty flag)
+* **Unix Inode Mode Word (16-bit `st_mode` Integer)**:
+  * **Bits 12–15 (File Type)**: `S_IFREG`, `S_IFDIR`, `S_IFLNK`, `S_IFIFO`, `S_IFSOCK`, `S_IFCHR`, `S_IFBLK`
+  * **Bits 9–11 (Special Execution Flags)**: `setuid` (`04000`), `setgid` (`02000`), `sticky bit` (`01000`)
+  * **Bits 0–8 (Access Control Permissions)**: 3 bits each for User, Group, and Other (`rwxrwxrwx`)
 
 ### A. MS-DOS / FAT Attribute Byte (Property Flags, NOT Access Control)
 In MS-DOS (FAT filesystems), each file entry had an **Attribute Byte** (8 bits):
@@ -86,30 +78,19 @@ Traditional Unix never had "Hidden" or "System" property bits. Instead, every in
 
 Windows NTFS uses a layered security model combining **legacy DOS/FAT file attributes** and **NTFS Security Descriptors**.
 
-```mermaid
-flowchart TD
-    File["File / Directory on NTFS"]
-    
-    subgraph L1["Layer 1: Legacy DOS / FAT Attributes (Win32 API)"]
-        RO["FILE_ATTRIBUTE_READONLY (Read-Only)"]
-        HD["FILE_ATTRIBUTE_HIDDEN (Hidden)"]
-        SYS["FILE_ATTRIBUTE_SYSTEM (System)"]
-    end
-
-    subgraph L2["Layer 2: NTFS Security Descriptor (SRM / Object Manager)"]
-        Owner["Owner SID (e.g. S-1-5-21-...-1001)"]
-        Group["Group SID (e.g. S-1-5-21-...-513)"]
-        DACL["DACL (Discretionary Access Control List)"]
-        SACL["SACL (System Audit Access Control List)"]
-    end
-
-    File --> L1
-    File --> L2
-    
-    DACL --> ACE1["[Explicit DENY]  User 'Eve': Delete, Write Data"]
-    DACL --> ACE2["[Explicit ALLOW] Group 'Developers': Read, Write, Execute"]
-    DACL --> ACE3["[Inherited ALLOW] Group 'Everyone': Read Data"]
-```
+* **File / Directory on NTFS**:
+  * **Layer 1: Legacy DOS / FAT Attributes (Win32 API)**:
+    * `FILE_ATTRIBUTE_READONLY` (Read-Only)
+    * `FILE_ATTRIBUTE_HIDDEN` (Hidden)
+    * `FILE_ATTRIBUTE_SYSTEM` (System)
+  * **Layer 2: NTFS Security Descriptor (SRM / Object Manager)**:
+    * **Owner SID**: e.g. `S-1-5-21-...-1001`
+    * **Group SID**: e.g. `S-1-5-21-...-513`
+    * **SACL**: System Audit Access Control List
+    * **DACL (Discretionary Access Control List)**:
+      * ACE 1: `[Explicit DENY]` User 'Eve': Delete, Write Data
+      * ACE 2: `[Explicit ALLOW]` Group 'Developers': Read, Write, Execute
+      * ACE 3: `[Inherited ALLOW]` Group 'Everyone': Read Data
 
 ### A. The 14 Granular NTFS Rights
 Unlike POSIX `rwx`, NTFS divides permissions into 14 distinct rights:

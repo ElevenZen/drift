@@ -22,29 +22,18 @@ Industrial configuration management is divided into two distinct responsibilitie
 
 ## 2. The 3-Tier Architectural Pipeline
 
-```mermaid
-flowchart LR
-    subgraph Central["1. Central Plane (Source of Truth)"]
-        Git["GitOps Repositories\n(GitHub / GitLab)"]
-        Center["Dynamic Config Centers\n(Apollo / Nacos / Etcd)"]
-        Vault["Secret Vaults\n(HashiCorp Vault / KMS)"]
-    end
-
-    subgraph Sync["2. Synchronization Tier"]
-        Pull["GitOps Controllers\n(ArgoCD / FluxCD)"]
-        Push["gRPC Streams / Long-Polling\n(Agent / Sidecar / SDK)"]
-    end
-
-    subgraph Install["3. Installation & Activation Tier"]
-        Render["Sandbox Template Rendering\n(Jinja2 / Go Template / Mustache)"]
-        Verify["Pre-Flight Syntax Validation\n(e.g., nginx -t, promtool)"]
-        Swap["Atomic Materialization\n(Symlink Swap / In-place Rename)"]
-        Reload["Lifecycle Signal & Activation\n(SIGHUP / Hot Reload / Hooks)"]
-    end
-
-    Central --> Sync
-    Sync --> Render --> Verify --> Swap --> Reload
-```
+* **1. Central Plane (Source of Truth)**:
+  * GitOps Repositories (GitHub / GitLab)
+  * Dynamic Config Centers (Apollo / Nacos / Etcd)
+  * Secret Vaults (HashiCorp Vault / KMS)
+* **2. Synchronization Tier**:
+  * GitOps Controllers (ArgoCD / FluxCD)
+  * gRPC Streams / Long-Polling (Agent / Sidecar / SDK)
+* **3. Installation & Activation Tier**:
+  * Sandbox Template Rendering (Jinja2 / Go Template / Mustache)
+  * $\rightarrow$ Pre-Flight Syntax Validation (e.g. `nginx -t`, `promtool`)
+  * $\rightarrow$ Atomic Materialization (Symlink Swap / In-place Rename)
+  * $\rightarrow$ Lifecycle Signal & Activation (SIGHUP / Hot Reload / Hooks)
 
 ---
 
@@ -63,18 +52,11 @@ Dynamic configuration centers serve as real-time distributed key-value/document 
 * **Dynamic Database & Circuit Breaker Tuning**: Adjusting connection pool sizes or timeout thresholds during traffic surges.
 
 #### 3. How It Checks & Triggers
-```mermaid
-sequenceDiagram
-    participant App as Application / Node
-    participant Server as Config Center (Apollo / Nacos)
-    participant Operator as Admin / CI/CD
-
-    App->>Server: 1. Persistent gRPC Stream / HTTP/2 Long-Poll (holding connection)
-    Operator->>Server: 2. Publish updated configuration (v2)
-    Server-->>App: 3. Instant push notification (DataID, Namespace, Hash)
-    App->>Server: 4. Fetch incremental config payload
-    App->>App: 5. Execute in-memory listener callback / refresh context
-```
+1. **Persistent Connection**: Application / Node establishes a persistent gRPC stream or HTTP/2 long-poll connection with Config Center (Apollo / Nacos).
+2. **Publish Change**: Admin / CI/CD publishes updated configuration (v2) to the Config Center.
+3. **Push Notification**: Config Center sends an instant push notification containing `DataID`, `Namespace`, and `Hash` to the Application.
+4. **Fetch Payload**: Application queries Config Center for the incremental config payload.
+5. **Local Refresh**: Application executes in-memory listener callback / refreshes configuration context.
 
 ---
 
@@ -93,20 +75,11 @@ GitOps treats a Git repository as the immutable, auditable single source of trut
 * **Filesystem Materialization (Kubernetes Symlink Farm)**:
   To prevent applications from reading half-written files, the Kubelet uses a double-symlink swap pattern:
 
-```mermaid
-flowchart TD
-    subgraph MountDir["Target Mount Directory (/etc/app/config/)"]
-        AppConf["app.conf (Symlink) -> ..data/app.conf"]
-        DataLink["..data (Symlink)"]
-        
-        DirOld["..2026_08_28_10_00/ (Old Config Dir)"]
-        DirNew["..2026_08_28_12_00/ (New Config Dir)"]
-        
-        AppConf --> DataLink
-        DataLink -. "Atomic Swap (ln -sfn)" .-> DirNew
-        DataLink -. "Previous Target" .-> DirOld
-    end
-```
+* **Target Mount Directory Structure (`/etc/app/config/`)**:
+  * `app.conf` (Symlink) $\rightarrow$ `..data/app.conf`
+  * `..data` (Symlink) $\rightarrow$ Atomically swapped to point to `..2026_08_28_12_00/`
+    * `..2026_08_28_12_00/` (New Config Directory)
+    * `..2026_08_28_10_00/` (Old Config Directory - unlinked on GC)
 
 1. **Step 1**: Creates a hidden timestamped directory `..2026_08_28_12_00/` and writes all files completely.
 2. **Step 2**: Atomically swaps the intermediate symlink `..data` to point to the new directory using an atomic rename (`rename(2)`).
@@ -126,20 +99,14 @@ Node agents (**Consul-Template**, **ConfD**, **Vault Agent**) bridge the gap bet
 
 #### 3. How It Checks & Triggers (The 6-Step Execution Lifecycle)
 
-```mermaid
-flowchart TD
-    KV["Remote KV / Vault / Git"] -->|"1. Event Watch / Polling"| Agent["Agent Daemon (ConfD / Consul-Template)"]
-    
-    subgraph Sandbox["Isolated Sandbox Phase"]
-        Agent -->|"2. Compile Template"| TempFile["/tmp/app.conf.next"]
-        TempFile -->|"3. Execute check_cmd"| SyntaxCheck{"Syntax Valid?\n(e.g., nginx -t)"}
-    end
-
-    SyntaxCheck -- "❌ Invalid (Abort & Alert)" --> Halt["Abort! Live config untouched"]
-    SyntaxCheck -- "✅ Valid" --> Swap["4. Atomic Move / Swap to /etc/app/app.conf"]
-    Swap -->|"5. Execute reload_cmd"| Daemon["Target Daemon (Nginx / HAProxy)"]
-    Daemon -->|"6. SIGHUP / Graceful Reload"| Live["Live Traffic Uninterrupted"]
-```
+1. **Event Watch / Polling**: Agent Daemon (ConfD / Consul-Template) detects changes from Remote KV / Vault / Git.
+2. **Sandbox Compilation**: Agent compiles template into an isolated temporary file (`/tmp/app.conf.next`).
+3. **Syntax Validation**: Agent runs `check_cmd` (e.g. `nginx -t`).
+   * *If Invalid*: Abort immediately; live configuration remains untouched, error alert dispatched.
+   * *If Valid*: Proceed to Step 4.
+4. **Atomic Swap**: Atomically moves/swaps `/tmp/app.conf.next` $\rightarrow$ `/etc/app/app.conf`.
+5. **Reload Trigger**: Agent runs `reload_cmd` (e.g. `systemctl reload nginx`).
+6. **Graceful Activation**: Daemon processes `SIGHUP` / reload with zero traffic downtime.
 
 #### Example Configuration: ConfD (`/etc/confd/conf.d/nginx.toml`)
 ```toml
