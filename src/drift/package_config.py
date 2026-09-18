@@ -39,6 +39,7 @@ from .constants import (
     WINDOWS_PLATFORM_ALIASES,
     DEFAULT_HOOK_TIMEOUT,
     INITIAL_ENV,
+    InstallMethod,
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig, load_env_settings
 from .render_engine_config import RenderEngineRegistry
@@ -873,7 +874,7 @@ class PackageConfig:
     source_directory: Path = field(default_factory=lambda: Path("."))
     enable_render: bool = True
     enable_install: bool = True
-    install_method: Optional[str] = None
+    install_method: Optional[InstallMethod] = None
     target_directory: Optional[Path] = None
     target_directory_windows: Optional[Path] = None
     sudo: bool = False
@@ -901,7 +902,7 @@ class PackageConfig:
         source_directory: Optional[Union[str, Path]] = None,
         enable_render: bool = True,
         enable_install: bool = True,
-        install_method: Optional[str] = None,
+        install_method: Optional[InstallMethod] = None,
         target_directory: Optional[Path] = None,
         target_directory_windows: Optional[Path] = None,
         sudo: bool = False,
@@ -919,6 +920,8 @@ class PackageConfig:
             raise ConfigError(f"target_directory must be a Path or str, got {type(target_directory).__name__}")
         if target_directory_windows is not None and not isinstance(target_directory_windows, (str, Path)):
             raise ConfigError(f"target_directory_windows must be a Path or str, got {type(target_directory_windows).__name__}")
+        if install_method is not None and not isinstance(install_method, InstallMethod):
+            raise ConfigError(f"install_method must be an InstallMethod instance, got {type(install_method).__name__}")
         if hooks is not None and not isinstance(hooks, PackageHooks):
             raise ConfigError(f"hooks must be a PackageHooks instance, got {type(hooks).__name__}")
         if requirements is not None and not isinstance(requirements, PackageRequirements):
@@ -959,10 +962,10 @@ class PackageConfig:
         for file in self.source_files:
             if not isinstance(file, Path):
                 raise ConfigError(f"source_files entries must be Path objects for package '{self.name}'.")
-        if self.install_method is not None and self.install_method not in ("stow", "copy"):
+        if self.install_method is not None and not isinstance(self.install_method, InstallMethod):
             raise ConfigError(
                 f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
-                "Must be 'stow' or 'copy'."
+                "Must be an InstallMethod instance."
             )
         if not isinstance(self.enable_render, bool):
             raise ConfigError(f"enable_render must be a boolean for package '{self.name}'.")
@@ -1051,9 +1054,9 @@ class PackageConfig:
             return expand_user_and_env(self.target_directory_windows)
         return expand_user_and_env(self.target_directory or workspace_config.default_target_path)
 
-    def get_install_method(self, workspace_config: WorkspaceConfig) -> str:
+    def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
         if sys.platform == "win32":
-            return "copy"
+            return InstallMethod.COPY
         return self.install_method or workspace_config.workspace.default_install_method
 
     def get_render_engines(self, workspace_config: WorkspaceConfig) -> RenderEngineRegistry:
@@ -1093,7 +1096,7 @@ class PackageConfig:
 
         target_dir = self.get_target_directory(workspace_config)
         target_dir_str = str(target_dir)
-        install_method_str = self.get_install_method(workspace_config)
+        install_method_str = str(self.get_install_method(workspace_config))
         source_dir_str = str(workspace_config.source_path / self.name)
         render_dir_str = str(workspace_config.render_path / self.name)
         install_dir_str = str(workspace_config.install_path / self.name)
@@ -1292,12 +1295,20 @@ class PackageConfig:
         else:
             resolved_hook_file = None
 
+        raw_install_method = package_data.get("install_method")
+        parsed_install_method: Optional[InstallMethod] = None
+        if raw_install_method is not None:
+            try:
+                parsed_install_method = InstallMethod.from_str(raw_install_method)
+            except ValueError as e:
+                raise ConfigError(f"Invalid install_method '{raw_install_method}' for package '{name}'. Must be 'stow' or 'copy'.") from e
+
         config = cls(
             name=str(name),
             source_directory=source_dir,
             enable_render=bool(package_data.get("enable_render", True)),
             enable_install=bool(package_data.get("enable_install", True)),
-            install_method=package_data.get("install_method"),
+            install_method=parsed_install_method,
             target_directory=target_dir,
             target_directory_windows=target_dir_windows,
             sudo=bool(package_data.get("sudo", False)),

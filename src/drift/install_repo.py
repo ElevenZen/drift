@@ -19,6 +19,7 @@ from .constants import (
     MANAGED_CONFIG_FILES,
     STOW_LOCAL_IGNORE_FILE_NAME,
     LineEnding,
+    InstallMethod,
     BackupSubfolder,
 )
 from .exceptions import InstallCollisionError, HookExecutionError
@@ -71,7 +72,7 @@ class PackageInstallContext:
     install_pkg_dir: Path
     backup_pkg_dir: Path
     target_dir: Path
-    install_method: str
+    install_method: InstallMethod
     ignore_handler: DriftIgnore
     sudo: bool
     is_first_time: bool
@@ -217,7 +218,7 @@ def resolve_single_internal_symlink_conflict(
     abs_install_pkg = context.install_pkg_dir.resolve()
 
     # If install method is stow and link points into our pkg install dir, it's valid for this package
-    if context.install_method == "stow":
+    if context.install_method == InstallMethod.STOW:
         try:
             # stow command can only handle relative paths,
             # so only relative links pointing to the file in the same install_pkg_dir are valid stow links.
@@ -376,13 +377,13 @@ def run_collision_guard(
         #   3. it is pointing inside the same pkg_install_dir, but not the same file.
         # We can skip if the system target is a symlink pointing to another file in same install_pkg_dir.
         # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
-        if (context.install_method == "stow"
+        if (context.install_method == InstallMethod.STOW
                 and system_target.is_symlink() and system_target.exists()
                 and is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve())):
             continue
 
         # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
-        if (context.install_method == "copy"
+        if (context.install_method == InstallMethod.COPY
                 and not system_target.is_symlink() and not context.is_first_time):
             continue
 
@@ -400,7 +401,7 @@ def run_collision_guard(
         )
 
     # 5. Handle Content Match items (Stow specific: physical file matching repo content is STILL a collision)
-    if context.install_method == "stow":
+    if context.install_method == InstallMethod.STOW:
         for rel in diff.matches:
             if rel in processed_paths:
                 continue
@@ -537,13 +538,13 @@ def run_full_file_delivery(
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
     install_base = context.install_pkg_dir.parent
-    if context.install_method == "copy":
+    if context.install_method == InstallMethod.COPY:
         run_full_copy_deployment(
             context.install_pkg_dir, context.target_dir, context.sudo,
             deployable_files=deployable_files
         )
         return
-    if context.install_method == "stow":
+    if context.install_method == InstallMethod.STOW:
         stow_version = get_stow_version()
         stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
         if stow_sufficient:
@@ -586,14 +587,14 @@ def run_incremental_file_delivery(
                     resolve_system_target(rel_file, context.target_dir), context.sudo)
             continue
 
-        if context.install_method == "stow":
+        if context.install_method == InstallMethod.STOW:
             deploy_single_stow_file(
                 rel_file=rel_file,
                 install_pkg_dir=context.install_pkg_dir,
                 target_dir=context.target_dir,
                 sudo=context.sudo
             )
-        elif context.install_method == "copy":
+        elif context.install_method == InstallMethod.COPY:
             deploy_single_copy_file(
                 rel_file=rel_file,
                 install_pkg_dir=context.install_pkg_dir,
@@ -625,7 +626,7 @@ def sync_deployed_files_manifest(
 def update_state_registry_post_deployment(
     state_registry: StateRegistry,
     pkg: str,
-    install_method: str,
+    install_method: InstallMethod,
     deployable_files: List[Path],
     full_redeploy: bool,
     package_changes: Optional[PackageStageChanges] = None
@@ -669,7 +670,7 @@ def deploy_one_package_impl(
     )
 
     # Generate or update .stow-local-ignore file if using stow method
-    if context.install_method == "stow":
+    if context.install_method == InstallMethod.STOW:
         context.ignore_handler.create_stow_ignore_file(context.install_pkg_dir)
     
     package_changes = options.get_package_changes(context.pkg_name)

@@ -8,6 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
+from .constants import InstallMethod
 
 
 class NextActionType(str, Enum):
@@ -134,7 +135,7 @@ class FileOperations(SerializableModel):
 @dataclass
 class PackageInstallResult(SerializableModel):
     package: str
-    install_method: str  # "stow" or "copy"
+    install_method: InstallMethod
     target_directory: str
     operations: FileOperations = field(default_factory=FileOperations)
     is_first_time: bool = False
@@ -164,7 +165,7 @@ class RestoredBackup(SerializableModel):
 @dataclass
 class PackageUninstallResult(SerializableModel):
     package: str
-    install_method: str
+    install_method: InstallMethod
     target_directory: str
     detach_mode: bool = False
     removed_files: List[str] = field(default_factory=list)
@@ -253,7 +254,7 @@ class NewPackageResult(SerializableModel):
     package_dir: str = ""
     config_file: str = ""
     target_directory: str = ""
-    install_method: str = ""
+    install_method: InstallMethod = InstallMethod.STOW
     error_message: Optional[str] = None
 
 

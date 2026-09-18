@@ -1271,7 +1271,8 @@ class TestInstallRepo(unittest.TestCase):
 
         # Mock config loading to return metadata for missing dir
         from drift.package_config import PackageConfig
-        metadata = PackageConfig(name=pkg_missing, install_method="copy", target_directory=self.system_target_dir)
+        from drift.constants import InstallMethod
+        metadata = PackageConfig(name=pkg_missing, install_method=InstallMethod.COPY, target_directory=self.system_target_dir)
         with patch("drift.install_repo.PackageConfig.from_install_dir", return_value=metadata):
             res_missing = deploy_one_package(
                 workspace_config=self.workspace_config,

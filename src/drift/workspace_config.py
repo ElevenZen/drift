@@ -21,6 +21,7 @@ from .constants import (
         DRIFT_INTERNAL_DIR_NAME,
         INITIAL_ENV,
         SYSTEM_FACT_KEYS,
+        InstallMethod,
         inject_system_facts,
         INTERNAL_RENDER_COMMAND,
 )
@@ -94,7 +95,7 @@ class WorkspaceSectionConfig:
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
     default_target_directory: Path = Path("~")
-    default_install_method: str = "stow"
+    default_install_method: InstallMethod = InstallMethod.STOW
     hook_file: Optional[Path] = None
 
     def __init__(
@@ -104,7 +105,7 @@ class WorkspaceSectionConfig:
         install_directory: Union[Path, str] = Path("install"),
         backup_directory: Union[Path, str] = Path("backup"),
         default_target_directory: Union[Path, str] = Path("~"),
-        default_install_method: str = "stow",
+        default_install_method: InstallMethod = InstallMethod.STOW,
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
         if not isinstance(source_directory, (str, Path)):
@@ -117,8 +118,8 @@ class WorkspaceSectionConfig:
             raise ConfigError(f"backup_directory must be a Path or str, got {type(backup_directory).__name__}")
         if not isinstance(default_target_directory, (str, Path)):
             raise ConfigError(f"default_target_directory must be a Path or str, got {type(default_target_directory).__name__}")
-        if not isinstance(default_install_method, str):
-            raise ConfigError(f"default_install_method must be a string, got {type(default_install_method).__name__}")
+        if not isinstance(default_install_method, InstallMethod):
+            raise ConfigError(f"default_install_method must be an InstallMethod instance, got {type(default_install_method).__name__}")
         if hook_file is not None and not isinstance(hook_file, (str, Path)):
             raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
         self.source_directory = Path(source_directory)
@@ -126,7 +127,7 @@ class WorkspaceSectionConfig:
         self.install_directory = Path(install_directory)
         self.backup_directory = Path(backup_directory)
         self.default_target_directory = expand_user_and_env(Path(default_target_directory))
-        self.default_install_method = str(default_install_method)
+        self.default_install_method = default_install_method
         self.hook_file = Path(hook_file) if hook_file is not None else None
 
     def validate(self) -> None:
@@ -143,7 +144,7 @@ class WorkspaceSectionConfig:
             raise ConfigError("default_target_directory must be a non-empty path.")
         if not self.default_target_directory.is_absolute():
             raise ConfigError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
-        if self.default_install_method not in ("stow", "copy"):
+        if not isinstance(self.default_install_method, InstallMethod):
             raise ConfigError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
 
     @classmethod
@@ -164,13 +165,19 @@ class WorkspaceSectionConfig:
             if key not in known_workspace_keys:
                 raise ConfigError(f"Unknown workspace option: '{key}'")
 
+        raw_install_method = data.get("default_install_method", InstallMethod.STOW)
+        try:
+            default_install_method = InstallMethod.from_str(raw_install_method)
+        except ValueError as e:
+            raise ConfigError(f"default_install_method must be 'stow' or 'copy', got '{raw_install_method}'") from e
+
         return cls(
             source_directory=data.get("source_directory", "src"),
             render_directory=data.get("render_directory", "render"),
             install_directory=data.get("install_directory", "install"),
             backup_directory=data.get("backup_directory", "backup"),
             default_target_directory=data.get("default_target_directory", "~"),
-            default_install_method=data.get("default_install_method", "stow"),
+            default_install_method=default_install_method,
             hook_file=data.get("hook_file"),
         )
 

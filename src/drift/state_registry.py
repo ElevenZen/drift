@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Optional, List, Mapping, Sequence, Tuple
 from .toml_utils import parse_toml
 from .exceptions import ConfigError
-from .constants import MIDWAY_TRANSACTION_STATES
+from .constants import MIDWAY_TRANSACTION_STATES, InstallMethod
 
 
 
@@ -15,7 +15,7 @@ class PackageState:
     state: str
     target_directory: Optional[Path] = None
     last_deployed: Optional[str] = None
-    install_method: Optional[str] = None
+    install_method: Optional[InstallMethod] = None
     deployed_files: List[Path] = field(default_factory=list)
 
 
@@ -51,7 +51,7 @@ class StateRegistry:
         pkg: str,
         state: str,
         last_deployed: Optional[str] = None,
-        install_method: Optional[str] = None,
+        install_method: Optional[InstallMethod] = None,
         target_directory: Optional[Path] = None,
     ) -> None:
         if pkg not in self.packages:
@@ -188,9 +188,13 @@ def load_state_registry(filepath: Path) -> StateRegistry:
             last_deployed = v.get("last_deployed")
             if last_deployed is not None:
                 last_deployed = str(last_deployed)
-            install_method = v.get("install_method")
-            if install_method is not None:
-                install_method = str(install_method)
+            install_method_raw = v.get("install_method")
+            install_method: Optional[InstallMethod] = None
+            if install_method_raw is not None:
+                try:
+                    install_method = InstallMethod.from_str(install_method_raw)
+                except ValueError:
+                    install_method = None
             deployed_files_raw = v.get("deployed_files")
             deployed_files = []
             if isinstance(deployed_files_raw, list):

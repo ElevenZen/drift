@@ -13,6 +13,7 @@ from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_HOOK_TIMEOUT,
+    InstallMethod,
     set_test_mode,
 )
 from drift.toml_utils import (
@@ -967,17 +968,17 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(
             drift_root=Path("/test"),
-            workspace=WorkspaceSectionConfig(default_install_method="stow"),
+            workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.STOW),
         )
-        pkg_config = PackageConfig(name="test_pkg", install_method="stow")
+        pkg_config = PackageConfig(name="test_pkg", install_method=InstallMethod.STOW)
 
         # On non-Windows, returns stow
         with patch("sys.platform", "linux"):
-            self.assertEqual(pkg_config.get_install_method(ws_config), "stow")
+            self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.STOW)
 
         # On Windows (win32), always forces copy
         with patch("sys.platform", "win32"):
-            self.assertEqual(pkg_config.get_install_method(ws_config), "copy")
+            self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.COPY)
 
     def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
@@ -1674,7 +1675,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pkg = PackageConfig(
             name="my_pkg",
             target_directory=Path("/custom/target"),
-            install_method="copy"
+            install_method=InstallMethod.COPY
         )
 
         # 1. Load with workspace config
@@ -1722,7 +1723,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             drift_root=Path("/dummy/root"),
             workspace=WorkspaceSectionConfig(
                 default_target_directory=custom_global_target,
-                default_install_method="copy",
+                default_install_method=InstallMethod.COPY,
             ),
         )
 
@@ -1744,7 +1745,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         pkg_overridden = PackageConfig(
             name="pkg_overridden",
             target_directory=Path("/etc/custom_pkg_target"),
-            install_method="stow"
+            install_method=InstallMethod.STOW
         )
         with pkg_overridden.package_envs(workspace_config):
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_overridden")

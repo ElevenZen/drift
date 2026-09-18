@@ -69,7 +69,7 @@ from .file_utils import (
     tree_relative_files,
     resolve_system_target,
 )
-from .constants import UNINSTALL_HOOK_NAMES, BackupSubfolder
+from .constants import UNINSTALL_HOOK_NAMES, BackupSubfolder, InstallMethod
 from .lifecycle_hooks import HookExecFlags
 from .result_models import PackageUninstallResult, UninstallResult, RestoredBackup
 
@@ -269,7 +269,7 @@ def detach_one_package(
 
     return PackageUninstallResult(
         package=pkg,
-        install_method=pkg_state.install_method or "stow",
+        install_method=pkg_state.install_method or InstallMethod.STOW,
         target_directory=str(target_dir),
         detach_mode=True,
         removed_files=[],
@@ -335,7 +335,7 @@ def uninstall_one_package(
 
         return PackageUninstallResult(
             package=pkg,
-            install_method=pkg_state.install_method or "stow",
+            install_method=pkg_state.install_method or InstallMethod.STOW,
             target_directory=str(target_dir),
             detach_mode=False,
             removed_files=[str(rel) for rel, _ in removed],

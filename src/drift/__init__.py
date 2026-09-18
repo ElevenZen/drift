@@ -54,6 +54,7 @@ from .constants import (
     INITIAL_ENV,
     SYSTEM_FACT_KEYS,
     BackupSubfolder,
+    InstallMethod,
     inject_system_facts,
     update_initial_env,
     set_initial_env,

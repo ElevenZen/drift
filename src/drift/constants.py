@@ -135,6 +135,27 @@ class LineEnding(str, Enum):
     PRESERVE = "preserve"
 
 
+class InstallMethod(str, Enum):
+    """Supported package installation methods for deploying configuration files."""
+    STOW = "stow"
+    COPY = "copy"
+
+    def __str__(self) -> str:
+        return self.value
+
+    @classmethod
+    def from_str(cls, val: Union[str, "InstallMethod"]) -> "InstallMethod":
+        """Parses a string or InstallMethod instance into an InstallMethod enum member."""
+        if isinstance(val, cls):
+            return val
+        s = str(val).strip().lower()
+        if s == "stow":
+            return cls.STOW
+        if s == "copy":
+            return cls.COPY
+        raise ValueError(f"Unknown install method '{val}'. Valid choices: 'stow', 'copy'.")
+
+
 class BackupSubfolder(str, Enum):
     """Subfolders within backup/<pkg>/ for different backup categories."""
     OVERWRITTEN = "overwritten"
@@ -410,7 +431,7 @@ def get_default_internal_gitignore_content() -> str:
 
 def get_default_package_config_content(
     package_name: str,
-    install_method: str = "stow",
+    install_method: InstallMethod = InstallMethod.STOW,
     target_directory: Optional[str] = None,
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:
@@ -440,7 +461,7 @@ def get_default_package_config_content(
         template_str
         .replace("{package_name}", package_name)
         .replace("{config_filename}", config_filename)
-        .replace("{install_method}", install_method)
+        .replace("{install_method}", str(install_method))
         .replace("{target_directory_line}", target_directory_line)
     )
 

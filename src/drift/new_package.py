@@ -1,6 +1,6 @@
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 from .workspace_config import WorkspaceConfig
 from .result_models import NewPackageResult
 from .constants import (
@@ -8,6 +8,7 @@ from .constants import (
     PACKAGE_CONFIG_FILE_NAME_LIST,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
+    InstallMethod,
     get_default_package_config_content,
     get_default_drift_ignore_content,
 )
@@ -20,7 +21,7 @@ def run_primitive_10_create_new_package(
     package_name: str,
     force: bool = False,
     target_directory: Optional[str] = None,
-    install_method: Optional[str] = None
+    install_method: Optional[Union[InstallMethod, str]] = None
 ) -> NewPackageResult:
     """Scaffolds a new package directory and a default package configuration file (Primitive 10).
 
@@ -48,9 +49,13 @@ def run_primitive_10_create_new_package(
     final_config_name = PACKAGE_CONFIG_FILE_NAME
     config_file = package_dir / final_config_name
 
-    final_install_method: str = install_method or workspace_config.workspace.default_install_method
-    if final_install_method not in ("stow", "copy"):
-        raise ValueError(f"install_method must be 'stow' or 'copy', got '{final_install_method}'")
+    if install_method is not None:
+        try:
+            final_install_method: InstallMethod = InstallMethod.from_str(install_method)
+        except ValueError as e:
+            raise ValueError(f"install_method must be 'stow' or 'copy', got '{install_method}'") from e
+    else:
+        final_install_method = workspace_config.workspace.default_install_method
 
     config_content = get_default_package_config_content(
         package_name=package_name,

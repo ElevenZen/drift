@@ -6,6 +6,7 @@ from drift.new_package import run_primitive_10_create_new_package
 from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
+    InstallMethod,
     get_default_package_config_content,
     get_default_drift_ignore_content,
 )
@@ -120,7 +121,7 @@ class TestNewPackage(unittest.TestCase):
 
         content_custom = get_default_package_config_content(
             package_name="zsh_pkg",
-            install_method="copy",
+            install_method=InstallMethod.COPY,
             target_directory="/etc/zsh"
         )
         self.assertIn("# src/zsh_pkg/drift_package.toml", content_custom)
