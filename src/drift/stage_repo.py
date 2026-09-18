@@ -21,7 +21,7 @@ Layer 5: Primitive Entry Point
                 check_sudo_privilege (if sudo required)
                 state_registry.set_package_state("staging") & save
                 apply_package_stage_changes(pkg, ...) [Layer 3]
-                    backup_and_delete_one_file (deletions with backup)
+                    delete_one_file (direct physical deletion)
                     atomic_copy_file / copy_file_mode_with_sudo (additions & modifications)
                     generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
                 state_registry.set_package_state("staged") & save
@@ -49,11 +49,11 @@ from pathlib import Path
 from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
 from dataclasses import dataclass, field
 
-from .constants import DRIFT_GENERATED_FILES, BackupSubfolder
+from .constants import DRIFT_GENERATED_FILES
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
 from .file_utils import (
-    backup_and_delete_one_file,
+    delete_one_file,
     remove_file_or_dir,
     atomic_copy_file,
     copy_file_mode_with_sudo,
@@ -207,14 +207,12 @@ def apply_package_stage_changes(
     pkg: str,
     install_base: Path,
     render_base: Path,
-    backup_base: Path,
     stage_changes: PackageStageChanges,
     ignore_handler: DriftIgnore,
 ) -> None:
     """Applies calculated physical deletions, additions, and modifications for a single package into install/."""
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
-    backup_dir = backup_base / pkg / BackupSubfolder.DELETED_FILES.value
     all_diff = stage_changes.physical_changes
 
     # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)
@@ -224,23 +222,21 @@ def apply_package_stage_changes(
             continue
 
         # No symlink should exist in deleted files,
-        # but if they do, remove them without backup.
+        # but if they do, remove them directly.
         if install_file.is_symlink():
-            logger.warning(f"⚠️  [BUG] Unexpected symlink found for deletion: {pkg}/{rel_file}. Removing without backup.")
+            logger.warning(f"⚠️  [BUG] Unexpected symlink found for deletion: {pkg}/{rel_file}. Removing.")
             remove_file_or_dir(install_file)
             continue
 
-        # If directory exists in deleted list, it means it's an empty directory that should be removed. Remove it without backup.
+        # If directory exists in deleted list, it means it's an empty directory that should be removed.
         if install_file.is_dir():
             if any(install_file.iterdir()):
-                logger.warning(f"⚠️  [BUG] Non-empty directory found for deletion: {pkg}/{rel_file}. Removing without backup.")
+                logger.warning(f"⚠️  [BUG] Non-empty directory found for deletion: {pkg}/{rel_file}. Removing.")
             remove_file_or_dir(install_file)
             continue
 
-        backup_file = backup_dir / rel_file
         logger.info(f"🗑️  Deleting: {pkg}/{rel_file}")
-        logger.debug(f"   (Backup: {backup_file})")
-        backup_and_delete_one_file(install_file, backup_file, limit_dir=install_pkg_dir)
+        delete_one_file(install_file, limit_dir=install_pkg_dir)
 
     # B. Process Additions
     for rel_file in all_diff.added:
@@ -281,7 +277,6 @@ def stage_modified_packages(
     pkg_metadata: Mapping[str, PackageConfig],
     install_base: Path,
     render_base: Path,
-    backup_base: Path,
     state_registry: StateRegistry,
 ) -> None:
     """Applies physical changes and manages staging state transitions for packages with changes."""
@@ -305,7 +300,6 @@ def stage_modified_packages(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
-            backup_base=backup_base,
             stage_changes=changes,
             ignore_handler=ignore_handler,
         )
@@ -352,7 +346,6 @@ def run_primitive_4_stage_render_to_install(
 
     render_base = workspace_config.render_path
     install_base = workspace_config.install_path
-    backup_base = workspace_config.backup_path
 
     # 1. First find all active packages to process and load their metadata from RENDER directory
     # Filter out packages that are not enabled for installation/deployment.
@@ -417,7 +410,6 @@ def run_primitive_4_stage_render_to_install(
             pkg_metadata=pkg_metadata,
             install_base=install_base,
             render_base=render_base,
-            backup_base=backup_base,
             state_registry=state_registry,
         )
 

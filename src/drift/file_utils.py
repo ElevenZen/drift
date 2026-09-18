@@ -434,18 +434,14 @@ def atomic_copy_file(
                 pass
 
 
-def backup_and_delete_one_file(
+def delete_one_file(
     file_path: Path,
-    backup_dest: Path,
     limit_dir: Optional[Path] = None
 ) -> None:
-    """Backs up a file to backup_dest atomically, deletes it, and cleans up empty parent directories up to limit_dir."""
-    if not file_path.exists():
+    """Deletes a file or symlink and cleans up empty parent directories up to limit_dir."""
+    if not file_path.exists() and not file_path.is_symlink():
         return
 
-    unlock_file_or_dir_if_windows(backup_dest)
-    backup_dest.parent.mkdir(parents=True, exist_ok=True)
-    atomic_copy_file(file_path, backup_dest)
     unlock_file_or_dir_if_windows(file_path)
     remove_file_or_dir(file_path)
     if limit_dir:

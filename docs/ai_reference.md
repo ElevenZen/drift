@@ -22,7 +22,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   **`src/<package>/`**: Declarative source templates and lifecycle hooks (`src/<package>/drift_hooks/`). Hidden files **must** use `dot-` prefix (`dot-bashrc`).
 *   **`render/<package>/`**: Clean compilation sandbox. Committed into local `render/.git` repo (P3).
 *   **`install/<package>/`**: Staging state database. Committed into local `install/.git` repo (P6). Contains `install/state.toml`.
-*   **`backup/<package>/`**: Meticulously structured historical backups (`backup/<pkg>/overwritten/`, `backup/<pkg>/deleted_files/`).
+*   **`backup/<package>/`**: Meticulously structured historical host backups (`backup/<pkg>/overwritten/`, `backup/<pkg>/deleted_files/`).
 *   **`config/`**: Global workspace configuration (`config/drift_workspace.toml`, `drift_workspace.local.toml`, `secrets.env`, `drift_workspace.py`).
 
 ---

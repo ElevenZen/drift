@@ -167,7 +167,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
 *   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with 1:1 fidelity. The only permitted differences are synthetic files generated dynamically during staging (`DRIFT_GENERATED_FILES`, such as `.stow-local-ignore`). All other files (payloads, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
-*   **Mechanism**: Computes exactly which files and packages require redeployment. Moves deleted files in `install/` to `backup/<package>/deleted_files/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
+*   **Mechanism**: Computes exactly which files and packages require redeployment. Directly deletes removed files from `install/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
 

@@ -19,7 +19,7 @@ from drift.file_utils import (
     file_contents_differ,
     rmdir_parents,
     get_symlinked_parent,
-    backup_and_delete_one_file,
+    delete_one_file,
     copy_or_move_file_or_dir_external,
     ensure_directory_writable,
     ensure_dir_exists_with_sudo,
@@ -233,36 +233,16 @@ class TestFileUtils(unittest.TestCase):
         nested_file_external = external_symlink / "some_file.txt"
         self.assertIsNone(get_symlinked_parent(nested_file_external, drift_root))
 
-    def test_backup_and_delete_one_file(self) -> None:
+    def test_delete_one_file(self) -> None:
         file_path = self.root / "a" / "b" / "file.txt"
         file_path.parent.mkdir(parents=True)
         file_path.write_text("original content", encoding="utf-8")
 
-        backup_path = self.root / "backup" / "file.txt"
-        backup_and_delete_one_file(file_path, backup_path, limit_dir=self.root)
+        delete_one_file(file_path, limit_dir=self.root)
 
         self.assertFalse(file_path.exists())
         self.assertFalse((self.root / "a").exists())  # Empty parent cleaned up
-        self.assertTrue(backup_path.exists())
-        self.assertEqual(backup_path.read_text(encoding="utf-8"), "original content")
-
-    def test_backup_and_delete_one_file_overwrites(self) -> None:
-        # Verify that backup_and_delete_one_file overwrites existing file/dir at backup_dest
-        file_path = self.root / "a" / "b" / "file.txt"
-        file_path.parent.mkdir(parents=True)
-        file_path.write_text("fresh content", encoding="utf-8")
-
-        # Pre-create conflicting file at backup destination
-        backup_path = self.root / "backup" / "file.txt"
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
-        backup_path.write_text("old stale conflict", encoding="utf-8")
-
-        backup_and_delete_one_file(file_path, backup_path, limit_dir=self.root)
-
-        self.assertFalse(file_path.exists())
-        self.assertTrue(backup_path.exists())
-        # Confirms it was overwritten!
-        self.assertEqual(backup_path.read_text(encoding="utf-8"), "fresh content")
+        self.assertTrue(self.root.exists())
 
     def test_ensure_directory_writable(self) -> None:
         writable_dir = self.root / "writable"

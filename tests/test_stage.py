@@ -188,11 +188,9 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file2.txt")))
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
-        # Verify file2 is backed up under backup/
-        backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file2.txt")
-        self.assertTrue(os.path.isfile(backup_file))
-        with open(backup_file, "r", encoding="utf-8") as f:
-            self.assertEqual(f.read(), "File 2 content")
+        # Verify no backup is created under backup/ (backup/ is strictly for host deployments)
+        backup_pkg_dir = os.path.join(self.backup_dir, "pkg_a")
+        self.assertFalse(os.path.exists(backup_pkg_dir))
 
     def test_stage_skips_enable_install_false(self) -> None:
         """Verifies that packages with enable_install=false are skipped from stage."""
@@ -443,10 +441,10 @@ class TestStageRepo(unittest.TestCase):
         # 4. Now physically delete file1.txt from render/pkg_a/
         os.remove(os.path.join(pkg_a_render, "file1.txt"))
         changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
-        # Physical file is now deleted from install/ and backed up
+        # Physical file is now deleted from install/ without polluting backup/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
         backup_file = os.path.join(self.backup_dir, "pkg_a", "deleted_files", "file1.txt")
-        self.assertTrue(os.path.isfile(backup_file))
+        self.assertFalse(os.path.exists(backup_file))
 
     def test_stage_deleting_drift_ignore_removes_it_from_install(self) -> None:
         """Verifies that when .drift_ignore is removed from render/, it is unlinked from install/."""
@@ -512,10 +510,10 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue((pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_install.sh").is_file())
         self.assertTrue((pkg_install / "app.json").is_file())
 
-    def test_backup_and_delete_one_file_utility(self) -> None:
-        """Tests backup_and_delete_one_file utility function."""
-        from drift.file_utils import backup_and_delete_one_file
-        util_dir = self.drift_root / "util_backup_delete"
+    def test_delete_one_file_utility(self) -> None:
+        """Tests delete_one_file utility function."""
+        from drift.file_utils import delete_one_file
+        util_dir = self.drift_root / "util_delete"
         util_dir.mkdir(parents=True, exist_ok=True)
         
         limit_dir = util_dir / "limit"
@@ -523,22 +521,17 @@ class TestStageRepo(unittest.TestCase):
         sub_dir.mkdir(parents=True, exist_ok=True)
         
         file_path = sub_dir / "test.txt"
-        backup_path = util_dir / "backup" / "test_backup.txt"
         
         with open(file_path, "w") as f:
-            f.write("hello backup")
+            f.write("hello file")
             
-        backup_and_delete_one_file(file_path, backup_path, limit_dir=limit_dir)
+        delete_one_file(file_path, limit_dir=limit_dir)
         
         # Verify file is deleted
         self.assertFalse(file_path.exists())
         # Verify nested parent directories are pruned up to limit_dir
         self.assertFalse((limit_dir / "nested").exists())
         self.assertTrue(limit_dir.exists())
-        # Verify backup is created with same content
-        self.assertTrue(backup_path.is_file())
-        with open(backup_path, "r") as f:
-            self.assertEqual(f.read(), "hello backup")
 
     def test_stage_aborts_on_uncommitted_local_modifications(self) -> None:
         """Verifies that stage raises RuntimeError if there are uncommitted modifications in install repo, unless force is True."""
