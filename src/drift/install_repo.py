@@ -8,8 +8,9 @@ import logging
 import subprocess
 import datetime
 import shlex
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Union, Tuple, Set, Sequence, Mapping
+from typing import List, Optional, Union, Tuple, Set, Sequence, Mapping, Dict
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
@@ -18,6 +19,7 @@ from .constants import (
     MANAGED_CONFIG_FILES,
     STOW_LOCAL_IGNORE_FILE_NAME,
     LineEnding,
+    BackupSubfolder,
 )
 from .exceptions import InstallCollisionError, HookExecutionError
 from .ignore import DriftIgnore
@@ -44,6 +46,63 @@ from .sync_ops import backup_file_or_dir_external
 from .result_models import FileOperations, PackageInstallResult, InstallDeploymentResult
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DeployOptions:
+    """Options controlling package deployment behavior."""
+    resolve_symlinks: bool = True
+    force: bool = False
+    redeploy: bool = True
+    package_changes: Optional[Mapping[str, PackageStageChanges]] = None
+    flags: Optional[HookExecFlags] = None
+
+    def get_package_changes(self, pkg: str) -> Optional[PackageStageChanges]:
+        """Retrieves stage changes for a specific package name from mapping."""
+        if self.package_changes is not None:
+            return self.package_changes.get(pkg)
+        return None
+
+
+@dataclass(frozen=True)
+class PackageInstallContext:
+    """Encapsulates resolved package metadata and filesystem paths for installation operations."""
+    pkg_name: str
+    install_pkg_dir: Path
+    backup_pkg_dir: Path
+    target_dir: Path
+    install_method: str
+    ignore_handler: DriftIgnore
+    sudo: bool
+    is_first_time: bool
+    drift_root: Path
+
+    @classmethod
+    def from_package(
+        cls,
+        workspace_config: WorkspaceConfig,
+        state_registry: StateRegistry,
+        metadata: PackageConfig,
+    ) -> "PackageInstallContext":
+        pkg = metadata.name
+        target_dir = metadata.get_target_directory(workspace_config)
+        install_pkg_dir = workspace_config.install_path / pkg
+        backup_pkg_dir = workspace_config.backup_path / pkg
+        pkg_state = state_registry.packages.get(pkg)
+        is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
+        ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
+        install_method = metadata.get_install_method(workspace_config)
+        return cls(
+            pkg_name=pkg,
+            install_pkg_dir=install_pkg_dir,
+            backup_pkg_dir=backup_pkg_dir,
+            target_dir=target_dir,
+            install_method=install_method,
+            ignore_handler=ignore_handler,
+            sudo=metadata.sudo,
+            is_first_time=is_first_time,
+            drift_root=workspace_config.drift_root,
+        )
 
 
 def get_stow_version() -> Optional[str]:
@@ -74,47 +133,48 @@ def is_stow_version_sufficient(version: str) -> bool:
 
 
 def handle_collision_error(
-    pkg: str,
-    rel_path: Path,
+    context: PackageInstallContext,
     system_target: Path,
-    workspace_config: WorkspaceConfig,
-    sudo: bool,
+    backup_subfolder: BackupSubfolder,
+    backup_rel_path: Path,
     reason: str,
-    resolve_symlinks: bool = True,
-    backup_subfolder: str = "overwritten"
+    resolve_symlinks: bool,
+    ops: Optional[FileOperations] = None,
 ) -> None:
     """Helper to backup and report a collision/error at a system target path."""
-    # Ensure backup path respects relative structure
-    backup_path = workspace_config.backup_path / pkg / backup_subfolder / rel_path
+    subfolder_str = backup_subfolder.value if isinstance(backup_subfolder, BackupSubfolder) else str(backup_subfolder)
+    backup_path = context.backup_pkg_dir / subfolder_str / backup_rel_path
     logger.warning(f"🛡️  [COLLISION] {reason} at '{system_target}'")
     logger.debug(f"   Backing up to: {backup_path}")
-    backup_file_or_dir_external(system_target, backup_path, sudo, resolve_symlinks=resolve_symlinks)
+    backup_file_or_dir_external(system_target, backup_path, context.sudo, resolve_symlinks=resolve_symlinks)
     # After backup, remove the colliding item to clear the way
-    remove_file_or_dir_with_sudo(system_target, sudo)
+    remove_file_or_dir_with_sudo(system_target, context.sudo)
+    if ops is not None:
+        if backup_subfolder == BackupSubfolder.DELETED_FILES:
+            ops.deleted_backup.append(str(backup_rel_path))
+        else:
+            ops.overwritten_backup.append(str(backup_rel_path))
 
 
 def find_internal_symlink_conflicts(
-    workspace_config: WorkspaceConfig,
-    install_pkg_dir: Path,
-    ignore_handler: DriftIgnore,
-    target_dir: Path
+    context: PackageInstallContext,
 ) -> List[Tuple[Path, Path]]:
     """Detects symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files.
 
     Instead of recursively scanning the entire target_dir (which could be the whole HOME directory),
     we inspect only the specific target paths and ancestor directories covered by install_pkg_dir.
-    Returns a list of (repo_rel, system_target) tuples sorted by path depth.
+    Returns a list of (install_rel_path, system_target) tuples sorted by path depth.
     """
-    if not (install_pkg_dir.exists() and install_pkg_dir.is_dir()):
+    if not (context.install_pkg_dir.exists() and context.install_pkg_dir.is_dir()):
         return []
 
     # 1. Collect all deployable relative paths inside the package
-    pkg_items = ignore_handler.filter_deployable_files(install_pkg_dir)
+    pkg_items = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
 
     # 2. Build the set of target relative paths and all intermediate parent directories
     target_candidates = set()
-    for repo_rel in pkg_items:
-        target_rel = translate_dot_prefixes(repo_rel)
+    for install_rel in pkg_items:
+        target_rel = translate_dot_prefixes(install_rel)
         curr = target_rel
         while curr != Path(".") and str(curr) not in ("", "."):
             target_candidates.add(curr)
@@ -123,11 +183,11 @@ def find_internal_symlink_conflicts(
     # 3. Sort candidates from shallowest to deepest so parents are checked before children
     sorted_candidates = sorted(target_candidates, key=lambda p: len(p.parts))
 
-    abs_drift_root = workspace_config.drift_root.resolve()
+    abs_drift_root = context.drift_root.resolve()
     links_detected: List[Tuple[Path, Path]] = []
 
     for t_rel in sorted_candidates:
-        system_target = target_dir / t_rel
+        system_target = context.target_dir / t_rel
         if not system_target.is_symlink():
             continue
         try:
@@ -136,39 +196,37 @@ def find_internal_symlink_conflicts(
                 continue
         except Exception:
             continue
-        repo_rel = translate_dot_prefixes_reverse(t_rel)
-        links_detected.append((repo_rel, system_target))
+        install_rel_path = translate_dot_prefixes_reverse(t_rel)
+        links_detected.append((install_rel_path, system_target))
 
     return links_detected
 
 
 def resolve_single_internal_symlink_conflict(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
-    metadata: PackageConfig,
-    ignore_handler: DriftIgnore,
-    repo_rel: Path,
+    context: PackageInstallContext,
+    install_rel_path: Path,
     system_target: Path,
     resolve_symlinks: bool,
-    processed_paths: set
+    processed_paths: set,
+    ops: Optional[FileOperations] = None,
 ) -> None:
     """Processes a single detected internal symlink conflict: validates stow compatibility,
     marks paths as processed, backs up & removes conflicting symlinks, and recreates physical directories.
     """
-    repo_path = install_pkg_dir / repo_rel
-    abs_install_pkg = install_pkg_dir.resolve()
+    install_file_path = context.install_pkg_dir / install_rel_path
+    abs_install_pkg = context.install_pkg_dir.resolve()
 
     # If install method is stow and link points into our pkg install dir, it's valid for this package
-    if metadata.get_install_method(workspace_config) == "stow":
+    if context.install_method == "stow":
         try:
             # stow command can only handle relative paths,
-            # so only relative links pointing to the same install_pkg_dir are valid stow links.
+            # so only relative links pointing to the file in the same install_pkg_dir are valid stow links.
             # And we restrict the result to not contain linked dir as parent dir.
-            # so dir pointing to the same install_pkg_dir is considered invalid, and trigger backup and removal.
-            # Other cases must trigger backup and removal, including symlinked directories.
+            # so linked dirs are considered invalid, and trigger backup and removal.
+            # Other cases must trigger backup and removal.
             link_content = Path(os.readlink(system_target))
-            if not link_content.is_absolute() and not system_target.is_dir():
+            if not (link_content.is_absolute() or system_target.is_dir()):
+                # Canonicalize the link target to check if it points inside the same install_pkg_dir
                 link_target = (system_target.parent / os.readlink(system_target)).resolve()
                 if is_relative_to(link_target, abs_install_pkg):
                     return
@@ -176,95 +234,78 @@ def resolve_single_internal_symlink_conflict(
             pass
 
     # Otherwise, it is a link conflict and must be backed up & removed
-    processed_paths.add(repo_rel)
+    processed_paths.add(install_rel_path)
 
-    # Add all children of this repo_rel to processed_paths to avoid double handling
-    if repo_path.is_dir():
+    # Add all children of this install_rel_path to processed_paths to avoid double handling
+    if install_file_path.is_dir():
         for child_rel in list_folder_paths(
-            src_dir=repo_path,
-            base_rel=repo_rel,
-            ignore_handler=ignore_handler,
+            src_dir=install_file_path,
+            base_rel=install_rel_path,
+            ignore_handler=context.ignore_handler,
             resolve_symlinks=resolve_symlinks,
             translate_mode="forward"
         ):
             processed_paths.add(child_rel)
 
     handle_collision_error(
-        pkg=pkg,
-        rel_path=repo_rel,
+        context=context,
         system_target=system_target,
-        workspace_config=workspace_config,
-        sudo=metadata.sudo,
+        backup_subfolder=BackupSubfolder.OVERWRITTEN,
+        backup_rel_path=install_rel_path,
         reason="Internal symlink detected",
-        resolve_symlinks=resolve_symlinks
+        resolve_symlinks=resolve_symlinks,
+        ops=ops,
     )
 
     # If repo expects a directory here, recreate it as physical to avoid cycles
-    if repo_path.is_dir() and not repo_path.is_symlink():
-        ensure_dir_exists_with_sudo(system_target, metadata.sudo)
+    if install_file_path.is_dir() and not install_file_path.is_symlink():
+        ensure_dir_exists_with_sudo(system_target, context.sudo)
 
 
 def handle_internal_symlink_conflicts(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
-    metadata: PackageConfig,
-    ignore_handler: DriftIgnore,
-    target_dir: Path,
+    context: PackageInstallContext,
     resolve_symlinks: bool,
-    processed_paths: set
+    processed_paths: set,
+    ops: Optional[FileOperations] = None,
 ) -> None:
     """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
-    links_detected = find_internal_symlink_conflicts(
-        workspace_config=workspace_config,
-        install_pkg_dir=install_pkg_dir,
-        ignore_handler=ignore_handler,
-        target_dir=target_dir
-    )
+    links_detected = find_internal_symlink_conflicts(context=context)
 
-    for repo_rel, system_target in links_detected:
+    for install_rel_path, system_target in links_detected:
         resolve_single_internal_symlink_conflict(
-            workspace_config=workspace_config,
-            pkg=pkg,
-            install_pkg_dir=install_pkg_dir,
-            metadata=metadata,
-            ignore_handler=ignore_handler,
-            repo_rel=repo_rel,
+            context=context,
+            install_rel_path=install_rel_path,
             system_target=system_target,
             resolve_symlinks=resolve_symlinks,
-            processed_paths=processed_paths
+            processed_paths=processed_paths,
+            ops=ops,
         )
 
     # Check if the canonical path of target_dir still points inside drift_root after resolving conflicts
-    abs_drift_root = workspace_config.drift_root.resolve()
-    resolved_target = target_dir.resolve()
+    abs_drift_root = context.drift_root.resolve()
+    resolved_target = context.target_dir.resolve()
     if resolved_target == abs_drift_root or is_relative_to(resolved_target, abs_drift_root):
         raise InstallCollisionError(
-            f"Safety Abort: Target directory '{target_dir}' (resolved to '{resolved_target}') "
-            f"points inside drift workspace root '{workspace_config.drift_root}'. "
+            f"Safety Abort: Target directory '{context.target_dir}' (resolved to '{resolved_target}') "
+            f"points inside drift workspace root '{context.drift_root}'. "
             f"Resolving this automatically is unsafe. Please resolve manually."
         )
 
 
 def run_collision_guard(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
-    metadata: PackageConfig,
-    ignore_handler: DriftIgnore,
-    target_dir: Path,
-    is_first_time: bool,
+    context: PackageInstallContext,
     resolve_symlinks: bool,
+    ops: Optional[FileOperations] = None,
 ) -> None:
     """Handles collision backing up before any file deployment using FolderDiff."""
     # 0. Safety Abort Check for parents ABOVE or AT target_dir
     # This detects if our target base itself is a symlink into drift_root
-    parent_symlink = get_symlinked_parent(target_dir, workspace_config.drift_root)
+    parent_symlink = get_symlinked_parent(context.target_dir, context.drift_root)
     if parent_symlink:
          raise InstallCollisionError(
             f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
-            f"is a symlink pointing into drift workspace root '{workspace_config.drift_root}', "
-            f"but lies outside the package target directory '{target_dir}'. "
+            f"is a symlink pointing into drift workspace root '{context.drift_root}', "
+            f"but lies outside the package target directory '{context.target_dir}'. "
             f"Resolving this automatically is unsafe. Please resolve manually."
         )
 
@@ -272,22 +313,17 @@ def run_collision_guard(
 
     # 1. Check and resolve internal symlink conflicts inside target_dir
     handle_internal_symlink_conflicts(
-        workspace_config=workspace_config,
-        pkg=pkg,
-        install_pkg_dir=install_pkg_dir,
-        metadata=metadata,
-        ignore_handler=ignore_handler,
-        target_dir=target_dir,
+        context=context,
         resolve_symlinks=resolve_symlinks,
-        processed_paths=processed_paths
+        processed_paths=processed_paths,
+        ops=ops,
     )
-
 
     # 2. Recursive Audit using FolderDiff
     diff = compare_folders(
-        src_dir=install_pkg_dir,
-        dst_dir=target_dir,
-        ignore_handler=ignore_handler,
+        src_dir=context.install_pkg_dir,
+        dst_dir=context.target_dir,
+        ignore_handler=context.ignore_handler,
         resolve_symlinks=resolve_symlinks,
         translate_mode="forward",
         src_only=True,
@@ -299,15 +335,29 @@ def run_collision_guard(
             continue
         processed_paths.add(rel)
         
-        system_target = resolve_system_target(rel, target_dir)
-        if ignore_handler.match_path(rel):
+        system_target = resolve_system_target(rel, context.target_dir)
+        if context.ignore_handler.match_path(rel):
             # Clean up now-ignored files
-            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
-                                   "Ignored file cleanup", resolve_symlinks, backup_subfolder="deleted_files")
+            handle_collision_error(
+                context=context,
+                system_target=system_target,
+                backup_subfolder=BackupSubfolder.DELETED_FILES,
+                backup_rel_path=rel,
+                reason="Ignored file cleanup",
+                resolve_symlinks=resolve_symlinks,
+                ops=ops,
+            )
         else:
             # Type mismatch (e.g. System has file, Repo has dir)
-            handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
-                                   "Type mismatch collision", resolve_symlinks)
+            handle_collision_error(
+                context=context,
+                system_target=system_target,
+                backup_subfolder=BackupSubfolder.OVERWRITTEN,
+                backup_rel_path=rel,
+                reason="Type mismatch collision",
+                resolve_symlinks=resolve_symlinks,
+                ops=ops,
+            )
 
     # 4. Handle Modified items (collisions that need overwrite)
     for rel in diff.modified:
@@ -315,7 +365,7 @@ def run_collision_guard(
             continue
         processed_paths.add(rel)
         
-        system_target = resolve_system_target(rel, target_dir)
+        system_target = resolve_system_target(rel, context.target_dir)
         
         # If the file is modified, then it cannot pointing to the same file.
         # If the symlink points to anywhere inside install_pkg_dir but not the same pkg_install_dir,
@@ -326,33 +376,47 @@ def run_collision_guard(
         #   3. it is pointing inside the same pkg_install_dir, but not the same file.
         # We can skip if the system target is a symlink pointing to another file in same install_pkg_dir.
         # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
-        if (metadata.get_install_method(workspace_config) == "stow"
+        if (context.install_method == "stow"
                 and system_target.is_symlink() and system_target.exists()
-                and is_relative_to(system_target.resolve(), install_pkg_dir.resolve())):
+                and is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve())):
             continue
 
         # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
-        if (metadata.get_install_method(workspace_config) == "copy"
-                and not system_target.is_symlink() and not is_first_time):
+        if (context.install_method == "copy"
+                and not system_target.is_symlink() and not context.is_first_time):
             continue
 
         # conditions include:
         # stow mode: system target file is not a symlink, or is broken link, or pointing outside install_pkg_dir
         # copy mode: first installation, or system target is a symlink (broken or not)
-        handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
-                               "Deployment collision", resolve_symlinks)
+        handle_collision_error(
+            context=context,
+            system_target=system_target,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            backup_rel_path=rel,
+            reason="Deployment collision",
+            resolve_symlinks=resolve_symlinks,
+            ops=ops,
+        )
 
     # 5. Handle Content Match items (Stow specific: physical file matching repo content is STILL a collision)
-    if metadata.get_install_method(workspace_config) == "stow":
+    if context.install_method == "stow":
         for rel in diff.matches:
             if rel in processed_paths:
                 continue
             processed_paths.add(rel)
             
-            system_target = resolve_system_target(rel, target_dir)
+            system_target = resolve_system_target(rel, context.target_dir)
             if not system_target.is_symlink():
-                handle_collision_error(pkg, rel, system_target, workspace_config, metadata.sudo,
-                                       "Stow physical collision", resolve_symlinks)
+                handle_collision_error(
+                    context=context,
+                    system_target=system_target,
+                    backup_subfolder=BackupSubfolder.OVERWRITTEN,
+                    backup_rel_path=rel,
+                    reason="Stow physical collision",
+                    resolve_symlinks=resolve_symlinks,
+                    ops=ops,
+                )
 
 
 def run_full_copy_deployment(
@@ -374,23 +438,20 @@ def run_full_copy_deployment(
         deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
 
 
-def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool, stow_sufficient: bool) -> None:
+def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool) -> None:
     """Invokes GNU Stow for package deployment."""
-    if stow_sufficient:
-        ensure_dir_exists_with_sudo(target_dir, sudo)
-        stow_cmd = [
-            "stow",
-            "--no-folding",
-            "--dotfiles",
-            "-d", str(install_base),
-            "-t", str(target_dir),
-            pkg
-        ]
-        logger.info(f"🔗 Linking files: {pkg} (stow)")
-        logger.debug(f"   Command: {shlex.join(stow_cmd)}")
-        run_sudo_command(stow_cmd, sudo=sudo, cwd=str(install_base))
-    else:
-        raise RuntimeError("Stow version is insufficient (< 2.4.1) or not installed.")
+    ensure_dir_exists_with_sudo(target_dir, sudo)
+    stow_cmd = [
+        "stow",
+        "--no-folding",
+        "--dotfiles",
+        "-d", str(install_base),
+        "-t", str(target_dir),
+        pkg
+    ]
+    logger.info(f"🔗 Linking files: {pkg} (stow)")
+    logger.debug(f"   Command: {shlex.join(stow_cmd)}")
+    run_sudo_command(stow_cmd, sudo=sudo, cwd=str(install_base))
 
 
 def deploy_single_stow_file(
@@ -446,107 +507,98 @@ def delete_single_system_file_or_dir(
 
 
 def reconcile_orphaned_files(
-    pkg: str,
-    target_dir: Path,
+    context: PackageInstallContext,
     deployable_files: List[Path],
-    state_registry: StateRegistry,
-    workspace_config: WorkspaceConfig,
-    metadata: PackageConfig,
-    resolve_symlinks: bool
+    deployed_files: Sequence[Path],
+    resolve_symlinks: bool,
+    ops: Optional[FileOperations] = None,
 ) -> None:
     """Reconciles historical deployment files to prune orphaned files from active system target."""
-    previous_files = state_registry.get_package_deployed_files(pkg)
-    orphaned_files = set(previous_files) - set(deployable_files)
+    orphaned_files = set(deployed_files) - set(deployable_files)
     if not orphaned_files:
         return
     logger.info(f"🔍 Reconciling desired state: Pruning {len(orphaned_files)} orphaned files")
     for orphaned in sorted(orphaned_files):
-        system_target = resolve_system_target(orphaned, target_dir)
+        system_target = resolve_system_target(orphaned, context.target_dir)
         if system_target.exists() or system_target.is_symlink():
-            backup_path = workspace_config.backup_path / pkg / "deleted_files" / orphaned
+            backup_path = context.backup_pkg_dir / BackupSubfolder.DELETED_FILES.value / orphaned
             logger.info(f"🧹 [PRUNE] Orphaned file '{orphaned}' removed. Backing up and deleting.")
             logger.debug(f"   Backing up to: {backup_path}")
-            backup_file_or_dir_external(system_target, backup_path, metadata.sudo, resolve_symlinks=resolve_symlinks)
+            backup_file_or_dir_external(system_target, backup_path, context.sudo, resolve_symlinks=resolve_symlinks)
             # Ensure the system target itself is removed
-            remove_file_or_dir_with_sudo(system_target, metadata.sudo)
+            remove_file_or_dir_with_sudo(system_target, context.sudo)
+            if ops is not None:
+                ops.deleted_backup.append(str(orphaned))
 
 
 def run_full_file_delivery(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    install_pkg_dir: Path,
-    target_dir: Path,
-    metadata: PackageConfig,
+    context: PackageInstallContext,
     deployable_files: List[Path]
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
-    install_base = workspace_config.install_path
-    install_method = metadata.get_install_method(workspace_config)
-    if install_method == "copy":
+    install_base = context.install_pkg_dir.parent
+    if context.install_method == "copy":
         run_full_copy_deployment(
-            install_pkg_dir, target_dir, metadata.sudo,
+            context.install_pkg_dir, context.target_dir, context.sudo,
             deployable_files=deployable_files
         )
         return
-    if install_method == "stow":
+    if context.install_method == "stow":
         stow_version = get_stow_version()
         stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
         if stow_sufficient:
-            run_stow_deployment(install_base, target_dir, pkg, metadata.sudo, stow_sufficient)
+            run_stow_deployment(install_base, context.target_dir, context.pkg_name, context.sudo)
             return
         logger.warning("GNU Stow version is insufficient (< 2.4.1) or not installed. Falling back to manual symlinking.")
         for rel_file in deployable_files:
             deploy_single_stow_file(
                 rel_file=rel_file,
-                install_pkg_dir=install_pkg_dir,
-                target_dir=target_dir,
-                sudo=metadata.sudo
+                install_pkg_dir=context.install_pkg_dir,
+                target_dir=context.target_dir,
+                sudo=context.sudo
             )
 
 
 def run_incremental_file_delivery(
-    workspace_config: WorkspaceConfig,
+    context: PackageInstallContext,
     package_changes: PackageStageChanges,
-    install_pkg_dir: Path,
-    target_dir: Path,
-    metadata: PackageConfig
 ) -> None:
     """
     Handles incremental deployment applying Stage Changes additions, modifications, and deletions.
     """
     # A. Process Deletions on active host system
     for rel_file in package_changes.deployable_changes.deleted:
-        delete_single_system_file_or_dir(rel_file, target_dir, metadata.sudo)
+        delete_single_system_file_or_dir(rel_file, context.target_dir, context.sudo)
 
     # B. Process Additions and Modifications
     for rel_file in package_changes.deployable_changes.added + package_changes.deployable_changes.modified:
-        if not install_pkg_dir.joinpath(rel_file).exists():
+        if not context.install_pkg_dir.joinpath(rel_file).exists():
             logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' does not exist in install package directory.")
             continue
 
-        if install_pkg_dir.joinpath(rel_file).is_symlink():
+        if context.install_pkg_dir.joinpath(rel_file).is_symlink():
             logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' is a symlink in install package directory, "
             f"which is not allowed.")
             continue
 
         if rel_file.is_dir():
             ensure_dir_exists_with_sudo(
-                    resolve_system_target(rel_file, target_dir), metadata.sudo)
+                    resolve_system_target(rel_file, context.target_dir), context.sudo)
             continue
 
-        if metadata.get_install_method(workspace_config) == "stow":
+        if context.install_method == "stow":
             deploy_single_stow_file(
                 rel_file=rel_file,
-                install_pkg_dir=install_pkg_dir,
-                target_dir=target_dir,
-                sudo=metadata.sudo
+                install_pkg_dir=context.install_pkg_dir,
+                target_dir=context.target_dir,
+                sudo=context.sudo
             )
-        elif metadata.get_install_method(workspace_config) == "copy":
+        elif context.install_method == "copy":
             deploy_single_copy_file(
                 rel_file=rel_file,
-                install_pkg_dir=install_pkg_dir,
-                target_dir=target_dir,
-                sudo=metadata.sudo
+                install_pkg_dir=context.install_pkg_dir,
+                target_dir=context.target_dir,
+                sudo=context.sudo
             )
 
 
@@ -598,74 +650,67 @@ def update_state_registry_post_deployment(
 def deploy_one_package_impl(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
-    pkg: str,
     metadata: PackageConfig,
-    target_dir: Path,
-    install_pkg_dir: Path,
-    resolve_symlinks: bool,
-    is_first_time: bool,
-    package_changes: Optional[PackageStageChanges],
-    flags: Optional[HookExecFlags] = None,
+    options: DeployOptions,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
-    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
-    
+    context = PackageInstallContext.from_package(
+        workspace_config=workspace_config,
+        state_registry=state_registry,
+        metadata=metadata,
+    )
+    ops = FileOperations()
+
     # 1. Collision Guard
     run_collision_guard(
-        workspace_config=workspace_config,
-        pkg=pkg,
-        install_pkg_dir=install_pkg_dir,
-        metadata=metadata,
-        ignore_handler=ignore_handler,
-        target_dir=target_dir,
-        is_first_time=is_first_time,
-        resolve_symlinks=resolve_symlinks,
+        context=context,
+        resolve_symlinks=options.resolve_symlinks,
+        ops=ops,
     )
 
     # Generate or update .stow-local-ignore file if using stow method
-    if metadata.get_install_method(workspace_config) == "stow":
-        ignore_handler.create_stow_ignore_file(install_pkg_dir)
+    if context.install_method == "stow":
+        context.ignore_handler.create_stow_ignore_file(context.install_pkg_dir)
     
-    # Remove full_redeploy parameter and rely on package_changes to determine deployment mode
-    full_redeploy = (package_changes is None)
+    package_changes = options.get_package_changes(context.pkg_name)
+    full_redeploy = options.redeploy
     
     # Calculate current desired files list
     # Actually, this filter process is already done in stage_repo phase.
-    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
 
     if full_redeploy:
+        deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
         reconcile_orphaned_files(
-            pkg=pkg,
-            target_dir=target_dir,
+            context=context,
             deployable_files=deployable_files,
-            state_registry=state_registry,
-            workspace_config=workspace_config,
-            metadata=metadata,
-            resolve_symlinks=resolve_symlinks
+            deployed_files=deployed_files,
+            resolve_symlinks=options.resolve_symlinks,
+            ops=ops,
         )
 
     # 2. Lifecycle Hooks & State registry update
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(options.flags)
     try:
-        if is_first_time:
+        if context.is_first_time:
             metadata.hooks.trigger_pre_install(flags=hook_flags)
         else:
             metadata.hooks.trigger_pre_update(flags=hook_flags)
     except HookExecutionError as e:
         if not e.requires_rollback:
-            if is_first_time:
-                state_registry.packages.pop(pkg, None)
+            if context.is_first_time:
+                state_registry.packages.pop(context.pkg_name, None)
             else:
-                state_registry.set_package_state(pkg, "installed", install_method=metadata.get_install_method(workspace_config))
+                state_registry.set_package_state(context.pkg_name, "installed")
             state_registry.save()
-            logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{pkg}'. Deployment stopped (no rollback needed).")
+            logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Deployment stopped (no rollback needed).")
         raise
 
     # Persist the full target file manifest to state.toml before hooks & physical delivery
     # so that midway crashes have an authoritative list of files to uninstall
     sync_deployed_files_manifest(
         state_registry=state_registry,
-        pkg=pkg,
+        pkg=context.pkg_name,
         deployable_files=deployable_files,
         full_redeploy=full_redeploy,
         package_changes=package_changes
@@ -675,30 +720,23 @@ def deploy_one_package_impl(
     # 3. Physical Deployment Execution
     if full_redeploy:
         run_full_file_delivery(
-            workspace_config=workspace_config,
-            pkg=pkg,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata,
+            context=context,
             deployable_files=deployable_files,
         )
     else:
         assert package_changes is not None
         run_incremental_file_delivery(
-            workspace_config=workspace_config,
+            context=context,
             package_changes=package_changes,
-            install_pkg_dir=install_pkg_dir,
-            target_dir=target_dir,
-            metadata=metadata
         )
 
-    logger.debug(f"   File delivery completed via {metadata.get_install_method(workspace_config)}")
+    logger.debug(f"   File delivery completed via {context.install_method}")
     
     # Post Hooks
     success = False
     no_rollback_err = False
     try:
-        if is_first_time:
+        if context.is_first_time:
             metadata.hooks.trigger_post_install(flags=hook_flags)
         else:
             metadata.hooks.trigger_post_update(flags=hook_flags)
@@ -706,22 +744,21 @@ def deploy_one_package_impl(
     except HookExecutionError as e:
         if not e.requires_rollback:
             no_rollback_err = True
-            logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{pkg}'. Files remain installed (no rollback needed).")
+            logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
         raise
     finally:
         if success or no_rollback_err:
             update_state_registry_post_deployment(
                 state_registry=state_registry,
-                pkg=pkg,
-                install_method=metadata.get_install_method(workspace_config),
+                pkg=context.pkg_name,
+                install_method=context.install_method,
                 deployable_files=deployable_files,
                 full_redeploy=full_redeploy,
                 package_changes=package_changes
             )
 
-    logger.info(f"✨ Package '{pkg}' deployed successfully.")
+    logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
 
-    ops = FileOperations()
     if package_changes is not None:
         ops.added = [str(p) for p in package_changes.deployable_changes.added]
         ops.modified = [str(p) for p in package_changes.deployable_changes.modified]
@@ -730,33 +767,30 @@ def deploy_one_package_impl(
         ops.added = [str(p) for p in deployable_files]
 
     return PackageInstallResult(
-        package=pkg,
-        install_method=metadata.get_install_method(workspace_config),
-        target_directory=str(target_dir),
+        package=context.pkg_name,
+        install_method=context.install_method,
+        target_directory=str(context.target_dir),
         operations=ops,
-        is_first_time=is_first_time,
+        is_first_time=context.is_first_time,
         status="SUCCESS"
     )
 
 
-def deploy_one_package(
+def precheck_single_package(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
-    pkg: str,
-    resolve_symlinks: bool,
-    force: bool,
-    package_changes: Optional[PackageStageChanges] = None,
-    flags: Optional[HookExecFlags] = None,
-) -> PackageInstallResult:
-    """
-    Core function to deploy a single package configuration.
-    force flag skips the check for current state being 'staging' or 'deploying', allowing deployment even if previous operation failed midway.
-    """
+    metadata: PackageConfig,
+    options: DeployOptions,
+) -> Optional[PackageInstallResult]:
+    """Runs pre-flight validation for a single package.
 
-    install_base = workspace_config.install_path
-    hook_flags = HookExecFlags.resolve(flags)
-    
-    metadata = PackageConfig.from_install_dir(install_base / pkg)
+    Returns:
+        A PackageInstallResult if the package should be skipped, or None if validation passed.
+    Raises:
+        InstallCollisionError: If the target directory is within drift root.
+        RuntimeError: If the package is in a midway failed state and force is False.
+    """
+    pkg = metadata.name
     if not metadata.enable_install:
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return PackageInstallResult(
@@ -768,27 +802,18 @@ def deploy_one_package(
         )
         
     target_dir = metadata.get_target_directory(workspace_config)
-    # target dir should be absolute.
     assert target_dir.is_absolute(), f"Target directory '{target_dir}' must be absolute."
     
-    # Safety Check: Target directory cannot be inside or equal to drift_root.
-    # We want to prevent accidental drift_root nesting in config files.
-    # Just a naming safety check, not a symlink resolution check,
-    # because symlink tools may create symlinked install target dir that points into drift_root,
-    # and the linked parent check will catch that later.
-    abs_target = target_dir.absolute()
     abs_drift_root = workspace_config.drift_root.absolute()
-    if abs_target == abs_drift_root or is_relative_to(abs_target, abs_drift_root):
+    if target_dir == abs_drift_root or is_relative_to(target_dir, abs_drift_root):
         raise InstallCollisionError(
             f"Safety Abort: The target directory written in config '{target_dir}' "
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
         )
     
-    # Check target folder writability
     ensure_directory_writable(target_dir, metadata.sudo)
     
-    # Check if first time before setting state to deploying
-    if not force and state_registry.is_package_in_midway_state(pkg):
+    if not options.force and state_registry.is_package_in_midway_state(pkg):
         current_state = state_registry.get_package_state(pkg)
         raise RuntimeError(
             f"Safety Abort: Package '{pkg}' is currently in '{current_state}' state, "
@@ -796,15 +821,7 @@ def deploy_one_package(
             f"Please run 'drift rollback {pkg}' to restore a clean state before retrying."
         )
     
-    # stage-repo will set state to 'staged'.
-    pkg_state = state_registry.packages.get(pkg)
-
-    # last_deployed is None if the package has never been deployed successfully before.
-    # thus failed first-time deployment will not count as a successful deployment,
-    # and is_first_time will remain True.
-    is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
-    
-    install_pkg_dir = install_base / pkg
+    install_pkg_dir = workspace_config.install_path / pkg
     if not install_pkg_dir.is_dir():
         logger.warning(f"⚠️  Package installation directory '{install_pkg_dir}' does not exist. Skipping.")
         return PackageInstallResult(
@@ -815,11 +832,47 @@ def deploy_one_package(
             error=f"Package installation directory '{install_pkg_dir}' does not exist."
         )
 
-    # Verify hook files exist and are regular files in install/
+    hook_flags = HookExecFlags.resolve(options.flags)
     if not hook_flags.no_hooks:
         metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
+
+    # non-deployable changes is counted as changes and will trigger hooks even if no files are deployed.
+    pkg_change = options.get_package_changes(pkg)
+    if (options.redeploy == False
+            and (pkg_change is None or not pkg_change.has_changes)
+            and (not state_registry.detect_target_directory_migration(pkg, target_dir))):
+        logger.info(f"Skipping package '{pkg}' deployment (no changes detected and redeploy is False).")
+        return PackageInstallResult(
+            package=pkg,
+            install_method=metadata.get_install_method(workspace_config),
+            target_directory=str(target_dir),
+            status="SKIPPED",
+            error="No changes detected and redeploy is False"
+        )
+
+    return None
+
+
+def deploy_one_package(
+    workspace_config: WorkspaceConfig,
+    state_registry: StateRegistry,
+    pkg: str,
+    options: Optional[DeployOptions] = None,
+) -> PackageInstallResult:
+    """Core function to deploy a single package configuration."""
+    opts = options if options is not None else DeployOptions()
+    install_base = workspace_config.install_path
+    metadata = PackageConfig.from_install_dir(install_base / pkg)
+
+    skip_res = precheck_single_package(
+        workspace_config=workspace_config,
+        state_registry=state_registry,
+        metadata=metadata,
+        options=opts,
+    )
+    if skip_res is not None:
+        return skip_res
     
-    # Set package state to "deploying" before actual deployment
     state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
     state_registry.save()
     
@@ -829,14 +882,8 @@ def deploy_one_package(
         return deploy_one_package_impl(
             workspace_config=workspace_config,
             state_registry=state_registry,
-            pkg=pkg,
             metadata=metadata,
-            target_dir=target_dir,
-            install_pkg_dir=install_pkg_dir,
-            resolve_symlinks=resolve_symlinks,
-            is_first_time=is_first_time,
-            package_changes=package_changes,
-            flags=hook_flags,
+            options=opts,
         )
 
 
@@ -844,10 +891,7 @@ def deploy_one_package_with_error_wrapping(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     pkg: str,
-    resolve_symlinks: bool,
-    force: bool,
-    package_changes: Optional[PackageStageChanges] = None,
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[DeployOptions] = None,
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     try:
@@ -855,10 +899,7 @@ def deploy_one_package_with_error_wrapping(
             workspace_config=workspace_config,
             state_registry=state_registry,
             pkg=pkg,
-            resolve_symlinks=resolve_symlinks,
-            force=force,
-            package_changes=package_changes,
-            flags=flags,
+            options=options,
         )
     except subprocess.CalledProcessError as e:
         stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
@@ -876,53 +917,12 @@ def deploy_one_package_with_error_wrapping(
         raise RuntimeError(err_msg) from e
 
 
-def run_primitive_5_install_deployment(
+def precheck_deployment_packages(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: Sequence[str] = (),
-    resolve_symlinks: bool = True,
-    force: bool = False,
-    package_changes: Optional[Mapping[str, PackageStageChanges]] = None,
-    flags: Optional[HookExecFlags] = None,
-    redeploy: bool = True,
-) -> InstallDeploymentResult:
-    """Applies changes from the install/ state database to the active host system (Primitive 5).
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
-        resolve_symlinks: Controls symlink traversal and backup resolution during collision auditing:
-            - When True (default): Follows and resolves symlinks during target directory diffing
-              and recursively backs up the underlying physical contents of colliding symlinks
-              before replacing them.
-            - When False: Treats symlinks strictly as symlink pointers without following targets.
-        force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
-            in the state database, allowing deployment even if a previous operation failed midway.
-            Note: Does NOT bypass 'enable_install = false' package configurations.
-        package_changes: Optional pre-calculated stage changes mapping keyed by package name.
-        flags: Optional HookExecFlags controlling hook execution options.
-        redeploy: Governs behavior for packages without staging changes info (package_changes=None):
-            - If True (default for standalone apply): Performs full deployment for the package.
-            - If False (pipeline mode): Skips the package when no staging changes info is present.
-
-    Returns:
-        InstallDeploymentResult with detailed per-package deployment results.
-    """
-    install_base = workspace_config.install_path
-    state_file = install_base / "state.toml"
-    hook_flags = HookExecFlags.resolve(flags)
-    
-    state_registry = load_state_registry(state_file)
-    
-    discovered_packages = workspace_config.get_installed_packages(
-        target_pkgs=packages_to_redeploy,
-    )
-
-    # Pre-check hook files in install/ for all packages before starting deployment
-    pkg_metadata_map = { pkg: PackageConfig.from_install_dir(install_base / pkg)
-                        for pkg in discovered_packages
-                        if (install_base / pkg).is_dir() }
-
-    # Pre-flight check for administrator/sudo privileges if any active package requires sudo
+    pkg_metadata_map: Mapping[str, PackageConfig],
+    hook_flags: HookExecFlags,
+) -> None:
+    """Pre-flight checks for permissions and lifecycle hook scripts before deployment."""
     needs_sudo = any(m.sudo for pkg, m in pkg_metadata_map.items() if m.enable_install)
     if needs_sudo:
         from .file_utils import check_sudo_privilege
@@ -931,27 +931,52 @@ def run_primitive_5_install_deployment(
     if not hook_flags.no_hooks:
         for pkg, metadata in pkg_metadata_map.items():
             if metadata.enable_install:
-                metadata.hooks.check_hook_files(install_base / pkg, is_source=False)
+                install_pkg_dir = workspace_config.install_path / pkg
+                if install_pkg_dir.is_dir():
+                    metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
+
+
+def run_primitive_5_install_deployment(
+    workspace_config: WorkspaceConfig,
+    packages_to_redeploy: Sequence[str] = (),
+    options: Optional[DeployOptions] = None,
+) -> InstallDeploymentResult:
+    """Applies changes from the install/ state database to the active host system (Primitive 5).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
+        options: Optional DeployOptions controlling deployment behavior (resolve_symlinks, force, redeploy, package_changes, flags).
+
+    Returns:
+        InstallDeploymentResult with detailed per-package deployment results.
+    """
+    opts = options if options is not None else DeployOptions()
+    install_base = workspace_config.install_path
+    state_file = install_base / "state.toml"
+    hook_flags = HookExecFlags.resolve(opts.flags)
     
-    changes_map = package_changes if package_changes is not None else {}
+    state_registry = load_state_registry(state_file)
+    
+    discovered_packages = workspace_config.get_installed_packages(
+        target_pkgs=packages_to_redeploy,
+    )
+
+    pkg_metadata_map = {
+        pkg: PackageConfig.from_install_dir(install_base / pkg)
+        for pkg in discovered_packages
+        if (install_base / pkg).is_dir()
+    }
+
+    precheck_deployment_packages(workspace_config, pkg_metadata_map, hook_flags)
 
     results: List[PackageInstallResult] = []
     for pkg in discovered_packages:
-        # find corresponding PackageStageChanges for this package if provided
-        pkg_change = changes_map.get(pkg)
-
-        if pkg_change is None and not redeploy:
-            logger.info(f"Skipping package '{pkg}' during deployment (no stage changes).")
-            continue
-
         pkg_res = deploy_one_package_with_error_wrapping(
             workspace_config=workspace_config,
             state_registry=state_registry,
             pkg=pkg,
-            resolve_symlinks=resolve_symlinks,
-            force=force,
-            package_changes=pkg_change,
-            flags=hook_flags,
+            options=opts,
         )
         results.append(pkg_res)
 

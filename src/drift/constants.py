@@ -135,6 +135,12 @@ class LineEnding(str, Enum):
     PRESERVE = "preserve"
 
 
+class BackupSubfolder(str, Enum):
+    """Subfolders within backup/<pkg>/ for different backup categories."""
+    OVERWRITTEN = "overwritten"
+    DELETED_FILES = "deleted_files"
+
+
 class ExitCode(IntEnum):
     """Standardized exit codes for the Drift CLI and automated pipeline integration."""
     SUCCESS = 0

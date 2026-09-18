@@ -47,7 +47,7 @@ from typing import List, Optional, Sequence
 from .workspace_config import WorkspaceConfig
 from .result_models import RollbackResult
 from .state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install_deployment
+from .install_repo import run_primitive_5_install_deployment, DeployOptions
 from .uninstall_repo import run_primitive_7_uninstall_packages
 from .lifecycle_hooks import HookExecFlags
 
@@ -112,9 +112,11 @@ def rollback_redeploy_committed_package(
     install_res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=[pkg],
-        resolve_symlinks=True,
-        force=True,
-        flags=flags,
+        options=DeployOptions(
+            resolve_symlinks=True,
+            force=True,
+            flags=flags,
+        ),
     )
     if install_res.status != "SUCCESS":
         raise RuntimeError(install_res.error_message or f"Rollback redeployment failed for package '{pkg}'.")

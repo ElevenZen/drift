@@ -49,7 +49,7 @@ from pathlib import Path
 from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
 from dataclasses import dataclass, field
 
-from .constants import DRIFT_GENERATED_FILES
+from .constants import DRIFT_GENERATED_FILES, BackupSubfolder
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
 from .file_utils import (
@@ -214,7 +214,7 @@ def apply_package_stage_changes(
     """Applies calculated physical deletions, additions, and modifications for a single package into install/."""
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg
-    backup_dir = backup_base / pkg / "deleted_files"
+    backup_dir = backup_base / pkg / BackupSubfolder.DELETED_FILES.value
     all_diff = stage_changes.physical_changes
 
     # A. Process Deletions (clear obsolete paths and handle multi-level type changes first)

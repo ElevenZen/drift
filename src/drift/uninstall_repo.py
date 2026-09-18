@@ -69,9 +69,9 @@ from .file_utils import (
     tree_relative_files,
     resolve_system_target,
 )
-from .constants import UNINSTALL_HOOK_NAMES
+from .constants import UNINSTALL_HOOK_NAMES, BackupSubfolder
 from .lifecycle_hooks import HookExecFlags
-from .result_models import PackageUninstallResult, UninstallResult
+from .result_models import PackageUninstallResult, UninstallResult, RestoredBackup
 
 logger = logging.getLogger(__name__)
 
@@ -155,9 +155,9 @@ def remove_deployed_files(
     target_dir: Path,
     sudo: bool,
     dry_run: bool = False
-) -> List[Path]:
-    """Removes deployed files from the system. Returns list of removed paths."""
-    removed = []
+) -> List[Tuple[Path, Path]]:
+    """Removes deployed files from the system. Returns list of (rel_file, system_target) tuples for removed files."""
+    removed: List[Tuple[Path, Path]] = []
     # Sort in reverse to handle nested files/dirs (files before their parent dirs)
     for rel_file in sorted(deployed_files, reverse=True):
         system_target = resolve_system_target(rel_file, target_dir)
@@ -170,7 +170,7 @@ def remove_deployed_files(
                 remove_file_or_dir_with_sudo(system_target, sudo)
                 # Cleanup empty parent dirs up to target_dir
                 rmdir_parents(system_target.parent, target_dir)
-            removed.append(system_target)
+            removed.append((rel_file, system_target))
     
     if not dry_run and removed:
         logger.info(f"🧹 Cleaned up {len(removed)} deployed file(s) for {pkg}")
@@ -183,10 +183,10 @@ def restore_backups(
     target_dir: Path,
     sudo: bool,
     dry_run: bool = False
-) -> List[Path]:
-    """Restores backups for a package. Returns list of restored paths."""
-    restored = []
-    backup_pkg_overwritten = workspace_config.backup_path / pkg / "overwritten"
+) -> List[RestoredBackup]:
+    """Restores backups for a package. Returns list of RestoredBackup records."""
+    restored: List[RestoredBackup] = []
+    backup_pkg_overwritten = workspace_config.backup_path / pkg / BackupSubfolder.OVERWRITTEN.value
     if not backup_pkg_overwritten.exists():
         return restored  # No backups to restore
 
@@ -209,7 +209,7 @@ def restore_backups(
             logger.debug(f"   Restoring: {system_target}")
             # Use move=True to clean up backup as we restore it
             copy_or_move_file_or_dir_external(src, system_target, sudo, move=True)
-        restored.append(system_target)
+        restored.append(RestoredBackup(source_backup=str(src), restored_to=str(system_target)))
     
     if not dry_run:
         logger.info(f"✨ Restored {len(restored)} file(s) for {pkg}")
@@ -228,7 +228,7 @@ def detach_one_package(
     pkg_state: PackageState,
     pkg_config: PackageConfig,
     dry_run: bool = False,
-) -> bool:
+) -> PackageUninstallResult:
     """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
     pkg = pkg_config.name
     if dry_run:
@@ -236,8 +236,13 @@ def detach_one_package(
     else:
         logger.info(f"🔌 Detaching package: {pkg} (converting to independent system config)")
 
-    target_dir = pkg_config.get_target_directory(workspace_config)
+    target_dir = (
+        pkg_state.target_directory
+        if pkg_state.target_directory is not None
+        else pkg_config.get_target_directory(workspace_config)
+    )
     sudo = pkg_config.sudo
+    converted_symlinks = []
 
     for rel_file in pkg_state.deployed_files:
         system_target = resolve_system_target(rel_file, target_dir)
@@ -246,6 +251,7 @@ def detach_one_package(
         # Log the file that will be replaced in both dry-run and live modes
         if dry_run:
             logger.info(f"🔍 [DRY RUN] Would replace symlink with actual copy: {system_target}")
+            converted_symlinks.append(str(rel_file))
             continue
         src_file = workspace_config.install_path / pkg / rel_file
         if not src_file.is_file():
@@ -255,13 +261,22 @@ def detach_one_package(
         remove_file_or_dir_with_sudo(system_target, sudo)
         system_target.parent.mkdir(parents=True, exist_ok=True)
         copy_or_move_file_or_dir_external(src_file, system_target, sudo, move=False)
+        converted_symlinks.append(str(rel_file))
 
-    if dry_run:
-        return True
+    if not dry_run:
+        logger.info(f"🔌 Successfully detached and converted {pkg} files to independent configurations on the host.")
+        clean_up_package_directories(workspace_config, pkg)
 
-    logger.info(f"🔌 Successfully detached and converted {pkg} files to independent configurations on the host.")
-    clean_up_package_directories(workspace_config, pkg)
-    return True
+    return PackageUninstallResult(
+        package=pkg,
+        install_method=pkg_state.install_method or "stow",
+        target_directory=str(target_dir),
+        detach_mode=True,
+        removed_files=[],
+        converted_symlinks=converted_symlinks,
+        restored_backups=[],
+        status="SUCCESS",
+    )
 
 
 def uninstall_one_package(
@@ -270,7 +285,7 @@ def uninstall_one_package(
     pkg_config: PackageConfig,
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> bool:
+) -> PackageUninstallResult:
     """Orchestrates standard uninstallation of a single package.
 
     Note:
@@ -285,7 +300,11 @@ def uninstall_one_package(
         logger.info(f"🗑️  Uninstalling package: {pkg}")
 
     install_pkg_dir = workspace_config.install_path / pkg
-    target_dir = pkg_config.get_target_directory(workspace_config)
+    target_dir = (
+        pkg_state.target_directory
+        if pkg_state.target_directory is not None
+        else pkg_config.get_target_directory(workspace_config)
+    )
     sudo = pkg_config.sudo
     hook_flags = HookExecFlags.resolve(flags)
 
@@ -301,21 +320,29 @@ def uninstall_one_package(
             )
 
         # 2. Remove deployed files
-        remove_deployed_files(pkg, pkg_state.deployed_files, target_dir, sudo, dry_run=dry_run)
+        removed = remove_deployed_files(pkg, pkg_state.deployed_files, target_dir, sudo, dry_run=dry_run)
 
         # 3. Restore backups
-        restore_backups(workspace_config, pkg, target_dir, sudo, dry_run=dry_run)
+        restored = restore_backups(workspace_config, pkg, target_dir, sudo, dry_run=dry_run)
 
-        if dry_run:
-            return True
+        if not dry_run:
+            # 4. Trigger post_uninstall hook (only if drift_package.toml is available, CWD is install_pkg_dir)
+            if pkg_config.hooks.post_uninstall:
+                pkg_config.hooks.trigger_post_uninstall(
+                    flags=hook_flags
+                )
+            clean_up_package_directories(workspace_config, pkg)
 
-        # 4. Trigger post_uninstall hook (only if drift_package.toml is available, CWD is install_pkg_dir)
-        if pkg_config.hooks.post_uninstall:
-            pkg_config.hooks.trigger_post_uninstall(
-                flags=hook_flags
-            )
-        clean_up_package_directories(workspace_config, pkg)
-        return True
+        return PackageUninstallResult(
+            package=pkg,
+            install_method=pkg_state.install_method or "stow",
+            target_directory=str(target_dir),
+            detach_mode=False,
+            removed_files=[str(rel) for rel, _ in removed],
+            converted_symlinks=[],
+            restored_backups=restored,
+            status="SUCCESS",
+        )
 
 
 # =====================================================================
@@ -394,30 +421,19 @@ def run_primitive_7_uninstall_packages(
     for pkg, pkg_state in packages_to_uninstall.items():
         pkg_config = pkg_config_map[pkg]
         if detach:
-            success = detach_one_package(
+            pkg_res = detach_one_package(
                 workspace_config, pkg_state, pkg_config, dry_run=dry_run
             )
         else:
-            success = uninstall_one_package(
+            pkg_res = uninstall_one_package(
                 workspace_config, pkg_state, pkg_config, dry_run=dry_run, flags=hook_flags
             )
 
-        if success:
+        if pkg_res.status == "SUCCESS":
             successfully_uninstalled.append(pkg)
             if not dry_run:
                 registry.remove_package(pkg)
-            target_dir = pkg_config.get_target_directory(workspace_config)
-            package_results.append(
-                PackageUninstallResult(
-                    package=pkg,
-                    install_method=pkg_state.install_method or "stow",
-                    target_directory=str(target_dir),
-                    detach_mode=detach,
-                    removed_files=[str(x) for x in pkg_state.deployed_files] if not detach else [],
-                    converted_symlinks=[str(x) for x in pkg_state.deployed_files] if detach else [],
-                    status="SUCCESS"
-                )
-            )
+            package_results.append(pkg_res)
 
     # 4. Save state registry & commit changes in install repo
     if not dry_run:

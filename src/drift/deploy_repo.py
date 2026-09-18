@@ -11,7 +11,11 @@ from .git_utils import get_git_status_porcelain, check_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
 from .render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
 from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
-from .install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+from .install_repo import (
+    run_primitive_5_install_deployment,
+    run_primitive_6_commit_install_repo,
+    DeployOptions,
+)
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from .lifecycle_hooks import HookExecFlags
 from .exceptions import HookExecutionError
@@ -225,11 +229,13 @@ def execute_sequential_compile_and_apply(
         install_res = run_primitive_5_install_deployment(
             workspace_config,
             packages_to_redeploy=pkgs_to_install,
-            resolve_symlinks=True,
-            force=force,
-            package_changes=package_changes,
-            flags=hook_flags,
-            redeploy=redeploy,
+            options=DeployOptions(
+                resolve_symlinks=True,
+                force=force,
+                redeploy=redeploy,
+                package_changes=package_changes,
+                flags=hook_flags,
+            ),
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except HookExecutionError as e:

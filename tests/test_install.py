@@ -30,8 +30,10 @@ from drift.install_repo import (
         is_stow_version_sufficient,
         find_internal_symlink_conflicts,
         resolve_single_internal_symlink_conflict,
-        handle_internal_symlink_conflicts,
         deploy_single_stow_file,
+        deploy_one_package,
+        DeployOptions,
+        PackageInstallContext,
 )
 from drift.file_utils import (
         ensure_dir_exists_with_sudo,
@@ -188,7 +190,13 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))})
+        run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            options=DeployOptions(
+                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
+            ),
+        )
 
         # Verify symlink is created
         target_file = os.path.join(self.system_target_dir, ".bashrc")
@@ -227,7 +235,13 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))})
+        run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            options=DeployOptions(
+                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
+            ),
+        )
 
         # Collision file should be backed up under backup/pkg_stow/overwritten/dot-bashrc
         backup_file = os.path.join(self.backup_dir, pkg, "overwritten", "dot-bashrc")
@@ -280,7 +294,13 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run first-time deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("test.txt")]))})
+        run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            options=DeployOptions(
+                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("test.txt")]))}
+            ),
+        )
 
         # Target file is copied and pre-existing file backed up
         self.assertTrue(os.path.isfile(target_file))
@@ -312,7 +332,13 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run update deployment
         from drift.stage_repo import PackageStageChanges
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("test.txt")]))})
+        run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            options=DeployOptions(
+                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("test.txt")]))}
+            ),
+        )
 
         # Target file should be directly overwritten
         with open(target_file, "r", encoding="utf-8") as f:
@@ -552,13 +578,13 @@ class TestInstallRepo(unittest.TestCase):
             return res
 
         from unittest.mock import patch
+        from drift.install_repo import DeployOptions
         with patch("drift.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
             deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 pkg=pkg,
-                resolve_symlinks=False,
-                force=True
+                options=DeployOptions(resolve_symlinks=False, force=True)
             )
 
         # Verifies workspace_config default target directory was properly passed and not clobbered
@@ -645,7 +671,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(
                 self.workspace_config,
                 [pkg],
-                package_changes={}
+                options=DeployOptions(package_changes={}),
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
@@ -683,7 +709,9 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("nested_app/config.json")]))}
+            options=DeployOptions(
+                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("nested_app/config.json")]))}
+            ),
         )
 
         # 1. Parent symlink should be removed and rebuilt as a physical directory
@@ -714,7 +742,6 @@ class TestInstallRepo(unittest.TestCase):
             target_dir=Path("/target"),
             pkg="pkg_a",
             sudo=False,
-            stow_sufficient=True
         )
         
         mock_ensure_dir.assert_called_once_with(Path("/target"), False)
@@ -734,7 +761,6 @@ class TestInstallRepo(unittest.TestCase):
             target_dir=Path("/target"),
             pkg="pkg_a",
             sudo=True,
-            stow_sufficient=True
         )
         mock_ensure_dir.assert_called_once_with(Path("/target"), True)
         mock_run.assert_called_once()
@@ -743,17 +769,6 @@ class TestInstallRepo(unittest.TestCase):
             args[0],
             ["sudo", "stow", "--no-folding", "--dotfiles", "-d", "/install", "-t", "/target", "pkg_a"]
         )
-        
-        # 3. Test stow command when version is insufficient
-        with self.assertRaises(RuntimeError) as ctx:
-            run_stow_deployment(
-                install_base=Path("/install"),
-                target_dir=Path("/target"),
-                pkg="pkg_a",
-                sudo=False,
-                stow_sufficient=False
-            )
-        self.assertIn("insufficient", str(ctx.exception))
 
     def test_collision_guard_ignored_file_deletion(self) -> None:
         """Verifies that if a staged file matches .drift_ignore,
@@ -843,7 +858,9 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(os.path.join(pkg_install_dir, "file2.txt"))
 
         # Re-run standalone deployment (without package_changes)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(res2.packages[0].operations.deleted_backup, ["file2.txt"])
 
         # 3. Assert file2.txt is pruned from system target
         self.assertFalse(system_file2.exists())
@@ -1153,7 +1170,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("currently in 'deploying' state", str(ctx.exception))
 
         # Attempt with force=True - should proceed (and succeed here)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], force=True)
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(force=True))
         
         # Verify success after force
         registry = load_state_registry(Path(state_file))
@@ -1218,8 +1235,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace_config=self.workspace_config,
             state_registry=registry,
             pkg=pkg_disabled,
-            resolve_symlinks=True,
-            force=False
+            options=DeployOptions(resolve_symlinks=True, force=False)
         )
         self.assertEqual(res_disabled.status, "SKIPPED")
         # Check that state.toml did not transition this package into 'deploying'
@@ -1231,8 +1247,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace_config=self.workspace_config,
             state_registry=registry,
             pkg=pkg_disabled,
-            resolve_symlinks=True,
-            force=True
+            options=DeployOptions(resolve_symlinks=True, force=True)
         )
         self.assertEqual(res_forced.status, "SKIPPED")
         self.assertEqual(res_forced.error, "enable_install is False")
@@ -1262,8 +1277,7 @@ class TestInstallRepo(unittest.TestCase):
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 pkg=pkg_missing,
-                resolve_symlinks=True,
-                force=False
+                options=DeployOptions(resolve_symlinks=True, force=False)
             )
             self.assertEqual(res_missing.status, "SKIPPED")
             reloaded2 = load_state_registry(state_file)
@@ -1444,7 +1458,7 @@ class TestInstallRepo(unittest.TestCase):
         # Execute partial deployment modifying file_a.txt
         from drift.stage_repo import PackageStageChanges
         changes = {pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("file_a.txt")]))}
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], package_changes=changes)
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(package_changes=changes))
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1550,6 +1564,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
+        self.assertEqual(res.packages[0].operations.overwritten_backup, ["app.conf"])
 
     def test_switch_method_from_stow_to_copy_backs_up_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'stow' switches to 'copy',
@@ -1736,12 +1751,18 @@ class TestInstallRepo(unittest.TestCase):
         outside_target.write_text("outside", encoding="utf-8")
         (self.system_target_dir / "root.conf").symlink_to(outside_target)
 
-        conflicts = find_internal_symlink_conflicts(
-            workspace_config=self.workspace_config,
+        context = PackageInstallContext(
+            pkg_name=pkg,
             install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method="copy",
             ignore_handler=DriftIgnore(),
-            target_dir=self.system_target_dir
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
         )
+        conflicts = find_internal_symlink_conflicts(context=context)
 
         # Should only find 'nested' as an internal symlink conflict
         self.assertEqual(len(conflicts), 1)
@@ -1757,7 +1778,17 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / "sub_dir").mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "sub_dir" / "file.txt").write_text("file content", encoding="utf-8")
 
-        config = PackageConfig(name=pkg, install_method="copy", target_directory=Path(self.system_target_dir))
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method="copy",
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
 
         fake_drift_dest = self.drift_root / "fake_drift_dest"
         fake_drift_dest.mkdir(parents=True, exist_ok=True)
@@ -1768,12 +1799,8 @@ class TestInstallRepo(unittest.TestCase):
         processed_paths: set = set()
 
         resolve_single_internal_symlink_conflict(
-            workspace_config=self.workspace_config,
-            pkg=pkg,
-            install_pkg_dir=pkg_install_dir,
-            metadata=config,
-            ignore_handler=DriftIgnore(),
-            repo_rel=Path("sub_dir"),
+            context=context,
+            install_rel_path=Path("sub_dir"),
             system_target=system_target,
             resolve_symlinks=True,
             processed_paths=processed_paths
@@ -1799,7 +1826,17 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "valid_file.txt").write_text("valid content", encoding="utf-8")
 
-        config = PackageConfig(name=pkg, install_method="stow", target_directory=Path(self.system_target_dir))
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method="stow",
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
 
         # Create valid relative symlink pointing into install_pkg_dir
         system_target = self.system_target_dir / "valid_file.txt"
@@ -1809,12 +1846,8 @@ class TestInstallRepo(unittest.TestCase):
         processed_paths: set = set()
 
         resolve_single_internal_symlink_conflict(
-            workspace_config=self.workspace_config,
-            pkg=pkg,
-            install_pkg_dir=pkg_install_dir,
-            metadata=config,
-            ignore_handler=DriftIgnore(),
-            repo_rel=Path("valid_file.txt"),
+            context=context,
+            install_rel_path=Path("valid_file.txt"),
             system_target=system_target,
             resolve_symlinks=True,
             processed_paths=processed_paths

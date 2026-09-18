@@ -53,6 +53,7 @@ from .constants import (
     get_default_internal_gitignore_content,
     INITIAL_ENV,
     SYSTEM_FACT_KEYS,
+    BackupSubfolder,
     inject_system_facts,
     update_initial_env,
     set_initial_env,
@@ -148,6 +149,8 @@ from .state_registry import (
 from .install_repo import (
     run_primitive_5_install_deployment,
     run_primitive_6_commit_install_repo,
+    DeployOptions,
+    PackageInstallContext,
 )
 from .deploy_repo import (
     run_primitive_deploy_pipeline,

@@ -127,8 +127,8 @@ class FileOperations(SerializableModel):
     added: List[str] = field(default_factory=list)
     modified: List[str] = field(default_factory=list)
     deleted: List[str] = field(default_factory=list)
-    backed_up: List[str] = field(default_factory=list)
-    overwritten_backups: List[str] = field(default_factory=list)
+    deleted_backup: List[str] = field(default_factory=list)
+    overwritten_backup: List[str] = field(default_factory=list)
 
 
 @dataclass
