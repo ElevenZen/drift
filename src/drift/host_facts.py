@@ -1,4 +1,40 @@
-"""Zero-dependency automated host facts detection module."""
+"""Automated zero-dependency host facts detection and system profiling.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 3: Public Fact Ingestion Entry Point
+    get_system_facts(os_release_path_override, probe_wan_ip)
+        SystemFacts.probe(os_release_path_override, probe_wan_ip) [Layer 2]
+        SystemFacts.to_envs(ip_separator=";") [Layer 2]
+
+Layer 2: Structured Data Model & System Facts Aggregator
+    SystemFacts (dataclass)
+        .probe(os_release_path_override, probe_wan_ip)
+            get_host_os [Layer 1]
+            get_host_arch [Layer 1]
+            get_host_distro [Layer 1] (parse_os_release)
+            get_host_hostname [Layer 1]
+            get_host_user [Layer 1]
+            get_host_ip_addresses [Layer 1] (_get_ips_from_getifaddrs / _get_ips_from_windows / UDP probes)
+        .to_envs(ip_separator=";")
+            Maps probed facts into standardized drift_* environment variables:
+            drift_os, drift_arch, drift_distro, drift_hostname, drift_user, drift_ip_addresses
+
+Layer 1: Low-Level OS, Hardware & Network Probing Primitives
+    get_host_os: Normalizes platform (linux, darwin, windows, freebsd).
+    get_host_arch: Normalizes CPU architecture (x86_64, arm64, x86).
+    parse_os_release: Parses /etc/os-release or /usr/lib/os-release key-value pairs.
+    get_host_distro: Normalizes Linux/BSD distro (ubuntu, arch, debian, etc.) or OS name.
+    get_host_hostname: Retrieves local hostname without FQDN suffix.
+    get_host_user: Retrieves current login username.
+    _get_ips_from_getifaddrs: Direct POSIX libc network interface enumeration via ctypes.
+    _get_ips_from_windows: Windows adapter IP resolution via socket.gethostbyname_ex.
+    get_host_ip_addresses: Aggregates non-loopback IPv4 addresses with UDP routing fallback.
+
+===============================================================================
+"""
 
 import os
 import sys
@@ -35,12 +71,12 @@ def get_host_arch() -> str:
     return machine
 
 
-def parse_os_release(os_release_path: Optional[Path] = None) -> Dict[str, str]:
+def parse_os_release(os_release_path_override: Optional[Path] = None) -> Dict[str, str]:
     """Parses standard Freedesktop /etc/os-release or /usr/lib/os-release key-value pairs."""
     from .env_utils import parse_env_file
 
-    paths_to_check = ([os_release_path]
-                      if os_release_path
+    paths_to_check = ([os_release_path_override]
+                      if os_release_path_override
                       else [Path("/etc/os-release"), Path("/usr/lib/os-release")])
     for p in paths_to_check:
         if not p or not p.is_file():
@@ -51,7 +87,7 @@ def parse_os_release(os_release_path: Optional[Path] = None) -> Dict[str, str]:
     return {}
 
 
-def get_host_distro(os_release_path: Optional[Path] = None) -> str:
+def get_host_distro(os_release_path_override: Optional[Path] = None) -> str:
     """Returns the normalized OS distribution identifier (e.g. 'ubuntu', 'arch', 'debian', 'macos', 'windows')."""
     os_name = get_host_os()
     if os_name == "darwin":
@@ -62,7 +98,7 @@ def get_host_distro(os_release_path: Optional[Path] = None) -> str:
         return "freebsd"
 
     # On Linux / POSIX, check os-release
-    facts = parse_os_release(os_release_path)
+    facts = parse_os_release(os_release_path_override)
     distro_id = facts.get("ID", "").lower().strip()
     if distro_id:
         return distro_id
@@ -162,11 +198,19 @@ def _get_ips_from_windows() -> List[str]:
 
 
 def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
-    """Returns a list of local non-loopback IP addresses (LAN IPs) for the host across all network interfaces.
+    """Returns a list of local non-loopback IPv4 addresses for the host across network interfaces.
 
-    Uses zero-dependency kernel interface enumeration (getifaddrs on POSIX / macOS / Linux) to discover
-    all local network adapters without DNS or mDNS lookups.
-    Outbound internet route probing is only performed if probe_wan_ip is explicitly True.
+    Primary discovery uses kernel interface enumeration (libc `getifaddrs` on POSIX,
+    `gethostbyname_ex` on Windows). Supplementary connectionless UDP routing table probes
+    are then performed to discover virtual/VPN adapter IPs on Windows and serve as a
+    zero-dependency fallback if interface enumeration fails.
+
+    Args:
+        probe_wan_ip: If True, also queries the kernel routing table for the default
+            outbound internet gateway interface (probing `8.8.8.8:80`). Defaults to False.
+
+    Returns:
+        A deduplicated list of non-loopback IPv4 address strings.
     """
     ips: List[str] = []
 
@@ -176,7 +220,13 @@ def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
     else:
         ips.extend(_get_ips_from_windows())
 
-    # 2. Supplementary UDP routing table probes (covers special virtual bridges)
+    # 2. Supplementary UDP routing table probes.
+    # Note: On POSIX where getifaddrs() succeeds, all interface IPs are already collected,
+    # making this probe redundant for IP discovery. However, this probe serves two key purposes:
+    #   a) Primary supplement on Windows, where gethostbyname_ex() frequently misses VPNs,
+    #      Hyper-V/WSL virtual adapters, and secondary network interfaces.
+    #   b) Zero-dependency fallback on POSIX systems where ctypes / libc getifaddrs() fails
+    #      (e.g., restricted containers, sandboxes, or minimal Python runtimes).
     probe_destinations = [
         ("10.255.255.255", 1),
         ("172.31.255.255", 1),
@@ -212,14 +262,14 @@ class SystemFacts:
     @classmethod
     def probe(
         cls,
-        os_release_path: Optional[Path] = None,
+        os_release_path_override: Optional[Path] = None,
         probe_wan_ip: bool = False
     ) -> "SystemFacts":
         """Probes the current host system facts."""
         return cls(
             os=get_host_os(),
             arch=get_host_arch(),
-            distro=get_host_distro(os_release_path=os_release_path),
+            distro=get_host_distro(os_release_path_override=os_release_path_override),
             hostname=get_host_hostname(),
             user=get_host_user(),
             ip_addresses=get_host_ip_addresses(probe_wan_ip=probe_wan_ip),
@@ -238,8 +288,8 @@ class SystemFacts:
 
 
 def get_system_facts(
-    os_release_path: Optional[Path] = None,
+    os_release_path_override: Optional[Path] = None,
     probe_wan_ip: bool = False
 ) -> Dict[str, str]:
     """Returns the dictionary of auto-populated lowercase drift host facts."""
-    return SystemFacts.probe(os_release_path=os_release_path, probe_wan_ip=probe_wan_ip).to_envs()
+    return SystemFacts.probe(os_release_path_override=os_release_path_override, probe_wan_ip=probe_wan_ip).to_envs()

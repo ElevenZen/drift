@@ -59,6 +59,10 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         self.assertEqual(facts.get("ID"), "ubuntu")
         self.assertEqual(facts.get("ID_LIKE"), "debian")
 
+        # Test explicit keyword argument
+        facts_kw = parse_os_release(os_release_path_override=os_release)
+        self.assertEqual(facts_kw.get("ID"), "ubuntu")
+
     def test_get_host_distro(self) -> None:
         # Non-Linux
         with patch("sys.platform", "darwin"):
@@ -79,6 +83,7 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         arch_rel.write_text('ID="arch"\n', encoding="utf-8")
         with patch("sys.platform", "linux"):
             self.assertEqual(get_host_distro(arch_rel), "arch")
+            self.assertEqual(get_host_distro(os_release_path_override=arch_rel), "arch")
 
         # Linux Fallback
         empty_rel = self.root / "empty-release"
@@ -101,6 +106,13 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         self.assertIn("drift_user", facts)
         self.assertIn("drift_ip_addresses", facts)
         self.assertTrue(all(isinstance(v, str) for v in facts.values()))
+
+        # Test with custom os-release override
+        custom_rel = self.root / "custom-release"
+        custom_rel.write_text('ID=fedora\n', encoding="utf-8")
+        with patch("sys.platform", "linux"):
+            facts_custom = get_system_facts(os_release_path_override=custom_rel)
+            self.assertEqual(facts_custom["drift_distro"], "fedora")
 
     def test_get_host_ip_addresses_enumerates_interfaces(self) -> None:
         from drift.host_facts import get_host_ip_addresses
