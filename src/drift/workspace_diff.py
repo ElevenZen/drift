@@ -333,7 +333,10 @@ def run_primitive_15_workspace_diff(
     discovered_in_src = workspace_config.get_package_names_from_source_dir()
     all_discovered = sorted(set(discovered_in_install) | set(discovered_in_src))
 
-    packages = workspace_config.get_packages(all_discovered, package_names)
+    packages = workspace_config.filter_given_packages_by_target(
+        available_packages=all_discovered,
+        target_packages=package_names or None,
+    )
     if not packages and package_names:
         logger.warning(f"No packages found matching: {', '.join(package_names)}")
         return

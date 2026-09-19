@@ -278,7 +278,7 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     DEFAULT = false
     ${DRIFT_PACKAGES}
     ```
-    When Drift runs, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
+    When Drift runs, `load_workspace_config_file_with_render` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
 ### 🧩 4. Native In-TOML Variable Stitching & Derived Values
 
@@ -290,7 +290,7 @@ Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly wi
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
 *   **Dynamic Programmatic Generation via Python Hooks (Preprocessor Stage)**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
     > **Pipeline Execution Order**:
-    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_dict` / `load_package_config_dict`).
+    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_files_layered` / `load_package_config_dict`).
     > 2. **Dynamic Python Hook (Preprocessor)**: Executes *before* variable stitching, receiving the raw configuration dictionary with full access to resolved host facts and environment variables via `context`.
     > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` references (including any injected by the hook) and interpolates `${VAR}` across all non-env fields.
     > 4. **Validation & Model Instantiation**: Builds validated, strongly-typed configuration objects.

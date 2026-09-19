@@ -175,7 +175,10 @@ def run_primitive_status(
     discovered_in_src = workspace_config.get_package_names_from_source_dir()
     all_discovered = sorted(list(set(discovered_in_install) | set(discovered_in_src)))
     
-    packages = workspace_config.get_packages(all_discovered, target_pkgs)
+    packages = workspace_config.filter_given_packages_by_target(
+        available_packages=all_discovered,
+        target_packages=target_pkgs or None,
+    )
     if not packages:
         logger.info("No active packages selected for status audit.")
         return WorkspaceStatusResult(packages=[])

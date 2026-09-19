@@ -220,25 +220,25 @@ class TestConfigClasses(unittest.TestCase):
             targets = ["config.toml", "settings.json"]
             
             # 1. Neither exists
-            self.assertIsNone(config.find_source_file_for_rendered_names(directory, targets))
+            self.assertIsNone(config.render_engine_configs.find_source_file_for_rendered_names(directory, targets))
             
             # 2. Template form 1 exists (config.toml.envst)
             p1 = directory / "config.toml.envst"
             p1.touch()
-            match = config.find_source_file_for_rendered_names(directory, targets)
+            match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
             self.assertEqual(match, RenderSourceMatch(path=p1, engine=engine, target_name="config.toml"))
             p1.unlink()
 
             # 3. Template form 2 exists (config.envst.toml)
             p2 = directory / "config.envst.toml"
             p2.touch()
-            match = config.find_source_file_for_rendered_names(directory, targets)
+            match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
             self.assertEqual(match, RenderSourceMatch(path=p2, engine=engine, target_name="config.toml"))
 
             # 4. Static exists (takes precedence over template)
             p_static = directory / "config.toml"
             p_static.touch()
-            match = config.find_source_file_for_rendered_names(directory, targets)
+            match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
             self.assertEqual(match, RenderSourceMatch(path=p_static, engine=None, target_name="config.toml"))
 
     def test_find_source_file_for_targets_with_directories(self) -> None:
@@ -252,14 +252,14 @@ class TestConfigClasses(unittest.TestCase):
             # 1. Directory exists
             d1 = directory / "my_folder"
             d1.mkdir()
-            match = config.find_source_file_for_rendered_names(directory, targets)
+            match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
             self.assertEqual(match, RenderSourceMatch(path=d1, engine=None, target_name="my_folder"))
             
             # 2. File with same name takes precedence
             shutil.rmtree(d1)
             f1 = directory / "my_folder"
             f1.touch()
-            match = config.find_source_file_for_rendered_names(directory, targets)
+            match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
             self.assertEqual(match, RenderSourceMatch(path=f1, engine=None, target_name="my_folder"))
 
     def test_find_conflict_in_source_dir(self) -> None:
@@ -275,7 +275,7 @@ class TestConfigClasses(unittest.TestCase):
             # 1. Exact match (static file)
             f1 = src_pkg_dir / "dot-bashrc"
             f1.touch()
-            match: Any = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            match: Any = config.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, f1)
             self.assertEqual(match.status, "match")
@@ -284,7 +284,7 @@ class TestConfigClasses(unittest.TestCase):
             # 2. Exact match (template)
             t1 = src_pkg_dir / "dot-bashrc.envst"
             t1.touch()
-            match: Any = config.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
+            match: Any = config.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, Path(".bashrc"))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, t1)
             self.assertEqual(match.status, "match")
@@ -295,14 +295,14 @@ class TestConfigClasses(unittest.TestCase):
             # But src/pkg/dot-config is a file
             b1 = src_pkg_dir / "dot-config"
             b1.touch()
-            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
+            match = config.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
             self.assertIsNotNone(match)
             self.assertEqual(match.path, b1)
             self.assertEqual(match.status, "block")
             b1.unlink()
             
             # 4. No conflict
-            match = config.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
+            match = config.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, Path(".config/nvim/init.vim"))
             self.assertIsNone(match)
 
 
@@ -806,19 +806,19 @@ class TestConfigClasses(unittest.TestCase):
             )
 
             # 1. No target_pkgs - should return only enabled discovered packages (pkg_a)
-            discovered = config.get_discovered_packages(root_path)
+            discovered = config.filter_custom_dir_packages_by_target(root_path)
             self.assertEqual(discovered, ["pkg_a"])
 
             # 2. Target packages explicitly specified (even disabled pkg_b is returned)
-            discovered_targets = config.get_discovered_packages(root_path, target_pkgs=["pkg_a", "pkg_b"])
+            discovered_targets = config.filter_custom_dir_packages_by_target(root_path, target_packages=["pkg_a", "pkg_b"])
             self.assertEqual(discovered_targets, ["pkg_a", "pkg_b"])
 
             # 3. Missing target package (raises ValueError)
             with self.assertRaises(ValueError):
-                config.get_discovered_packages(root_path, target_pkgs=["pkg_a", "pkg_c"])
+                config.filter_custom_dir_packages_by_target(root_path, target_packages=["pkg_a", "pkg_c"])
 
     def test_get_source_packages_and_rendered_installed(self) -> None:
-        """Verifies get_source_packages finds all packages in src/, and get_rendered/installed find packages with config."""
+        """Verifies filter_source_packages_by_target finds all packages in src/, and filter_render/install find packages with config."""
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir).resolve()
             src_dir = root / "src"
@@ -858,18 +858,18 @@ class TestConfigClasses(unittest.TestCase):
                 packages_enable_default=False
             )
 
-            # get_source_packages discovers all subdirs in src/ (pkg_a, pkg_b, pkg_c)
-            # When target_pkgs is None, returns enabled: pkg_a, pkg_b
-            self.assertEqual(config.get_source_packages(), ["pkg_a", "pkg_b"])
+            # filter_source_packages_by_target discovers all subdirs in src/ (pkg_a, pkg_b, pkg_c)
+            # When target_packages is None, returns enabled: pkg_a, pkg_b
+            self.assertEqual(config.filter_source_packages_by_target(), ["pkg_a", "pkg_b"])
 
-            # Explicit target_pkgs includes disabled pkg_c
-            self.assertEqual(config.get_source_packages(target_pkgs=["pkg_c"]), ["pkg_c"])
+            # Explicit target_packages includes disabled pkg_c
+            self.assertEqual(config.filter_source_packages_by_target(target_packages=["pkg_c"]), ["pkg_c"])
 
-            # get_rendered_packages discovers pkg_a and pkg_b from render/
-            self.assertEqual(config.get_rendered_packages(), ["pkg_a", "pkg_b"])
+            # filter_render_packages_by_target discovers pkg_a and pkg_b from render/
+            self.assertEqual(config.filter_render_packages_by_target(), ["pkg_a", "pkg_b"])
 
-            # get_installed_packages discovers pkg_a from install/
-            self.assertEqual(config.get_installed_packages(), ["pkg_a"])
+            # filter_install_packages_by_target discovers pkg_a from install/
+            self.assertEqual(config.filter_install_packages_by_target(), ["pkg_a"])
 
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
@@ -1646,6 +1646,129 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             config.packages_enable_default = True
             self.assertTrue(config.is_package_enabled("pkg_unlisted"))
 
+    def test_package_filtering_methods(self) -> None:
+        """Verifies filter_*_by_target methods correctly handle target_packages=None vs () vs explicit lists."""
+        with tempfile.TemporaryDirectory() as root_path:
+            root = Path(root_path)
+            # Setup source, render, install dirs
+            (root / "src" / "pkg_a").mkdir(parents=True)
+            (root / "src" / "pkg_b").mkdir(parents=True)
+            (root / "src" / "pkg_c").mkdir(parents=True)
+
+            (root / "render" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
+            (root / "render" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
+            (root / "render" / "pkg_b").mkdir(parents=True)
+            (root / "render" / "pkg_b" / PACKAGE_CONFIG_FILE_NAME).touch()
+            # pkg_c has no config file in render/
+            (root / "render" / "pkg_c").mkdir(parents=True)
+
+            (root / "install" / "pkg_a").mkdir(parents=True)
+            (root / "install" / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+
+            config = WorkspaceConfig(
+                drift_root=root,
+                packages_enable={"pkg_a": True, "pkg_b": False, "pkg_c": True},
+                packages_enable_default=False,
+            )
+
+            # 1. filter_source_packages_by_target
+            # None -> returns enabled packages
+            self.assertEqual(config.filter_source_packages_by_target(target_packages=None), ["pkg_a", "pkg_c"])
+            # () -> returns empty list
+            self.assertEqual(config.filter_source_packages_by_target(target_packages=()), [])
+            # Explicit list -> returns matching target packages in order
+            self.assertEqual(config.filter_source_packages_by_target(target_packages=["pkg_b"]), ["pkg_b"])
+            self.assertEqual(config.filter_source_packages_by_target(target_packages=["pkg_c", "pkg_a"]), ["pkg_c", "pkg_a"])
+            # Missing package in target -> raises ValueError
+            with self.assertRaises(ValueError) as ctx:
+                config.filter_source_packages_by_target(target_packages=["pkg_missing"])
+            self.assertIn("Given target packages not found in directory", str(ctx.exception))
+            self.assertIn("pkg_missing", str(ctx.exception))
+
+            # 2. filter_render_packages_by_target
+            # render/ only recognizes packages with config file (pkg_a, pkg_b)
+            self.assertEqual(config.filter_render_packages_by_target(target_packages=None), ["pkg_a"])
+            self.assertEqual(config.filter_render_packages_by_target(target_packages=()), [])
+            self.assertEqual(config.filter_render_packages_by_target(target_packages=["pkg_b"]), ["pkg_b"])
+            with self.assertRaises(ValueError):
+                config.filter_render_packages_by_target(target_packages=["pkg_c"])
+
+            # 3. filter_install_packages_by_target
+            # install/ only has pkg_a
+            self.assertEqual(config.filter_install_packages_by_target(target_packages=None), ["pkg_a"])
+            self.assertEqual(config.filter_install_packages_by_target(target_packages=()), [])
+            with self.assertRaises(ValueError):
+                config.filter_install_packages_by_target(target_packages=["pkg_b"])
+
+            # 4. filter_custom_dir_packages_by_target
+            custom_dir = root / "custom"
+            (custom_dir / "pkg_x").mkdir(parents=True)
+            (custom_dir / "pkg_x" / PACKAGE_CONFIG_FILE_NAME).touch()
+            self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=None), [])
+            config.packages_enable_default = True
+            self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=None), ["pkg_x"])
+            self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=()), [])
+
+            # 5. filter_given_packages_by_target without error_context_dir
+            with self.assertRaises(ValueError) as ctx:
+                config.filter_given_packages_by_target(["pkg_1"], ["pkg_2"])
+            self.assertEqual(str(ctx.exception), "Given target packages not found: ['pkg_2']")
+
+    def test_load_workspace_config_layered_functions(self) -> None:
+        """Verifies load_workspace_config_file_with_render and load_workspace_config_files_layered functions."""
+        from drift.workspace_config import (
+            render_workspace_config,
+            load_workspace_config_file_with_render,
+            load_workspace_config_files_layered,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            cfg_dir = root / "config"
+            cfg_dir.mkdir(parents=True)
+
+            base_file = cfg_dir / "drift_workspace.toml"
+            override_file = cfg_dir / "drift_workspace.local.toml"
+            tmpl_file = cfg_dir / "drift_workspace.envst.toml"
+
+            # 1. Test load_workspace_config_file_with_render on non-existent file returns None
+            self.assertIsNone(load_workspace_config_file_with_render(base_file))
+
+            # 2. Test render_workspace_config and template loading
+            tmpl_file.write_text("""
+            [workspace]
+            source_directory = "$TEST_SRC_DIR"
+            """, encoding="utf-8")
+            with patch.dict(os.environ, {"TEST_SRC_DIR": "my_src"}):
+                rendered_str = render_workspace_config(tmpl_file)
+                self.assertIn('source_directory = "my_src"', rendered_str)
+                loaded_dict = load_workspace_config_file_with_render(base_file)
+                self.assertIsNotNone(loaded_dict)
+                self.assertEqual(loaded_dict["workspace"]["source_directory"], "my_src")
+
+            # 3. Static base file takes precedence over template
+            base_file.write_text("""
+            [workspace]
+            source_directory = "static_src"
+            render_directory = "render"
+            """, encoding="utf-8")
+            loaded_static = load_workspace_config_file_with_render(base_file)
+            self.assertEqual(loaded_static["workspace"]["source_directory"], "static_src")
+
+            # 4. Layered loading merges base and override
+            override_file.write_text("""
+            [workspace]
+            render_directory = "custom_render"
+            """, encoding="utf-8")
+            merged = load_workspace_config_files_layered([base_file, override_file])
+            self.assertEqual(merged["workspace"]["source_directory"], "static_src")
+            self.assertEqual(merged["workspace"]["render_directory"], "custom_render")
+
+            # 5. Layered loading raises ConfigError when none exist
+            non_existent = root / "non_existent.toml"
+            with self.assertRaises(ConfigError) as ctx:
+                load_workspace_config_files_layered([non_existent])
+            self.assertIn("Workspace configuration file not found", str(ctx.exception))
+
     def test_render_engine_strip_suffix(self) -> None:
         """Verifies RenderEngineConfig.strip_suffix strips engine suffix segment correctly from the filename."""
         from drift.workspace_config import RenderEngineConfig
@@ -2083,7 +2206,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
                 src_pkgs = ws_cfg.get_package_names_from_source_dir()
                 self.assertEqual(src_pkgs, ["pkg_one", "pkg_two"])
 
-                rendered_pkgs = ws_cfg.get_rendered_packages()
+                rendered_pkgs = ws_cfg.filter_render_packages_by_target()
                 self.assertEqual(rendered_pkgs, ["pkg_one"])
 
                 # No warnings should be emitted for any dot-named folders

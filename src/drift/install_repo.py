@@ -8,7 +8,7 @@ Layer 5: Public Primitive Entry Points
     run_primitive_5_install_deployment(workspace_config, packages_to_redeploy, options)
         1. Discover & Inspect Packages:
             load_state_registry
-            workspace_config.get_installed_packages
+            workspace_config.filter_install_packages_by_target
             PackageConfig.from_install_dir
         2. Pre-flight Validation & Permission Checks:
             precheck_deployment_packages [Layer 4]
@@ -1045,8 +1045,8 @@ def run_primitive_5_install_deployment(
     
     state_registry = load_state_registry(state_file)
     
-    discovered_packages = workspace_config.get_installed_packages(
-        target_pkgs=packages_to_redeploy,
+    discovered_packages = workspace_config.filter_install_packages_by_target(
+        target_packages=packages_to_redeploy or None,
     )
 
     pkg_metadata_map = {

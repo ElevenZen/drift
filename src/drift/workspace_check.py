@@ -203,7 +203,7 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
     If any legacy configuration file (e.g. config/drift.toml or config/drift.local.toml)
     is detected, immediately returns BROKEN so that 'drift repair' can migrate it.
     """
-    from .workspace_config import load_workspace_config, render_envst_load_toml
+    from .workspace_config import load_workspace_config
 
     config_dir = drift_root / CONFIG_DIR_NAME
 

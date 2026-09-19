@@ -7,7 +7,7 @@ Architecture & Call Chain Overview
 Layer 5: Primitive Entry Point
     run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force)
         1. Package Discovery & Config Validation:
-            workspace_config.get_rendered_packages
+            workspace_config.filter_render_packages_by_target
             PackageConfig.from_render_dir
         2. Transaction Safety & Sentinel Checks:
             state_registry.get_midway_packages
@@ -337,7 +337,7 @@ def run_primitive_4_stage_render_to_install(
         target_pkgs_seq = target_pkgs if target_pkgs else ()
 
     # Load active packages from render directory
-    active_packages = workspace_config.get_rendered_packages(target_pkgs=target_pkgs_seq)
+    active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs_seq or None)
 
     # If active_packages is empty, we should just return empty dict and not proceed further.
     if not active_packages:

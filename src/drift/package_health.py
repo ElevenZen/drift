@@ -228,7 +228,7 @@ def run_primitive_health_checks(
         targets = list(package_names)
     else:
         if stage == PackageStage.SOURCE:
-            targets = workspace_config.get_source_packages()
+            targets = workspace_config.filter_source_packages_by_target()
         else:
             state_file = workspace_config.install_path / "state.toml"
             if state_file.exists():

@@ -410,7 +410,7 @@ And author `config/drift_workspace.local.envst.toml`:
 DEFAULT = false
 ${DRIFT_PACKAGES}
 ```
-When Drift loads the workspace configuration, `render_envst_load_toml` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs.
+When Drift loads the workspace configuration, `load_workspace_config_file_with_render` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs.
 
 #### Native TOML Variable Stitching & Topological DAG Resolution
 Rather than requiring developers to wrap static configuration files in template extensions (e.g. `drift_workspace.envst.toml` or `drift_package.envst.toml`) and invoke `envsubst`, Drift provides **native, zero-dependency topological variable stitching** across all TOML configuration files (`drift_workspace.toml`, `drift_workspace.local.toml`, `drift_package.toml`, `drift_package.local.toml`).

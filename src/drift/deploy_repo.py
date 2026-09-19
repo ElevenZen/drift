@@ -307,7 +307,7 @@ def run_primitive_deploy_pipeline(
     check_repo_can_commit(workspace_config.install_path)
 
     # Discover target active packages from source directory
-    target_pkgs = workspace_config.get_source_packages(target_pkgs=packages_to_deploy)
+    target_pkgs = workspace_config.filter_source_packages_by_target(target_packages=packages_to_deploy or None)
     if not target_pkgs:
         logger.info("No active packages selected or enabled for deployment. Skipping.")
         return DeployResult(

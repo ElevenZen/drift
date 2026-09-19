@@ -318,10 +318,6 @@ class WorkspaceConfig:
         ]
         return sorted(packages)
 
-    def make_new_template_name(self, old_template_name: str, new_rendered_name: str) -> str:
-        """Calculates the new template filename based on the old template's engine suffix and the new target filename."""
-        return self.render_engine_configs.make_new_template_name(old_template_name, new_rendered_name)
-
     def get_package_names_from_source_dir(self) -> List[str]:
         """Finds all potential package subdirectory names within the source directory."""
         return WorkspaceConfig.get_package_names_from_dir(self.source_path)
@@ -332,85 +328,96 @@ class WorkspaceConfig:
             return self.packages_enable[package_name]
         return self.packages_enable_default
 
-    def get_source_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
-        """
-        Discovers and validates packages in the source directory (src/).
+    def filter_source_packages_by_target(
+        self,
+        target_packages: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """Discovers and validates packages in the source directory (src/).
+
         Finds all package subdirectories in src/ (regardless of whether drift_package.toml is static,
-        templated, or default), and filters by target_pkgs and enablement.
+        templated, or default), and filters by target_packages and enablement.
         """
         candidates = self.get_package_names_from_source_dir()
-        return self.get_packages(candidates, target_pkgs, custom_dir=self.source_path)
+        return self.filter_given_packages_by_target(
+            available_packages=candidates,
+            target_packages=target_packages,
+            error_context_dir=self.source_path,
+        )
 
-    def get_rendered_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
-        """
-        Discovers and validates compiled packages in the render directory (render/).
+    def filter_render_packages_by_target(
+        self,
+        target_packages: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """Discovers and validates compiled packages in the render directory (render/).
+
         Packages in render/ are compiled and guaranteed to have a literal drift_package.toml.
         """
         discovered = self.get_package_names_with_config_file_from_dir(self.render_path)
-        return self.get_packages(discovered, target_pkgs, custom_dir=self.render_path)
+        return self.filter_given_packages_by_target(
+            available_packages=discovered,
+            target_packages=target_packages,
+            error_context_dir=self.render_path,
+        )
 
-    def get_installed_packages(self, target_pkgs: Sequence[str] = ()) -> List[str]:
-        """
-        Discovers and validates staged/installed packages in the install directory (install/).
+    def filter_install_packages_by_target(
+        self,
+        target_packages: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """Discovers and validates staged/installed packages in the install directory (install/).
+
         Packages in install/ are staged and guaranteed to have a literal drift_package.toml.
         """
         discovered = self.get_package_names_with_config_file_from_dir(self.install_path)
-        return self.get_packages(discovered, target_pkgs, custom_dir=self.install_path)
+        return self.filter_given_packages_by_target(
+            available_packages=discovered,
+            target_packages=target_packages,
+            error_context_dir=self.install_path,
+        )
 
-    def get_discovered_packages(self, custom_dir: Path, target_pkgs: Sequence[str] = ()) -> List[str]:
-        """
-        Discovers packages in the given directory that contain a literal PACKAGE_CONFIG_FILE_NAME (drift_package.toml),
+    def filter_custom_dir_packages_by_target(
+        self,
+        custom_dir: Path,
+        target_packages: Optional[Sequence[str]] = None,
+    ) -> List[str]:
+        """Discovers packages in the given directory containing a literal drift_package.toml,
+
         filtering by target packages if provided.
         """
         discovered = self.get_package_names_with_config_file_from_dir(custom_dir)
-        return self.get_packages(discovered, target_pkgs, custom_dir)
+        return self.filter_given_packages_by_target(
+            available_packages=discovered,
+            target_packages=target_packages,
+            error_context_dir=custom_dir,
+        )
 
-    def get_packages(self, discovered: Sequence[str],
-                     target_pkgs: Sequence[str] = (),
-                     custom_dir: Optional[Path] = None) -> List[str]:
-        """
-        Get the list of packages to operate on based on discovered packages and target packages.
-        If target_pkgs is None or empty, returns all discovered packages that are enabled in the
-        workspace config.
-        custom_dir is used for error messages when target packages are not found in the directory.
-        """
-
-        if not target_pkgs:
-            # Fallback: redeploy all discovered packages currently inside install/ that are enabled in workspace config
-            return [pkg for pkg in discovered if self.is_package_enabled(pkg)]
-
-        remaining_packages = [x for x in target_pkgs if x not in discovered]
-        if remaining_packages:
-            if custom_dir:
-                raise ValueError(f"Given target packages not found in directory '{custom_dir}': {remaining_packages}")
-            else:
-                raise ValueError(f"Given target packages not found: {remaining_packages}")
-
-        # filter input target packages to only those that are discovered
-        # otherwise raise an error for missing packages
-        return [x for x in target_pkgs if x in discovered]
-
-    def find_source_file_for_rendered_names(
-        self, 
-        directory: Path, 
-        target_names: List[str]
-    ) -> Optional[RenderSourceMatch]:
-        """
-        Locates a file or directory in the given directory that will render to one of the rendered names.
-        Delegates to self.render_engine_configs.
-        """
-        return self.render_engine_configs.find_source_file_for_rendered_names(directory, target_names)
-
-    def find_conflict_in_source_dir(
+    def filter_given_packages_by_target(
         self,
-        src_pkg_dir: Path,
-        rel_target_path: Path
-    ) -> Optional[RenderSourceMatch]:
+        available_packages: Sequence[str],
+        target_packages: Optional[Sequence[str]] = None,
+        error_context_dir: Optional[Path] = None,
+    ) -> List[str]:
+        """Filters available packages by target_packages and workspace enablement.
+
+        If target_packages is None, returns all available packages enabled in the workspace config.
+        If target_packages is an empty sequence (), returns an empty list [].
+        If target_packages contains package names, validates that all target packages exist in available_packages,
+        raising a ValueError if any are missing.
         """
-        Finds a source file that renders to rel_target_path or a blocking path.
-        Delegates to self.render_engine_configs.
-        """
-        return self.render_engine_configs.find_conflict_in_source_dir(src_pkg_dir, rel_target_path)
+        if target_packages is None:
+            return [pkg for pkg in available_packages if self.is_package_enabled(pkg)]
+
+        if not target_packages:
+            return []
+
+        remaining_packages = [x for x in target_packages if x not in available_packages]
+        if remaining_packages:
+            if error_context_dir:
+                raise ValueError(
+                    f"Given target packages not found in directory '{error_context_dir}': {remaining_packages}"
+                )
+            raise ValueError(f"Given target packages not found: {remaining_packages}")
+
+        return [x for x in target_packages if x in available_packages]
 
     @classmethod
     def from_dict(
@@ -443,6 +450,7 @@ class WorkspaceConfig:
         
         packages = {}
         for pkg, val in packages_enable_data.items():
+            # TODO: please extract 'DEFAULT' to a constant
             if pkg == "DEFAULT":
                 continue
             if isinstance(val, bool):
@@ -501,31 +509,31 @@ class WorkspaceConfig:
         )
 
 
-def render_workspace_config_toml(envst_path: Path) -> str:
+def render_workspace_config(render_input_path: Path) -> str:
     """
     Renders the drift_workspace.envst.toml template using python_envsubst.
     returning the rendered output.
     """
     from .render_core import python_envsubst
-    content = envst_path.read_text(encoding="utf-8")
+    content = render_input_path.read_text(encoding="utf-8")
     rendered_content = python_envsubst(content, error_cls=ConfigError)
-    logger.debug(f"Rendered workspace config from template '{envst_path}':\n{rendered_content}")
+    logger.debug(f"Rendered workspace config from template '{render_input_path}':\n{rendered_content}")
     return rendered_content
     
 
-def render_envst_load_toml(config_path: Path) -> Optional[dict]:
+def load_workspace_config_file_with_render(rendered_config_path: Path) -> Optional[dict]:
     """Loads and parses the TOML file at path.
 
     Checks the static file first, then falls back to rendering its .envst.toml counterpart.
     Propagates FileNotFoundError if neither exists.
     """
-    envst_path = add_envst_path(config_path)
-    if config_path.exists():
-        logger.debug(f"Workspace config is being loaded from: '{config_path}'")
-        content = config_path.read_text(encoding="utf-8")
+    envst_path = add_envst_path(rendered_config_path)
+    if rendered_config_path.exists():
+        logger.debug(f"Workspace config is being loaded from: '{rendered_config_path}'")
+        content = rendered_config_path.read_text(encoding="utf-8")
     elif envst_path.exists():
         logger.debug(f"Workspace config is being rendered from template: '{envst_path}'")
-        content = render_workspace_config_toml(envst_path)
+        content = render_workspace_config(envst_path)
     else:
         return None
     return parse_toml(content)
@@ -568,7 +576,7 @@ def check_for_legacy_workspace_config(drift_root: Path) -> None:
     )
 
 
-def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
+def load_workspace_config_files_layered(rendered_config_path_list: Sequence[Path]) -> Dict[str, Any]:
     """Sequentially loads, renders (if templated), and deep-merges an arbitrary list of workspace configuration files.
 
     Accepts an arbitrary sequence of workspace config paths (e.g. base drift_workspace.toml,
@@ -576,7 +584,7 @@ def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
     templates as needed. Base missing with override existing is supported.
 
     Args:
-        config_files: Ordered list of candidate workspace configuration file paths.
+        rendered_config_path_list: Ordered list of candidate workspace configuration file paths.
 
     Returns:
         Merged configuration dictionary across all loaded file layers.
@@ -585,8 +593,8 @@ def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
         ConfigError: If none of the specified configuration files or their templates exist.
     """
     result: Dict[str, Any] = {}
-    for idx, file in enumerate(config_files):
-        f_dict = render_envst_load_toml(file)
+    for idx, file in enumerate(rendered_config_path_list):
+        f_dict = load_workspace_config_file_with_render(file)
         if not f_dict:
             continue
         logger.debug(f"Loaded workspace config {'base' if idx == 0 else 'override'} from '{file}'")
@@ -595,7 +603,7 @@ def load_workspace_config_dict(config_files: Sequence[Path]) -> Dict[str, Any]:
     # The whole result cannot be an empty dict.
     if not result:
         raise ConfigError(
-            f"Workspace configuration file not found in [{', '.join(str(x) for x in config_files)}] "
+            f"Workspace configuration file not found in [{', '.join(str(x) for x in rendered_config_path_list)}] "
             "or their templates."
         )
     return result
@@ -610,7 +618,7 @@ def load_workspace_config(
 
     Configuration Pipeline Execution Order:
     1. Multi-File Discovery & Merging: Loads base and override TOML files (or .envst.toml templates)
-       via load_workspace_config_dict.
+       via load_workspace_config_files_layered.
     2. Dynamic Python Workspace Hook: Executes configure_workspace(context) from config/drift_workspace.py
        (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
        resolved context facts and environment.
@@ -639,7 +647,7 @@ def load_workspace_config(
     # Ensure system facts are present before rendering workspace config (default: no WAN probe)
     inject_system_facts(probe_wan_ip=False)
 
-    combined_dict = load_workspace_config_dict(load_configs_from)
+    combined_dict = load_workspace_config_files_layered(load_configs_from)
 
     # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
     settings_dict = combined_dict.get("settings", {})

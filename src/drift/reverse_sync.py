@@ -325,8 +325,8 @@ def run_primitive_1_reverse_sync(
         )
 
     # Determine packages to process from install directory
-    discovered_packages = workspace_config.get_installed_packages(
-        target_pkgs=package_names,
+    discovered_packages = workspace_config.filter_install_packages_by_target(
+        target_packages=package_names or None,
     )
 
     results: List[PackageReverseSyncResult] = []

@@ -7,7 +7,7 @@ Architecture & Call Chain Overview
 Layer 3: Primitive Entry Point
     run_primitive_8_rollback_recovery(workspace_config, package_names, force, flags)
         1. Discover Target Packages & Sentinel Checks:
-            workspace_config.get_installed_packages
+            workspace_config.filter_install_packages_by_target
             validate_rollback_packages [Layer 1] (state_registry.get_midway_packages safeguard)
         2. Classify Packages & Reset Git State:
             is_package_committed_in_install_head [Layer 1]
@@ -169,7 +169,7 @@ def run_primitive_8_rollback_recovery(
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = sorted(set(workspace_config.get_installed_packages(target_pkgs=package_names)))
+    discovered = sorted(set(workspace_config.filter_install_packages_by_target(target_packages=package_names or None)))
     if not discovered:
         logger.info("✨ No active packages found to rollback.")
         return RollbackResult(
