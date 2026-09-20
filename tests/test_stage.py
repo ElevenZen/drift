@@ -4,15 +4,15 @@ import unittest
 import logging
 from pathlib import Path
 
-from drift.constants import (
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.workspace_config import WorkspaceConfig
-from drift.stage_repo import run_primitive_4_stage_render_to_install
-from drift.render_package import render_package
+from drift.config.workspace_config import WorkspaceConfig
+from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+from drift.render.render_package import render_package
 
 
 class TestStageRepo(unittest.TestCase):
@@ -258,8 +258,8 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stow_local_ignore_without_drift_ignore(self) -> None:
         """Verifies that even if a package does not have a .drift_ignore file, a .stow-local-ignore is created."""
-        from drift.render_package import render_package
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.render.render_package import render_package
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
 
         # Create a package src without .drift_ignore
         pkg_no_ignore_src = os.path.join(self.source_dir, "pkg_no_ignore")
@@ -286,10 +286,10 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:
         """Verifies that misspelled .driftignore is renamed/handled during render phase with warnings."""
-        from drift.constants import set_test_mode
+        from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.render_package", level="WARNING") as cm:
+            with self.assertLogs("drift.render.render_package", level="WARNING") as cm:
                 # Render pkg_misspelled
                 render_package(self.workspace_config, self.pkg_misspelled_src)
                 warning_found = any(".driftignore" in msg and "misspelled" in msg for msg in cm.output)
@@ -330,7 +330,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_tree_relative_files_utility(self) -> None:
         """Tests tree_relative_files utility function."""
-        from drift.file_utils import tree_relative_files
+        from drift.utils.file_utils import tree_relative_files
         nested_dir = self.drift_root / "nested_util"
         nested_dir.mkdir(parents=True, exist_ok=True)
         
@@ -349,7 +349,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_file_contents_differ_utility(self) -> None:
         """Tests file_contents_differ utility function."""
-        from drift.file_utils import file_contents_differ
+        from drift.utils.file_utils import file_contents_differ
         util_dir = self.drift_root / "util_differ"
         util_dir.mkdir(parents=True, exist_ok=True)
         
@@ -371,7 +371,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_rmdir_parents_utility(self) -> None:
         """Tests rmdir_parents utility function."""
-        from drift.file_utils import rmdir_parents
+        from drift.utils.file_utils import rmdir_parents
         limit = self.drift_root / "limit_dir"
         limit.mkdir(parents=True, exist_ok=True)
         
@@ -512,7 +512,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_delete_one_file_utility(self) -> None:
         """Tests delete_one_file utility function."""
-        from drift.file_utils import delete_one_file
+        from drift.utils.file_utils import delete_one_file
         util_dir = self.drift_root / "util_delete"
         util_dir.mkdir(parents=True, exist_ok=True)
         
@@ -582,7 +582,7 @@ class TestStageRepo(unittest.TestCase):
         
         # Pre-set state to 'staging'
         state_file = self.install_dir / "state.toml"
-        from drift.state_registry import load_state_registry, save_state_registry
+        from drift.core.state_registry import load_state_registry, save_state_registry
         registry = load_state_registry(state_file)
         registry.set_package_state(pkg, "staging")
         save_state_registry(registry)
@@ -776,7 +776,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stage_checks_mid_fail_state_before_uncommitted_drift(self) -> None:
         """Verifies that mid-fail states ('staging'/'installing') take precedence over uncommitted changes checks."""
-        from drift.state_registry import load_state_registry, save_state_registry
+        from drift.core.state_registry import load_state_registry, save_state_registry
         import subprocess
 
         # Initialize install git repo
@@ -807,8 +807,8 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stage_checks_multiple_mid_fail_packages(self) -> None:
         """Verifies that multiple midway packages are formatted cleanly in safety abort error."""
-        from drift.state_registry import load_state_registry, save_state_registry
-        from drift.render_package import render_package
+        from drift.core.state_registry import load_state_registry, save_state_registry
+        from drift.render.render_package import render_package
         import subprocess
 
         # Add pkg_c in source
@@ -846,7 +846,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_load_package_config_from_render_dir_missing_raises_error(self) -> None:
         """Verifies that PackageConfig.from_render_dir raises RuntimeError if drift_package.toml is missing."""
-        from drift.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig
         non_existent_pkg = "pkg_does_not_exist"
         with self.assertRaises(RuntimeError) as ctx:
             PackageConfig.from_render_dir(self.render_dir / non_existent_pkg)
@@ -854,7 +854,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_compute_package_stage_diff_returns_stage_changes(self) -> None:
         """Verifies that compute_package_stage_diff computes changes immutably without modifying install/."""
-        from drift.stage_repo import compute_package_stage_diff
+        from drift.primitives.stage_repo import compute_package_stage_diff
 
         pkg_a_render = self.render_dir / "pkg_a"
         (pkg_a_render / "new_diff_file.txt").write_text("diff content", encoding="utf-8")
@@ -890,21 +890,21 @@ class TestStageRepo(unittest.TestCase):
         render_package(self.workspace_config, pkg_sudo_src)
 
         # Initial staging: changes exist, so check_sudo_privilege MUST be called
-        with patch("drift.file_utils.check_sudo_privilege") as mock_sudo:
+        with patch("drift.utils.file_utils.check_sudo_privilege") as mock_sudo:
             changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes1), 1)
             mock_sudo.assert_called_once_with(True)
 
         # Second staging with ZERO changes: check_sudo_privilege must NOT be called
-        with patch("drift.file_utils.check_sudo_privilege") as mock_sudo:
+        with patch("drift.utils.file_utils.check_sudo_privilege") as mock_sudo:
             changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes2), 0)
             mock_sudo.assert_not_called()
 
     def test_package_stage_changes_properties(self) -> None:
         """Verifies PackageStageChanges properties."""
-        from drift.stage_repo import PackageStageChanges
-        from drift.folder_diff import FolderDiff
+        from drift.primitives.stage_repo import PackageStageChanges
+        from drift.core.folder_diff import FolderDiff
 
         # Custom deployable and physical changes
         change = PackageStageChanges(
@@ -1044,7 +1044,7 @@ class TestStageRepo(unittest.TestCase):
 
     def test_stage_unchanged_package_retains_installed_state(self) -> None:
         """Verifies that packages with no physical changes keep their existing state in state.toml."""
-        from drift.state_registry import load_state_registry, save_state_registry
+        from drift.core.state_registry import load_state_registry, save_state_registry
 
         pkg_a = "pkg_a"
         state_file = self.install_dir / "state.toml"

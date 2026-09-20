@@ -6,12 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME
-from drift.workspace_config import WorkspaceConfig
-from drift.package_config import PackageConfig
-from drift.ignore import DriftIgnore
-from drift.sync_ops import reverse_sync_file_or_dir
-from drift.reverse_sync import (
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME
+from drift.config.workspace_config import WorkspaceConfig
+from drift.config.package_config import PackageConfig
+from drift.core.ignore import DriftIgnore
+from drift.core.sync_ops import reverse_sync_file_or_dir
+from drift.primitives.reverse_sync import (
     run_primitive_1_reverse_sync,
     reverse_sync_package,
     sync_tracked_files,
@@ -595,7 +595,7 @@ class TestReverseSync(unittest.TestCase):
         """Verifies end-to-end FCD lifecycle under stow deployment:
         deploy stow -> create wild file on host -> reverse-sync -> deploy update.
         """
-        from drift.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install_deployment
         pkg = "pkg_fcd_stow_lifecycle"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -885,9 +885,9 @@ class TestReverseSync(unittest.TestCase):
     def test_execute_reverse_sync_fails_fast_when_workspace_structure_broken(self) -> None:
         """Verifies execute_reverse_sync fails with ConfigError and hints 'drift repair' when workspace structure is broken."""
         from drift.cli.actions import execute_reverse_sync
-        from drift.constants import PACKAGE_CONFIG_FILE_NAME
-        from drift.exceptions import ConfigError
-        from drift.workspace_init import init_drift_workspace
+        from drift.core.constants import PACKAGE_CONFIG_FILE_NAME
+        from drift.core.exceptions import ConfigError
+        from drift.primitives.workspace_init import init_drift_workspace
 
         init_drift_workspace(self.drift_root, force=True)
 

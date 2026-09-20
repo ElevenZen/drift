@@ -6,7 +6,7 @@ import unittest
 import subprocess
 from unittest.mock import patch
 
-from drift.process_utils import (
+from drift.utils.process_utils import (
     strip_ansi,
     format_output,
     has_admin_privileges,
@@ -14,7 +14,7 @@ from drift.process_utils import (
     run_command,
     run_sudo_command,
 )
-from drift.constants import set_test_mode
+from drift.core.constants import set_test_mode
 
 
 class TestProcessUtils(unittest.TestCase):
@@ -56,7 +56,7 @@ class TestProcessUtils(unittest.TestCase):
     def test_run_command_non_streaming_debug_logging(self) -> None:
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.process_utils", level="DEBUG") as cm:
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
                 run_command([sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"], text=True)
             logs = "\n".join(cm.output)
             self.assertIn("External:", logs)
@@ -69,7 +69,7 @@ class TestProcessUtils(unittest.TestCase):
     def test_run_command_non_streaming_error(self) -> None:
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.process_utils", level="ERROR") as cm:
+            with self.assertLogs("drift.utils.process_utils", level="ERROR") as cm:
                 with self.assertRaises(subprocess.CalledProcessError) as ctx:
                     run_command([sys.executable, "-c", "import sys; print('failing', file=sys.stderr); sys.exit(42)"], text=True)
             self.assertEqual(ctx.exception.returncode, 42)
@@ -100,7 +100,7 @@ class TestProcessUtils(unittest.TestCase):
         set_test_mode(True, enable_logging=True)
         captured = io.StringIO()
         try:
-            with self.assertLogs("drift.process_utils", level="DEBUG") as cm, patch("sys.stdout", captured):
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm, patch("sys.stdout", captured):
                 run_command(
                     [sys.executable, "-c", "print('live output')"],
                     streaming=True,
@@ -136,7 +136,7 @@ class TestProcessUtils(unittest.TestCase):
         self.assertEqual(ctx.exception.timeout, 0.1)
 
     def test_run_sudo_command_passthrough(self) -> None:
-        with patch("drift.process_utils.has_admin_privileges", return_value=True):
+        with patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
             res = run_sudo_command([sys.executable, "-c", "print('sudo ok')"], sudo=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn("sudo ok", res.stdout)
@@ -145,7 +145,7 @@ class TestProcessUtils(unittest.TestCase):
         set_test_mode(True, enable_logging=True)
         try:
             # 1. Non-streaming success cleans debug logs and CompletedProcess
-            with self.assertLogs("drift.process_utils", level="DEBUG") as cm:
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
                 res = run_command([
                     sys.executable, "-c",
                     "import sys; print('\\x1b[32mSUCCESS_COLOR\\x1b[0m'); print('\\x1b[33mWARN_COLOR\\x1b[0m', file=sys.stderr)"
@@ -159,7 +159,7 @@ class TestProcessUtils(unittest.TestCase):
             self.assertEqual(res.stderr.strip(), "WARN_COLOR")
 
             # 2. Non-streaming error cleans debug logs and CalledProcessError
-            with self.assertLogs("drift.process_utils", level="DEBUG") as cm:
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
                 with self.assertRaises(subprocess.CalledProcessError) as ctx:
                     run_command([
                         sys.executable, "-c",

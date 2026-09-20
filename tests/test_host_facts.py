@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.host_facts import (
+from drift.utils.host_facts import (
     get_host_os,
     get_host_arch,
     parse_os_release,
@@ -115,7 +115,7 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
             self.assertEqual(facts_custom["drift_distro"], "fedora")
 
     def test_get_host_ip_addresses_enumerates_interfaces(self) -> None:
-        from drift.host_facts import get_host_ip_addresses
+        from drift.utils.host_facts import get_host_ip_addresses
         ips = get_host_ip_addresses(probe_wan_ip=False)
         self.assertIsInstance(ips, list)
         for ip in ips:

@@ -6,8 +6,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from drift.ignore import DriftIgnore
-from drift.constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
+from drift.core.ignore import DriftIgnore
+from drift.core.constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
 
 
 class TestDriftIgnore(unittest.TestCase):
@@ -105,7 +105,7 @@ class TestDriftIgnore(unittest.TestCase):
 
     def test_load_from_dir_missing_uses_default_stow_ignore_patterns(self) -> None:
         """Verifies that load_from_dir returns a DriftIgnore with default Stow ignore patterns if .drift_ignore doesn't exist."""
-        from drift.constants import DEFAULT_STOW_IGNORE_PATTERNS
+        from drift.core.constants import DEFAULT_STOW_IGNORE_PATTERNS
         # pkg_dir has no .drift_ignore
         ignore = DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
         self.assertEqual(ignore.patterns, DEFAULT_STOW_IGNORE_PATTERNS)
@@ -195,11 +195,11 @@ class TestDriftIgnore(unittest.TestCase):
     def test_match_path_invalid_regex_logs_warning_and_does_not_crash(self) -> None:
         """Verifies that invalid regex pattern doesn't crash the manager but logs warning."""
         # [invalid pattern (missing closing bracket)
-        from drift.constants import set_test_mode
+        from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
             ignore = DriftIgnore(["[invalid_pattern"])
-            with self.assertLogs("drift.ignore", level="WARNING") as cm:
+            with self.assertLogs("drift.core.ignore", level="WARNING") as cm:
                 result = ignore.match_path(Path("somefile.txt"))
                 self.assertFalse(result)
                 self.assertTrue(any("Invalid regex pattern" in log for log in cm.output))
@@ -243,7 +243,7 @@ class TestDriftIgnore(unittest.TestCase):
 
     def test_ignore_handler_protocol_compliance(self) -> None:
         """Verifies that DriftIgnore and custom matchers satisfy the IgnoreHandler protocol."""
-        from drift.ignore import IgnoreHandler
+        from drift.core.ignore import IgnoreHandler
 
         # 1. DriftIgnore instance satisfies IgnoreHandler
         drift_ignore = DriftIgnore()
@@ -261,7 +261,7 @@ class TestDriftIgnore(unittest.TestCase):
 
     def test_create_stow_ignore_file_method(self) -> None:
         """Verifies that create_stow_ignore_file generates the .stow-local-ignore file with expected contents."""
-        from drift.constants import STOW_LOCAL_IGNORE_FILE_NAME
+        from drift.core.constants import STOW_LOCAL_IGNORE_FILE_NAME
         ignore = DriftIgnore(["^/custom_ignored\\.txt$"])
         target_dir = self.pkg_dir / "target_pkg"
         ignore.create_stow_ignore_file(target_dir)
@@ -278,8 +278,8 @@ class TestDriftIgnore(unittest.TestCase):
 
     def test_for_install_root_and_default_install_content(self) -> None:
         """Verifies DriftIgnore.for_install_root() and get_default_install_stow_ignore_content()."""
-        from drift.ignore import get_default_install_stow_ignore_content
-        from drift.constants import INSTALL_STOW_IGNORE_PATTERN, DEFAULT_STOW_IGNORE_PATTERNS
+        from drift.core.ignore import get_default_install_stow_ignore_content
+        from drift.core.constants import INSTALL_STOW_IGNORE_PATTERN, DEFAULT_STOW_IGNORE_PATTERNS
 
         ignore = DriftIgnore.for_install_root()
         self.assertIn(INSTALL_STOW_IGNORE_PATTERN, ignore.patterns)
@@ -299,13 +299,13 @@ class TestDriftIgnore(unittest.TestCase):
 
     def test_load_from_dir_legacy_fallback(self) -> None:
         """Verifies that load_from_dir with is_source=False falls back to root .drift_ignore with deprecation warning."""
-        from drift.constants import set_test_mode
+        from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
             legacy_ignore = self.pkg_dir / DRIFT_IGNORE_FILE_NAME
             legacy_ignore.write_text("legacy_pattern_1\nlegacy_pattern_2\n", encoding="utf-8")
 
-            with self.assertLogs("drift.ignore", level="WARNING") as cm:
+            with self.assertLogs("drift.core.ignore", level="WARNING") as cm:
                 ignore = DriftIgnore.load_from_dir(self.pkg_dir, is_source=False)
                 self.assertEqual(ignore.patterns, ["legacy_pattern_1", "legacy_pattern_2"])
                 self.assertTrue(any("DEPRECATION" in msg and ".drift_ignore" in msg for msg in cm.output))

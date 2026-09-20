@@ -10,21 +10,21 @@ from unittest.mock import patch
 from pathlib import Path
 from typing import cast, Dict, Any
 
-from drift.constants import (
+from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
 )
-from drift.workspace_config import WorkspaceConfig, load_workspace_config
-from drift.package_config import PackageConfig
-from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
-from drift.render_package import render_package, run_primitive_2_render_packages
-from drift.reverse_sync import run_primitive_1_reverse_sync
-from drift.adopt_repo import resolve_source_file_path, adopt_one_package_drifts
-from drift.toml_utils import parse_toml
-from drift.exceptions import ConfigError
+from drift.config.workspace_config import WorkspaceConfig, load_workspace_config
+from drift.config.package_config import PackageConfig
+from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+from drift.render.render_package import render_package, run_primitive_2_render_packages
+from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
+from drift.primitives.adopt_repo import resolve_source_file_path, adopt_one_package_drifts
+from drift.utils.toml_utils import parse_toml
+from drift.core.exceptions import ConfigError
 
 
 class TestPackageRenderEngine(unittest.TestCase):
@@ -395,7 +395,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         self.assertEqual(pkg_adopt_res.status, "SUCCESS")
     def test_lifecycle_hook_with_package_render_engine_input_chaining(self) -> None:
         """Verifies lifecycle hooks resolve package-level engines with chained input templates."""
-        from drift.lifecycle_hooks import trigger_package_hook_with_render, HookExecFlags
+        from drift.hooks.lifecycle_hooks import trigger_package_hook_with_render, HookExecFlags
 
         if not shutil.which("envsubst"):
             self.skipTest("envsubst is not available on this system")

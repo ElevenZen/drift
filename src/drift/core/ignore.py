@@ -1,0 +1,232 @@
+"""Handles drift ignore filtering based on GNU Stow matching logic using pathlib."""
+
+import re
+import logging
+from pathlib import Path
+from typing import List, Optional, Protocol, runtime_checkable, Sequence
+
+from .constants import (
+    MANAGED_CONFIG_FILES,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_LEGACY_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_INTERNAL_DIR_NAME,
+    DEFAULT_STOW_IGNORE_PATTERNS,
+    INSTALL_STOW_IGNORE_PATTERN,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class IgnoreHandler(Protocol):
+    """Protocol for ignore path matching."""
+
+    def match_path(self, rel_path: Path) -> bool:
+        """Determines whether a relative path should be ignored.
+
+        Args:
+            rel_path: Relative Path object to check against ignore rules.
+
+        Returns:
+            True if the path should be ignored, False otherwise.
+        """
+        return False
+
+
+def _resolve_package_ignore_file(package_dir: Path, is_source: bool) -> Optional[Path]:
+    """Resolves the ignore configuration file path for a package directory."""
+    if is_source:
+        canonical_source = package_dir / DRIFT_IGNORE_FILE_NAME
+        if canonical_source.is_file():
+            return canonical_source
+        legacy_source = package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME
+        if legacy_source.is_file():
+            return legacy_source
+        return None
+
+    # For render sandbox / install state packages:
+    canonical_internal = package_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
+    if canonical_internal.is_file():
+        return canonical_internal
+
+    legacy_root = package_dir / DRIFT_IGNORE_FILE_NAME
+    if legacy_root.is_file():
+        logger.warning(
+            f"⚠️ [DEPRECATION] Package at '{package_dir}' contains legacy root ignore file '{DRIFT_IGNORE_FILE_NAME}'. "
+            f"Please run 'drift repair' to migrate metadata into '{DRIFT_INTERNAL_DIR_NAME}/'."
+        )
+        return legacy_root
+
+    return None
+
+
+def _validate_no_other_ignore_files(package_dir: Path, resolved_path: Optional[Path]) -> None:
+    """Validates that only the single resolved ignore file exists in the package."""
+    for name in DRIFT_IGNORE_FILE_NAME_LIST:
+        for path in package_dir.rglob(name):
+            if resolved_path is not None and path == resolved_path:
+                continue
+            raise ValueError(
+                f"Nested ignore files are not allowed. "
+                f"Found nested '{name}' inside subdirectory: "
+                f"{path.parent.relative_to(package_dir)}"
+            )
+
+
+class DriftIgnore(IgnoreHandler):
+    """Handles parsing and match evaluation of drift ignore patterns."""
+
+    def __init__(self, patterns: Optional[Sequence[str]] = None) -> None:
+        if patterns is None:
+            self.patterns = list(DEFAULT_STOW_IGNORE_PATTERNS)
+        else:
+            self.patterns = list(patterns)
+        # Pre-divide patterns depending on whether they contain '/'
+        self.set_with_slash = []
+        self.set_without_slash = []
+        for pattern in self.patterns:
+            if "/" in pattern:
+                self.set_with_slash.append(pattern)
+            else:
+                self.set_without_slash.append(pattern)
+
+    @staticmethod
+    def strip_comments(line: str) -> str:
+        """Strips out comments unless '#' is escaped with a backslash."""
+        result = []
+        escaped = False
+        for char in line:
+            if char == "\\" and not escaped:
+                escaped = True
+                result.append(char)
+                continue
+            if char == "#" and not escaped:
+                break
+            escaped = False
+            result.append(char)
+        return "".join(result).strip()
+
+    @classmethod
+    def load_from_dir(cls, package_dir: Path, is_source: bool) -> "DriftIgnore":
+        """Loads ignore PCRE regex patterns from .drift_ignore inside package_dir.
+
+        Args:
+            package_dir: Directory path of the package (source, render sandbox, or install base).
+            is_source: If True, loads .drift_ignore directly from package root (src/<pkg>/.drift_ignore).
+                If False, loads .drift_ignore from the internal control plane (.drift/.drift_ignore)
+                with fallback to package root for backward compatibility.
+
+        Returns:
+            An instance of DriftIgnore with loaded patterns, or default Stow ignore patterns if missing.
+
+        Raises:
+            ValueError: If a nested ignore file is detected in an unauthorized subdirectory.
+        """
+        if not package_dir.exists() or not package_dir.is_dir():
+            return cls(None)
+
+        ignore_path = _resolve_package_ignore_file(package_dir, is_source=is_source)
+        _validate_no_other_ignore_files(package_dir, resolved_path=ignore_path)
+        if not ignore_path:
+            return cls(None)
+
+        with ignore_path.open("r", encoding="utf-8") as f:
+            patterns = [
+                stripped
+                for line in f
+                if (stripped := cls.strip_comments(line))
+            ]
+        return cls(patterns)
+
+    @classmethod
+    def for_install_root(cls) -> "DriftIgnore":
+        """Creates a DriftIgnore instance with default ignore patterns plus state.toml for install/ root."""
+        return cls(patterns=[*DEFAULT_STOW_IGNORE_PATTERNS, INSTALL_STOW_IGNORE_PATTERN])
+
+    def export_stow_ignore_patterns(self) -> List[str]:
+        """Exports the list of ignore patterns combined with MANAGED_CONFIG_FILES in Stow format."""
+        exported = []
+        # 1. Add MANAGED_CONFIG_FILES patterns with escaped dots
+        for managed_file in MANAGED_CONFIG_FILES:
+            escaped_name = managed_file.replace(".", r"\.")
+            pattern = f"^/{escaped_name}$"
+            if pattern not in exported:
+                exported.append(pattern)
+        # 2. Add patterns from DriftIgnore
+        for p in self.patterns:
+            if p not in exported:
+                exported.append(p)
+        return exported
+
+    def generate_stow_local_ignore_content(self) -> str:
+        """Generates the content for a .stow-local-ignore file."""
+        lines = [
+            "# =====================================================================",
+            "# .stow-local-ignore - Generated by Drift for GNU Stow compatibility",
+            "# =====================================================================",
+        ]
+        lines.extend(self.export_stow_ignore_patterns())
+        return "\n".join(lines) + "\n"
+
+    def create_stow_ignore_file(self, target_dir: Path) -> None:
+        """Generates <target_dir>/.stow-local-ignore using DriftIgnore patterns plus MANAGED_CONFIG_FILES."""
+        stow_ignore_path = target_dir / STOW_LOCAL_IGNORE_FILE_NAME
+        target_dir.mkdir(parents=True, exist_ok=True)
+        content = self.generate_stow_local_ignore_content()
+        if not stow_ignore_path.exists() or stow_ignore_path.read_text(encoding="utf-8") != content:
+            stow_ignore_path.write_text(content, encoding="utf-8")
+            logger.debug(f"📝 Created/updated Stow ignore file at {stow_ignore_path}")
+
+    def filter_deployable_files(self, install_pkg_dir: Path) -> List[Path]:
+        """
+        Returns a list of relative Path objects for all deployable files in a package.
+        The install_pkg_dir is the path to the package in the install directory.
+        The input should not contain any symlink to other directories.
+        The returned list excludes files that match the ignore patterns.
+        """
+        from ..utils.file_utils import tree_relative_files
+        return [
+            rel_file
+            for rel_file in tree_relative_files(install_pkg_dir)
+            if not self.match_path(rel_file)
+        ]
+
+    def match_path(self, rel_path: Path) -> bool:
+        """Implements GNU Stow's ignore matching algorithm on a relative path."""
+        # Special exception: always ignore internal drift directories, ignore-related files, and config files
+        if rel_path.parts and rel_path.parts[0] == DRIFT_INTERNAL_DIR_NAME:
+            return True
+
+        filename = rel_path.name
+        if filename in MANAGED_CONFIG_FILES:
+            return True
+
+        normalized_rel_path = rel_path.as_posix()
+        path_with_slash = "/" + normalized_rel_path
+        basename = rel_path.name
+
+        # Match Step 1: Check patterns containing '/' against path_with_slash
+        for pattern in self.set_with_slash:
+            try:
+                if re.search(pattern, path_with_slash):
+                    return True
+            except re.error as e:
+                logger.warning(f"Invalid regex pattern '{pattern}': {e}")
+
+        # Match Step 2: Check remaining patterns against basename
+        for pattern in self.set_without_slash:
+            try:
+                if re.search(pattern, basename):
+                    return True
+            except re.error as e:
+                logger.warning(f"Invalid regex pattern '{pattern}': {e}")
+
+        return False
+
+
+def get_default_install_stow_ignore_content() -> str:
+    """Generates default .stow-local-ignore content for install/ root."""
+    return DriftIgnore.for_install_root().generate_stow_local_ignore_content()
+

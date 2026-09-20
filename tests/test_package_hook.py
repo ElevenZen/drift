@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import (
+from drift.core.constants import (
     set_test_mode,
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
@@ -16,17 +16,17 @@ from drift.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
 )
-from drift.exceptions import ConfigError
-from drift.workspace_config import load_workspace_config
-from drift.package_config import PackageConfig
-from drift.package_hook import (
+from drift.core.exceptions import ConfigError
+from drift.config.workspace_config import load_workspace_config
+from drift.config.package_config import PackageConfig
+from drift.hooks.package_hook import (
     PackageHookContext,
     resolve_package_hook_path,
     load_package_hook_module,
     execute_package_hook,
     apply_package_hook,
 )
-from drift.render_package import render_package
+from drift.render.render_package import render_package
 
 
 class TestPackageHook(unittest.TestCase):

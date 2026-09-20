@@ -1,0 +1,85 @@
+import logging
+from pathlib import Path
+from typing import Optional, Union
+from ..config.workspace_config import WorkspaceConfig
+from ..core.result_models import NewPackageResult
+from ..core.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME_LIST,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_LEGACY_FILE_NAME,
+    InstallMethod,
+    get_default_package_config_content,
+    get_default_drift_ignore_content,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def run_primitive_10_create_new_package(
+    workspace_config: WorkspaceConfig,
+    package_name: str,
+    force: bool = False,
+    target_directory: Optional[str] = None,
+    install_method: Optional[Union[InstallMethod, str]] = None
+) -> NewPackageResult:
+    """Scaffolds a new package directory and a default package configuration file (Primitive 10).
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        package_name: The name of the new package to scaffold.
+        force: If True, overwrites any existing package configuration file in the package
+            source directory without raising a FileExistsError.
+        target_directory: Optional custom target directory override.
+        install_method: Optional install method override ('stow' or 'copy').
+
+    Returns:
+        NewPackageResult containing details of the created package.
+    """
+    package_dir = workspace_config.source_path / package_name
+    
+    package_dir.mkdir(parents=True, exist_ok=True)
+    existing_info = workspace_config.render_engine_configs.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    if existing_info and not force:
+        raise FileExistsError(
+            f"Configuration file already exists: {existing_info.path}. "
+            "Use --force to overwrite."
+        )
+
+    final_config_name = PACKAGE_CONFIG_FILE_NAME
+    config_file = package_dir / final_config_name
+
+    if install_method is not None:
+        try:
+            final_install_method: InstallMethod = InstallMethod.from_str(install_method)
+        except ValueError as e:
+            raise ValueError(f"install_method must be 'stow' or 'copy', got '{install_method}'") from e
+    else:
+        final_install_method = workspace_config.workspace.default_install_method
+
+    config_content = get_default_package_config_content(
+        package_name=package_name,
+        install_method=final_install_method,
+        target_directory=target_directory,
+        config_filename=final_config_name
+    )
+    config_file.write_text(config_content, encoding="utf-8")
+
+    logger.info(f"✨ Package '{package_name}' created successfully!")
+    logger.info(f"📝 Generated {final_config_name} at {config_file}")
+
+    # Generate default .drift_ignore if it doesn't already exist
+    ignore_file = package_dir / DRIFT_IGNORE_FILE_NAME
+    if not ignore_file.exists() and not (package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME).exists():
+        ignore_file.write_text(get_default_drift_ignore_content(), encoding="utf-8")
+        logger.info(f"📝 Generated {DRIFT_IGNORE_FILE_NAME} at {ignore_file}")
+    
+    return NewPackageResult(
+        command="new",
+        status="SUCCESS",
+        package=package_name,
+        package_dir=str(package_dir),
+        config_file=str(config_file),
+        target_directory=target_directory or str(workspace_config.default_target_path),
+        install_method=final_install_method,
+    )

@@ -4,9 +4,9 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig, load_workspace_config
-from drift.state_registry import load_state_registry
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
+from drift.config.workspace_config import WorkspaceConfig, load_workspace_config
+from drift.core.state_registry import load_state_registry
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 
 class TestIntegration(unittest.TestCase):
     def setUp(self):
@@ -24,7 +24,7 @@ class TestIntegration(unittest.TestCase):
         os.environ["USERPROFILE"] = str(self.system_target_dir)
         
         # 1. Initialize drift workspace via CLI logic
-        from drift.workspace_init import init_drift_workspace
+        from drift.primitives.workspace_init import init_drift_workspace
         init_drift_workspace(self.drift_root)
         
         # Configure git identity for commits in tests
@@ -54,11 +54,11 @@ class TestIntegration(unittest.TestCase):
 
     def test_lifecycle_stow_basic(self):
         """Scenario: Basic stow deployment, drift detection, and uninstallation."""
-        from drift.new_package import run_primitive_10_create_new_package
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment
-        from drift.uninstall_repo import run_primitive_7_uninstall_packages
+        from drift.primitives.new_package import run_primitive_10_create_new_package
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
         
         pkg = "pkg_stow"
         # Manually enable the package in the loaded config object
@@ -83,7 +83,7 @@ class TestIntegration(unittest.TestCase):
         target_file.write_text("drifted content", encoding="utf-8") # Replace symlink with physical drifted file
         
         # 4. Reverse Sync
-        from drift.reverse_sync import run_primitive_1_reverse_sync
+        from drift.primitives.reverse_sync import run_primitive_1_reverse_sync
         run_primitive_1_reverse_sync(self.workspace_config, package_names=[pkg])
         
         # Verify install/ state updated
@@ -97,11 +97,11 @@ class TestIntegration(unittest.TestCase):
 
     def test_lifecycle_copy_with_backup_restore(self):
         """Scenario: Copy deployment overwriting existing system file, then restoring it."""
-        from drift.new_package import run_primitive_10_create_new_package
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment
-        from drift.uninstall_repo import run_primitive_7_uninstall_packages
+        from drift.primitives.new_package import run_primitive_10_create_new_package
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
         
         pkg = "pkg_copy"
         self.workspace_config.packages_enable[pkg] = True
@@ -135,11 +135,11 @@ class TestIntegration(unittest.TestCase):
 
     def test_orphan_garbage_collection(self):
         """Scenario: Deploying a package, then disabling it and running gc to trigger cleanup."""
-        from drift.new_package import run_primitive_10_create_new_package
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment
-        from drift.workspace_gc import run_primitive_9_purge_workspace_garbage
+        from drift.primitives.new_package import run_primitive_10_create_new_package
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
         
         pkg = "pkg_to_be_orphan"
         self.workspace_config.packages_enable[pkg] = True
@@ -183,11 +183,11 @@ class TestIntegration(unittest.TestCase):
 
     def test_workspace_gc_scopes_commits(self):
         """Scenario: Running GC should only commit purged folders, leaving other modified packages unstaged/uncommitted."""
-        from drift.new_package import run_primitive_10_create_new_package
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.workspace_gc import run_primitive_9_purge_workspace_garbage
-        from drift.git_utils import commit_repo_changes
+        from drift.primitives.new_package import run_primitive_10_create_new_package
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
+        from drift.utils.git_utils import commit_repo_changes
 
         pkg_a = "pkg_a"
         self.workspace_config.packages_enable[pkg_a] = True
@@ -260,9 +260,9 @@ class TestIntegration(unittest.TestCase):
     def test_template_engine_dependency_chain(self):
         """Scenario: mustache template depends on envsubst-rendered JSON input."""
         import sys
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment
         
         pkg = "pkg_templating"
         self.workspace_config.packages_enable[pkg] = True

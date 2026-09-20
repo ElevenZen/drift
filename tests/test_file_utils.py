@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from drift.constants import set_test_mode
-from drift.file_utils import (
+from drift.core.constants import set_test_mode
+from drift.utils.file_utils import (
     is_relative_to,
     resolve_system_target,
     translate_dot_prefixes,
@@ -28,7 +28,7 @@ from drift.file_utils import (
     atomic_copy_file_with_sudo,
     atomic_copy_symlink,
 )
-from drift.sync_ops import (
+from drift.core.sync_ops import (
     backup_file_or_dir_external,
     reverse_sync_file_or_dir,
 )
@@ -493,7 +493,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(os.readlink(dest_link), "nested_non_existent")
 
     def test_expand_user_and_env(self) -> None:
-        from drift.file_utils import expand_user_and_env
+        from drift.utils.file_utils import expand_user_and_env
 
         # 1. Test empty string
         self.assertEqual(expand_user_and_env(""), Path("."))
@@ -528,7 +528,7 @@ class TestFileUtils(unittest.TestCase):
             self.assertEqual(expand_user_and_env("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
 
     def test_has_admin_privileges_and_run_sudo_command(self) -> None:
-        from drift.file_utils import has_admin_privileges, run_sudo_command
+        from drift.utils.file_utils import has_admin_privileges, run_sudo_command
 
         # Linux non-root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
@@ -547,7 +547,7 @@ class TestFileUtils(unittest.TestCase):
                 mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
 
     def test_check_sudo_privilege(self) -> None:
-        from drift.file_utils import check_sudo_privilege
+        from drift.utils.file_utils import check_sudo_privilege
 
         # If sudo is not required, does nothing
         check_sudo_privilege(sudo_required=False)
@@ -569,16 +569,16 @@ class TestFileUtils(unittest.TestCase):
                     check_sudo_privilege(sudo_required=True)
 
         # Windows non-admin failure
-        with patch("sys.platform", "win32"), patch("drift.process_utils.has_admin_privileges", return_value=False):
+        with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=False):
             with self.assertRaises(PermissionError):
                 check_sudo_privilege(sudo_required=True)
 
         # Windows admin success
-        with patch("sys.platform", "win32"), patch("drift.process_utils.has_admin_privileges", return_value=True):
+        with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
             check_sudo_privilege(sudo_required=True)
 
     def test_is_binary_file(self) -> None:
-        from drift.file_utils import is_binary_file
+        from drift.utils.file_utils import is_binary_file
 
         text_file = self.root / "sample.txt"
         text_file.write_text("Hello world!\nLine 2\n", encoding="utf-8")
@@ -589,8 +589,8 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(is_binary_file(bin_file))
 
     def test_normalize_newlines_bytes(self) -> None:
-        from drift.file_utils import normalize_newlines_bytes
-        from drift.constants import LineEnding
+        from drift.utils.file_utils import normalize_newlines_bytes
+        from drift.core.constants import LineEnding
 
         # to CRLF
         raw_lf = b"line1\nline2\nline3"
@@ -608,7 +608,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(normalize_newlines_bytes(raw_lf, line_ending=LineEnding.PRESERVE), raw_lf)
 
     def test_write_file_contents_with_sudo(self) -> None:
-        from drift.file_utils import write_file_contents_with_sudo
+        from drift.utils.file_utils import write_file_contents_with_sudo
 
         target_file = self.root / "nested" / "dir" / "out.txt"
         write_file_contents_with_sudo(target_file, "text content", sudo=False, permission=0o755)
@@ -618,8 +618,8 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(bool(target_file.stat().st_mode & 0o111))
 
     def test_atomic_copy_file_with_sudo_crlf_translation(self) -> None:
-        from drift.file_utils import atomic_copy_file_with_sudo
-        from drift.constants import LineEnding
+        from drift.utils.file_utils import atomic_copy_file_with_sudo
+        from drift.core.constants import LineEnding
 
         # 1. Text file: LF -> CRLF
         src_text = self.root / "src_text.txt"
@@ -641,7 +641,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(dst_bin.read_bytes(), b"data\x00with\nnulls\r\n")
 
     def test_file_contents_differ_convert_line_endings(self) -> None:
-        from drift.file_utils import file_contents_differ
+        from drift.utils.file_utils import file_contents_differ
 
         f1 = self.root / "f1.txt"
         f2 = self.root / "f2.txt"
@@ -656,7 +656,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(file_contents_differ(f1, f2, convert_line_endings=False))
 
     def test_unlock_file_or_dir_if_windows(self) -> None:
-        from drift.file_utils import unlock_file_or_dir_if_windows, remove_file_or_dir
+        from drift.utils.file_utils import unlock_file_or_dir_if_windows, remove_file_or_dir
 
         # 1. On non-windows: does nothing without errors
         target_file = self.root / "locked_file.txt"
@@ -689,7 +689,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertFalse(target_dir.exists())
 
     def test_atomic_copy_file(self) -> None:
-        from drift.file_utils import atomic_copy_file, LineEnding
+        from drift.utils.file_utils import atomic_copy_file, LineEnding
         src = self.root / "source.txt"
         dst = self.root / "dest_dir" / "dest.txt"
         src.write_text("hello atomic copy", encoding="utf-8")
@@ -721,7 +721,7 @@ class TestFileUtils(unittest.TestCase):
 
     def test_file_permissions_differ_and_mode_only(self) -> None:
         import sys
-        from drift.file_utils import file_permissions_differ, is_mode_only_change, copy_file_mode_with_sudo, atomic_copy_file
+        from drift.utils.file_utils import file_permissions_differ, is_mode_only_change, copy_file_mode_with_sudo, atomic_copy_file
         if sys.platform == "win32":
             return
 
@@ -748,11 +748,11 @@ class TestFileUtils(unittest.TestCase):
     def test_run_command_debug_logging(self) -> None:
         """Verifies run_command logs external command and stdout/stderr in debug mode."""
         import sys
-        from drift.file_utils import run_command
+        from drift.utils.file_utils import run_command
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.process_utils", level="DEBUG") as cm: 
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm: 
                 run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
 
             logs = "\n".join(cm.output)
@@ -765,7 +765,7 @@ class TestFileUtils(unittest.TestCase):
 
     def test_is_editor_or_os_temporary_file(self) -> None:
         """Verifies is_editor_or_os_temporary_file correctly matches temporary files and ignores normal files."""
-        from drift.file_utils import is_editor_or_os_temporary_file
+        from drift.utils.file_utils import is_editor_or_os_temporary_file
 
         # Temporary / editor / OS files
         self.assertTrue(is_editor_or_os_temporary_file(".stow-local-ignore"))

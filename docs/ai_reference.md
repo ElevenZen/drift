@@ -31,83 +31,83 @@ This document provides a concise, high-density architecture reference, primitive
 
 | Primitive | CLI Command | Source File | Public Entry Point | Return Model |
 |---|---|---|---|---|
-| **P1** | `drift reverse-sync` | [`src/drift/reverse_sync.py`](../src/drift/reverse_sync.py) | [`run_primitive_1_reverse_sync`](../src/drift/reverse_sync.py#L90) | `ReverseSyncResult` |
-| **P2** | `drift render` | [`src/drift/render_package.py`](../src/drift/render_package.py) | [`run_primitive_2_render_packages`](../src/drift/render_package.py#L425) | `List[PackageRenderResult]` |
-| **P3** | `drift render-commit` | [`src/drift/render_repo.py`](../src/drift/render_repo.py) | [`run_primitive_3_commit_render_repo`](../src/drift/render_repo.py#L65) | `RenderCommitResult` |
-| **P4** | `drift stage` | [`src/drift/stage_repo.py`](../src/drift/stage_repo.py) | [`run_primitive_4_stage_render_to_install`](../src/drift/stage_repo.py#L250) | `List[PackageStageChanges]` |
-| **P5** | `drift apply` | [`src/drift/install_repo.py`](../src/drift/install_repo.py) | [`run_primitive_5_install_deployment`](../src/drift/install_repo.py#L920) | `List[PackageInstallResult]` |
-| **P6** | `drift install-commit` | [`src/drift/install_repo.py`](../src/drift/install_repo.py) | [`run_primitive_6_commit_install_repo`](../src/drift/install_repo.py#L965) | `InstallCommitResult` |
-| **P7** | `drift uninstall` | [`src/drift/uninstall_repo.py`](../src/drift/uninstall_repo.py) | [`run_primitive_7_uninstall_packages`](../src/drift/uninstall_repo.py#L350) | `UninstallResult` |
-| **P8** | `drift rollback` | [`src/drift/rollback.py`](../src/drift/rollback.py) | [`run_primitive_8_rollback_recovery`](../src/drift/rollback.py#L75) | `RollbackResult` |
-| **P9** | `drift gc` | [`src/drift/workspace_gc.py`](../src/drift/workspace_gc.py) | [`run_primitive_9_purge_workspace_garbage`](../src/drift/workspace_gc.py#L172) | `GcResult` |
-| **P10** | `drift new` | [`src/drift/package_creator.py`](../src/drift/package_creator.py) | [`run_primitive_10_create_package`](../src/drift/package_creator.py#L110) | `PackageCreateResult` |
-| **P11** | `drift add` | [`src/drift/import_resource.py`](../src/drift/import_resource.py) | [`run_primitive_11_import_resource`](../src/drift/import_resource.py#L220) | `ImportResult` |
-| **P12** | `drift health` | [`src/drift/health_check.py`](../src/drift/health_check.py) | [`run_primitive_12_package_health_checks`](../src/drift/health_check.py#L125) | `HealthResult` |
-| **P13** | `drift clone` | [`src/drift/clone_repo.py`](../src/drift/clone_repo.py) | [`run_primitive_13_clone_and_bootstrap`](../src/drift/clone_repo.py#L85) | `CloneResult` |
-| **P14** | `drift repair` | [`src/drift/repair.py`](../src/drift/repair.py) | [`run_primitive_14_repair_workspace`](../src/drift/repair.py#L180) | `RepairResult` |
-| **P15** | `drift diff` | [`src/drift/workspace_diff.py`](../src/drift/workspace_diff.py) | [`run_primitive_15_workspace_diff`](../src/drift/workspace_diff.py#L319) | `DiffResult` |
-| **P16** | `drift status` | [`src/drift/workspace_status.py`](../src/drift/workspace_status.py) | [`run_primitive_16_workspace_status`](../src/drift/workspace_status.py#L185) | `StatusResult` |
+| **P1** | `drift reverse-sync` | [`src/drift/primitives/reverse_sync.py`](../src/drift/primitives/reverse_sync.py) | `run_primitive_1_reverse_sync` | `ReverseSyncResult` |
+| **P2** | `drift render` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_2_render_packages` | `List[PackageRenderResult]` |
+| **P3** | `drift render-commit` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_3_commit_render_repo` | `RenderCommitResult` |
+| **P4** | `drift stage` | [`src/drift/primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) | `run_primitive_4_stage_render_to_install` | `List[PackageStageChanges]` |
+| **P5** | `drift apply` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_5_install_deployment` | `List[PackageInstallResult]` |
+| **P6** | `drift install-commit` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_6_commit_install_repo` | `InstallCommitResult` |
+| **P7** | `drift uninstall` | [`src/drift/primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) | `run_primitive_7_uninstall_packages` | `UninstallResult` |
+| **P8** | `drift rollback` | [`src/drift/primitives/rollback_repo.py`](../src/drift/primitives/rollback_repo.py) | `run_primitive_8_rollback_recovery` | `RollbackResult` |
+| **P9** | `drift gc` | [`src/drift/primitives/workspace_gc.py`](../src/drift/primitives/workspace_gc.py) | `run_primitive_9_purge_workspace_garbage` | `GcResult` |
+| **P10** | `drift new` | [`src/drift/primitives/new_package.py`](../src/drift/primitives/new_package.py) | `run_primitive_10_new_package` | `NewPackageResult` |
+| **P11** | `drift add` | [`src/drift/primitives/add_resource.py`](../src/drift/primitives/add_resource.py) | `run_primitive_11_add_resources` | `AddResourceResult` |
+| **P12** | `drift health` | [`src/drift/primitives/package_health.py`](../src/drift/primitives/package_health.py) | `run_primitive_12_package_health_checks` | `HealthResult` |
+| **P13** | `drift clone` | [`src/drift/primitives/workspace_clone.py`](../src/drift/primitives/workspace_clone.py) | `run_primitive_13_clone_and_bootstrap` | `CloneResult` |
+| **P14** | `drift repair` | [`src/drift/primitives/workspace_repair.py`](../src/drift/primitives/workspace_repair.py) | `run_primitive_14_repair_workspace` | `RepairResult` |
+| **P15** | `drift diff` | [`src/drift/primitives/workspace_diff.py`](../src/drift/primitives/workspace_diff.py) | `run_primitive_15_workspace_diff` | `DiffResult` |
+| **P16** | `drift status` | [`src/drift/primitives/workspace_status.py`](../src/drift/primitives/workspace_status.py) | `run_primitive_16_workspace_status` | `StatusResult` |
 
 ---
 
 ## 3. Frequently Used Core Modules & Functions
 
-### [`file_utils.py`](../src/drift/file_utils.py) (Filesystem & Path Operations)
-*   [`resolve_system_target(rel_file, target_dir) -> Path`](../src/drift/file_utils.py#L125): Translates relative path to target host path applying `dot-` prefix translation.
-*   [`translate_dot_prefixes(rel_path) -> Path`](../src/drift/file_utils.py#L85): Translates path segments (`dot-config` $\rightarrow$ `.config`).
-*   [`reverse_translate_dot_prefixes(rel_path) -> Path`](../src/drift/file_utils.py#L105): Reverses path segments (`.config` $\rightarrow$ `dot-config`).
-*   [`compare_folders(src, dst, ignore_handler=None, translate_mode='none') -> FolderDiff`](../src/drift/file_utils.py#L210): Computes `added`, `modified`, `deleted`, `unmodified` between directory trees.
-*   [`tree_relative_files(base_path) -> List[Path]`](../src/drift/file_utils.py#L160): Recursively gathers all relative file paths under `base_path`.
-*   [`backup_file_or_dir_external(src, backup_path, sudo, resolve_symlinks=False)`](../src/drift/file_utils.py#L320): Backs up host paths to `backup/<pkg>/`.
-*   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/file_utils.py#L380): Deletes a file or directory safely (with `sudo` if configured).
-*   [`check_sudo_privilege() -> bool`](../src/drift/file_utils.py#L40): Verifies sudo permissions without password prompts (`sudo -n true`).
+### [`core/folder_diff.py`](../src/drift/core/folder_diff.py) & [`utils/file_utils.py`](../src/drift/utils/file_utils.py)
+*   [`compare_folders(src, dst, ignore_handler=None, translate_mode=None) -> FolderDiff`](../src/drift/core/folder_diff.py): Computes `added`, `modified`, `deleted`, `matches` between directory trees.
+*   [`resolve_system_target(rel_file, target_dir) -> Path`](../src/drift/utils/file_utils.py): Translates relative path to target host path applying `dot-` prefix translation.
+*   [`translate_dot_prefixes(rel_path) -> Path`](../src/drift/utils/file_utils.py): Translates path segments (`dot-config` $\rightarrow$ `.config`).
+*   [`translate_dot_prefixes_reverse(rel_path) -> Path`](../src/drift/utils/file_utils.py): Reverses path segments (`.config` $\rightarrow$ `dot-config`).
+*   [`tree_relative_files(base_path) -> List[Path]`](../src/drift/utils/file_utils.py): Recursively gathers all relative file paths under `base_path`.
+*   [`backup_file_or_dir_external(src, backup_path, sudo, resolve_symlinks=False)`](../src/drift/core/sync_ops.py): Backs up host paths to `backup/<pkg>/`.
+*   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/utils/file_utils.py): Deletes a file or directory safely (with `sudo` if configured).
+*   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
-### [`ignore.py`](../src/drift/ignore.py) (Ignore Engine & GNU Stow Rules)
-*   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/ignore.py#L71): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
-*   [`DriftIgnore.for_install_root() -> DriftIgnore`](../src/drift/ignore.py#L102): Creates ignore rules for `install/` root (`state.toml` guard).
-*   [`ignore.match_path(rel_path) -> bool`](../src/drift/ignore.py#L155): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` and `MANAGED_CONFIG_FILES` exclusion).
-*   [`ignore.filter_deployable_files(install_pkg_dir) -> List[Path]`](../src/drift/ignore.py#L141): Returns non-ignored deployable files.
-*   [`ignore.create_stow_ignore_file(target_dir)`](../src/drift/ignore.py#L132): Generates `.stow-local-ignore`.
+### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules)
+*   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/core/ignore.py): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
+*   [`DriftIgnore.for_install_root() -> DriftIgnore`](../src/drift/core/ignore.py): Creates ignore rules for `install/` root (`state.toml` guard).
+*   [`ignore.match_path(rel_path) -> bool`](../src/drift/core/ignore.py): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` and `MANAGED_CONFIG_FILES` exclusion).
+*   [`ignore.filter_deployable_files(install_pkg_dir) -> List[Path]`](../src/drift/core/ignore.py): Returns non-ignored deployable files.
+*   [`ignore.create_stow_ignore_file(target_dir)`](../src/drift/core/ignore.py): Generates `.stow-local-ignore`.
 
-### [`state_registry.py`](../src/drift/state_registry.py) (State Database & Manifests)
-*   [`load_state_registry(path) -> StateRegistry`](../src/drift/state_registry.py#L208): Loads `install/state.toml`.
-*   [`registry.set_package_state(pkg, state, last_deployed=None)`](../src/drift/state_registry.py#L49): Updates package state (`"installed"`, `"staging"`, `"installing"`, `"staged"`).
-*   [`registry.sync_deployed_files(pkg, target_directory, install_method, redeploy=False, deployable_files=(), package_changes=None)`](../src/drift/state_registry.py#L121): Updates target directory, install method, and deployed files manifest.
-*   [`registry.get_target_migrated_from(pkg, current_target) -> Optional[Path]`](../src/drift/state_registry.py#L69): Detects if package is migrating to a new destination.
-*   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/state_registry.py#L83): Builds destination ownership mapping across installed packages.
-*   [`registry.remove_package(pkg)`](../src/drift/state_registry.py#L148): Unregisters package from `state.toml`.
+### [`core/state_registry.py`](../src/drift/core/state_registry.py) (State Database & Manifests)
+*   [`load_state_registry(path) -> StateRegistry`](../src/drift/core/state_registry.py): Loads `install/state.toml`.
+*   [`registry.set_package_state(pkg, state, last_deployed=None)`](../src/drift/core/state_registry.py): Updates package state (`"installed"`, `"staging"`, `"installing"`, `"staged"`).
+*   [`registry.sync_deployed_files(pkg, target_directory, install_method, redeploy=False, deployable_files=(), package_changes=None)`](../src/drift/core/state_registry.py): Updates target directory, install method, and deployed files manifest.
+*   [`registry.get_target_migrated_from(pkg, current_target) -> Optional[Path]`](../src/drift/core/state_registry.py): Detects if package is migrating to a new destination.
+*   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/core/state_registry.py): Builds destination ownership mapping across installed packages.
+*   [`registry.remove_package(pkg)`](../src/drift/core/state_registry.py): Unregisters package from `state.toml`.
 
-### [`toml_utils.py`](../src/drift/toml_utils.py) (TOML Parsing & Traversal)
-*   [`get_nested_from(data, keys, default=None, required=False, is_table=False)`](../src/drift/toml_utils.py#L33): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
-*   [`get_first_from(data, keys, default=None)`](../src/drift/toml_utils.py#L14): Retrieves the first matching key from alternative candidates.
-*   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/toml_utils.py#L85): Enforces strict key allowlists on config mappings.
+### [`utils/toml_utils.py`](../src/drift/utils/toml_utils.py) (TOML Parsing & Traversal)
+*   [`get_nested_from(data, keys, default=None, required=False, is_table=False, config_source=None)`](../src/drift/utils/toml_utils.py): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
+*   [`get_first_from(data, keys, default=None)`](../src/drift/utils/toml_utils.py): Retrieves the first matching key from alternative candidates.
+*   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/utils/toml_utils.py): Enforces strict key allowlists on config mappings.
 
-### [`workspace_config.py`](../src/drift/workspace_config.py) & [`package_config.py`](../src/drift/package_config.py)
-*   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/workspace_config.py#L210): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
-*   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/package_config.py#L1523): Loads, transforms, merges, and validates package configuration from source directory.
-*   [`load_package_config_rendered(package_toml_path, package_name, package_dir) -> PackageConfig`](../src/drift/package_config.py#L1355): Loads and parses package configuration strictly with explicit `package_dir`.
-*   [`config.is_package_enabled(pkg) -> bool`](../src/drift/workspace_config.py#L319): Checks if package is active in workspace.
+### [`config/workspace_config.py`](../src/drift/config/workspace_config.py) & [`config/package_config.py`](../src/drift/config/package_config.py)
+*   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/config/workspace_config.py): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
+*   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads, transforms, merges, and validates package configuration from source directory.
+*   [`load_package_config_rendered(package_toml_path, package_name, package_dir) -> PackageConfig`](../src/drift/config/package_config.py): Loads and parses package configuration strictly with explicit `package_dir`.
+*   [`config.is_package_enabled(pkg) -> bool`](../src/drift/config/workspace_config.py): Checks if package is active in workspace.
 
-### [`git_utils.py`](../src/drift/git_utils.py) (Sub-Repository Git Management)
-*   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/git_utils.py#L85): Scoped `git add` and `git commit`.
-*   [`is_repo_dirty(repo_path, target_pkgs=()) -> bool`](../src/drift/git_utils.py#L50): Checks porcelain status.
+### [`utils/git_utils.py`](../src/drift/utils/git_utils.py) (Sub-Repository Git Management)
+*   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/utils/git_utils.py): Scoped `git add` and `git commit`.
+*   [`has_uncommitted_modifications(repo_path, subpath=None) -> bool`](../src/drift/utils/git_utils.py): Checks porcelain status.
 
-### [`adopt_repo.py`](../src/drift/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
-*   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/adopt_repo.py#L965): Entry point reconciling drifts across packages.
-*   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/adopt_repo.py#L863): Reconciles single-package additions, deletions, renames, and modifications.
-*   [`patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor) -> bool`](../src/drift/adopt_repo.py#L317): Applies patch, syncs permissions, and optionally launches `$EDITOR`.
-*   [`adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, ...) -> Path`](../src/drift/adopt_repo.py#L338): Symmetrically renames template file in `src/` matching engine suffix, applies patch, and syncs permissions.
-*   [`fallback_side_by_side(src_file, install_file) -> bool`](../src/drift/adopt_repo.py#L380): Visual split-screen diff in `$EDITOR` (`nvim`, `vim`, `code`, `emacs`).
+### [`primitives/adopt_repo.py`](../src/drift/primitives/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
+*   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Entry point reconciling drifts across packages.
+*   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/primitives/adopt_repo.py): Reconciles single-package additions, deletions, renames, and modifications.
+*   [`patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor) -> bool`](../src/drift/primitives/adopt_repo.py): Applies patch, syncs permissions, and optionally launches `$EDITOR`.
+*   [`adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, ...) -> Path`](../src/drift/primitives/adopt_repo.py): Symmetrically renames template file in `src/` matching engine suffix, applies patch, and syncs permissions.
+*   [`fallback_side_by_side(src_file, install_file) -> bool`](../src/drift/primitives/adopt_repo.py): Visual split-screen diff in `$EDITOR` (`nvim`, `vim`, `code`, `emacs`).
 
-### [`lifecycle_hooks.py`](../src/drift/lifecycle_hooks.py) (Lifecycle Scripts & Python Hooks)
-*   [`HookExecFlags`](../src/drift/lifecycle_hooks.py#L40): Execution flags (`dry_run`, `no_hooks`, `force`).
-*   [`PackageHooks`](../src/drift/lifecycle_hooks.py#L110): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
+### [`hooks/lifecycle_hooks.py`](../src/drift/hooks/lifecycle_hooks.py) (Lifecycle Scripts & Python Hooks)
+*   [`HookExecFlags`](../src/drift/hooks/lifecycle_hooks.py): Execution flags (`dry_run`, `no_hooks`, `force`).
+*   [`PackageHooks`](../src/drift/hooks/lifecycle_hooks.py): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
 
-### [`exceptions.py`](../src/drift/exceptions.py) & Standard Exit Codes
-*   [`InstallCollisionError`](../src/drift/exceptions.py#L31) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, cross-package file conflict, or symlinked parent directory.
-*   [`ConfigError`](../src/drift/exceptions.py#L20) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or DAG cyclic dependency.
-*   [`RenderError`](../src/drift/exceptions.py#L26) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure.
-*   [`HookExecutionError`](../src/drift/exceptions.py#L45): Script execution timeout or non-zero returncode.
+### [`core/exceptions.py`](../src/drift/core/exceptions.py) & Standard Exit Codes
+*   [`InstallCollisionError`](../src/drift/core/exceptions.py) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, cross-package file conflict, or symlinked parent directory.
+*   [`ConfigError`](../src/drift/core/exceptions.py) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or DAG cyclic dependency.
+*   [`RenderError`](../src/drift/core/exceptions.py) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure.
+*   [`HookExecutionError`](../src/drift/core/exceptions.py): Script execution timeout or non-zero returncode.
 
 ---
 

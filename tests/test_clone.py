@@ -9,13 +9,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.workspace_clone import (
+from drift.primitives.workspace_clone import (
     extract_repo_name_from_url,
     is_drift_repository,
     run_primitive_clone,
 )
-from drift.workspace_init import init_drift_workspace
-from drift.result_models import CloneResult
+from drift.primitives.workspace_init import init_drift_workspace
+from drift.core.result_models import CloneResult
 from drift.cli.argparse_backend import run_argparse_cli
 
 
@@ -211,10 +211,10 @@ class TestWorkspaceClone(unittest.TestCase):
             self.assertEqual(data["target_directory"], str(dest_path))
 
 
-    @patch("drift.workspace_clone.run_command")
+    @patch("drift.primitives.workspace_clone.run_command")
     def test_clone_streaming_flag(self, mock_run_command):
         """Verifies streaming flag is passed to run_command from run_primitive_clone."""
-        from drift.workspace_clone import clone_git_repository
+        from drift.primitives.workspace_clone import clone_git_repository
         mock_run_command.return_value = subprocess.CompletedProcess([], 0)
 
         # 1. streaming=True (default in clone_git_repository)

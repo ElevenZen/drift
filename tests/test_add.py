@@ -3,10 +3,10 @@ import os
 import shutil
 import tempfile
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig
-from drift.lifecycle_hooks import HookExecFlags
-from drift.add_resource import run_primitive_11_add_resources
-from drift.constants import (
+from drift.config.workspace_config import WorkspaceConfig
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.primitives.add_resource import run_primitive_11_add_resources
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
@@ -32,8 +32,8 @@ class TestAddResource(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "env.sh").write_text("#!/bin/bash\n", encoding="utf-8")
 
-        from drift.workspace_config import WorkspaceSectionConfig
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+        from drift.config.workspace_config import WorkspaceSectionConfig
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
         self.workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(

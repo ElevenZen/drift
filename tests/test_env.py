@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, List
 from unittest.mock import patch
 
-from drift.constants import (
+from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
@@ -22,7 +22,7 @@ from drift.constants import (
     update_initial_env,
     set_initial_env,
 )
-from drift.env_utils import (
+from drift.utils.env_utils import (
     load_env_settings,
     unload_env_settings,
     parse_secrets_env,
@@ -31,11 +31,11 @@ from drift.env_utils import (
     env_scope,
     secrets_env_scope,
 )
-from drift.workspace_config import (
+from drift.config.workspace_config import (
     load_workspace_config
 )
-from drift.render_engine_config import RenderEngineRegistry
-from drift.render_package import run_primitive_2_render_packages
+from drift.config.render_engine_config import RenderEngineRegistry
+from drift.render.render_package import run_primitive_2_render_packages
 
 
 class TestLoadEnvSettingsUnit(unittest.TestCase):
@@ -143,7 +143,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
             os.environ["TEST_OVERWRITTEN"] = "old_val"
             os.environ.pop("TEST_NEW", None)
 
-            with self.assertLogs("drift.env_utils", level="DEBUG") as cm:
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
                 saved = load_env_settings({
                     "TEST_UNCHANGED": "same_val",
                     "TEST_OVERWRITTEN": "new_val",
@@ -667,7 +667,7 @@ pkg_cli = true
 
         self._setup_package_with_template("pkg_cli", f"VAL=${{{var_name}}}\n")
 
-        from drift.workspace_repair import repair_drift_workspace
+        from drift.primitives.workspace_repair import repair_drift_workspace
         repair_drift_workspace(self.drift_root)
 
         # Execute CLI render
@@ -698,7 +698,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_update_env_dict(self) -> None:
         """Verifies update_env_dict with overwrite, non-overwrite, env_keep, and snapshot tracking."""
-        from drift.env_utils import update_env_dict, restore_env_dict
+        from drift.utils.env_utils import update_env_dict, restore_env_dict
 
         # 1. Basic update with overwrite and snapshot
         target = {"A": "1", "B": "2"}
@@ -742,8 +742,8 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_topological_sort_env(self) -> None:
         """Verifies topological_sort_env computes correct evaluation order and catches cycles."""
-        from drift.env_utils import topological_sort_env
-        from drift.exceptions import ConfigError
+        from drift.utils.env_utils import topological_sort_env
+        from drift.core.exceptions import ConfigError
 
         # Independent variables
         order = topological_sort_env({"A": "1", "B": "2"})
@@ -784,7 +784,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_linear(self) -> None:
         """Verifies that linear dependencies A -> B -> C resolve in correct topological order."""
-        from drift.env_utils import resolve_env_references
+        from drift.utils.env_utils import resolve_env_references
 
         raw_env = {
             "A": "root_val",
@@ -798,7 +798,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_multi_dep(self) -> None:
         """Verifies that multiple variable references in a single string interpolate correctly."""
-        from drift.env_utils import resolve_env_references
+        from drift.utils.env_utils import resolve_env_references
 
         raw_env = {
             "HOST": "127.0.0.1",
@@ -814,7 +814,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_with_base_env(self) -> None:
         """Verifies that external variables from base_env (e.g. os.environ or host facts) are resolved."""
-        from drift.env_utils import resolve_env_references
+        from drift.utils.env_utils import resolve_env_references
 
         base_env = {"HOME": "/home/tester", "drift_host_os": "linux"}
         raw_env = {
@@ -829,8 +829,8 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_self_cycle(self) -> None:
         """Verifies that immediate self-references raise ConfigError."""
-        from drift.env_utils import resolve_env_references
-        from drift.exceptions import ConfigError
+        from drift.utils.env_utils import resolve_env_references
+        from drift.core.exceptions import ConfigError
 
         raw_env = {"LOOP": "${LOOP}"}
         with self.assertRaises(ConfigError) as ctx:
@@ -839,8 +839,8 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_mutual_cycle(self) -> None:
         """Verifies that cyclic dependencies (A -> B -> A) raise ConfigError."""
-        from drift.env_utils import resolve_env_references
-        from drift.exceptions import ConfigError
+        from drift.utils.env_utils import resolve_env_references
+        from drift.core.exceptions import ConfigError
 
         raw_env = {
             "A": "start_${B}",
@@ -853,8 +853,8 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_resolve_env_references_missing_var(self) -> None:
         """Verifies that referencing a non-existent variable raises ConfigError."""
-        from drift.env_utils import resolve_env_references
-        from drift.exceptions import ConfigError
+        from drift.utils.env_utils import resolve_env_references
+        from drift.core.exceptions import ConfigError
 
         raw_env = {"A": "${UNKNOWN_VAR}"}
         with self.assertRaises(ConfigError) as ctx:
@@ -863,7 +863,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
 
     def test_interpolate_config_dict(self) -> None:
         """Verifies recursive interpolation of strings across nested dicts, lists, and tuples."""
-        from drift.env_utils import interpolate_config_dict
+        from drift.utils.env_utils import interpolate_config_dict
 
         env = {"BASE": "/opt/app", "PORT": "8080"}
         data = {
@@ -920,7 +920,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_with_env_override_and_field_interpolation(self) -> None:
         """Verifies that package drift_package.toml resolves [env.override] and interpolates package fields."""
-        from drift.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig
 
         pkg_dict = {
             "package": {
@@ -939,7 +939,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 "timeout": 45,
             }
         }
-        from drift.package_config import resolve_and_interpolate_package_config
+        from drift.config.package_config import resolve_and_interpolate_package_config
         base_dir = Path("/mock/src/my_daemon")
         stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
         pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
@@ -951,8 +951,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_with_direct_env_raises_error(self) -> None:
         """Verifies that direct key-value pairs in package [env] raise ConfigError."""
-        from drift.package_config import PackageConfig
-        from drift.exceptions import ConfigError
+        from drift.config.package_config import PackageConfig
+        from drift.core.exceptions import ConfigError
 
         pkg_dict = {
             "package": {
@@ -969,7 +969,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_escaped_variable_stitching(self) -> None:
         """Verifies that \\$VAR and \\${VAR} escape variable stitching in [env] and config fields."""
-        from drift.env_utils import resolve_env_references, interpolate_config_dict
+        from drift.utils.env_utils import resolve_env_references, interpolate_config_dict
 
         raw_env = {
             "REAL_VAR": "actual_val",
@@ -994,8 +994,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_facts_and_precedence(self) -> None:
         """Verifies that all four package facts are available and 7-tier precedence is respected in package config."""
-        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Test CLI environment precedence (Tier 1 INITIAL_ENV)
         os.environ["CLI_OVERRIDE_VAR"] = "cli_val"
@@ -1053,8 +1053,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
 
         ws = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1091,8 +1091,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
         """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
-        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
-        from drift.exceptions import ConfigError
+        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.core.exceptions import ConfigError
 
         # drift_package_name is always set
         pkg_dict_name_only = {
@@ -1126,9 +1126,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_fallback_references_drift_package_source_dir(self) -> None:
         """Verifies that [env.fallback] can reference ${drift_package_source_dir} and respect precedence."""
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import PackageConfig, resolve_and_interpolate_package_config
-        from drift.render_engine_config import RenderEngineRegistry
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1175,9 +1175,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_load_package_config_from_source_dir_writes_stitched_toml_and_renders(self) -> None:
         """Verifies that PackageConfig.from_source_dir writes out stitched TOML and PackageConfig.from_rendered_file reads it."""
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.package_config import PackageConfig
-        from drift.render_engine_config import RenderEngineRegistry
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig
+        from drift.config.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
             drift_root=self.drift_root,

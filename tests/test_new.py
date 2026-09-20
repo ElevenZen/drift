@@ -1,9 +1,9 @@
 import unittest
 import tempfile
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig
-from drift.new_package import run_primitive_10_create_new_package
-from drift.constants import (
+from drift.config.workspace_config import WorkspaceConfig
+from drift.primitives.new_package import run_primitive_10_create_new_package
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     InstallMethod,

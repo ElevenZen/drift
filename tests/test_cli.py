@@ -54,7 +54,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             with open(os.path.join(pkg_path, "file.txt"), "w", encoding="utf-8") as f:
                 f.write(f"Hello from {pkg}")
 
-        from drift.workspace_repair import repair_drift_workspace
+        from drift.primitives.workspace_repair import repair_drift_workspace
         from pathlib import Path
         repair_drift_workspace(Path(self.drift_root))
 

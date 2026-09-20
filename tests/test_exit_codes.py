@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import ExitCode, set_test_mode
-from drift.exceptions import (
+from drift.core.constants import ExitCode, set_test_mode
+from drift.core.exceptions import (
     DriftError,
     ConfigError,
     DriftDetectedError,

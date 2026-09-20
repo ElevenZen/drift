@@ -7,13 +7,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.package_config import PackageConfig, PackageRequirements, PackageHooks
-from drift.lifecycle_hooks import HookExecFlags
-from drift.workspace_config import WorkspaceConfig
-from drift.render_package import render_package
-from drift.exceptions import ConfigError
-from drift.toml_utils import parse_toml
-from drift.constants import (
+from drift.config.package_config import PackageConfig, PackageRequirements, PackageHooks
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.config.workspace_config import WorkspaceConfig
+from drift.render.render_package import render_package
+from drift.core.exceptions import ConfigError
+from drift.utils.toml_utils import parse_toml
+from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
@@ -100,7 +100,7 @@ class TestPackageRequirements(unittest.TestCase):
             self.assertIn("Required environment variable 'WAYLAND_DISPLAY' is unset or empty", reason)
 
     def test_match_ip_address_function(self) -> None:
-        from drift.package_config import match_ip_address, match_ip_addresses
+        from drift.config.package_config import match_ip_address, match_ip_addresses
 
         # Exact match
         self.assertTrue(match_ip_address("192.168.1.1", "192.168.1.1"))
@@ -129,7 +129,7 @@ class TestPackageRequirements(unittest.TestCase):
         self.assertTrue(match_ip_addresses(patterns_gen, ips_gen))
 
     def test_system_facts_dataclass(self) -> None:
-        from drift.host_facts import SystemFacts
+        from drift.utils.host_facts import SystemFacts
         facts = SystemFacts(
             os="linux",
             arch="x86_64",
@@ -341,12 +341,12 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
 
         # Running with no_hooks=True should ignore failing probe hook
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         res = render_package(self.workspace_config, pkg_dir, flags=HookExecFlags(no_hooks=True))
         self.assertEqual(res.status, "SUCCESS")
 
     def test_render_package_templated_probe_hook(self) -> None:
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
         self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envst": RenderEngineConfig(name="envst", suffix="envst", render_command="internal")

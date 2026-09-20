@@ -7,11 +7,11 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME
-from drift.workspace_config import WorkspaceConfig
-from drift.lifecycle_hooks import HookExecFlags
-from drift.state_registry import load_state_registry, save_state_registry
-from drift.deploy_repo import run_primitive_deploy_pipeline
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.config.workspace_config import WorkspaceConfig
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.core.state_registry import load_state_registry, save_state_registry
+from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
 
 
 class TestDeploy(unittest.TestCase):
@@ -63,7 +63,7 @@ pkg_a = true
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Build workspace config
-        from drift.workspace_config import load_workspace_config
+        from drift.config.workspace_config import load_workspace_config
         self.workspace_config = load_workspace_config(self.drift_root)
         self.workspace_config.workspace.default_target_directory = self.system_target_dir
 
@@ -155,7 +155,7 @@ target_directory = "{self.system_target_dir}"
         ).stdout
         self.assertEqual(snapshot_content, "Modified on host system directly!")
 
-    @patch("drift.deploy_repo.run_primitive_5_install_deployment")
+    @patch("drift.primitives.deploy_repo.run_primitive_5_install_deployment")
     def test_deploy_pipeline_midway_crash_prints_recovery_card(self, mock_install) -> None:
         """Verifies that midway crashes during stage 2 capture, print recovery blocks, and abort."""
         mock_install.side_with_err = PermissionError("Permission Denied: mock error")
@@ -182,7 +182,7 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("EMERGENCY RECOVERY REQUIRED", printed_card)
         self.assertIn("drift rollback pkg_a", printed_card)
 
-    @patch("drift.deploy_repo.run_primitive_2_render_packages")
+    @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
     def test_deploy_pipeline_step1_failure_shows_retry(self, mock_render) -> None:
         """Verifies that Step 1 (rendering) failure logs retry and doesn't print emergency recovery card."""
         mock_render.side_effect = ValueError("rendering error")
@@ -192,7 +192,7 @@ target_directory = "{self.system_target_dir}"
         
         self.assertIn("Step 1 (Template Rendering) failed.", str(context.exception))
 
-    @patch("drift.deploy_repo.run_primitive_6_commit_install_repo")
+    @patch("drift.primitives.deploy_repo.run_primitive_6_commit_install_repo")
     def test_deploy_pipeline_step5_failure_shows_install_commit(self, mock_commit) -> None:
         """Verifies that Step 5 (install commit) failure logs specific manual install-commit instruction."""
         mock_commit.side_effect = ValueError("commit error")
@@ -213,7 +213,7 @@ target_directory = "{self.system_target_dir}"
         printed_msg = stderr_capture.getvalue()
         self.assertIn("drift install-commit -m", printed_msg)
 
-    @patch("drift.deploy_repo.run_primitive_9_purge_workspace_garbage")
+    @patch("drift.primitives.deploy_repo.run_primitive_9_purge_workspace_garbage")
     def test_global_deploy_calls_gc(self, mock_gc) -> None:
         """Verifies that global deploy (packages_to_deploy=()) calls GC at the end."""
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=())
@@ -332,7 +332,7 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(state_registry.get_package_state("pkg_a"), "installing")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
-        from drift.install_repo import deploy_one_package_with_error_wrapping, DeployOptions
+        from drift.primitives.install_repo import deploy_one_package_with_error_wrapping, DeployOptions
         with self.assertRaises(RuntimeError) as ctx2:
             deploy_one_package_with_error_wrapping(
                 workspace_config=self.workspace_config,
@@ -468,7 +468,7 @@ target_directory = "{self.system_target_dir}"
 
     def test_deploy_aborts_on_midway_transaction_state(self) -> None:
         """Verifies that Stage 1 Sentinel aborts when package is in midway transaction state and suggests rollback."""
-        from drift.state_registry import load_state_registry, save_state_registry
+        from drift.core.state_registry import load_state_registry, save_state_registry
 
         # 1. Initial deployment
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -494,7 +494,7 @@ target_directory = "{self.system_target_dir}"
 
     def test_deploy_pipeline_skipped_packages_retain_installed_state(self) -> None:
         """Verifies that packages skipped due to no physical changes retain 'installed' state in state.toml."""
-        from drift.state_registry import load_state_registry
+        from drift.core.state_registry import load_state_registry
 
         # 1. Initial deployment
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -516,9 +516,9 @@ target_directory = "{self.system_target_dir}"
     def test_execute_deploy_fails_fast_when_workspace_structure_broken(self) -> None:
         """Verifies execute_deploy fails with ConfigError and hints 'drift repair' when workspace structure is broken."""
         from drift.cli.actions import execute_deploy
-        from drift.constants import PACKAGE_CONFIG_FILE_NAME
-        from drift.exceptions import ConfigError
-        from drift.workspace_init import init_drift_workspace
+        from drift.core.constants import PACKAGE_CONFIG_FILE_NAME
+        from drift.core.exceptions import ConfigError
+        from drift.primitives.workspace_init import init_drift_workspace
 
         init_drift_workspace(self.drift_root, force=True)
 
@@ -529,8 +529,8 @@ target_directory = "{self.system_target_dir}"
 
     def test_deploy_warns_and_skips_reverse_sync_when_install_config_missing(self) -> None:
         """Verifies that when install/<pkg> exists without a package config file, Stage 1 warns and skips reverse-sync without crashing."""
-        from drift.constants import set_test_mode, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME
-        from drift.deploy_repo import check_and_prevent_system_drifts
+        from drift.core.constants import set_test_mode, DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME
+        from drift.primitives.deploy_repo import check_and_prevent_system_drifts
 
         # 1. Initial deployment
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -549,7 +549,7 @@ target_directory = "{self.system_target_dir}"
         # 3. Running check_and_prevent_system_drifts should NOT crash with ValueError; it should warn and return clean drifts
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.deploy_repo", level="WARNING") as cm:
+            with self.assertLogs("drift.primitives.deploy_repo", level="WARNING") as cm:
                 drifted_pkgs, drifted_files = check_and_prevent_system_drifts(
                     self.workspace_config, target_pkgs=["pkg_a"]
                 )

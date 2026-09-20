@@ -1,4 +1,4 @@
-"""Comprehensive unit tests for compare_folders in drift.folder_diff."""
+"""Comprehensive unit tests for compare_folders in drift.utils.folder_diff."""
 
 import os
 import sys
@@ -7,9 +7,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.constants import set_test_mode
-from drift.folder_diff import compare_folders, list_folder_paths, FolderDiff
-from drift.ignore import DriftIgnore
+from drift.core.constants import set_test_mode
+from drift.core.folder_diff import compare_folders, list_folder_paths, FolderDiff
+from drift.core.ignore import DriftIgnore
 
 
 class TestFolderDiffBasic(unittest.TestCase):

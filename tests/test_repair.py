@@ -9,7 +9,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import (
+from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
@@ -21,7 +21,7 @@ from drift.constants import (
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     set_test_mode,
 )
-from drift.workspace_check import (
+from drift.primitives.workspace_check import (
     ComponentStatus,
     CheckResult,
     WorkspaceHealthReport,
@@ -39,16 +39,16 @@ from drift.workspace_check import (
     check_package_metadata_structure,
     check_existing_workspace_status,
 )
-from drift.workspace_init import (
+from drift.primitives.workspace_init import (
     init_drift_workspace,
 )
-from drift.exceptions import ConfigError
-from drift.workspace_repair import (
+from drift.core.exceptions import ConfigError
+from drift.primitives.workspace_repair import (
     repair_drift_workspace,
     repair_workspace_config,
     repair_package_metadata_structure,
 )
-from drift.workspace_config import (
+from drift.config.workspace_config import (
     WorkspaceConfig,
     load_workspace_config,
 )
@@ -77,7 +77,7 @@ class TestCheckRepoModular(unittest.TestCase):
 
     def test_fresh_repo_with_only_root_git_is_not_found(self) -> None:
         """A fresh directory with only a root .git repo must still return NOT_FOUND."""
-        from drift.git_utils import git_init_repo
+        from drift.utils.git_utils import git_init_repo
         git_init_repo(self.drift_root, "main")
         self.assertFalse(probe_existing_workspace_structure(self.drift_root))
 
@@ -460,8 +460,8 @@ class TestWorkspaceRepair(unittest.TestCase):
         legacy_file = self.drift_root / "config" / "drift.toml"
         legacy_file.write_text("[workspace]\n", encoding="utf-8")
 
-        from drift.exceptions import ConfigError
-        from drift.workspace_config import load_workspace_config
+        from drift.core.exceptions import ConfigError
+        from drift.config.workspace_config import load_workspace_config
 
         # 1. load_workspace_config must fail fast on legacy file
         with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
@@ -729,7 +729,7 @@ class TestPackageMetadataStructureCheckAndRepair(unittest.TestCase):
 
     def test_to_repair_result_generator(self) -> None:
         """Verifies to_repair_result and build_repair_result accept unmaterialized generator expressions."""
-        from drift.workspace_repair import build_repair_result
+        from drift.primitives.workspace_repair import build_repair_result
 
         report = WorkspaceHealthReport(
             checks=[

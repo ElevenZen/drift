@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import (
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
@@ -15,18 +15,18 @@ from drift.constants import (
     DRIFT_HOOKS_DIR_NAME,
     InstallMethod,
 )
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.package_config import PackageConfig, PackageHooks
-from drift.folder_diff import FolderDiff
-from drift.state_registry import (
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.package_config import PackageConfig, PackageHooks
+from drift.core.folder_diff import FolderDiff
+from drift.core.state_registry import (
         load_state_registry,
         save_state_registry,
         StateRegistry,
         PackageState
 )
-from drift.exceptions import InstallCollisionError
-from drift.stage_repo import PackageStageChanges
-from drift.install_repo import (
+from drift.core.exceptions import InstallCollisionError
+from drift.primitives.stage_repo import PackageStageChanges
+from drift.primitives.install_repo import (
         resolve_system_target,
         run_primitive_5_install_deployment,
         get_stow_version,
@@ -39,7 +39,7 @@ from drift.install_repo import (
         PackageInstallContext,
         check_cross_package_file_conflicts,
 )
-from drift.file_utils import (
+from drift.utils.file_utils import (
         ensure_dir_exists_with_sudo,
         ensure_directory_writable,
 )
@@ -204,7 +204,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("content of bashrc")
 
         # Run deployment
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
@@ -249,7 +249,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("pre-existing user content")
 
         # Run deployment
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
@@ -308,7 +308,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("colliding user file")
 
         # Run first-time deployment
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
@@ -346,7 +346,7 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(hook_marker)
 
         # Run update deployment
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
@@ -396,7 +396,7 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies trigger_package_hook handles failures and timeouts with detailed logging and RuntimeError."""
         from unittest.mock import patch
         import subprocess
-        from drift.lifecycle_hooks import trigger_package_hook
+        from drift.hooks.lifecycle_hooks import trigger_package_hook
         
         pkg = "pkg_copy"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -416,7 +416,7 @@ class TestInstallRepo(unittest.TestCase):
         cwd = Path(self.system_target_dir)
 
         # 1. Test CalledProcessError
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(
                 returncode=5,
                 cmd=["dummy.sh"],
@@ -434,7 +434,7 @@ class TestInstallRepo(unittest.TestCase):
             self.assertIn("Some severe error output", str(ctx.exception))
 
         # 2. Test TimeoutExpired
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.side_effect = subprocess.TimeoutExpired(
                 cmd=["dummy.sh"],
                 timeout=120,
@@ -469,7 +469,7 @@ class TestInstallRepo(unittest.TestCase):
     def test_lifecycle_hooks_sudo_privileges(self) -> None:
         """Verifies that only pre/post_install and pre/post_update hooks run with sudo when sudo=True."""
         from unittest.mock import patch
-        from drift.lifecycle_hooks import trigger_package_hook
+        from drift.hooks.lifecycle_hooks import trigger_package_hook
 
         pkg = "pkg_hooks_sudo"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -502,11 +502,11 @@ class TestInstallRepo(unittest.TestCase):
 
         cwd = Path(self.system_target_dir)
 
-        from drift.constants import LIFECYCLE_HOOK_NAMES
+        from drift.core.constants import LIFECYCLE_HOOK_NAMES
 
         # All lifecycle hooks always execute in user space without sudo (preserving all injected envs)
         for hook_name in LIFECYCLE_HOOK_NAMES:
-            with patch("drift.lifecycle_hooks.run_command") as mock_run:
+            with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
                 mock_run.return_value.returncode = 0
                 trigger_package_hook(
                     pkg=pkg,
@@ -521,7 +521,7 @@ class TestInstallRepo(unittest.TestCase):
     def test_lifecycle_hook_non_executable_runs_via_interpreter_fallback(self) -> None:
         """Verifies that execute_hook_script falls back to interpreter without mutating disk permissions."""
         from unittest.mock import patch
-        from drift.lifecycle_hooks import execute_hook_script
+        from drift.hooks.lifecycle_hooks import execute_hook_script
 
         pkg = "pkg_hook_perm"
         pkg_install_dir = Path(self.install_dir) / pkg
@@ -533,7 +533,7 @@ class TestInstallRepo(unittest.TestCase):
 
         config = PackageConfig(name=pkg)
 
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value.returncode = 0
             execute_hook_script(
                 hook_path=hook_script,
@@ -552,8 +552,8 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
         """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_package_install_method in env."""
-        from drift.install_repo import deploy_one_package
-        from drift.state_registry import StateRegistry
+        from drift.primitives.install_repo import deploy_one_package
+        from drift.core.state_registry import StateRegistry
 
         pkg = "pkg_env_hooks"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -593,8 +593,8 @@ class TestInstallRepo(unittest.TestCase):
             return res
 
         from unittest.mock import patch
-        from drift.install_repo import DeployOptions
-        with patch("drift.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
+        from drift.primitives.install_repo import DeployOptions
+        with patch("drift.hooks.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
             deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
@@ -720,7 +720,7 @@ class TestInstallRepo(unittest.TestCase):
         os.symlink(fake_drift_dest, nested_target_symlink)
 
         # Deploy
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
@@ -745,11 +745,11 @@ class TestInstallRepo(unittest.TestCase):
             os.path.abspath(os.path.join(nested_src_dir, "config.json"))
         )
 
-    @patch("drift.install_repo.ensure_dir_exists_with_sudo")
+    @patch("drift.primitives.install_repo.ensure_dir_exists_with_sudo")
     @patch("subprocess.run")
     def test_run_stow_deployment(self, mock_run, mock_ensure_dir) -> None:
         """Verifies that run_stow_deployment builds the correct stow command, ensures target exists, and runs it."""
-        from drift.install_repo import run_stow_deployment
+        from drift.primitives.install_repo import run_stow_deployment
         
         # 1. Test standard stow command without sudo
         run_stow_deployment(
@@ -864,7 +864,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_file2.exists() or system_file2.is_symlink())
 
         # Verify state.toml has registered them in deployed_files
-        from drift.state_registry import load_state_registry
+        from drift.core.state_registry import load_state_registry
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         self.assertEqual(sorted(registry.get_package_deployed_files(pkg)), [Path("file1.txt"), Path("file2.txt")])
@@ -1016,7 +1016,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_install_target_cannot_be_inside_drift_root(self) -> None:
         """Verifies that the installation deployment raises InstallCollisionError if the target directory is inside or equal to drift_root."""
-        from drift.exceptions import InstallCollisionError
+        from drift.core.exceptions import InstallCollisionError
         pkg = "pkg_stow"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -1053,7 +1053,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_run_primitive_6_commit_install_repo(self) -> None:
         """Verifies staging and committing changes within the install state repository (Primitive 6)."""
-        from drift.install_repo import run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_6_commit_install_repo
         import subprocess
 
         # 1. Initialize Git repository inside the install directory
@@ -1150,7 +1150,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Check state.toml
         state_file = os.path.join(self.install_dir, "state.toml")
-        from drift.state_registry import load_state_registry
+        from drift.core.state_registry import load_state_registry
         registry = load_state_registry(Path(state_file))
         self.assertEqual(registry.get_package_state(pkg), "installing")
         self.assertTrue(registry.has_installing_package())
@@ -1172,7 +1172,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Pre-set state to 'installing'
         state_file = os.path.join(self.install_dir, "state.toml")
-        from drift.state_registry import load_state_registry, save_state_registry
+        from drift.core.state_registry import load_state_registry, save_state_registry
         registry = load_state_registry(Path(state_file))
         registry.set_package_state(pkg, "installing")
         save_state_registry(registry)
@@ -1222,14 +1222,14 @@ class TestInstallRepo(unittest.TestCase):
 
         # Verify state in state.toml is registered under 'dot-my_pkg'
         state_file = self.install_dir / "state.toml"
-        from drift.state_registry import load_state_registry
+        from drift.core.state_registry import load_state_registry
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_name), "installed")
 
     def test_skipped_package_not_set_to_installing_state(self) -> None:
         """Verifies that skipped packages (enable_install=False or missing dir) are not set to 'installing' in state.toml."""
-        from drift.install_repo import deploy_one_package
-        from drift.state_registry import load_state_registry
+        from drift.primitives.install_repo import deploy_one_package
+        from drift.core.state_registry import load_state_registry
 
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
@@ -1285,10 +1285,10 @@ class TestInstallRepo(unittest.TestCase):
         shutil.rmtree(pkg_missing_dir)
 
         # Mock config loading to return metadata for missing dir
-        from drift.package_config import PackageConfig
-        from drift.constants import InstallMethod
+        from drift.config.package_config import PackageConfig
+        from drift.core.constants import InstallMethod
         metadata = PackageConfig(name=pkg_missing, install_method=InstallMethod.COPY, target_directory=self.system_target_dir)
-        with patch("drift.install_repo.PackageConfig.from_install_dir", return_value=metadata):
+        with patch("drift.primitives.install_repo.PackageConfig.from_install_dir", return_value=metadata):
             res_missing = deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
@@ -1301,8 +1301,8 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_deploy_executes_hooks_ignored_in_drift_ignore(self) -> None:
         """Verifies that hook scripts listed in .drift_ignore are staged to install/, executed, and not deployed to host."""
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.render_package import render_package
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.render.render_package import render_package
 
         pkg = "pkg_ignored_hook"
         pkg_src = self.source_dir / pkg
@@ -1379,7 +1379,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # 3. Setup system target directory:
         # A. valid_file.txt already points to pkg_install_dir / valid_file.txt (valid stow link)
-        from drift.file_utils import get_relative_path
+        from drift.utils.file_utils import get_relative_path
         system_valid = self.system_target_dir / "valid_file.txt"
         system_valid.symlink_to(get_relative_path(self.system_target_dir, pkg_install_dir / "valid_file.txt"))
 
@@ -1472,7 +1472,7 @@ class TestInstallRepo(unittest.TestCase):
         system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
 
         # Execute partial deployment modifying file_a.txt
-        from drift.stage_repo import PackageStageChanges
+        from drift.primitives.stage_repo import PackageStageChanges
         changes = {pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("file_a.txt")]))}
         res = run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(package_changes=changes))
         self.assertEqual(res.status, "SUCCESS")
@@ -1742,7 +1742,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_find_internal_symlink_conflicts_direct(self) -> None:
         """Directly verifies find_internal_symlink_conflicts helper function."""
-        from drift.ignore import DriftIgnore
+        from drift.core.ignore import DriftIgnore
         pkg = "pkg_find_conflicts"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -1787,7 +1787,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_resolve_single_internal_symlink_conflict_direct(self) -> None:
         """Directly verifies resolve_single_internal_symlink_conflict helper function."""
-        from drift.ignore import DriftIgnore
+        from drift.core.ignore import DriftIgnore
         pkg = "pkg_resolve_conflict"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -1836,7 +1836,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_resolve_single_internal_symlink_conflict_valid_stow_skipped(self) -> None:
         """Verifies that a valid Stow relative symlink pointing to the current package is skipped."""
-        from drift.ignore import DriftIgnore
+        from drift.core.ignore import DriftIgnore
         pkg = "pkg_stow_valid"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -1873,7 +1873,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_target.is_symlink())
         self.assertEqual(len(processed_paths), 0)
 
-    @patch("drift.install_repo.create_symlink_manually_with_sudo")
+    @patch("drift.primitives.install_repo.create_symlink_manually_with_sudo")
     def test_deploy_single_stow_file_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
         """Verifies deploy_single_stow_file skips recreating symlink if target already points to source."""
         pkg = "pkg_stow_skip"
@@ -1963,8 +1963,8 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_reconcile_orphaned_files_with_generators(self) -> None:
         """Verifies reconcile_orphaned_files accepts unmaterialized generator expressions."""
-        from drift.install_repo import reconcile_orphaned_files, PackageInstallContext
-        from drift.ignore import DriftIgnore
+        from drift.primitives.install_repo import reconcile_orphaned_files, PackageInstallContext
+        from drift.core.ignore import DriftIgnore
 
         context = PackageInstallContext(
             pkg_name="pkg_test",
@@ -2275,21 +2275,21 @@ class TestInstallRepo(unittest.TestCase):
 class TestStowVersionDetection(unittest.TestCase):
     """Tests for GNU Stow version retrieval and version checking logic."""
 
-    @patch("drift.install_repo.run_command")
+    @patch("drift.primitives.install_repo.run_command")
     def test_get_stow_version_string_stdout(self, mock_run_command) -> None:
         mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout="stow (GNU Stow) version 2.4.1\n")
         mock_run_command.return_value = mock_res
         version = get_stow_version()
         self.assertEqual(version, "2.4.1")
 
-    @patch("drift.install_repo.run_command")
+    @patch("drift.primitives.install_repo.run_command")
     def test_get_stow_version_bytes_stdout(self, mock_run_command) -> None:
         mock_res = subprocess.CompletedProcess(args=["stow", "--version"], returncode=0, stdout=b"stow (GNU Stow) version 2.3.1\n")
         mock_run_command.return_value = mock_res
         version = get_stow_version()
         self.assertEqual(version, "2.3.1")
 
-    @patch("drift.install_repo.run_command")
+    @patch("drift.primitives.install_repo.run_command")
     def test_get_stow_version_command_fails(self, mock_run_command) -> None:
         mock_run_command.side_effect = FileNotFoundError("No such file or directory: 'stow'")
         version = get_stow_version()

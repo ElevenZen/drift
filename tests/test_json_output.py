@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from drift.cli import main
-from drift.result_models import (
+from drift.core.result_models import (
     SerializableModel,
     NextActionType,
     PackageInstallResult,
@@ -101,7 +101,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
 
         subprocess.run(["git", "init"], cwd=self.drift_root, check=True, capture_output=True)
 
-        from drift.workspace_init import init_drift_workspace
+        from drift.primitives.workspace_init import init_drift_workspace
         init_drift_workspace(Path(self.drift_root), force=True, no_git_root=True)
 
         for d in [self.drift_root, os.path.join(self.drift_root, "render"), os.path.join(self.drift_root, "install")]:

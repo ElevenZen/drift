@@ -1,5 +1,5 @@
 import os
-from drift.constants import set_test_mode
+from drift.core.constants import set_test_mode
 
 # Disable interactive pagers and editors during tests to prevent blocking and pop-up windows.
 os.environ["PAGER"] = "cat"

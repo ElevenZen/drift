@@ -9,20 +9,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.constants import (
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.state_registry import load_state_registry, save_state_registry
-from drift.package_health import (
+from drift.core.state_registry import load_state_registry, save_state_registry
+from drift.primitives.package_health import (
     run_single_package_health_probe,
     run_primitive_health_checks,
 )
-from drift.lifecycle_hooks import HookExecFlags
-from drift.result_models import PackageHealthStatus, HealthResult
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.core.result_models import PackageHealthStatus, HealthResult
 from drift.cli.argparse_backend import run_argparse_cli
 
 
@@ -55,7 +55,7 @@ default_target_directory = "{self.system_target_dir}"
 DEFAULT = true
 """, encoding="utf-8")
 
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
         self.workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
             workspace=WorkspaceSectionConfig(
@@ -229,7 +229,7 @@ exit 0
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "OK"
             mock_run.return_value.stderr = ""
@@ -464,7 +464,7 @@ exit 0
 
     def test_package_stage_enum(self):
         """Verifies PackageStage parsing from various string aliases."""
-        from drift.constants import PackageStage
+        from drift.core.constants import PackageStage
         self.assertEqual(PackageStage.from_str("source"), PackageStage.SOURCE)
         self.assertEqual(PackageStage.from_str("src"), PackageStage.SOURCE)
         self.assertEqual(PackageStage.from_str(PackageStage.SOURCE), PackageStage.SOURCE)

@@ -7,21 +7,21 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from drift.constants import (
+from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     FORBIDDEN_RENDER_ENGINE_SUFFIXES,
 )
-from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
-from drift.render_engine_config import RenderEngineRegistry
-from drift.package_config import PackageConfig, PackageHooks
-from drift.ignore import DriftIgnore
-from drift.render_package import render_package
-from drift.stage_repo import run_primitive_4_stage_render_to_install
-from drift.install_repo import run_primitive_5_install_deployment, DeployOptions
-from drift.exceptions import ConfigError
-from drift.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
+from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+from drift.config.render_engine_config import RenderEngineRegistry
+from drift.config.package_config import PackageConfig, PackageHooks
+from drift.core.ignore import DriftIgnore
+from drift.render.render_package import render_package
+from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+from drift.primitives.install_repo import run_primitive_5_install_deployment, DeployOptions
+from drift.core.exceptions import ConfigError
+from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
 
 class TestDriftHooksIsolation(unittest.TestCase):
@@ -46,7 +46,7 @@ class TestDriftHooksIsolation(unittest.TestCase):
         self.target_dir.mkdir(parents=True)
 
         # Initialize git repositories for render and install
-        from drift.git_utils import git_init_repo
+        from drift.utils.git_utils import git_init_repo
         git_init_repo(self.render_dir, "render")
         git_init_repo(self.install_dir, "install")
 
@@ -428,7 +428,7 @@ name = "pkg_alias"
             self.assertEqual(os.environ["drift_package_src_dir"], str(pkg_src))
 
         # Test PackageHookContext facts
-        from drift.package_hook import PackageHookContext
+        from drift.hooks.package_hook import PackageHookContext
         ctx = PackageHookContext(
             config={},
             package_name="pkg_alias",

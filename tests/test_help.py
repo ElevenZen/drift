@@ -4,7 +4,7 @@ import sys
 from unittest.mock import patch
 
 from drift.cli.help_docs import get_help_page, print_help_document
-from drift.constants import CONFIG_DIR_NAME, SECRETS_ENV_FILE_NAME
+from drift.core.constants import CONFIG_DIR_NAME, SECRETS_ENV_FILE_NAME
 
 
 class TestHelpDocs(unittest.TestCase):

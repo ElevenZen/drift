@@ -5,10 +5,10 @@ import unittest
 import subprocess
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.state_registry import load_state_registry, save_state_registry
-from drift.rollback_repo import run_primitive_8_rollback_recovery
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.core.state_registry import load_state_registry, save_state_registry
+from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
 
 
 class TestRollback(unittest.TestCase):

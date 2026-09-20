@@ -7,12 +7,12 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from drift.constants import DRIFT_INTERNAL_DIR_NAME
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageHooks
-from drift.trigger_hook import run_primitive_trigger_hook
-from drift.lifecycle_hooks import HookExecFlags
-from drift.exceptions import ConfigError
+from drift.core.constants import DRIFT_INTERNAL_DIR_NAME
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageHooks
+from drift.hooks.trigger_hook import run_primitive_trigger_hook
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.core.exceptions import ConfigError
 from drift.cli import main, run_argparse_cli
 
 
@@ -209,22 +209,22 @@ class TestPackageHook(unittest.TestCase):
     def test_execute_hook_skipped_exits_with_hook_skipped_code(self) -> None:
         """Verifies that execute_hook exits with ExitCode.HOOK_SKIPPED (7) when the hook is SKIPPED."""
         from drift.cli.actions import execute_hook
-        from drift.constants import ExitCode
+        from drift.core.constants import ExitCode
         from unittest.mock import patch
         from io import StringIO
-        from drift.result_models import HookResult
+        from drift.core.result_models import HookResult
 
         stdout_buf = StringIO()
         with patch("sys.stdout", stdout_buf), patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config):
             # 1. Skipped hook
-            with patch("drift.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
+            with patch("drift.hooks.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
                 mock_trigger.return_value = HookResult.skipped(package="pkg_a", hook_name="pre_source")
                 with self.assertRaises(SystemExit) as cm:
                     execute_hook(self.drift_root, "pkg_a", "pre_source")
                 self.assertEqual(cm.exception.code, ExitCode.HOOK_SKIPPED)
 
             # 2. Failed hook
-            with patch("drift.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
+            with patch("drift.hooks.trigger_hook.run_primitive_trigger_hook") as mock_trigger:
                 mock_trigger.return_value = HookResult(package="pkg_a", hook_name="pre_source", status="FAILED", exit_code=1, error_message="Fail")
                 with self.assertRaises(SystemExit) as cm:
                     execute_hook(self.drift_root, "pkg_a", "pre_source")
@@ -232,12 +232,12 @@ class TestPackageHook(unittest.TestCase):
 
     def test_trigger_pre_source_hook_return_types(self) -> None:
         """Verifies that trigger_pre_source_hook returns HookResult."""
-        from drift.lifecycle_hooks import (
+        from drift.hooks.lifecycle_hooks import (
             trigger_pre_source_hook,
             execute_hook_script,
             HookExecFlags,
         )
-        from drift.package_config import load_package_config_from_source_dir
+        from drift.config.package_config import load_package_config_from_source_dir
 
         # 1. Successful execution -> status == "SUCCESS", duration_ms >= 0
         res = trigger_pre_source_hook(self.workspace_config, "pkg_hook")
@@ -309,7 +309,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res_direct.status, "SUCCESS")
 
         # 6. PackageHooks no_hooks=True -> status == "SKIPPED"
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         res_pkg_no_hooks = pkg_config.hooks.trigger_pre_source(
             workspace_config=self.workspace_config,
             flags=HookExecFlags(no_hooks=True)
@@ -323,7 +323,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res_pkg_without_render_no_hooks.status, "SKIPPED")
 
     def test_render_package_ensures_hooks_executable(self) -> None:
-        from drift.render_package import render_package
+        from drift.render.render_package import render_package
         if sys.platform == "win32":
             return
 
@@ -344,8 +344,8 @@ class TestPackageHook(unittest.TestCase):
         self.assertTrue(bool(render_hook_file.stat().st_mode & 0o111))
 
     def test_build_hook_execution_command_fallback_and_no_disk_mutation(self) -> None:
-        from drift.lifecycle_hooks import build_hook_execution_command, execute_hook_script
-        from drift.package_config import PackageConfig
+        from drift.hooks.lifecycle_hooks import build_hook_execution_command, execute_hook_script
+        from drift.config.package_config import PackageConfig
         if sys.platform == "win32":
             return
 
@@ -373,8 +373,8 @@ class TestPackageHook(unittest.TestCase):
 
 
     def test_render_package_ensures_templated_hooks_and_executable_templates_are_executable(self) -> None:
-        from drift.render_package import render_package
-        from drift.workspace_config import RenderEngineConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import RenderEngineConfig
         if sys.platform == "win32":
             return
 
@@ -382,7 +382,7 @@ class TestPackageHook(unittest.TestCase):
         input_file.parent.mkdir(parents=True, exist_ok=True)
         input_file.write_text("export FOO=bar\n", encoding="utf-8")
 
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
         self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
@@ -421,8 +421,8 @@ class TestPackageHook(unittest.TestCase):
 
     def test_trigger_pre_source_hook_with_rendering(self) -> None:
         """Verifies that pre_source hook specified as a template file is rendered to render/ before execution."""
-        from drift.lifecycle_hooks import trigger_pre_source_hook
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
         self.workspace_config.render_engine_configs = RenderEngineRegistry({
             "envst": RenderEngineConfig(
@@ -470,7 +470,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_trigger_hook_with_from_stage(self) -> None:
         """Verifies choosing from 'source' vs 'install' stage explicitly."""
-        from drift.constants import PackageStage
+        from drift.core.constants import PackageStage
 
         # 1. from_stage=SOURCE triggers directly from src even without install/ directory for pre_source
         res_source = run_primitive_trigger_hook(
@@ -524,7 +524,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_hook_execution_streaming(self) -> None:
         """Verifies hook streaming outputs to stdout in real time."""
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         (self.drift_hooks_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'LIVE_HOOK_STREAM'\n", encoding="utf-8")
         stdout = StringIO()
         with patch("sys.stdout", stdout):
@@ -539,8 +539,8 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_package_hooks_streaming_forwarding(self) -> None:
         """Verifies that PackageHooks trigger methods accept and forward the streaming parameter and flags."""
-        from drift.package_config import PackageConfig, PackageHooks
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.config.package_config import PackageConfig, PackageHooks
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         hooks = PackageHooks(
             probe=self.drift_root / ".drift/hooks/probe.sh",
             pre_source=self.drift_root / ".drift/hooks/pre_source.sh",
@@ -555,7 +555,7 @@ echo "VALUE=$DYNAMIC_VAL"
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
-        with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
+        with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
             hooks.trigger("pre_install", cwd=self.drift_root, flags=HookExecFlags(streaming=False))
             mock_trigger.assert_called_with(
@@ -566,7 +566,7 @@ echo "VALUE=$DYNAMIC_VAL"
                 flags=HookExecFlags(no_hooks=False, streaming=False, inject_non_interactive_envs=True)
             )
 
-        with patch("drift.lifecycle_hooks.trigger_probe_hook") as mock_probe:
+        with patch("drift.hooks.lifecycle_hooks.trigger_probe_hook") as mock_probe:
             mock_probe.return_value = MagicMock()
             hooks.trigger_probe(workspace_config=self.workspace_config, flags=HookExecFlags(streaming=False))
             mock_probe.assert_called_with(
@@ -607,7 +607,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_hook_exec_flags_dataclass_and_resolve(self) -> None:
         """Verifies HookExecFlags dataclass creation, defaults, and resolve classmethod."""
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.hooks.lifecycle_hooks import HookExecFlags
 
         # 1. Defaults
         flags = HookExecFlags()
@@ -643,7 +643,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_hook_load_envs_flag(self) -> None:
         """Verifies load_envs flag in HookExecFlags controls loading package_envs context."""
-        from drift.lifecycle_hooks import (
+        from drift.hooks.lifecycle_hooks import (
             HookExecFlags,
             trigger_pre_source_hook,
         )
@@ -690,8 +690,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_hook_non_interactive_envs_flag_disabled(self) -> None:
         """Verifies that setting inject_non_interactive_envs=False suppresses external non-interactive envs while preserving common Drift hook envs."""
-        from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
-        from drift.package_config import PackageConfig
+        from drift.hooks.lifecycle_hooks import HookExecFlags, execute_hook_script
+        from drift.config.package_config import PackageConfig
 
         (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
@@ -731,8 +731,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_hook_exec_flags_resolve_with_settings(self) -> None:
         """Verifies that HookExecFlags.resolve correctly respects SettingsConfig defaults."""
-        from drift.lifecycle_hooks import HookExecFlags, trigger_package_hook_with_render
-        from drift.workspace_config import SettingsConfig, WorkspaceConfig
+        from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_package_hook_with_render
+        from drift.config.workspace_config import SettingsConfig, WorkspaceConfig
 
         # 1. No flags, no settings -> defaults to True
         f1 = HookExecFlags.resolve()
@@ -786,7 +786,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
 
-        with patch("drift.lifecycle_hooks.trigger_package_hook") as mock_trigger:
+        with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
 
             # 1. trigger_pre_install without explicit cwd defaults to pre_install.parent
@@ -869,12 +869,12 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_hook_raise_on_error_flag(self) -> None:
         """Verifies raise_on_error in HookExecFlags controls exception raising vs returning FAILED HookResult."""
-        from drift.lifecycle_hooks import (
+        from drift.hooks.lifecycle_hooks import (
             HookExecFlags,
             execute_hook_script,
             trigger_probe_hook,
         )
-        from drift.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig
 
         failing_script = self.drift_hooks_dir / "fail.sh"
         failing_script.write_text("#!/bin/sh\necho 'error details' >&2\nexit 42\n", encoding="utf-8")
@@ -922,8 +922,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_rollback_on_failure_parsing_and_validation(self) -> None:
         """Verifies parsing and validation for rollback_on_failure in PackageHooks."""
-        from drift.package_config import PackageHooks
-        from drift.exceptions import ConfigError
+        from drift.config.package_config import PackageHooks
+        from drift.core.exceptions import ConfigError
 
         # 1. Default is True
         h_default = PackageHooks.from_dict({})
@@ -961,9 +961,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_execute_hook_script_raises_hook_execution_error_with_rollback_flag(self) -> None:
         """Verifies execute_hook_script raises HookExecutionError with requires_rollback matching config."""
-        from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
-        from drift.package_config import PackageConfig, PackageHooks
-        from drift.exceptions import HookExecutionError
+        from drift.hooks.lifecycle_hooks import HookExecFlags, execute_hook_script
+        from drift.config.package_config import PackageConfig, PackageHooks
+        from drift.core.exceptions import HookExecutionError
 
         failing_script = self.drift_hooks_dir / "fail.sh"
         failing_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
@@ -1005,8 +1005,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_from_dict_without_base_dir_when_no_relative_hooks(self) -> None:
         """Verifies that base_dir or workspace_config is not required when no relative hooks are configured."""
-        from drift.package_config import PackageConfig, PackageHooks, DEFAULT_HOOK_TIMEOUT
-        from drift.exceptions import ConfigError
+        from drift.config.package_config import PackageConfig, PackageHooks, DEFAULT_HOOK_TIMEOUT
+        from drift.core.exceptions import ConfigError
 
         # 1. Empty hooks dict requires no base_dir
         hooks_empty = PackageHooks.from_dict({})
@@ -1048,8 +1048,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_external_shared_hook_trigger_with_render(self) -> None:
         """Verifies that an external hook outside the package directory is executed directly without rendering."""
-        from drift.lifecycle_hooks import trigger_pre_source_hook, trigger_package_hook_with_render
-        from drift.trigger_hook import run_primitive_trigger_hook
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook, trigger_package_hook_with_render
+        from drift.hooks.trigger_hook import run_primitive_trigger_hook
 
         # Create a shared script outside package directory
         common_dir = self.drift_root / "common_scripts"
@@ -1161,7 +1161,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_inside_source_absolute_path_trigger(self) -> None:
         """Verifies that an absolute hook path inside source dir is normalized, rendered, and executed properly."""
-        from drift.lifecycle_hooks import trigger_pre_source_hook
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
 
         abs_hook = (self.src_pkg_dir / "drift_hooks" / "pre_source.sh").resolve()
         (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -1184,7 +1184,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_hook_environment_constants(self) -> None:
         """Verifies definition and separation of hook environment constants."""
-        from drift.constants import (
+        from drift.core.constants import (
             DEFAULT_HOOK_COMMON_ENVS,
             DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
             DEFAULT_HOOK_NON_INTERACTIVE_ENVS,

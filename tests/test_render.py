@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typing import cast, Any, List, Tuple, Union
 
-from drift.constants import (
+from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
@@ -19,15 +19,15 @@ from drift.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
-from drift.render_engine_config import RenderEngineRegistry
-from drift.render_core import render_template, render_template_to_file, RenderError
-from drift.render_input import (
+from drift.config.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.render_engine_config import RenderEngineRegistry
+from drift.render.render_core import render_template, render_template_to_file, RenderError
+from drift.render.render_input import (
     resolve_dependencies,
     check_cyclic_dependencies,
     render_input_templates,
 )
-from drift.toml_utils import parse_toml
+from drift.utils.toml_utils import parse_toml
 
 
 class TestRenderEngine(unittest.TestCase):
@@ -44,8 +44,8 @@ class TestRenderEngine(unittest.TestCase):
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
-        from drift.workspace_config import load_workspace_config
-        from drift.render_core import render_template
+        from drift.config.workspace_config import load_workspace_config
+        from drift.render.render_core import render_template
 
         # Create config directory and files
         config_dir = self.drift_root / "config"
@@ -477,7 +477,7 @@ class TestDependencyResolver(unittest.TestCase):
         })
 
         # 1. Resolve and check dependencies
-        from drift.render_input import resolve_dependencies
+        from drift.render.render_input import resolve_dependencies
         dep_map = resolve_dependencies(engines)
 
         # Assert correct 1-to-1 dependency resolution mapping
@@ -591,8 +591,8 @@ class TestRenderPackage(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_render_package_success_static_config(self) -> None:
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -653,8 +653,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_disabled(self) -> None:
         """Verifies that enable_render=False copies all files as static assets without template engine compilation."""
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
@@ -701,8 +701,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_with_empty_directories(self) -> None:
         """Verifies that empty directories in source packages are created in render/ without raising IsADirectoryError."""
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
@@ -750,8 +750,8 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((render_pkg_dir / "regular_file.txt").is_file())
 
     def test_render_package_templated_config_package_toml(self) -> None:
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -788,8 +788,8 @@ class TestRenderPackage(unittest.TestCase):
         self.assertIn("not found", str(ctx.exception))
 
     def test_render_package_templated_config_drift_package_toml(self) -> None:
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -837,8 +837,8 @@ class TestRenderPackage(unittest.TestCase):
         self.assertFalse((render_pkg_dir / "drift_package.envst.toml").exists())
 
     def test_render_all_packages(self) -> None:
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.config.workspace_config import WorkspaceConfig
 
         drift_root = self.drift_root
 
@@ -879,8 +879,8 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue((drift_root / "render" / "pkg_c" / "file.txt").is_file())
 
     def test_run_primitive_3_commit_render_repo(self) -> None:
-        from drift.render_package import run_primitive_3_commit_render_repo
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import run_primitive_3_commit_render_repo
+        from drift.config.workspace_config import WorkspaceConfig
         import subprocess
 
         drift_root = self.drift_root
@@ -947,8 +947,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_and_commit_multiple_packages(self) -> None:
         """Verifies rendering and committing multiple packages specifically."""
-        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.config.workspace_config import WorkspaceConfig
         import subprocess
 
         drift_root = self.drift_root
@@ -999,8 +999,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_engine_input_dependency(self) -> None:
         """Verifies that engine input templates are rendered before package rendering."""
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -1131,8 +1131,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_name_starts_with_dot_dash(self) -> None:
         """Verifies that rendering a package whose name starts with 'dot-' preserves the name exactly."""
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig
 
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
@@ -1163,8 +1163,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_skips_raw_hidden_files(self) -> None:
         """Verifies that render_package skips raw hidden files (starting with '.') except for .drift_ignore."""
-        from drift.render_package import render_package
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig
 
         # Setup WorkspaceConfig
         workspace_config = WorkspaceConfig(
@@ -1195,10 +1195,10 @@ class TestRenderPackage(unittest.TestCase):
             f.write("normal content")
 
         # Setup logger spy to verify print info
-        from drift.constants import set_test_mode
+        from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.render_package", level="INFO") as log_capture:
+            with self.assertLogs("drift.render.render_package", level="INFO") as log_capture:
                 render_package(workspace_config, pkg_dir)
         finally:
             set_test_mode(True, enable_logging=False)
@@ -1220,7 +1220,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue(any("Skipping hidden file" in log_msg for log_msg in log_capture.output))
 
     def test_secrets_env_load_and_unload_helpers(self) -> None:
-        from drift.workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
+        from drift.config.workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
 
         # Setup temporary secrets.env file
         config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1263,8 +1263,8 @@ class TestRenderPackage(unittest.TestCase):
         os.environ.pop("PRE_EXISTING_SECRET", None)
 
     def test_run_primitive_2_renders_package_with_secrets(self) -> None:
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.workspace_config import WorkspaceConfig
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.config.workspace_config import WorkspaceConfig
 
         # Setup config
         config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1351,7 +1351,7 @@ class TestRenderPackage(unittest.TestCase):
             drift_root=self.drift_root,
         )
 
-        from drift.render_package import run_primitive_2_render_packages
+        from drift.render.render_package import run_primitive_2_render_packages
         run_primitive_2_render_packages(workspace_config, ["pkg_dynamic"])
 
         # Check that the dynamic file was created in src by the hook and then copied/rendered into render
@@ -1392,8 +1392,8 @@ class TestRenderPackage(unittest.TestCase):
             drift_root=self.drift_root,
         )
 
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         res = run_primitive_2_render_packages(
             workspace_config, ["pkg_failing_hook"], flags=HookExecFlags(streaming=False)
         )
@@ -1438,7 +1438,7 @@ class TestRenderPackage(unittest.TestCase):
             encoding="utf-8"
         )
 
-        from drift.render_package import run_primitive_2_render_packages
+        from drift.render.render_package import run_primitive_2_render_packages
         run_primitive_2_render_packages(workspace_config, ["pkg_env_test"])
 
         rendered_output = self.drift_root / "render" / "pkg_env_test" / "config.json"
@@ -1495,8 +1495,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_primitive_2_partial_failure_proceeds_with_other_packages(self) -> None:
         """Tests that Primitive 2 continues rendering remaining packages when one package fails, and returns FAILED status."""
-        from drift.workspace_config import WorkspaceConfig
-        from drift.render_package import run_primitive_2_render_packages
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.render.render_package import run_primitive_2_render_packages
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1537,7 +1537,7 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_pre_source_hook_static_in_src_copied_and_executed_with_src_cwd(self) -> None:
         """Verifies that a static pre_source hook located inside src/ is copied into render/ before executing with cwd=src/."""
-        from drift.lifecycle_hooks import trigger_pre_source_hook
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1586,7 +1586,7 @@ echo "STATIC_PRE_SOURCE_RAN" > generated_static_file.txt
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
-        from drift.lifecycle_hooks import trigger_pre_source_hook
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
 
         # Setup workspace config with envsubst engine
         config_dir = self.drift_root / "config"
@@ -1644,8 +1644,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertEqual(created_file.read_text(encoding="utf-8").strip(), "CREATED_BY_pkg_hook")
 
     def test_python_envsubst_direct(self) -> None:
-        from drift.render_core import python_envsubst
-        from drift.exceptions import RenderError, ConfigError
+        from drift.render.render_core import python_envsubst
+        from drift.core.exceptions import RenderError, ConfigError
 
         # Valid substitutions with custom env dict
         env = {"USER": "alice", "APP_PORT": "8080"}
@@ -1667,7 +1667,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertIn("Environment variable '$NOT_SET_VAR' referenced in template was not found", str(ctx.exception))
 
     def test_render_template_envsubst_internal_fallback(self) -> None:
-        from drift.render_core import render_template
+        from drift.render.render_core import render_template
 
         template_path = self.drift_root / "template.envst.txt"
         template_path.write_text("Value: ${FALLBACK_VAR}", encoding="utf-8")
@@ -1702,7 +1702,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_template_internal_var_engine(self) -> None:
         """Verifies an internal render engine (e.g. [render.var] with render_command='internal')."""
-        from drift.render_core import render_template
+        from drift.render.render_core import render_template
 
         template_path = self.drift_root / "config.var.toml"
         template_path.write_text("""
@@ -1729,8 +1729,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_rendered_file_preserves_template_permissions(self) -> None:
         """Verifies that rendered files preserve the exact file permissions (modes) of their template files."""
-        from drift.render_core import render_template_to_file
-        from drift.render_package import render_or_copy_file, render_package_files
+        from drift.render.render_core import render_template_to_file
+        from drift.render.render_package import render_or_copy_file, render_package_files
 
         template_script = self.drift_root / "test_exec.sh.envst"
         template_script.write_text("#!/bin/sh\necho '$GREETING'\n", encoding="utf-8")
@@ -1758,8 +1758,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_no_hooks_bypasses_pre_source_and_post_render_hooks(self) -> None:
         """Verifies that no_hooks=True completely bypasses pre_source and post_render hook execution."""
-        from drift.lifecycle_hooks import trigger_pre_source_hook
-        from drift.render_package import render_package
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
+        from drift.render.render_package import render_package
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1789,7 +1789,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         (scripts_dir / "fail_post.sh").chmod(0o755)
 
         # 1. Direct hook functions with no_hooks=True should return without error
-        from drift.lifecycle_hooks import HookExecFlags
+        from drift.hooks.lifecycle_hooks import HookExecFlags
         trigger_pre_source_hook(
             workspace_config=workspace_config,
             package_name="pkg_hooks_bypass",
@@ -1802,7 +1802,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_package_with_subfolder_source_directory(self) -> None:
         """Verifies that only files inside package source_directory subfolder are rendered."""
-        from drift.render_package import render_package
+        from drift.render.render_package import render_package
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1844,7 +1844,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_package_with_missing_source_directory_raises_file_not_found(self) -> None:
         """Verifies that a non-existent source_directory raises FileNotFoundError."""
-        from drift.render_package import render_package
+        from drift.render.render_package import render_package
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1867,8 +1867,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_template_to_drift_ignore_raises_config_error(self) -> None:
         """Verifies that templates attempting to render to .drift_ignore raise ConfigError."""
-        from drift.render_package import render_package
-        from drift.exceptions import ConfigError
+        from drift.render.render_package import render_package
+        from drift.core.exceptions import ConfigError
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1902,7 +1902,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_package_config_template_renders_with_drift_package_name_and_host_facts(self) -> None:
         """Verifies drift_package_name and host facts ($drift_os) are available when rendering drift_package.envst.toml."""
-        from drift.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1953,8 +1953,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_collision_template_and_template_raises_error(self) -> None:
         """Verifies that multiple templates targeting the same destination raise RenderCollisionError."""
-        from drift.exceptions import RenderCollisionError
-        from drift.render_package import render_package
+        from drift.core.exceptions import RenderCollisionError
+        from drift.render.render_package import render_package
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -1997,8 +1997,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_collision_static_and_template_raises_error(self) -> None:
         """Verifies that a static file and a template targeting the same destination raise RenderCollisionError."""
-        from drift.exceptions import RenderCollisionError
-        from drift.render_package import render_package
+        from drift.core.exceptions import RenderCollisionError
+        from drift.render.render_package import render_package
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -2033,8 +2033,8 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_render_collision_drift_hooks_raises_error(self) -> None:
         """Verifies that duplicate hook scripts in drift_hooks/ raise RenderCollisionError."""
-        from drift.exceptions import RenderCollisionError
-        from drift.render_package import render_package
+        from drift.core.exceptions import RenderCollisionError
+        from drift.render.render_package import render_package
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)
@@ -2069,7 +2069,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
     def test_run_primitive_2_render_packages_handles_collision(self) -> None:
         """Verifies that run_primitive_2_render_packages catches RenderCollisionError and reports FAILED."""
-        from drift.render_package import run_primitive_2_render_packages
+        from drift.render.render_package import run_primitive_2_render_packages
 
         config_dir = self.drift_root / "config"
         config_dir.mkdir(parents=True, exist_ok=True)

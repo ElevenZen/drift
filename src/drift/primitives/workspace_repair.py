@@ -1,0 +1,592 @@
+"""Feature implementation for repairing a damaged or partially-initialized drift workspace.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Repair Pipeline Flow:
+    repair_drift_workspace(drift_root, dry_run) [Layer 3: Pipeline Orchestration]
+        │
+        ├── [Step 1: Workspace Config (Fail-Fast Foundation)] [Layer 1]
+        │   └── repair_workspace_config(drift_root, dry_run) -> (actions, WorkspaceConfig)
+        │       ├── Migrates legacy filenames (drift.toml -> drift_workspace.toml)
+        │       ├── Generates default configuration if missing
+        │       ├── Validates & loads WorkspaceConfig (raises ConfigError immediately if broken)
+        │
+        └── [Step 2: Component Repair Steps (Require WorkspaceConfig)] [Layer 2]
+            ├── repair_core_directories(drift_root, workspace_config, dry_run)
+            ├── repair_gitignore(drift_root, workspace_config, dry_run)
+            ├── repair_render_repo(drift_root, workspace_config, dry_run)
+            ├── repair_install_repo(drift_root, workspace_config, dry_run)
+            ├── repair_internal_gitignores(drift_root, workspace_config, dry_run)
+            ├── repair_install_stow_ignore(drift_root, workspace_config, dry_run)
+            ├── repair_state_registry(drift_root, workspace_config, dry_run)
+            ├── repair_secrets_env(drift_root, workspace_config, dry_run)
+            ├── repair_engine_inputs(drift_root, workspace_config, dry_run)
+            └── repair_package_metadata_structure(drift_root, workspace_config, dry_run)
+
+Result Formatting:
+    build_repair_result(report, actions, dry_run) [Layer 3: Pipeline Orchestration]
+
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Foundation Config Repair (Step 1 - Fail Fast)
+        repair_workspace_config
+    Layer 2: Downstream Component Repair Handlers (Step 2 - Require WorkspaceConfig)
+        repair_core_directories
+        repair_gitignore
+        repair_render_repo
+        repair_install_repo
+        repair_internal_gitignores
+        repair_install_stow_ignore
+        repair_state_registry
+        repair_secrets_env
+        repair_engine_inputs
+        repair_package_metadata_structure
+    Layer 3: Pipeline Orchestration & Reporting
+        repair_drift_workspace
+        build_repair_result
+===============================================================================
+"""
+
+import logging
+from pathlib import Path
+from typing import List, Iterable, Tuple
+
+from ..core.constants import (
+    add_envst_path,
+    add_envst_str,
+    CONFIG_DIR_NAME,
+    WORKSPACE_CONFIG_FILE_NAME,
+    WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+    SECRETS_ENV_FILE_NAME,
+    STATE_REGISTRY_FILE_NAME,
+    STOW_LOCAL_IGNORE_FILE_NAME,
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    get_default_drift_workspace_toml_content,
+    DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
+    get_default_secrets_env_content,
+    get_default_envsubst_content,
+    get_default_mustache_content,
+    get_default_jinja2_content,
+    get_default_internal_gitignore_content,
+    DEFAULT_ROOT_GITIGNORE_ENTRIES,
+    DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
+)
+from ..core.ignore import get_default_install_stow_ignore_content
+from .workspace_check import (
+    ComponentStatus,
+    WorkspaceHealthReport,
+    check_root_gitignore,
+    check_render_repo,
+    check_install_repo,
+    check_render_gitignore,
+    check_install_gitignore,
+    check_install_stow_ignore,
+    check_state_registry,
+    check_workspace_config,
+    check_package_metadata_structure,
+)
+from ..utils.git_utils import (
+    git_init_repo,
+    append_to_gitignore,
+    commit_repo_changes,
+    is_git_tracked,
+)
+from ..core.exceptions import ConfigError
+from ..config.workspace_config import WorkspaceConfig, load_workspace_config
+from ..utils.toml_utils import parse_toml
+
+logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# Layer 1: Foundation Config Repair (Step 1 - Fail Fast)
+# =====================================================================
+
+def repair_workspace_config(
+    drift_root: Path,
+    dry_run: bool = False,
+) -> Tuple[List[str], WorkspaceConfig]:
+    """Repairs workspace configuration, renaming legacy config files or generating default if missing.
+
+    Returns:
+        A tuple of (actions_list, loaded_workspace_config).
+
+    Raises:
+        ConfigError: If workspace configuration is invalid and cannot be repaired/loaded.
+    """
+    actions: List[str] = []
+    config_dir = drift_root / CONFIG_DIR_NAME
+    config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+    local_config_file = config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME
+
+    # 1. Detect and rename legacy workspace configuration files in config/
+    legacy_mappings = [
+        ("drift.toml", WORKSPACE_CONFIG_FILE_NAME),
+        ("drift.local.toml", WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+        ("drift.envst.toml", add_envst_str(WORKSPACE_CONFIG_FILE_NAME)),
+        ("drift.local.envst.toml", add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME)),
+    ]
+
+    # in dry-run mode, we cannot rename file, so we need to load legacy config files if they exist.
+    use_legacy_main = False
+    use_legacy_local = False
+
+    for old_name, new_name in legacy_mappings:
+        old_path = config_dir / old_name
+        if not old_path.is_file():
+            continue
+        target_path = config_dir / new_name
+        if target_path.exists():
+            raise ConfigError(
+                f"Cannot migrate legacy file '{CONFIG_DIR_NAME}/{old_name}': "
+                f"Target configuration file '{CONFIG_DIR_NAME}/{new_name}' already exists. "
+                f"Please manually inspect, merge, and remove '{CONFIG_DIR_NAME}/{old_name}'."
+            )
+        actions.append(f"Renamed legacy workspace configuration file '{CONFIG_DIR_NAME}/{old_name}' to '{CONFIG_DIR_NAME}/{new_name}'.")
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            old_path.rename(target_path)
+        else:
+            if old_name in ('drift.toml', add_envst_str('drift.toml')):
+                use_legacy_main = True
+            else:
+                use_legacy_local = True
+
+    # 2. Check if main workspace configuration needs to be generated or inspected
+    config_res = check_workspace_config(drift_root)
+    if config_res.status == ComponentStatus.NOT_FOUND:
+        # check_workspace_config will return BROKEN if legacy main exists.
+        actions.append(f"Generated default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file.write_text(get_default_drift_workspace_toml_content(), encoding="utf-8")
+    elif config_res.status == ComponentStatus.BROKEN and not use_legacy_main:
+        raise ConfigError(
+            f"Workspace configuration at '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}' is invalid ({config_res.details}). "
+            f"Manual inspection required."
+        )
+
+    # 3. Check and restore drift_workspace.local.toml template if missing
+    local_config_files = [
+        local_config_file,
+        config_dir / add_envst_str(WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+    ]
+    local_config_occupied = any(f.exists() for f in local_config_files)
+    if not local_config_occupied and not use_legacy_local:
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
+        actions.append(f"Generated '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_LOCAL_FILE_NAME}' template.")
+
+    # 4. Load and validate WorkspaceConfig
+    load_config_from = [
+            config_dir / ('drift.toml' if use_legacy_main else WORKSPACE_CONFIG_FILE_NAME),
+            config_dir / ('drift.local.toml' if use_legacy_local else WORKSPACE_CONFIG_LOCAL_FILE_NAME),
+    ]
+    try:
+        if dry_run and not any(p.exists() or add_envst_path(p).exists() for p in load_config_from):
+            ws_config = WorkspaceConfig.from_dict(
+                parse_toml(get_default_drift_workspace_toml_content()),
+                drift_root=drift_root
+            )
+        else:
+            ws_config = load_workspace_config(drift_root, check_legacy=False, config_files_override=load_config_from)
+    except Exception as e:
+        raise ConfigError(f"Failed to load workspace configuration during repair: {e}") from e
+
+    return actions, ws_config
+
+
+# =====================================================================
+# Layer 2: Downstream Component Repair Handlers (Step 2 - Require WorkspaceConfig)
+# =====================================================================
+
+def repair_core_directories(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs core workspace directories (src/ and config/)."""
+    actions: List[str] = []
+    src_dir = workspace_config.source_path
+    config_dir = drift_root / CONFIG_DIR_NAME
+
+    if not src_dir.exists():
+        actions.append("Created missing 'src/' directory." if src_dir == drift_root / "src" else f"Created missing '{src_dir.name}/' directory.")
+        if not dry_run:
+            src_dir.mkdir(parents=True, exist_ok=True)
+
+    if not config_dir.exists():
+        actions.append(f"Created missing '{CONFIG_DIR_NAME}/' directory.")
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+
+    return actions
+
+
+def repair_gitignore(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs root .gitignore rules."""
+    actions: List[str] = []
+    gitignore_res = check_root_gitignore(drift_root, workspace_config=workspace_config)
+    if gitignore_res.status != ComponentStatus.GOOD:
+        actions.append("Updated '.gitignore' with required workspace isolation entries.")
+        if not dry_run:
+            rules = [
+                f"{workspace_config.render_path.name}/",
+                f"{workspace_config.install_path.name}/",
+            ]
+            for entry in DEFAULT_ROOT_GITIGNORE_ENTRIES:
+                if entry not in ("render/", "install/"):
+                    rules.append(entry)
+            append_to_gitignore(drift_root, rules)
+    return actions
+
+
+def repair_render_repo(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs the render/ sandbox Git repository."""
+    actions: List[str] = []
+    render_res = check_render_repo(drift_root, workspace_config=workspace_config)
+    render_dir = workspace_config.render_path
+
+    if render_res.status == ComponentStatus.GOOD:
+        return actions
+
+    if render_dir.exists() and not render_dir.is_dir():
+        actions.append(f"⚠️ Error: '{render_dir.name}' exists as a regular file. Expected a directory.")
+        return actions
+
+    git_dir = render_dir / ".git"
+    if not git_dir.exists():
+        actions.append(f"Initialized '{render_dir.name}/' sandbox Git repository.")
+        if not dry_run:
+            git_init_repo(render_dir, "render")
+    else:
+        actions.append(f"⚠️ Error in '{render_dir.name}/' Git repository: {render_res.details}. Manual resolution required.")
+
+    return actions
+
+
+def repair_install_repo(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs the install/ local state Git repository."""
+    actions: List[str] = []
+    install_res = check_install_repo(drift_root, workspace_config=workspace_config)
+    install_dir = workspace_config.install_path
+
+    if install_res.status == ComponentStatus.GOOD:
+        return actions
+
+    if install_dir.exists() and not install_dir.is_dir():
+        actions.append(f"⚠️ Error: '{install_dir.name}' exists as a regular file. Expected a directory.")
+        return actions
+
+    git_dir = install_dir / ".git"
+    if not git_dir.exists():
+        actions.append(f"Initialized '{install_dir.name}/' local state Git repository.")
+        if not dry_run:
+            git_init_repo(install_dir, "install")
+    else:
+        actions.append(f"⚠️ Error in '{install_dir.name}/' Git repository: {install_res.details}. Manual resolution required.")
+
+    return actions
+
+
+def repair_internal_gitignores(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs .gitignore files inside render/ and install/ internal repositories."""
+    actions: List[str] = []
+    render_dir = workspace_config.render_path
+    install_dir = workspace_config.install_path
+
+    render_check = check_render_gitignore(drift_root, workspace_config=workspace_config)
+    if render_check.status != ComponentStatus.GOOD and render_dir.exists() and render_dir.is_dir():
+        if render_check.status == ComponentStatus.NOT_FOUND:
+            actions.append(f"Restored '{render_dir.name}/.gitignore'.")
+            if not dry_run:
+                (render_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        else:
+            actions.append(f"Updated '{render_dir.name}/.gitignore' with missing ignore rules.")
+            if not dry_run:
+                append_to_gitignore(render_dir, list(DEFAULT_INTERNAL_GITIGNORE_ENTRIES))
+
+    install_check = check_install_gitignore(drift_root, workspace_config=workspace_config)
+    if install_check.status != ComponentStatus.GOOD and install_dir.exists() and install_dir.is_dir():
+        if install_check.status == ComponentStatus.NOT_FOUND:
+            actions.append(f"Restored '{install_dir.name}/.gitignore'.")
+            if not dry_run:
+                (install_dir / ".gitignore").write_text(get_default_internal_gitignore_content(), encoding="utf-8")
+        else:
+            actions.append(f"Updated '{install_dir.name}/.gitignore' with missing ignore rules.")
+            if not dry_run:
+                append_to_gitignore(install_dir, list(DEFAULT_INTERNAL_GITIGNORE_ENTRIES))
+
+    return actions
+
+
+def repair_install_stow_ignore(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs install/.stow-local-ignore configuration."""
+    actions: List[str] = []
+    stow_ignore_res = check_install_stow_ignore(drift_root, workspace_config=workspace_config)
+    install_dir = workspace_config.install_path
+    stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
+
+    if stow_ignore_res.status != ComponentStatus.GOOD:
+        actions.append(f"Restored '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}'.")
+        if not dry_run:
+            install_dir.mkdir(parents=True, exist_ok=True)
+            stow_ignore_path.write_text(get_default_install_stow_ignore_content(), encoding="utf-8")
+    return actions
+
+
+def repair_state_registry(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs install/state.toml registry database."""
+    actions: List[str] = []
+    state_res = check_state_registry(drift_root, workspace_config=workspace_config)
+    install_dir = workspace_config.install_path
+    state_file = install_dir / STATE_REGISTRY_FILE_NAME
+
+    if state_res.status != ComponentStatus.GOOD:
+        actions.append(f"Restored '{install_dir.name}/{STATE_REGISTRY_FILE_NAME}' registry database.")
+        if not dry_run:
+            install_dir.mkdir(parents=True, exist_ok=True)
+            state_file.write_text("[packages]\n", encoding="utf-8")
+    return actions
+
+
+def repair_secrets_env(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs config/secrets.env template if missing."""
+    actions: List[str] = []
+    config_dir = drift_root / CONFIG_DIR_NAME
+    secrets_file = config_dir / SECRETS_ENV_FILE_NAME
+
+    if not secrets_file.exists():
+        actions.append(f"Generated '{CONFIG_DIR_NAME}/{SECRETS_ENV_FILE_NAME}' template.")
+        if not dry_run:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            secrets_file.write_text(get_default_secrets_env_content(), encoding="utf-8")
+    return actions
+
+
+def repair_engine_inputs(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs configured render engine input files."""
+    actions: List[str] = []
+    config_dir = drift_root / CONFIG_DIR_NAME
+
+    configured_engines = list(workspace_config.render_engine_configs.values())
+    for engine in configured_engines:
+        if engine.is_disabled:
+            actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
+            continue
+        input_path = config_dir / engine.input_file
+
+        if input_path.exists():
+            continue
+
+        filename = input_path.name
+        if filename == "envsubst.bash":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/envsubst.bash'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_envsubst_content(), encoding="utf-8")
+        elif filename == "mustache.envst.json":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/mustache.envst.json'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_mustache_content(), encoding="utf-8")
+        elif filename == "jinja2.mustache.json":
+            actions.append(f"Created default '{CONFIG_DIR_NAME}/jinja2.mustache.json'.")
+            if not dry_run:
+                config_dir.mkdir(parents=True, exist_ok=True)
+                input_path.write_text(get_default_jinja2_content(), encoding="utf-8")
+        else:
+            actions.append(f"⚠️ Warning: Missing custom engine input file '{engine.input_file}'. Manual creation required.")
+
+    return actions
+
+
+def migrate_single_package_metadata(
+    repo_dir: Path,
+    pkg_dir: Path,
+    dry_run: bool = False,
+) -> Tuple[List[str], bool]:
+    """Migrates legacy metadata files for a single package into its .drift/ subdirectory.
+
+    Returns:
+        A tuple of (actions_list, was_migrated_bool).
+    """
+    actions: List[str] = []
+    migrated = False
+
+    # Check for forbidden local override file
+    local_config_root = pkg_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
+    local_config_internal = pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
+    if local_config_root.exists() or local_config_internal.exists():
+        found_file = local_config_root if local_config_root.exists() else local_config_internal
+        raise ConfigError(
+            f"Forbidden local configuration file '{found_file.name}' detected in '{repo_dir.name}/{pkg_dir.name}'. "
+            f"Local package overrides are only allowed in source packages ('src/')."
+        )
+
+    legacy_files = (
+        PACKAGE_CONFIG_FILE_NAME,
+        DRIFT_IGNORE_FILE_NAME,
+    )
+    dot_drift_dir = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+
+    for filename in legacy_files:
+        legacy_file = pkg_dir / filename
+        if not legacy_file.is_file():
+            continue
+        target_file = dot_drift_dir / filename
+        if target_file.exists():
+            raise ConfigError(
+                f"Cannot migrate legacy file '{repo_dir.name}/{pkg_dir.name}/{filename}': "
+                f"Target '{repo_dir.name}/{pkg_dir.name}/{DRIFT_INTERNAL_DIR_NAME}/{filename}' already exists. "
+                f"Please manually inspect and merge."
+            )
+        actions.append(
+            f"Migrated legacy metadata '{repo_dir.name}/{pkg_dir.name}/{filename}' to "
+            f"'{repo_dir.name}/{pkg_dir.name}/{DRIFT_INTERNAL_DIR_NAME}/{filename}'."
+        )
+        if not dry_run:
+            dot_drift_dir.mkdir(parents=True, exist_ok=True)
+            legacy_file.rename(target_file)
+            migrated = True
+
+    return actions, migrated
+
+
+def repair_repo_package_metadata(
+    repo_dir: Path,
+    dry_run: bool = False,
+) -> List[str]:
+    """Migrates legacy package metadata across all packages in a repo directory (render/ or install/)."""
+    if not repo_dir.exists() or not repo_dir.is_dir():
+        return []
+
+    actions: List[str] = []
+    migrated_pkgs: List[str] = []
+
+    for pkg_dir in sorted(repo_dir.iterdir()):
+        if not pkg_dir.is_dir() or pkg_dir.name.startswith("."):
+            continue
+        pkg_actions, was_migrated = migrate_single_package_metadata(repo_dir, pkg_dir, dry_run=dry_run)
+        actions.extend(pkg_actions)
+        if was_migrated:
+            migrated_pkgs.append(pkg_dir.name)
+
+    if not dry_run and migrated_pkgs and is_git_tracked(repo_dir):
+        try:
+            commit_repo_changes(
+                repo_dir,
+                f"refactor(drift): migrate package metadata into {DRIFT_INTERNAL_DIR_NAME}/ for {', '.join(sorted(migrated_pkgs))}",
+                target_pkgs=migrated_pkgs,
+                repo_name=repo_dir.name,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to commit metadata migration in {repo_dir.name}: {e}")
+
+    return actions
+
+
+def repair_package_metadata_structure(
+    drift_root: Path,
+    workspace_config: WorkspaceConfig,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs package metadata structure by migrating root metadata files in render/ and install/ into .drift/."""
+    actions: List[str] = []
+    actions.extend(repair_repo_package_metadata(workspace_config.render_path, dry_run=dry_run))
+    actions.extend(repair_repo_package_metadata(workspace_config.install_path, dry_run=dry_run))
+    return actions
+
+
+# =====================================================================
+# Layer 3: Pipeline Orchestration & Reporting
+# =====================================================================
+
+def repair_drift_workspace(
+    drift_root: Path,
+    dry_run: bool = False,
+) -> List[str]:
+    """Repairs missing or broken components in a drift workspace non-destructively.
+
+    Step 1 repairs and validates the workspace configuration. If it fails,
+    ConfigError is raised immediately. Subsequent steps consume the validated
+    WorkspaceConfig object as a required input.
+
+    Args:
+        drift_root: Absolute or resolved Path to workspace root.
+        dry_run: If True, only returns list of actions without applying changes.
+
+    Returns:
+        List of repair actions taken (or planned in dry-run mode).
+
+    Raises:
+        ConfigError: If workspace configuration repair or loading fails.
+    """
+    drift_root = Path(drift_root).resolve()
+    actions: List[str] = []
+
+    # 1. Step 1: Repair workspace configuration FIRST and obtain validated WorkspaceConfig.
+    # If this fails, an exception is raised immediately.
+    cfg_actions, ws_config = repair_workspace_config(drift_root, dry_run=dry_run)
+    actions.extend(cfg_actions)
+
+    # 2. Later steps take validated workspace_config as a REQUIRED input
+    actions.extend(repair_core_directories(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_gitignore(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_render_repo(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_install_repo(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_internal_gitignores(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_install_stow_ignore(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_state_registry(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_secrets_env(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_engine_inputs(drift_root, workspace_config=ws_config, dry_run=dry_run))
+    actions.extend(repair_package_metadata_structure(drift_root, workspace_config=ws_config, dry_run=dry_run))
+
+    return actions
+
+
+def build_repair_result(
+    report: "WorkspaceHealthReport",
+    actions: Iterable[str] = (),
+    dry_run: bool = False
+):
+    """Converts a WorkspaceHealthReport and performed actions into a RepairResult object."""
+    return report.to_repair_result(actions=actions, dry_run=dry_run)

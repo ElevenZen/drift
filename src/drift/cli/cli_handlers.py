@@ -27,7 +27,7 @@ from .actions import (
     execute_hook,
     execute_complete,
 )
-from ..result_models import DiffType
+from ..core.result_models import DiffType
 from .error_boundary import cli_error_boundary
 
 

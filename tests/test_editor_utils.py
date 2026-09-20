@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch, MagicMock, call
 
-from drift.editor_utils import (
+from drift.utils.editor_utils import (
     get_configured_editor,
     launch_single_file_editor,
     launch_vim_diff,
@@ -43,7 +43,7 @@ class TestEditorUtils(unittest.TestCase):
 
     def test_parse_editor_command_with_quotes_and_flags(self) -> None:
         """Verifies parse_editor_command uses shlex to parse quoted arguments and flags."""
-        from drift.editor_utils import parse_editor_command
+        from drift.utils.editor_utils import parse_editor_command
 
         tokens, name = parse_editor_command('code --reuse-window --wait')
         self.assertEqual(tokens, ["code", "--reuse-window", "--wait"])
@@ -209,7 +209,7 @@ class TestEditorUtils(unittest.TestCase):
 
     def test_to_tokens_iterable(self) -> None:
         """Verifies _to_tokens accepts string, sequence, and lazy generator expressions."""
-        from drift.editor_utils import _to_tokens
+        from drift.utils.editor_utils import _to_tokens
 
         self.assertEqual(_to_tokens("code --wait"), ["code", "--wait"])
         self.assertEqual(_to_tokens(["code", "--wait"]), ["code", "--wait"])

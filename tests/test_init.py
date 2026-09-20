@@ -7,7 +7,7 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.git_utils import (
+from drift.utils.git_utils import (
     is_git_tracked,
     is_bare_repository,
     is_detached_head,
@@ -15,12 +15,12 @@ from drift.git_utils import (
     git_init_repo,
     append_to_gitignore,
 )
-from drift.constants import (
+from drift.core.constants import (
     STATE_REGISTRY_FILE_NAME,
     INSTALL_STOW_IGNORE_PATTERN,
     STOW_LOCAL_IGNORE_FILE_NAME,
 )
-from drift.workspace_init import (
+from drift.primitives.workspace_init import (
     init_drift_workspace,
 )
 from drift.cli import main

@@ -2,8 +2,8 @@
 
 import sys
 from contextlib import contextmanager
-from ..exceptions import DriftError
-from ..constants import ExitCode
+from ..core.exceptions import DriftError
+from ..core.constants import ExitCode
 
 
 @contextmanager

@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typing import cast, Any
-from drift.constants import (
+from drift.core.constants import (
     CONFIG_DIR_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
@@ -16,7 +16,7 @@ from drift.constants import (
     InstallMethod,
     set_test_mode,
 )
-from drift.toml_utils import (
+from drift.utils.toml_utils import (
     parse_toml,
     _parse_toml_fallback,
     parse_toml_value,
@@ -25,8 +25,8 @@ from drift.toml_utils import (
     get_nested_from,
     validate_known_keys,
 )
-from drift.exceptions import ConfigError
-from drift.workspace_config import (
+from drift.core.exceptions import ConfigError
+from drift.config.workspace_config import (
     WorkspaceConfig,
     WorkspaceSectionConfig,
     SettingsConfig,
@@ -35,7 +35,7 @@ from drift.workspace_config import (
     RenderSourceMatch,
     load_workspace_config,
 )
-from drift.package_config import (
+from drift.config.package_config import (
     PackageConfig,
     PackageHooks,
     PackageRequirements,
@@ -692,7 +692,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_build_hook_execution_command(self) -> None:
         """Verifies cross-platform command building for lifecycle hook dispatch."""
-        from drift.lifecycle_hooks import (
+        from drift.hooks.lifecycle_hooks import (
             build_hook_execution_command,
             build_hook_execution_command_win32,
             build_hook_execution_command_posix,
@@ -769,15 +769,15 @@ class TestConfigClasses(unittest.TestCase):
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", r"C:\scripts\install.ps1"]
             )
         with patch("sys.platform", "linux"):
-            with patch("drift.lifecycle_hooks.build_hook_execution_command_posix") as mock_posix:
+            with patch("drift.hooks.lifecycle_hooks.build_hook_execution_command_posix") as mock_posix:
                 mock_posix.return_value = ["/bin/bash", "/path/hook.sh"]
                 self.assertEqual(build_hook_execution_command(Path("/path/hook.sh")), ["/bin/bash", "/path/hook.sh"])
 
     def test_execute_hook_command(self) -> None:
         """Verifies execute_hook_command runs in user space across platforms."""
-        from drift.lifecycle_hooks import execute_hook_command
+        from drift.hooks.lifecycle_hooks import execute_hook_command
 
-        with patch("drift.lifecycle_hooks.run_command") as mock_run:
+        with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value = MagicMock()
 
             # POSIX execution in user space
@@ -1265,7 +1265,7 @@ class TestConfigLoaders(unittest.TestCase):
             PackageConfig.from_source_dir(pkg_dir)
 
     def test_get_package_config_file_info(self) -> None:
-        from drift.workspace_config import RenderEngineConfig
+        from drift.config.workspace_config import RenderEngineConfig
         pkg_dir = self.drift_root / "test_find_info"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1355,8 +1355,8 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
 
         # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
-        from drift.render_input import render_input_templates
-        from drift.constants import DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_RENDER_DIR_NAME
+        from drift.render.render_input import render_input_templates
+        from drift.core.constants import DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_RENDER_DIR_NAME
         render_input_templates(
             workspace_config.render_engine_configs,
             workspace_config.drift_root,
@@ -1518,7 +1518,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_render_engine_config_validation(self) -> None:
-        from drift.workspace_config import RenderEngineConfig
+        from drift.config.workspace_config import RenderEngineConfig
         config = RenderEngineConfig(
             name="envsubst",
             input_file=Path("envsubst.bash"),
@@ -1541,7 +1541,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertIn("cannot contain dots", str(ctx.exception))
 
     def test_workspace_config_with_render_engines(self) -> None:
-        from drift.workspace_config import WorkspaceConfig
+        from drift.config.workspace_config import WorkspaceConfig
         data = {
             "workspace": {
                 "render_directory": "custom_render",
@@ -1578,8 +1578,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.render_engine_configs["var"].input_file, Path(""))
 
     def test_render_engine_registry_class(self) -> None:
-        from drift.render_engine_config import RenderEngineConfig, RenderEngineRegistry, RenderSourceMatch
-        from drift.exceptions import ConfigError
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry, RenderSourceMatch
+        from drift.core.exceptions import ConfigError
 
         dummy_base = Path("/workspace_test/config")
         # Test from_dict empty / non-dict
@@ -1683,7 +1683,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
 
     def test_meta_rendering_drift_envst_toml(self) -> None:
-        from drift.workspace_config import load_workspace_config
+        from drift.config.workspace_config import load_workspace_config
         # We set an env variable
         os.environ["MY_TEST_RENDER_DIR"] = "templated_render"
         os.environ["MY_TEST_INSTALL_DIR"] = "templated_install"
@@ -1712,8 +1712,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertEqual(config.workspace.install_directory, Path("templated_install"))
 
     def test_meta_rendering_drift_envst_toml_missing_var_raises_config_error(self) -> None:
-        from drift.workspace_config import load_workspace_config
-        from drift.exceptions import ConfigError
+        from drift.config.workspace_config import load_workspace_config
+        from drift.core.exceptions import ConfigError
 
         os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
         base, ext = os.path.splitext(WORKSPACE_CONFIG_FILE_NAME)
@@ -1732,7 +1732,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_package_discovery_methods(self) -> None:
         """Verifies package discovery methods on WorkspaceConfig correctly find folders from source, render, and install dirs."""
-        from drift.workspace_config import WorkspaceConfig
+        from drift.config.workspace_config import WorkspaceConfig
         with tempfile.TemporaryDirectory() as root_path:
             # Setup directories
             os.makedirs(os.path.join(root_path, "src", "pkg_src_a"), exist_ok=True)
@@ -1830,7 +1830,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_load_workspace_config_layered_functions(self) -> None:
         """Verifies load_workspace_config_file_with_render and load_workspace_config_files_layered functions."""
-        from drift.workspace_config import (
+        from drift.config.workspace_config import (
             render_workspace_config,
             load_workspace_config_file_with_render,
             load_workspace_config_files_layered,
@@ -1885,7 +1885,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_render_engine_strip_suffix(self) -> None:
         """Verifies RenderEngineConfig.strip_suffix strips engine suffix segment correctly from the filename."""
-        from drift.workspace_config import RenderEngineConfig
+        from drift.config.workspace_config import RenderEngineConfig
         engine = RenderEngineConfig(
             name="envsubst",
             input_file=Path("env.sh"),
@@ -1902,8 +1902,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_package_config_load_unload_package_envs(self) -> None:
         """Verifies PackageConfig.load_package_envs and unload_package_envs."""
-        from drift.package_config import PackageConfig
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         config = WorkspaceConfig(
             drift_root=Path("/dummy/root"),
@@ -1951,8 +1951,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_package_envs_resolution_with_custom_workspace_target_and_install_method(self) -> None:
         """Verifies environment variable resolution when workspace target != '~' and package has/has not explicit target."""
-        from drift.package_config import PackageConfig
-        from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+        from drift.config.package_config import PackageConfig
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Workspace with non-default target directory != '~' and non-default install method
         custom_global_target = Path("/opt/custom_drift_target")
@@ -2094,8 +2094,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_seven_tier_variable_preemption_order(self) -> None:
         """Verifies the complete 7-tier environment variable preemption hierarchy."""
-        from drift.constants import set_initial_env, update_initial_env
-        from drift.workspace_config import WorkspaceConfig
+        from drift.core.constants import set_initial_env, update_initial_env
+        from drift.config.workspace_config import WorkspaceConfig
 
         # Setup workspace config
         workspace_config = WorkspaceConfig(
@@ -2162,19 +2162,19 @@ class TestSettingsConfig(unittest.TestCase):
     """Tests for SettingsConfig and [settings] in drift_workspace.toml."""
 
     def test_settings_config_defaults(self) -> None:
-        from drift.workspace_config import SettingsConfig
+        from drift.config.workspace_config import SettingsConfig
         settings = SettingsConfig()
         self.assertFalse(settings.probe_wan_ip)
         self.assertTrue(settings.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict(self) -> None:
-        from drift.workspace_config import SettingsConfig
+        from drift.config.workspace_config import SettingsConfig
         s1 = SettingsConfig.from_dict({"probe_wan_ip": True, "hook_inject_non_interactive_envs": False})
         self.assertTrue(s1.probe_wan_ip)
         self.assertFalse(s1.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict_aliases(self) -> None:
-        from drift.workspace_config import SettingsConfig
+        from drift.config.workspace_config import SettingsConfig
         s2 = SettingsConfig.from_dict({"probe_network_ip": True, "hook_inject_non_interactive_env": False})
         self.assertTrue(s2.probe_wan_ip)
         self.assertFalse(s2.hook_inject_non_interactive_envs)
@@ -2187,8 +2187,8 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertTrue(s4.hook_inject_non_interactive_envs)
 
     def test_settings_config_validation(self) -> None:
-        from drift.workspace_config import SettingsConfig
-        from drift.exceptions import ConfigError
+        from drift.config.workspace_config import SettingsConfig
+        from drift.core.exceptions import ConfigError
 
         with self.assertRaises(ConfigError) as ctx:
             SettingsConfig.from_dict({"unknown_setting": True})
@@ -2291,7 +2291,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             WorkspaceSectionConfig(default_install_method="invalid_method").validate()
 
     def test_get_host_ip_addresses_no_wan_activity_by_default(self) -> None:
-        from drift.host_facts import get_host_ip_addresses
+        from drift.utils.host_facts import get_host_ip_addresses
         from unittest.mock import MagicMock
 
         with patch("socket.socket") as mock_sock_cls:
@@ -2323,7 +2323,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             (base_dir / "config").mkdir()
             (base_dir / "install").mkdir()
 
-            with patch("drift.workspace_config.logger.warning") as mock_warn:
+            with patch("drift.config.workspace_config.logger.warning") as mock_warn:
                 packages = WorkspaceConfig.get_package_names_from_dir(base_dir)
                 self.assertEqual(packages, ["nvim", "zsh"])
 
@@ -2354,7 +2354,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             (render_dir / "pkg_one" / DRIFT_INTERNAL_DIR_NAME / "drift_package.toml").write_text("[package]\nname = 'pkg_one'\n")
 
             ws_cfg = WorkspaceConfig(drift_root=drift_root, packages_enable_default=True)
-            with patch("drift.workspace_config.logger.warning") as mock_warn:
+            with patch("drift.config.workspace_config.logger.warning") as mock_warn:
                 src_pkgs = ws_cfg.get_package_names_from_source_dir()
                 self.assertEqual(src_pkgs, ["pkg_one", "pkg_two"])
 
@@ -2367,7 +2367,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
 
 class TestPathSuffixHelpers(unittest.TestCase):
     def test_path_and_string_suffix_helpers(self) -> None:
-        from drift.constants import (
+        from drift.core.constants import (
             add_suffix_path,
             add_local_path,
             add_envst_path,
@@ -2393,7 +2393,7 @@ class TestPathSuffixHelpers(unittest.TestCase):
 
 class TestPackageHooksConfiguredPaths(unittest.TestCase):
     def test_package_hooks_get_configured_hook_paths(self) -> None:
-        from drift.package_config import PackageHooks
+        from drift.config.package_config import PackageHooks
 
         base1 = Path("/workspace/src/pkg1")
         base2 = Path("/workspace/render/pkg1")
@@ -2449,7 +2449,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.package_config", level="WARNING") as cm:
+            with self.assertLogs("drift.config.package_config", level="WARNING") as cm:
                 cfg = load_package_config_from_render_dir(self.pkg_dir)
                 self.assertEqual(cfg.name, "my_pkg")
                 self.assertTrue(any("DEPRECATION" in msg and "render" in msg for msg in cm.output))
@@ -2477,7 +2477,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.package_config", level="WARNING") as cm:
+            with self.assertLogs("drift.config.package_config", level="WARNING") as cm:
                 cfg = load_package_config_for_install(self.pkg_dir)
                 self.assertEqual(cfg.name, "my_pkg")
                 self.assertTrue(any("DEPRECATION" in msg and "install" in msg for msg in cm.output))

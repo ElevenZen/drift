@@ -7,14 +7,14 @@ import unittest
 import subprocess
 from pathlib import Path
 
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.workspace_gc import (
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.primitives.workspace_gc import (
     run_primitive_9_purge_workspace_garbage,
     purge_render_folders,
     purge_install_folders,
     purge_zombie_folders,
 )
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME
 from drift.cli.actions import execute_gc
 
 
@@ -145,7 +145,7 @@ class TestWorkspaceGc(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "drift_workspace.toml").write_text("[workspace]\n[packages.enable]\n", encoding="utf-8")
 
-        from drift.workspace_repair import repair_drift_workspace
+        from drift.primitives.workspace_repair import repair_drift_workspace
         repair_drift_workspace(self.drift_root)
 
         # Run execute_gc
@@ -153,7 +153,7 @@ class TestWorkspaceGc(unittest.TestCase):
 
     def test_gc_preserves_legacy_root_package_config_with_warning(self) -> None:
         """Verifies that packages with legacy root drift_package.toml are not purged as zombies."""
-        from drift.constants import set_test_mode
+        from drift.core.constants import set_test_mode
         pkg = "pkg_legacy"
         (self.source_dir / pkg).mkdir(parents=True, exist_ok=True)
         (self.source_dir / pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")

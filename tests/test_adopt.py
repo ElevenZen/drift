@@ -9,17 +9,17 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch, MagicMock
 
 from io import StringIO
-from drift.constants import (
+from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     set_test_mode,
 )
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.render_engine_config import RenderEngineRegistry
-from drift.lifecycle_hooks import HookExecFlags
-from drift.adopt_repo import (
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.render_engine_config import RenderEngineRegistry
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.primitives.adopt_repo import (
     get_drifted_packages,
     check_source_file_clean,
     get_package_drifts,
@@ -88,7 +88,7 @@ class TestAdopt(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "envsubst.bash").write_text("#!/bin/bash\n", encoding="utf-8")
 
-        from drift.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
+        from drift.config.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
         env_engine = RenderEngineConfig(
             name="envsubst",
             input_file=config_dir / "envsubst.bash",
@@ -331,7 +331,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename(self) -> None:
         """Verifies that adopting a rename correctly renames the template file inside src/ and applies any content diff."""
-        from drift.adopt_repo import adopt_rename
+        from drift.primitives.adopt_repo import adopt_rename
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -354,7 +354,7 @@ class TestAdopt(unittest.TestCase):
         (pkg_install_dir / "dot-new_name.txt").write_text("template content\ntemplate content\ntemplate content modified\n", encoding="utf-8")
 
         # 4. Adopt the rename
-        from drift.adopt_repo import generate_adjusted_patch
+        from drift.primitives.adopt_repo import generate_adjusted_patch
         patch_content = generate_adjusted_patch(
             self.install_dir,
             pkg,
@@ -374,7 +374,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_missing_old_source_file(self) -> None:
         """Verifies that adopting a rename when the old source file does not exist correctly creates a new file and applies the full content."""
-        from drift.adopt_repo import adopt_rename, generate_adjusted_patch
+        from drift.primitives.adopt_repo import adopt_rename, generate_adjusted_patch
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -411,7 +411,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_rollback_on_patch_failure(self) -> None:
         """Verifies that when a patch fails during adopt_rename, new_src_file is unlinked and old_src_file remains untouched."""
-        from drift.adopt_repo import adopt_rename
+        from drift.primitives.adopt_repo import adopt_rename
 
         pkg = "pkg_rollback"
         src_pkg_dir = self.src_dir / pkg
@@ -447,7 +447,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_addition_conflict_target_exists(self) -> None:
         """Verifies that non-interactive adopt skips addition if the target already exists in source."""
-        from drift.adopt_repo import handle_single_addition
+        from drift.primitives.adopt_repo import handle_single_addition
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -475,7 +475,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_deletion_target_missing(self) -> None:
         """Verifies that adopting deletion when target does not exist in source skips gracefully and returns True."""
-        from drift.adopt_repo import handle_single_deletion
+        from drift.primitives.adopt_repo import handle_single_deletion
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -497,7 +497,7 @@ class TestAdopt(unittest.TestCase):
 
     def test_adopt_rename_unstage_on_skip(self) -> None:
         """Verifies that if a rename is skipped or failed, both old and new paths get unstaged at the end."""
-        from drift.adopt_repo import adopt_one_package_drifts
+        from drift.primitives.adopt_repo import adopt_one_package_drifts
 
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
@@ -1151,8 +1151,8 @@ class TestAdopt(unittest.TestCase):
             if len(line) >= 2:
                 self.assertIn(line[0], [" ", "?"])
 
-    @patch("drift.adopt_repo.launch_single_file_editor")
-    @patch("drift.adopt_repo.apply_source_patch")
+    @patch("drift.primitives.adopt_repo.launch_single_file_editor")
+    @patch("drift.primitives.adopt_repo.apply_source_patch")
     def test_patch_and_edit_success_and_failure(self, mock_apply: MagicMock, mock_launch: MagicMock) -> None:
         """Verifies patch_and_edit applies patch, syncs permissions, opens editor, and handles failures."""
         mock_apply.return_value = True
@@ -1193,7 +1193,7 @@ class TestAdopt(unittest.TestCase):
         mock_launch.side_effect = RuntimeError("Environment variable $EDITOR is not set")
         self.assertFalse(patch_and_edit(src_file, "patch content", open_editor=True))
 
-    @patch("drift.adopt_repo.launch_side_by_side_editor")
+    @patch("drift.primitives.adopt_repo.launch_side_by_side_editor")
     def test_fallback_side_by_side_success_and_failure(self, mock_launch: MagicMock) -> None:
         """Verifies fallback_side_by_side returns True on success and False on RuntimeError."""
         src_file = self.src_dir / "pkg_a" / "test.txt"
@@ -1343,7 +1343,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "config.txt").write_text("line1\nline2_modified\n", encoding="utf-8")
 
         with patch("builtins.input", return_value="2"), \
-             patch("drift.adopt_repo.launch_single_file_editor") as mock_editor, \
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor, \
              patch("sys.stdout", StringIO()) as mock_stdout:
             res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
             self.assertEqual(res.status, "SUCCESS")
@@ -1373,7 +1373,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "config.txt").write_text("modified\n", encoding="utf-8")
 
         with patch("builtins.input", return_value="3"), \
-             patch("drift.adopt_repo.launch_side_by_side_editor") as mock_sbs:
+             patch("drift.primitives.adopt_repo.launch_side_by_side_editor") as mock_sbs:
             res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
             self.assertEqual(res.status, "SUCCESS")
             mock_sbs.assert_called_once_with([(src_pkg / "config.txt", install_pkg / "config.txt")])
@@ -1401,7 +1401,7 @@ render_command = "bash -c 'cat %i %s'"
         (install_pkg / "new_name.txt").write_text(content_mod, encoding="utf-8")
 
         with patch("builtins.input", return_value="2"), \
-             patch("drift.adopt_repo.launch_single_file_editor") as mock_editor:
+             patch("drift.primitives.adopt_repo.launch_single_file_editor") as mock_editor:
             res = adopt_one_package_drifts(self.workspace_config, pkg, interactive=True)
             self.assertEqual(res.status, "SUCCESS")
             mock_editor.assert_called_once_with(src_pkg / "new_name.txt")
@@ -1429,7 +1429,7 @@ render_command = "bash -c 'cat %i %s'"
 
             (install_pkg / "file.txt").write_text("changed_text\n", encoding="utf-8")
 
-            with self.assertLogs("drift.adopt_repo", level="DEBUG") as cm:
+            with self.assertLogs("drift.primitives.adopt_repo", level="DEBUG") as cm:
                 adopt_one_package_drifts(self.workspace_config, pkg, interactive=False)
                 self.assertTrue(any("Diff for 'file.txt'" in log for log in cm.output))
                 self.assertTrue(any("+changed_text" in log for log in cm.output))

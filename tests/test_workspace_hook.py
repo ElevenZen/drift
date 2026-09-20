@@ -8,10 +8,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.constants import set_test_mode, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
-from drift.exceptions import ConfigError
-from drift.workspace_config import load_workspace_config
-from drift.workspace_hook import WorkspaceHookContext, apply_workspace_hook
+from drift.core.constants import set_test_mode, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
+from drift.core.exceptions import ConfigError
+from drift.config.workspace_config import load_workspace_config
+from drift.hooks.workspace_hook import WorkspaceHookContext, apply_workspace_hook
 
 
 class TestWorkspaceHook(unittest.TestCase):

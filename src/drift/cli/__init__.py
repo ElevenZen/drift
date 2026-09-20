@@ -1,7 +1,7 @@
 import sys
 import logging
 
-from ..constants import configure_utf8_streams, update_initial_env
+from ..core.constants import configure_utf8_streams, update_initial_env
 from .argparse_backend import run_argparse_cli
 from .actions import check_sudo_and_root
 

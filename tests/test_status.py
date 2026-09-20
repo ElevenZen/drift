@@ -4,8 +4,8 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.workspace_status import run_primitive_status
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.primitives.workspace_status import run_primitive_status
 
 class TestStatus(unittest.TestCase):
     def setUp(self):
@@ -49,10 +49,10 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("content")
         
         # 1. Initial render, stage, apply
-        from drift.render_package import run_primitive_2_render_packages
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
-        from drift.render_package import run_primitive_3_commit_render_repo
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.render.render_package import run_primitive_3_commit_render_repo
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
@@ -78,9 +78,9 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "file.txt").write_text("original content")
         
         # Initial state setup
-        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
@@ -132,9 +132,9 @@ class TestStatus(unittest.TestCase):
         (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
         (pkg_src_dir / "file.txt").write_text("content\n")
 
-        from drift.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
-        from drift.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
 
         # Initial full deployment and clean state
         run_primitive_2_render_packages(self.workspace_config)
@@ -159,7 +159,7 @@ class TestStatus(unittest.TestCase):
 
     def test_status_empty(self):
         """Verifies empty workspace status format."""
-        from drift.workspace_status import WorkspaceStatusResult
+        from drift.primitives.workspace_status import WorkspaceStatusResult
         empty_res = WorkspaceStatusResult(packages=[])
         self.assertEqual(len(empty_res), 0)
         self.assertEqual(empty_res.format_text(), "")
@@ -168,9 +168,9 @@ class TestStatus(unittest.TestCase):
     def test_execute_status_fails_fast_when_workspace_structure_broken(self) -> None:
         """Verifies execute_status fails with ConfigError and hints 'drift repair' when workspace structure is broken."""
         from drift.cli.actions import execute_status
-        from drift.constants import PACKAGE_CONFIG_FILE_NAME
-        from drift.exceptions import ConfigError
-        from drift.workspace_init import init_drift_workspace
+        from drift.core.constants import PACKAGE_CONFIG_FILE_NAME
+        from drift.core.exceptions import ConfigError
+        from drift.primitives.workspace_init import init_drift_workspace
 
         init_drift_workspace(self.drift_root, force=True)
 

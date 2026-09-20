@@ -2,7 +2,7 @@ import argparse
 from typing import Optional, List, Dict, Any
 from pathlib import Path
 
-from ..constants import configure_utf8_streams
+from ..core.constants import configure_utf8_streams
 from .schema import (
     CompletionSchema,
     OptionSpec,

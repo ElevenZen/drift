@@ -4,10 +4,10 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.state_registry import load_state_registry, save_state_registry, PackageState
-from drift.uninstall_repo import run_primitive_7_uninstall_packages
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.core.state_registry import load_state_registry, save_state_registry, PackageState
+from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
