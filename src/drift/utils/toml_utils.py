@@ -181,15 +181,16 @@ def parse_toml_value(val_str: str) -> Any:
         inner = val_str[1:-1]
         inner = inner.replace('\\"', '"')
         inner = inner.replace('\\n', '\n')
+        inner = inner.replace('\\r', '\r')
         inner = inner.replace('\\t', '\t')
+        inner = inner.replace('\\b', '\b')
+        inner = inner.replace('\\f', '\f')
         return inner.replace('\\\\', '\\')
 
     # 3. Parse single-quoted string
     if val_str.startswith("'") and val_str.endswith("'"):
         inner = val_str[1:-1]
         inner = inner.replace("\\'", "'")
-        inner = inner.replace('\\n', '\n')
-        inner = inner.replace('\\t', '\t')
         return inner.replace('\\\\', '\\')
 
     # 4. Parse boolean
@@ -319,25 +320,44 @@ def merge_toml(dict_a: dict, dict_b: dict) -> dict:
     return result
 
 
+def _escape_toml_string(val: Any) -> str:
+    """Escapes special characters in TOML string literals (including newlines and control characters)."""
+    return (
+        str(val)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\b", "\\b")
+        .replace("\f", "\\f")
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+
+
+def _format_toml_value(val: Any) -> Optional[str]:
+    """Formats a scalar Python value or list into a valid TOML value string representation."""
+    if val is None:
+        return None
+    if isinstance(val, bool):
+        return str(val).lower()
+    if isinstance(val, (int, float)):
+        return str(val)
+    if isinstance(val, list):
+        formatted_items = [_format_toml_value(item) for item in val]
+        return f"[{', '.join(x for x in formatted_items if x is not None)}]"
+    return f'"{_escape_toml_string(val)}"'
+
+
 def dump_toml(data: dict) -> str:
     """Serializes a dictionary of basic package/workspace settings back to TOML format."""
     lines = []
-    
+
     # 1. First, serialize any top-level key-values (outside tables)
     for k, v in data.items():
         if not isinstance(v, dict):
-            if isinstance(v, bool):
-                lines.append(f"{k} = {str(v).lower()}")
-            elif isinstance(v, int):
-                lines.append(f"{k} = {v}")
-            elif isinstance(v, list):
-                items = [f'"{str(i)}"' for i in v]
-                lines.append(f"{k} = [{', '.join(items)}]")
-            elif v is None:
-                continue
-            else:
-                escaped_val = str(v).replace("\\", "\\\\").replace('"', '\\"')
-                lines.append(f'{k} = "{escaped_val}"')
+            formatted = _format_toml_value(v)
+            if formatted is not None:
+                lines.append(f"{k} = {formatted}")
 
     # 2. Then, serialize nested tables (like [package] or [workspace])
     for table_name, table_dict in data.items():
@@ -349,34 +369,15 @@ def dump_toml(data: dict) -> str:
                 if isinstance(v, dict):
                     # For nested tables (e.g. [packages.enable] or [render.envsubst])
                     # We can support one level of nested sub-table simply
-                    sub_lines = []
-                    sub_lines.append(f"[{table_name}.{k}]")
+                    sub_lines = [f"[{table_name}.{k}]"]
                     for sk, sv in v.items():
-                        if isinstance(sv, bool):
-                            sub_lines.append(f"{sk} = {str(sv).lower()}")
-                        elif isinstance(sv, int):
-                            sub_lines.append(f"{sk} = {sv}")
-                        elif isinstance(sv, list):
-                            items = [f'"{str(si)}"' for si in sv]
-                            sub_lines.append(f"{sk} = [{', '.join(items)}]")
-                        elif sv is None:
-                            continue
-                        else:
-                            escaped_val = str(sv).replace("\\", "\\\\").replace('"', '\\"')
-                            sub_lines.append(f'{sk} = "{escaped_val}"')
+                        formatted_sub = _format_toml_value(sv)
+                        if formatted_sub is not None:
+                            sub_lines.append(f"{sk} = {formatted_sub}")
                     lines.append("\n".join(sub_lines))
                 else:
-                    if isinstance(v, bool):
-                        lines.append(f"{k} = {str(v).lower()}")
-                    elif isinstance(v, int):
-                        lines.append(f"{k} = {v}")
-                    elif isinstance(v, list):
-                        items = [f'"{str(i)}"' for i in v]
-                        lines.append(f"{k} = [{', '.join(items)}]")
-                    elif v is None:
-                        continue
-                    else:
-                        escaped_val = str(v).replace("\\", "\\\\").replace('"', '\\"')
-                        lines.append(f'{k} = "{escaped_val}"')
+                    formatted = _format_toml_value(v)
+                    if formatted is not None:
+                        lines.append(f"{k} = {formatted}")
 
     return "\n".join(lines) + "\n"

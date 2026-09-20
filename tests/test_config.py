@@ -2491,6 +2491,65 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
         self.assertIn("Missing required", str(ctx.exception))
 
 
+class TestDumpToml(unittest.TestCase):
+    """Unit tests for dump_toml serialization, multiline escaping, and roundtrip parsing."""
+
+    def test_dump_toml_multiline_string_escaping(self) -> None:
+        from drift.utils.toml_utils import dump_toml, parse_toml
+
+        data = {
+            "package": {
+                "name": "my_pkg",
+                "description": "Line 1\nLine 2\nLine 3",
+                "notes": "Tab:\t, Windows Line:\r\n, Backslash: \\, Quotes: \"Hello\"",
+            },
+            "env": {
+                "override": {
+                    "SCRIPT": "echo 'hello'\necho 'world'\n",
+                }
+            }
+        }
+
+        toml_str = dump_toml(data)
+        # Ensure raw literal line breaks are NOT in the serialized string literals
+        for line in toml_str.splitlines():
+            if line.startswith("description ="):
+                self.assertIn(r"\n", line)
+                self.assertNotIn("\n", line[len("description ="):])
+
+        parsed = parse_toml(toml_str)
+        self.assertEqual(parsed["package"]["name"], "my_pkg")
+        self.assertEqual(parsed["package"]["description"], "Line 1\nLine 2\nLine 3")
+        self.assertEqual(parsed["package"]["notes"], "Tab:\t, Windows Line:\r\n, Backslash: \\, Quotes: \"Hello\"")
+        self.assertEqual(parsed["env"]["override"]["SCRIPT"], "echo 'hello'\necho 'world'\n")
+
+    def test_dump_toml_roundtrip_data_types(self) -> None:
+        from drift.utils.toml_utils import dump_toml, parse_toml
+
+        data = {
+            "version": 1,
+            "debug": True,
+            "ratio": 3.14,
+            "tags": ["a\nb", "c", "d"],
+            "empty": None,
+            "package": {
+                "enable_render": False,
+                "count": 42,
+            }
+        }
+
+        toml_str = dump_toml(data)
+        parsed = parse_toml(toml_str)
+        self.assertEqual(parsed["version"], 1)
+        self.assertEqual(parsed["debug"], True)
+        self.assertEqual(parsed["ratio"], 3.14)
+        self.assertEqual(parsed["tags"], ["a\nb", "c", "d"])
+        self.assertNotIn("empty", parsed)
+        self.assertEqual(parsed["package"]["enable_render"], False)
+        self.assertEqual(parsed["package"]["count"], 42)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
