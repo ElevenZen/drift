@@ -49,6 +49,14 @@ class TestNewPackage(unittest.TestCase):
             self.assertTrue(ignore_file.is_file())
             self.assertEqual(ignore_file.read_text(encoding="utf-8"), get_default_drift_ignore_content())
 
+            # Default drift_package.py should be generated
+            hook_file = pkg_dir / "drift_package.py"
+            self.assertTrue(hook_file.exists())
+            self.assertTrue(hook_file.is_file())
+            hook_content = hook_file.read_text(encoding="utf-8")
+            self.assertIn("def configure_package(context: PackageHookContext)", hook_content)
+            self.assertIn("PackageHookContext", hook_content)
+
     def test_run_primitive_10_create_new_package_preserves_existing_drift_ignore(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             drift_root = Path(temp_dir).resolve()

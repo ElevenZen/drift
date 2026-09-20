@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-670%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-791%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -220,10 +220,16 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     ```
 
 *   **Dynamic Python Workspace Hook (`config/drift_workspace.py`)**:
-    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on the fly without requiring any external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
+    For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). Automatically scaffolded during `drift init`, this hook executes dynamically during configuration pre-processing without requiring external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
     ```python
     # config/drift_workspace.py
-    def configure_workspace(context):
+    from __future__ import annotations
+    from typing import TYPE_CHECKING, Any, Dict
+
+    if TYPE_CHECKING:
+        from drift.hooks import WorkspaceHookContext
+
+    def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
         """Dynamically configure workspace packages and environment on the fly."""
         cfg = context.config
         facts = context.facts
@@ -238,19 +244,30 @@ A **single, unified dotfiles repository** can effortlessly power everything from
         enable["desktop_hyprland"] = (os_name == "linux" and "laptop" in hostname)
         enable["macos_settings"] = (os_name == "darwin")
 
-        # 2. Dynamically inject workspace-level environment variables
+        # 2. Dynamically inject workspace-level environment variables / remote secrets
         env = cfg.setdefault("env", {})
         if os_name == "darwin":
             env["HOMEBREW_PREFIX"] = "/opt/homebrew"
 
+        # (Optional) Download secrets or global tokens from remote vaults / APIs
+        # env["GITHUB_TOKEN"] = fetch_vault_secret("github_token")
+
         return cfg
     ```
+    > [!TIP]
+    > **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `cfg["env"]` before downstream templates compile.
 
 *   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py` or `drift_hooks/`)**:
-    Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`) defining `configure_package(context)` to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
+    Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`), auto-scaffolded during `drift new <pkg>`. Defining `configure_package(context: PackageHookContext)` allows you to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides or remote secrets, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
     ```python
     # src/my_app/drift_package.py (or src/my_app/drift_hooks/drift_package.py)
-    def configure_package(context):
+    from __future__ import annotations
+    from typing import TYPE_CHECKING, Any, Dict
+
+    if TYPE_CHECKING:
+        from drift.hooks import PackageHookContext
+
+    def configure_package(context: PackageHookContext) -> Dict[str, Any]:
         """Dynamically configure package and disable installation on incompatible machines."""
         cfg = context.config
         pkg = cfg.setdefault("package", {})
@@ -265,6 +282,10 @@ A **single, unified dotfiles repository** can effortlessly power everything from
             pkg["target_directory"] = "~/Library/Application Support/my_app"
         else:
             pkg["target_directory"] = "~/.config/my_app"
+
+        # (Optional) Dynamically fetch package-specific secrets or configuration
+        # env = cfg.setdefault("env", {})
+        # env["APP_LICENSE_KEY"] = fetch_package_license("my_app")
 
         return cfg
     ```

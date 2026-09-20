@@ -521,6 +521,44 @@ def get_default_drift_workspace_toml_content() -> str:
     raise FileNotFoundError(f"Default drift_workspace.toml template file not found at {template_path}")
 
 
+def get_default_package_hook_content(package_name: str) -> str:
+    """Gets the default drift_package.py template content for a package."""
+    template_str: Optional[str] = None
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift", "templates/drift_package_default.py")
+        if data:
+            template_str = data.decode("utf-8")
+    except Exception:
+        pass
+
+    if template_str is None:
+        template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_package_default.py"
+        if template_path.exists():
+            template_str = template_path.read_text(encoding="utf-8")
+        else:
+            raise FileNotFoundError(f"Default drift_package.py template file not found at {template_path}")
+
+    return template_str.replace("{package_name}", package_name)
+
+
+def get_default_workspace_hook_content() -> str:
+    """Gets the default drift_workspace.py template content."""
+    try:
+        import pkgutil
+        data = pkgutil.get_data("drift", "templates/drift_workspace_default.py")
+        if data:
+            return data.decode("utf-8")
+    except Exception:
+        pass
+
+    template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_workspace_default.py"
+    if template_path.exists():
+        return template_path.read_text(encoding="utf-8")
+
+    raise FileNotFoundError(f"Default drift_workspace.py template file not found at {template_path}")
+
+
 def configure_utf8_streams() -> None:
     """Configures sys.stdout and sys.stderr to use UTF-8 encoding with replacement error handler.
 

@@ -46,29 +46,40 @@ A local-only, git-ignored override file. If present at startup, drift recursivel
     ```
 
 ### Layer 3: Dynamic Python Workspace Hook (`config/drift_workspace.py`)
-For complete programmatic control across heterogeneous fleets, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on-the-fly without external wrapper scripts, providing direct access to detected system facts, discovered packages, and configuration tables:
+For complete programmatic control across heterogeneous fleets, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on-the-fly without external wrapper scripts, providing direct access to detected system facts, discovered packages, and configuration tables.
+
+> [!TIP]
+> **Best Practice — Remote Secrets & Configs Fetching**:
+> `drift_workspace.py` is the **recommended place** to download workspace-wide configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env]`).
 
 ```python
 # config/drift_workspace.py
-def configure_workspace(context):
-    """Dynamically configure workspace packages and environment on the fly."""
-    cfg = context.config
-    facts = context.facts
-    os_name = facts.get("drift_os", "")
-    hostname = facts.get("drift_hostname", "")
+from __future__ import annotations
+import subprocess
+from typing import TYPE_CHECKING, Any, Dict
 
-    # 1. Dynamically compute enabled package roster
+if TYPE_CHECKING:
+    from drift.hooks import WorkspaceHookContext
+
+
+def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
+    """Dynamically configure workspace packages, remote secrets, and environment on the fly."""
+    cfg = context.config
+
+    # 1. Fetch remote secrets / global credentials and inject into workspace [env]
+    # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
+    env = cfg.setdefault("env", {})
+    # env["GLOBAL_GITHUB_TOKEN"] = token
+    if context.os == "darwin":
+        env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+
+    # 2. Dynamically compute enabled package roster based on host facts
     enable = cfg.setdefault("packages", {}).setdefault("enable", {})
     enable["shell"] = True
     enable["nvim"] = True
-    enable["cuda_toolkit"] = (os_name == "linux" and "gpu" in hostname)
-    enable["desktop_hyprland"] = (os_name == "linux" and "laptop" in hostname)
-    enable["macos_settings"] = (os_name == "darwin")
-
-    # 2. Dynamically inject workspace-level environment variables
-    env = cfg.setdefault("env", {})
-    if os_name == "darwin":
-        env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+    enable["cuda_toolkit"] = (context.os == "linux" and "gpu" in context.hostname)
+    enable["desktop_hyprland"] = (context.os == "linux" and "laptop" in context.hostname)
+    enable["macos_settings"] = (context.os == "darwin")
 
     return cfg
 ```
@@ -79,6 +90,7 @@ def configure_workspace(context):
 *   **`context.facts`**: Accessor dictionary for auto-detected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 *   **`context.env`**: Dictionary of all environment variables and host facts.
 *   **`context.discovered_packages`**: List of all package directory names found in `src/`.
+*   **Helper properties**: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
 
 ---
 

@@ -79,6 +79,8 @@ from .core import (
     get_default_mustache_content,
     get_default_jinja2_content,
     get_default_drift_workspace_toml_content,
+    get_default_package_hook_content,
+    get_default_workspace_hook_content,
     configure_utf8_streams,
     update_initial_env,
     set_initial_env,

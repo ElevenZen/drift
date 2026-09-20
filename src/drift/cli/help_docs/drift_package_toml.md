@@ -1,5 +1,18 @@
 # 📝 drift_package.toml Complete Configuration Reference
 
+## 📖 Overview
+In Drift, each package under `src/<package_name>/` is governed by a `drift_package.toml` configuration file (with optional local overrides via `drift_package.local.toml` and programmatic extensions via `drift_package.py`).
+
+This document provides a comprehensive reference for all configuration options available in a Drift package, including:
+1. **Core Package Settings (`[package]`)**: Target deployment directories, installation methods (`stow` symlinking vs. `copy` physical copy), Windows overrides, subfolder `source_directory` isolation, elevated privilege (`sudo = true`), and Fully Controlled Directories (`fully_controlled_dirs`).
+2. **Host Prerequisites & Requirements (`[package.requirements]`)**: Declarative pre-flight checks (OS, architecture, Linux distro, required binaries in `$PATH`, environment variables, LAN IP/subnets) that selectively enable or skip package deployment.
+3. **7-Tier Environment Variables (`[env.override]` & `[env.fallback]`)**: Dual-tier package variable scopes with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
+4. **Lifecycle Command Hooks (`[hooks]`)**: Hook execution triggers across source rendering, installation, updates, uninstallation, and health checks, with `drift_hooks/` internal isolation and rollback management.
+5. **Dynamic Python Package Hooks (`drift_package.py`)**: Programmatic preprocessors executed before variable stitching—the best place to dynamically fetch remote configuration or secret vaults and inject them into `[env.override]`.
+6. **Package-Level Render Engines (`[render.<name>]`)**: Per-package template engine overrides with field-level inheritance.
+
+---
+
 Below is a complete, fully documented template for `drift_package.toml` (or `drift_package.local.toml`):
 
 ```toml
@@ -260,8 +273,12 @@ When rendering package templates and running hook scripts, variables resolve in 
 
 For programmatic, procedural package configuration that exceeds static TOML or variable stitching capabilities, Drift supports **dynamic Python package hooks**.
 
+> [!TIP]
+> **Best Practice — Remote Secrets & Configs Fetching**:
+> `drift_package.py` is the **recommended, canonical place** to fetch package-specific configuration files or secrets from remote servers (such as 1Password CLI, Bitwarden, HashiCorp Vault, AWS Secrets Manager, or remote HTTP endpoints) and inject them directly into `[env.override]` or `[env.fallback]`. Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]["override"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
+
 ### Automatic Discovery or Custom Path
-* **Default Path**: Place a `drift_package.py` file directly in your package's source directory (`src/<pkg>/drift_package.py`). Drift automatically discovers and executes it.
+* **Default Path**: Place a `drift_package.py` file directly in your package's source directory (`src/<pkg>/drift_package.py`). Drift automatically scaffolds this when running `drift new <package_name>`.
 * **Custom Path**: Explicitly configure `[package] hook_file = "my_hook.py"` (resolved relative to `src/<pkg>/`).
 
 ### Execution Model & Pipeline Order
@@ -273,7 +290,7 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 6. **Schema Validation & Model Construction**: Instantiates the strongly-typed `PackageConfig` object.
 
 ### `PackageHookContext` Reference
-The `context` object passed into `configure_package(context)` provides:
+The `context` object passed into `configure_package(context)` is an instance of `PackageHookContext` and provides:
 * `context.config`: The package's raw configuration dictionary (from `drift_package.toml` and `.local.toml`).
 * `context.package_name`: Active package name (`str`).
 * `context.package_dir`: Absolute path to the package's source directory (`Path`).
@@ -287,30 +304,39 @@ The `context` object passed into `configure_package(context)` provides:
 ### Example `drift_package.py`
 ```python
 # src/my_app/drift_package.py
+from __future__ import annotations
+import subprocess
+from typing import TYPE_CHECKING, Any, Dict
 
-def configure_package(context):
-    """Dynamically transform package configuration based on host facts and workspace settings."""
+if TYPE_CHECKING:
+    from drift.hooks import PackageHookContext
+
+
+def configure_package(context: PackageHookContext) -> Dict[str, Any]:
+    """Dynamically transform package configuration based on host facts, remote secrets, and workspace settings."""
     cfg = context.config
     pkg = cfg.setdefault("package", {})
 
-    # Strictly disable package installation on incompatible hosts
+    # 1. Strictly disable package installation on incompatible hosts
     if context.os not in ("linux", "darwin"):
         pkg["enable_install"] = False
         return cfg
 
-    # Dynamically select install method or target directory based on OS
+    # 2. Dynamically select install method or target directory based on OS
     if context.os == "darwin":
         pkg["target_directory"] = "~/Library/Application Support/my_app"
     elif context.os == "linux" and context.distro == "arch":
         pkg["install_method"] = "stow"
 
-    # Dynamically set host requirements
+    # 3. Dynamically set host requirements
     reqs = pkg.setdefault("requirements", {})
     if context.arch == "x86_64":
         reqs["binaries"] = ["my_app_x86"]
 
-    # Inject package environment variables
+    # 4. Fetch remote secrets / config and inject into package [env.override]
+    # token = subprocess.check_output(["op", "read", "op://vault/my_app/api_token"], text=True).strip()
     env_override = cfg.setdefault("env", {}).setdefault("override", {})
+    # env_override["MY_APP_API_TOKEN"] = token
     env_override["APP_RUN_MODE"] = "optimized" if "prod" in context.hostname else "debug"
 
     return cfg

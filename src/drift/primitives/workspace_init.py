@@ -11,10 +11,12 @@ from ..core.constants import (
     SECRETS_ENV_FILE_NAME,
     WORKSPACE_CONFIG_FILE_NAME,
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
+    DEFAULT_WORKSPACE_HOOK_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
     STOW_LOCAL_IGNORE_FILE_NAME,
     get_default_drift_workspace_toml_content,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
+    get_default_workspace_hook_content,
     get_default_secrets_env_content,
     get_default_envsubst_content,
     get_default_mustache_content,
@@ -112,6 +114,13 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     local_config_file = config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME
     if not local_config_file.exists() or force:
         local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
+
+    # Create drift_workspace.py template
+    workspace_hook_file = config_dir / DEFAULT_WORKSPACE_HOOK_FILE_NAME
+    if not workspace_hook_file.exists():
+        workspace_hook_file.write_text(get_default_workspace_hook_content(), encoding="utf-8")
+    else:
+        logger.warning(f"drift_workspace.py already exists at '{workspace_hook_file}', skipping creation.")
 
     # Create secrets.env template
     secrets_file = config_dir / SECRETS_ENV_FILE_NAME

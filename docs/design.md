@@ -560,18 +560,29 @@ To handle machine-specific overrides and secrets at the package level, Drift imp
 4. **Exclusion Guard**: The final rendered `drift_package.toml` and `.drift_ignore` are strictly stored inside `.drift/`. The entire `.drift/` directory is marked as an internal control-plane directory and is **never copied** or symlinked onto the active target system, but stays as an index inside `install/<package_name>/.drift/`.
 
 #### Dynamic Package Python Hook: `src/<package_name>/drift_package.py`
-For complex packages requiring programmatic adjustments (such as dynamically calculating target directories, overriding deployment methods per OS, generating dynamic requirements, or injecting custom environment facts), Drift provides a **Dynamic Python Package Hook**.
+For complex packages requiring programmatic adjustments (such as downloading remote configs or secrets from remote servers, dynamically calculating target directories, overriding deployment methods per OS, generating dynamic requirements, or injecting custom environment facts), Drift provides a **Dynamic Python Package Hook**.
+
+> [!TIP]
+> **Best Practice — Remote Secrets & Configs Fetching**:
+> `drift_package.py` (and `config/drift_workspace.py` at workspace scope) is the **recommended, canonical place** to fetch configuration files or secrets from remote servers (such as 1Password CLI, Bitwarden, HashiCorp Vault, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into `[env.override]` or `[env.fallback]`. Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]["override"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
 
 1. **Convention & Entry Point**:
    - By default, Drift looks for `src/<package_name>/drift_package.py` (or a custom path defined via `[package] hook_file = "..."`).
    - The script defines an entry point:
      ```python
-     from typing import Dict, Any
-     from drift import PackageHookContext
+     from __future__ import annotations
+     from typing import TYPE_CHECKING, Any, Dict
+
+     if TYPE_CHECKING:
+         from drift.hooks import PackageHookContext
 
      def configure_package(context: PackageHookContext) -> Dict[str, Any]:
-         # Dynamically adjust target directory or install method
-         if context.os == "Darwin":
+         # 1. Fetch remote secrets and inject into [env.override]
+         # token = subprocess.check_output(["op", "read", "op://vault/item/token"], text=True).strip()
+         # context.config.setdefault("env", {}).setdefault("override", {})["API_TOKEN"] = token
+
+         # 2. Dynamically adjust target directory or install method
+         if context.os == "darwin":
              context.config.setdefault("package", {})["target_directory"] = "~/Library/Application Support/MyApp"
          return context.config
      ```

@@ -1,5 +1,18 @@
 # 📝 drift_workspace.toml Complete Global Configuration Reference
 
+## 📖 Overview
+In Drift, the entire workspace is orchestrated by the global `config/drift_workspace.toml` configuration file (with optional local overrides via `config/drift_workspace.local.toml` and programmatic extensions via `config/drift_workspace.py`).
+
+This document provides a comprehensive reference for all global workspace configuration tables and settings, including:
+1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "stow" | "copy"`), and custom Python workspace hooks (`hook_file`).
+2. **Topological Environment Variables (`[env]`)**: Global variables evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
+3. **Template Rendering Engine DAGs (`[render.<name>]`)**: Multi-level template compilation engines (e.g. `envsubst`, `mustache`, `jinja2`, `var`) with dependency resolution and `.drift/render/` sandboxing.
+4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including WAN IP probing and automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs.
+5. **Active Packages Registry (`[packages.enable]`)**: Declarative enablement and disablement of package folders, supporting explicit keys and fallback `DEFAULT = true | false`.
+6. **Dynamic Python Workspace Hooks (`drift_workspace.py`)**: Programmatic preprocessor executed before variable stitching—the best place to dynamically download global configuration or secrets from remote servers and inject them into `[env]`.
+
+---
+
 Below is a complete, fully documented template for the global `config/drift_workspace.toml` file:
 
 ```toml
@@ -25,31 +38,8 @@ default_target_directory = "~"
 default_install_method = "stow"
 
 # Optional dynamic Python workspace configuration hook file (relative to the 'config/' directory).
-# Defaults to "drift_workspace.py".
+# Defaults to "drift_workspace.py" if present.
 # hook_file = "drift_workspace.py"
-
-
-# ---------------------------------------------------------------------
-# Dynamic Python Workspace Hook (config/drift_workspace.py)
-# ---------------------------------------------------------------------
-# For programmatic configuration across heterogeneous machines without external scripts,
-# author a Python hook in `config/drift_workspace.py` (or specify via `[workspace] hook_file` above, relative to `config/`).
-#
-# Configuration Pipeline Execution Order:
-# 1. Multi-File Discovery & Merging: Loads base and override TOML files (or .envst.toml templates).
-# 2. Dynamic Python Hook (Preprocessor): Executes configure_workspace(context) BEFORE variable stitching.
-#    The hook receives raw config dict and can inject/modify [env], [packages.enable], etc., with full access to
-#    resolved host facts (context.facts, context.os, context.arch, etc.) and active environment (context.env).
-# 3. Variable Stitching & Topological Resolution: Resolves inter-variable references in [env] (including any
-#    injected by the hook) and interpolates ${VAR} across all non-env sections.
-# 4. Schema Validation: Constructs validated WorkspaceConfig instance.
-#
-# def configure_workspace(context):
-#     cfg = context.config
-#     facts = context.facts
-#     if facts.get("drift_os") == "darwin":
-#         cfg.setdefault("packages", {}).setdefault("enable", {})["macos_tools"] = True
-#     return cfg
 
 
 # ---------------------------------------------------------------------
@@ -143,4 +133,66 @@ DEFAULT = false
 shell = true
 nvim = true
 qbittorrent = true
+```
+
+
+## 🐍 Dynamic Python Workspace Hooks (`drift_workspace.py`)
+
+For programmatic workspace configuration and fleet management across heterogeneous machines, Drift supports **dynamic Python workspace hooks**.
+
+> [!TIP]
+> **Best Practice — Remote Secrets & Configs Fetching**:
+> `drift_workspace.py` is the **recommended, canonical place** to fetch global configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env]`). Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
+
+### Automatic Discovery or Custom Path
+* **Default Path**: Place a `drift_workspace.py` file directly in the `config/` directory (`config/drift_workspace.py`). Drift automatically scaffolds this when running `drift init`.
+* **Custom Path**: Explicitly configure `[workspace] hook_file = "my_workspace_hook.py"` (resolved relative to `config/`).
+
+### Execution Model & Pipeline Order
+1. **Multi-File Discovery & Merging**: Discovers candidate workspace configuration files (`config/drift_workspace.toml`, `config/drift_workspace.local.toml`, or custom layers) and `.envst.toml` templates, merging them sequentially into a raw configuration dictionary.
+2. **Dynamic Python Workspace Hook (Preprocessor)**: Executes `configure_workspace(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), active environment (`context.env`), and discovered package folder names (`context.discovered_packages`). The hook can inject `[env]`, dynamically toggle `[packages.enable]`, or customize default paths.
+3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves the `[env]` table (including any injected by the hook) according to Kahn's topological sort algorithm and variable self-referencing.
+4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`default_target_directory`, render engine fields, etc.).
+5. **Schema Validation & Model Construction**: Instantiates the strongly-typed `WorkspaceConfig` object.
+
+### `WorkspaceHookContext` Reference
+The `context` object passed into `configure_workspace(context)` is an instance of `WorkspaceHookContext` and provides:
+* `context.config`: The workspace's raw configuration dictionary (from `drift_workspace.toml` and `.local.toml`).
+* `context.drift_root`: Absolute `Path` to the active Drift workspace root directory.
+* `context.discovered_packages`: List of all package directory names found under `src/` (`List[str]`).
+* `context.env`: Full host environment snapshot (`Dict[str, str]`).
+* `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+* Helper properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
+
+### Example `drift_workspace.py`
+```python
+# config/drift_workspace.py
+from __future__ import annotations
+import subprocess
+from typing import TYPE_CHECKING, Any, Dict
+
+if TYPE_CHECKING:
+    from drift.hooks import WorkspaceHookContext
+
+
+def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
+    """Dynamically configure workspace packages, remote secrets, and environment on the fly."""
+    cfg = context.config
+
+    # 1. Fetch remote secrets / global credentials and inject into workspace [env]
+    # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
+    env = cfg.setdefault("env", {})
+    # env["GITHUB_TOKEN"] = token
+    if context.os == "darwin":
+        env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+
+    # 2. Dynamically compute enabled package roster based on host facts
+    enable = cfg.setdefault("packages", {}).setdefault("enable", {})
+    enable["shell"] = True
+    enable["nvim"] = True
+    enable["cuda_toolkit"] = (context.os == "linux" and "gpu" in context.hostname)
+    enable["desktop_hyprland"] = (context.os == "linux" and "laptop" in context.hostname)
+    enable["macos_settings"] = (context.os == "darwin")
+
+    return cfg
 ```

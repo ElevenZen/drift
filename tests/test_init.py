@@ -107,6 +107,14 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         local_config_file = os.path.join(self.drift_root, "config", "drift_workspace.local.toml")
         self.assertTrue(os.path.isfile(local_config_file))
 
+        # Check config/drift_workspace.py hook template was created
+        workspace_hook_file = os.path.join(self.drift_root, "config", "drift_workspace.py")
+        self.assertTrue(os.path.isfile(workspace_hook_file))
+        with open(workspace_hook_file, "r", encoding="utf-8") as f:
+            hook_content = f.read()
+        self.assertIn("def configure_workspace(context: WorkspaceHookContext)", hook_content)
+        self.assertIn("WorkspaceHookContext", hook_content)
+
         # Check config/secrets.env template was created and is gitignored
         secrets_file = os.path.join(self.drift_root, "config", "secrets.env")
         self.assertTrue(os.path.isfile(secrets_file))

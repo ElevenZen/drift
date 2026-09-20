@@ -6,10 +6,12 @@ from ..core.result_models import NewPackageResult
 from ..core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
+    DEFAULT_PACKAGE_HOOK_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     InstallMethod,
     get_default_package_config_content,
+    get_default_package_hook_content,
     get_default_drift_ignore_content,
 )
 
@@ -73,6 +75,12 @@ def run_primitive_10_create_new_package(
     if not ignore_file.exists() and not (package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME).exists():
         ignore_file.write_text(get_default_drift_ignore_content(), encoding="utf-8")
         logger.info(f"📝 Generated {DRIFT_IGNORE_FILE_NAME} at {ignore_file}")
+
+    # Generate default drift_package.py hook template if it doesn't already exist
+    hook_file = package_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME
+    if not hook_file.exists():
+        hook_file.write_text(get_default_package_hook_content(package_name), encoding="utf-8")
+        logger.info(f"📝 Generated {DEFAULT_PACKAGE_HOOK_FILE_NAME} at {hook_file}")
     
     return NewPackageResult(
         command="new",
