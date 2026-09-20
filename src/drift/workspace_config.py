@@ -25,7 +25,7 @@ from .constants import (
         inject_system_facts,
         INTERNAL_RENDER_COMMAND,
 )
-from .toml_utils import parse_toml, merge_toml, get_first_from, validate_known_keys
+from .toml_utils import parse_toml, merge_toml, get_first_from, validate_known_keys, get_nested_from
 from .exceptions import ConfigError
 from .file_utils import expand_user_and_env
 from .env_utils import (
@@ -481,12 +481,13 @@ class WorkspaceConfig:
 
         workspace_section = WorkspaceSectionConfig.from_dict(data.get("workspace", {}))
 
-        if "packages" not in data or not isinstance(data.get("packages"), dict) or "enable" not in data["packages"]:
-            raise ConfigError("Missing '[packages.enable]' section in workspace configuration.")
-
-        packages_enable_data = data["packages"]["enable"]
-        if not isinstance(packages_enable_data, dict):
-            raise ConfigError("'[packages.enable]' must be a TOML table.")
+        packages_enable_data = get_nested_from(
+            data,
+            "packages.enable",
+            required=True,
+            is_table=True,
+            context="workspace configuration",
+        )
         
         packages = {}
         for pkg, val in packages_enable_data.items():

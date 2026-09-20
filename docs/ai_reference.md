@@ -77,6 +77,11 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/state_registry.py#L83): Builds destination ownership mapping across installed packages.
 *   [`registry.remove_package(pkg)`](../src/drift/state_registry.py#L148): Unregisters package from `state.toml`.
 
+### [`toml_utils.py`](../src/drift/toml_utils.py) (TOML Parsing & Traversal)
+*   [`get_nested_from(data, keys, default=None, required=False, is_table=False)`](../src/drift/toml_utils.py#L33): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
+*   [`get_first_from(data, keys, default=None)`](../src/drift/toml_utils.py#L14): Retrieves the first matching key from alternative candidates.
+*   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/toml_utils.py#L85): Enforces strict key allowlists on config mappings.
+
 ### [`workspace_config.py`](../src/drift/workspace_config.py) & [`package_config.py`](../src/drift/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/workspace_config.py#L210): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
 *   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/package_config.py#L1523): Loads, transforms, merges, and validates package configuration from source directory.

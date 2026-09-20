@@ -1,5 +1,5 @@
 import re
-from typing import Any, Iterable, List, Optional, Mapping
+from typing import Any, Iterable, List, Optional, Mapping, Union, Sequence
 
 from .exceptions import ConfigError
 
@@ -29,6 +29,59 @@ def get_first_from(
     if not isinstance(data, (dict, Mapping)):
         return default
     return next((data[key] for key in keys if key in data), default)
+
+
+def get_nested_from(
+    data: Optional[Mapping[str, Any]],
+    keys: Union[str, Sequence[str]],
+    default: Any = None,
+    required: bool = False,
+    is_table: bool = False,
+    context: str = "configuration",
+) -> Any:
+    """Retrieves a nested value from a mapping given a dot-delimited key path or key sequence.
+
+    Args:
+        data: Mapping to traverse.
+        keys: Dot-separated path string (e.g. "packages.enable") or sequence of keys.
+        default: Fallback value if the nested path is missing and required is False.
+        required: If True, raises ConfigError when the path does not exist.
+        is_table: If True and the retrieved value is not a table/mapping, raises ConfigError.
+        context: Context descriptor (e.g. "workspace configuration", "package configuration")
+            used in error messages.
+
+    Returns:
+        The nested value at the specified key path, or `default` if not found.
+
+    Raises:
+        ConfigError: If required is True and the key path is missing, or if is_table is True
+            and the found value is not a mapping.
+    """
+    path_str = keys if isinstance(keys, str) else ".".join(str(k) for k in keys)
+    path_parts = [k.strip() for k in keys.split(".")] if isinstance(keys, str) else [str(k) for k in keys]
+
+    if not isinstance(data, (dict, Mapping)):
+        if required:
+            raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
+        return default
+
+    val: Any = data
+    for key in path_parts:
+        if not isinstance(val, (dict, Mapping)) or key not in val:
+            if required:
+                raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
+            return default
+        val = val[key]
+
+    if val is None:
+        if required:
+            raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
+        return default
+
+    if is_table and not isinstance(val, (dict, Mapping)):
+        raise ConfigError(f"'[{path_str}]' must be a TOML table.")
+
+    return val
 
 
 def validate_known_keys(

@@ -22,6 +22,7 @@ from drift.toml_utils import (
     parse_toml_value,
     split_array_elements,
     get_first_from,
+    get_nested_from,
     validate_known_keys,
 )
 from drift.exceptions import ConfigError
@@ -109,6 +110,47 @@ class TestConfigParser(unittest.TestCase):
         val = get_first_from(data, track_gen())
         self.assertEqual(val, "value_b")
         self.assertEqual(consumed, ["missing_1", "alias_b"])
+
+    def test_get_nested_from(self) -> None:
+        data = {
+            "packages": {
+                "enable": {
+                    "pkg_a": True,
+                    "pkg_b": False,
+                },
+                "flat_str": "value",
+            }
+        }
+
+        # Basic retrieval with string dot-path and sequence path
+        self.assertEqual(get_nested_from(data, "packages.enable.pkg_a"), True)
+        self.assertEqual(get_nested_from(data, ["packages", "enable", "pkg_b"]), False)
+        self.assertEqual(get_nested_from(data, "packages.enable"), {"pkg_a": True, "pkg_b": False})
+
+        # Missing path with fallback default
+        self.assertIsNone(get_nested_from(data, "packages.missing"))
+        self.assertEqual(get_nested_from(data, "packages.missing", default="custom"), "custom")
+        self.assertEqual(get_nested_from(None, "packages.enable", default="fallback"), "fallback")
+        self.assertEqual(get_nested_from("not_a_dict", "packages.enable", default="fallback"), "fallback")
+
+        # Missing required path raises ConfigError with default or custom context
+        with self.assertRaises(ConfigError) as ctx:
+            get_nested_from(data, "packages.nonexistent", required=True)
+        self.assertIn("Missing '[packages.nonexistent]' section in configuration.", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            get_nested_from(data, "packages.nonexistent", required=True, context="custom target config")
+        self.assertIn("Missing '[packages.nonexistent]' section in custom target config.", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            get_nested_from(None, "packages.enable", required=True, context="workspace configuration")
+        self.assertIn("Missing '[packages.enable]' section in workspace configuration.", str(ctx.exception))
+
+        # is_table validation
+        self.assertEqual(get_nested_from(data, "packages.enable", is_table=True), {"pkg_a": True, "pkg_b": False})
+        with self.assertRaises(ConfigError) as ctx:
+            get_nested_from(data, "packages.flat_str", is_table=True)
+        self.assertIn("'[packages.flat_str]' must be a TOML table", str(ctx.exception))
 
     def test_validate_known_keys(self) -> None:
         # None or non-mapping data does not raise
