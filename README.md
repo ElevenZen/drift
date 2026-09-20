@@ -207,6 +207,9 @@ Unlike monolithic dotfile managers that force you to deploy entire configuration
 
 A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
 
+> [!TIP]
+> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `cfg["env"]` before downstream templates compile.  
+
 *   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
     You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:
     ```toml
@@ -254,8 +257,6 @@ A **single, unified dotfiles repository** can effortlessly power everything from
 
         return cfg
     ```
-    > [!TIP]
-    > **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `cfg["env"]` before downstream templates compile.
 
 *   **Dynamic Python Package Hook (`src/<pkg>/drift_package.py` or `drift_hooks/`)**:
     Individual packages can also define a native Python hook (`src/<pkg>/drift_package.py` or configured via `[package] hook_file = "..."`), auto-scaffolded during `drift new <pkg>`. Defining `configure_package(context: PackageHookContext)` allows you to procedurally customize package behavior based on host facts, workspace context, and environment. You can dynamically adjust `target_directory`, inject custom environment overrides or remote secrets, or set `enable_install = False` to strictly disable a package on incompatible machines, OS families, or architectures:
