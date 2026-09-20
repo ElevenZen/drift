@@ -230,6 +230,7 @@ class WorkspaceConfig:
     packages_enable_default: bool = False
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
     env: Dict[str, str] = field(default_factory=dict)
+    secrets: Dict[str, str] = field(default_factory=dict)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
 
     def __init__(
@@ -240,6 +241,7 @@ class WorkspaceConfig:
         packages_enable_default: bool = False,
         render_engine_configs: Optional[RenderEngineRegistry] = None,
         env: Mapping[str, str] = {},
+        secrets: Optional[Mapping[str, str]] = None,
         settings: Optional[SettingsConfig] = None,
     ) -> None:
         if not isinstance(drift_root, (str, Path)):
@@ -254,6 +256,8 @@ class WorkspaceConfig:
             raise ConfigError("packages_enable must be a dictionary.")
         if not isinstance(env, (dict, Mapping)):
             raise ConfigError("env must be a dictionary.")
+        if secrets is not None and not isinstance(secrets, (dict, Mapping)):
+            raise ConfigError("secrets must be a dictionary.")
 
         self.drift_root = Path(drift_root)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
@@ -261,6 +265,7 @@ class WorkspaceConfig:
         self.packages_enable_default = packages_enable_default
         self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
         self.env = dict(env)
+        self.secrets = dict(secrets) if secrets is not None else parse_secrets_env(self.drift_root)
         self.settings = settings if settings is not None else SettingsConfig()
 
     def validate(self) -> None:
@@ -279,6 +284,8 @@ class WorkspaceConfig:
         self.render_engine_configs.validate()
         if not isinstance(self.env, dict):
             raise ConfigError("env must be a dictionary.")
+        if not isinstance(self.secrets, dict):
+            raise ConfigError("secrets must be a dictionary.")
         if not isinstance(self.settings, SettingsConfig):
             raise ConfigError("settings must be a SettingsConfig instance.")
         self.settings.validate()
@@ -463,6 +470,7 @@ class WorkspaceConfig:
         cls,
         data: dict,
         drift_root: Path,
+        secrets: Optional[Mapping[str, str]] = None,
     ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         root = drift_root
@@ -529,6 +537,7 @@ class WorkspaceConfig:
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
             env=env,
+            secrets=dict(secrets) if secrets is not None else {},
             settings=settings,
         )
         config.validate()
@@ -687,42 +696,47 @@ def load_workspace_config(
     # Ensure system facts are present before rendering workspace config (default: no WAN probe)
     inject_system_facts(probe_wan_ip=False)
 
-    combined_dict = load_workspace_config_files_layered(load_configs_from)
+    secrets = parse_secrets_env(root)
 
-    # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
-    settings_dict = combined_dict.get("settings", {})
-    if isinstance(settings_dict, dict) and (
-            settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
-        inject_system_facts(probe_wan_ip=True)
+    with secrets_env_scope(secrets):
+        combined_dict = load_workspace_config_files_layered(load_configs_from)
 
-    # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
-    from ..hooks.workspace_hook import apply_workspace_hook
-    combined_dict = apply_workspace_hook(root, combined_dict)
+        # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
+        settings_dict = combined_dict.get("settings", {})
+        if isinstance(settings_dict, dict) and (
+                settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
+            inject_system_facts(probe_wan_ip=True)
 
-    # 1. Resolve inter-variable dependencies within [env] using topological sorting
-    env_dict = combined_dict.get("env", {})
-    if isinstance(env_dict, dict) and env_dict:
-        resolved_env = resolve_env_references(env_dict, base_env=os.environ, error_cls=ConfigError)
-        combined_dict["env"] = resolved_env
-        protected_keys = set(INITIAL_ENV) | set(SYSTEM_FACT_KEYS)
-        load_env_settings(resolved_env, overwrite=False, env_keep=protected_keys)
+        # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
+        from ..hooks.workspace_hook import apply_workspace_hook
+        combined_dict = apply_workspace_hook(root, combined_dict, secrets=secrets)
 
-    # 2. Interpolate ${VAR} across all other sections of combined_dict using resolved env + os.environ
-    active_env = dict(os.environ)
-    if isinstance(combined_dict.get("env"), dict):
-        active_env.update(combined_dict["env"])
-    combined_dict = interpolate_config_dict(
-        combined_dict,
-        env=active_env,
-        exclude_keys={"env"},
-        error_cls=ConfigError
-    )
+        # 1. Resolve inter-variable dependencies within [env] using topological sorting
+        # base_env is os.environ which currently contains CLI envs + system facts + secrets
+        env_dict = combined_dict.get("env", {})
+        if isinstance(env_dict, dict) and env_dict:
+            resolved_env = resolve_env_references(env_dict, base_env=os.environ, error_cls=ConfigError)
+            combined_dict["env"] = resolved_env
+
+        # 2. Interpolate ${VAR} across all other sections of combined_dict using os.environ + secrets + [env]
+        with env_scope(combined_dict.get("env", {}), overwrite=False):
+            combined_dict = interpolate_config_dict(
+                combined_dict,
+                env=os.environ,
+                exclude_keys={"env"},
+                error_cls=ConfigError
+            )
+
+    # 3. Establish baseline workspace [env] in os.environ (Tier 6)
+    # NOTE: load_env_settings must be called AFTER secrets_env_scope exits so that
+    # the secrets scope cleanup (which restores os.environ snapshot) does not un-set or
+    # purge variables loaded from the workspace [env] section.
+    if "env" in combined_dict and isinstance(combined_dict["env"], dict):
+        load_env_settings(combined_dict["env"], overwrite=False)
 
     try:
-        return WorkspaceConfig.from_dict(combined_dict, drift_root=root)
+        return WorkspaceConfig.from_dict(combined_dict, drift_root=root, secrets=secrets)
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid workspace configuration in '{load_configs_from[0]}': {e}") from e
-
-

@@ -180,9 +180,8 @@ def env_scope(
 
 
 @contextmanager
-def secrets_env_scope(drift_root: Path) -> Iterator[None]:
-    """Context manager for loading secrets from secrets.env into os.environ."""
-    secrets = parse_secrets_env(drift_root)
+def secrets_env_scope(secrets: Optional[EnvInput] = None) -> Iterator[None]:
+    """Context manager for overlaying secrets into os.environ with Tier 5 precedence."""
     with env_scope(secrets, overwrite=True, env_keep=INITIAL_ENV):
         yield
 

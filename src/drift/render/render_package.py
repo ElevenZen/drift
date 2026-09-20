@@ -24,7 +24,7 @@ from ..core.constants import (
     DRIFT_INTERNAL_RENDER_DIR_NAME,
     INITIAL_ENV,
 )
-from ..config.workspace_config import secrets_env_scope, WorkspaceConfig
+from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
@@ -448,56 +448,55 @@ def run_primitive_2_render_packages(
     hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []
-    with secrets_env_scope(workspace_config.drift_root):
-        # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
-        render_input_templates(
-            engines=workspace_config.render_engine_configs,
-            drift_root=workspace_config.drift_root,
-            output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
-        )
+    # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
+    render_input_templates(
+        engines=workspace_config.render_engine_configs,
+        drift_root=workspace_config.drift_root,
+        output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
+    )
 
-        # 2. Identify and render packages
-        active_packages = workspace_config.filter_source_packages_by_target(target_packages=target_pkgs or None)
-        for package_name in active_packages:
-            package_dir = workspace_config.source_path / package_name
-            try:
-                pkg_res = render_package(
-                    workspace_config, package_dir, flags=hook_flags
-                )
-                results.append(pkg_res)
-            except Exception as e:
-                logger.debug(f"Render exception for package '{package_name}':", exc_info=True)
-                if isinstance(e, FileNotFoundError):
-                    err_msg = f"File not found: {e}"
-                elif isinstance(e, RenderCollisionError):
-                    err_msg = f"Render collision: {e}"
-                elif isinstance(e, RenderError):
-                    err_msg = f"Render failed: {e}"
-                elif isinstance(e, ConfigError):
-                    err_msg = f"Config error: {e}"
-                else:
-                    err_msg = f"Error: {e}"
-                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
-                errors.append((package_name, err_msg, e))
-                results.append(PackageRenderResult(
-                    package=package_name,
-                    status="FAILED",
-                    error=err_msg
-                ))
-
-        if errors:
-            failed_pkgs_str = ", ".join(f"'{pkg}' ({err})" for pkg, err, _ in errors)
-            return RenderResult(
-                status="FAILED",
-                packages=results,
-                error_package=errors[0][0],
-                error_message=f"Template rendering failed for package(s): {failed_pkgs_str}"
+    # 2. Identify and render packages
+    active_packages = workspace_config.filter_source_packages_by_target(target_packages=target_pkgs or None)
+    for package_name in active_packages:
+        package_dir = workspace_config.source_path / package_name
+        try:
+            pkg_res = render_package(
+                workspace_config, package_dir, flags=hook_flags
             )
+            results.append(pkg_res)
+        except Exception as e:
+            logger.debug(f"Render exception for package '{package_name}':", exc_info=True)
+            if isinstance(e, FileNotFoundError):
+                err_msg = f"File not found: {e}"
+            elif isinstance(e, RenderCollisionError):
+                err_msg = f"Render collision: {e}"
+            elif isinstance(e, RenderError):
+                err_msg = f"Render failed: {e}"
+            elif isinstance(e, ConfigError):
+                err_msg = f"Config error: {e}"
+            else:
+                err_msg = f"Error: {e}"
+            logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+            errors.append((package_name, err_msg, e))
+            results.append(PackageRenderResult(
+                package=package_name,
+                status="FAILED",
+                error=err_msg
+            ))
 
+    if errors:
+        failed_pkgs_str = ", ".join(f"'{pkg}' ({err})" for pkg, err, _ in errors)
         return RenderResult(
-            status="SUCCESS",
-            packages=results
+            status="FAILED",
+            packages=results,
+            error_package=errors[0][0],
+            error_message=f"Template rendering failed for package(s): {failed_pkgs_str}"
         )
+
+    return RenderResult(
+        status="SUCCESS",
+        packages=results
+    )
 
 
 def run_primitive_3_commit_render_repo(

@@ -1,10 +1,10 @@
-"""Dynamic Python workspace hook loader and executor for Drift."""
+from __future__ import annotations
 
 import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Mapping
 
 from ..core.constants import (
     CONFIG_DIR_NAME,
@@ -12,6 +12,7 @@ from ..core.constants import (
     WORKSPACE_HOOK_FUNCTION_NAME,
 )
 from ..core.exceptions import ConfigError
+from ..utils.env_utils import parse_secrets_env
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,7 @@ class WorkspaceHookContext:
     config: Dict[str, Any]
     drift_root: Path
     env: Dict[str, str] = field(default_factory=dict)
+    secrets: Dict[str, str] = field(default_factory=dict)
     discovered_packages: List[str] = field(default_factory=list)
 
     @property
@@ -67,7 +69,11 @@ def execute_workspace_hook(hook_path: Path, context: WorkspaceHookContext) -> Di
     )
 
 
-def apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any]) -> Dict[str, Any]:
+def apply_workspace_hook(
+    drift_root: Path,
+    config_dict: Dict[str, Any],
+    secrets: Optional[Mapping[str, str]] = None,
+) -> Dict[str, Any]:
     """Resolves and applies the workspace Python hook if configured or present."""
     workspace_section = config_dict.get("workspace", {})
     custom_hook = workspace_section.get("hook_file")
@@ -91,6 +97,7 @@ def apply_workspace_hook(drift_root: Path, config_dict: Dict[str, Any]) -> Dict[
         config=config_dict,
         drift_root=drift_root,
         env=dict(os.environ),
+        secrets=dict(secrets) if secrets is not None else parse_secrets_env(drift_root),
         discovered_packages=WorkspaceConfig.get_package_names_from_dir(drift_root / "src"),
     )
     return execute_workspace_hook(hook_path, context)

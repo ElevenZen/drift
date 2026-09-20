@@ -810,11 +810,12 @@ def resolve_and_interpolate_package_config(
     """Resolves environment variables and interpolates references across a package config dictionary.
 
     Follows the 7-Tier Precedence Model:
-    - Tier 1: CLI / Host Shell (INITIAL_ENV preserved above all)
+    - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
     - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
-    - Tier 3: Package facts (drift_package_*)
-    - Tier 4: Host system facts
-    - Tier 6: Workspace environment
+    - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
+    - Tier 4: drift_* system facts
+    - Tier 5: config/secrets.env (loaded via secrets_env_scope)
+    - Tier 6: Workspace [env]
     - Tier 7: Package [env.fallback] (fills unset blanks only)
 
     Args:
@@ -1177,12 +1178,24 @@ class PackageConfig:
         workspace_config: WorkspaceConfig,
         overwrite: bool = True
     ) -> Iterator[None]:
-        """Context manager to activate package-specific environment variables in os.environ."""
-        saved_envs = self.load_package_envs(workspace_config=workspace_config, overwrite=overwrite)
-        try:
-            yield
-        finally:
-            self.unload_package_envs(saved_envs)
+        """Context manager to activate package-specific environment variables and secrets in os.environ.
+
+        Preemption order activated within package execution scope:
+        - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
+        - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
+        - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
+        - Tier 4: drift_* system facts
+        - Tier 5: config/secrets.env (loaded via secrets_env_scope)
+        - Tier 6: Workspace [env]
+        - Tier 7: Package [env.fallback] (fills unset blanks only)
+        """
+        from ..utils.env_utils import secrets_env_scope
+        with secrets_env_scope(workspace_config.secrets):
+            saved_envs = self.load_package_envs(workspace_config=workspace_config, overwrite=overwrite)
+            try:
+                yield
+            finally:
+                self.unload_package_envs(saved_envs)
 
     @classmethod
     def from_dict(
@@ -1587,51 +1600,58 @@ def load_package_config_from_source_dir(
     """
     pkg_name = package_dir.name
     from ..hooks.package_hook import apply_package_hook
+    from ..utils.env_utils import secrets_env_scope
 
-    combined_dict, source_files = load_package_config_dict(
+    def _load_impl() -> PackageConfig:
+        combined_dict, source_files = load_package_config_dict(
             pkg_name, [
                 package_dir / PACKAGE_CONFIG_FILE_NAME,
                 package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME,
             ], workspace_config)
 
-    # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
-    combined_dict, hook_path = apply_package_hook(
+        # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
+        combined_dict, hook_path = apply_package_hook(
             package_dir, combined_dict, workspace_config, package_name_override=pkg_name)
 
-    # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
-    if hook_path:
-        source_files.append(hook_path)
+        # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
+        if hook_path:
+            source_files.append(hook_path)
 
-    # 1. Resolve environment variables and stitch configuration sections
-    stitched_dict = resolve_and_interpolate_package_config(
-        combined_dict,
-        package_name=pkg_name,
-        workspace_config=workspace_config,
-    )
-
-    # 2. Determine output path: render/<package_name>/.drift/drift_package.toml
-    if workspace_config is not None:
-        output_file_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
-        output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        toml_str = dump_toml(stitched_dict)
-        output_file_path.write_text(toml_str, encoding="utf-8")
-
-    # 3. Load PackageConfig from the stitched dictionary
-    try:
-        config = PackageConfig.from_dict(
-            stitched_dict,
+        # 1. Resolve environment variables and stitch configuration sections
+        stitched_dict = resolve_and_interpolate_package_config(
+            combined_dict,
             package_name=pkg_name,
-            source_files=source_files,
-            base_dir=package_dir,
             workspace_config=workspace_config,
         )
-    except (TypeError, ValueError) as e:
-        package_dir_log = package_dir.relative_to(workspace_config.drift_root) if workspace_config else package_dir
-        err_msg = (f"Invalid configuration for package '{pkg_name}' in '{package_dir_log}' "
-                   f"from {[str(x.relative_to(package_dir)) for x in source_files]}: {e}")
-        logger.error(f"❌ {err_msg}")
-        raise ConfigError(err_msg) from e
-    return config
+
+        # 2. Determine output path: render/<package_name>/.drift/drift_package.toml
+        if workspace_config is not None:
+            output_file_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+            output_file_path.parent.mkdir(parents=True, exist_ok=True)
+            toml_str = dump_toml(stitched_dict)
+            output_file_path.write_text(toml_str, encoding="utf-8")
+
+        # 3. Load PackageConfig from the stitched dictionary
+        try:
+            config = PackageConfig.from_dict(
+                stitched_dict,
+                package_name=pkg_name,
+                source_files=source_files,
+                base_dir=package_dir,
+                workspace_config=workspace_config,
+            )
+        except (TypeError, ValueError) as e:
+            package_dir_log = package_dir.relative_to(workspace_config.drift_root) if workspace_config else package_dir
+            err_msg = (f"Invalid configuration for package '{pkg_name}' in '{package_dir_log}' "
+                       f"from {[str(x.relative_to(package_dir)) for x in source_files]}: {e}")
+            logger.error(f"❌ {err_msg}")
+            raise ConfigError(err_msg) from e
+        return config
+
+    if workspace_config is not None:
+        with secrets_env_scope(workspace_config.secrets):
+            return _load_impl()
+    return _load_impl()
 
 
 def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:

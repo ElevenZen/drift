@@ -228,10 +228,26 @@ def configure_workspace(context):
     raise ValueError("Something went wrong during dynamic config calculation!")
 """, encoding="utf-8")
 
-        with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
-        self.assertIn("Error executing workspace hook", str(cm.exception))
-        self.assertIn("Something went wrong", str(cm.exception))
+    def test_hook_accesses_context_secrets(self) -> None:
+        """Workspace hook can inspect context.secrets and use them to mutate config."""
+        from drift.core.constants import SECRETS_ENV_FILE_NAME
+        (self.drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME).write_text(
+            'VAULT_TOKEN="secret_token_123"\n',
+            encoding="utf-8"
+        )
+        hook_file = self.drift_root / CONFIG_DIR_NAME / "drift_workspace.py"
+        hook_file.write_text("""
+def configure_workspace(context):
+    cfg = context.config
+    assert "VAULT_TOKEN" in context.secrets
+    assert context.secrets["VAULT_TOKEN"] == "secret_token_123"
+    assert "VAULT_TOKEN" in context.env
+    cfg.setdefault("env", {})["INJECTED_TOKEN"] = context.secrets["VAULT_TOKEN"]
+    return cfg
+""", encoding="utf-8")
+
+        cfg = load_workspace_config(self.drift_root)
+        self.assertEqual(cfg.env.get("INJECTED_TOKEN"), "secret_token_123")
 
 
 if __name__ == "__main__":

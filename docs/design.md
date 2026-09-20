@@ -436,20 +436,25 @@ Rather than requiring developers to wrap static configuration files in template 
 To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.
 
 1. **Strict 7-Tier Variable Precedence**:
-   During template parsing and hook execution, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
+   During configuration ingestion, template parsing, and hook execution, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
    - **Tier 1 - Host Shell / CLI Environment**: Active environment variables provided at invocation context (`os.environ`).
    - **Tier 2 - Package `[env.override]`**: Package-enforced configuration overrides defined in `src/<pkg>/drift_package.toml`.
    - **Tier 3 - Package Facts (`drift_package_*`)**: Dynamic attributes (`drift_package_name`, `drift_package_target_dir`, `drift_package_install_method`, etc.).
    - **Tier 4 - System Facts (`drift_*`)**: Auto-populated host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
-   - **Tier 5 - Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during rendering.
+   - **Tier 5 - Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during configuration and rendering.
    - **Tier 6 - Global Workspace Environment (`[env]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
    - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
 
-2. **Transient, Clean-Room Isolation**:
-   To prevent credentials from leaking to other processes, secrets are loaded with transient isolation:
-   - At the very beginning of **Render Package Primitive 2** (before template input compiling and package rendering begin), the engine parses `config/secrets.env` (stripping comments and quotes) and loads them into `os.environ`.
-   - It records the original state of all loaded keys.
-   - Once all rendering operations are finished, a secure `finally` block runs, unloading the secrets and completely restoring the parent shell's original environment variables. This guarantees zero credential contamination.
+2. **Single Ingestion & Explicit Workspace Injection**:
+   To avoid redundant disk I/O and repeated file parsing across multi-package workflows:
+   - `config/secrets.env` is parsed **once** at the beginning of workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed dictionary on `WorkspaceConfig.secrets`.
+   - Downstream operations (`PackageConfig` ingestion, lifecycle hooks, requirement checks, template rendering) read directly from `WorkspaceConfig.secrets` in $O(1)$ memory without re-reading the filesystem.
+
+3. **Transient, Clean-Room Isolation (`secrets_env_scope`)**:
+   To prevent credentials from leaking across operations or mutating ambient state:
+   - When loading workspace configurations (`load_workspace_config`), package configurations (`load_package_config_from_source_dir`), or rendering packages (`pkg_config.package_envs`), Drift enters `secrets_env_scope(workspace_config.secrets)`.
+   - Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence (leaving CLI environment and host shell variables intact).
+   - Upon exiting the scoped block, a secure `finally` handler completely unloads the secrets and restores the original environment snapshot, guaranteeing zero credential contamination.
 
 #### Dynamic Workspace Python Hook: `config/drift_workspace.py`
 For advanced programmatic workspace configuration (such as dynamically toggling packages based on the operating system, Linux distribution, hostname, CPU architecture, or custom discovery logic), Drift provides a **Dynamic Python Workspace Hook**.
@@ -462,7 +467,7 @@ For advanced programmatic workspace configuration (such as dynamically toggling 
      from drift import WorkspaceHookContext
 
      def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
-         # Inspect system facts and environment
+         # Inspect system facts, secrets, and environment
          if context.os == "Linux" and context.distro == "arch":
              context.config.setdefault("packages", {}).setdefault("enable", {})["hyprland"] = True
          return context.config
@@ -471,8 +476,10 @@ For advanced programmatic workspace configuration (such as dynamically toggling 
 2. **`WorkspaceHookContext` Properties**:
    - `context.config`: The parsed TOML configuration dictionary.
    - `context.drift_root`: Absolute path to the workspace root directory.
-   - `context.env`: Active environment variable dictionary snapshot.
+   - `context.secrets`: Private secrets dictionary loaded from `config/secrets.env` (`Dict[str, str]`).
+   - `context.env`: Active environment variable dictionary snapshot (including CLI envs and secrets).
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
+   - `context.discovered_packages`: List of all package directory names found in `src/`.
    - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
 
 3. **Lifecycle Execution**:
@@ -593,7 +600,8 @@ For complex packages requiring programmatic adjustments (such as downloading rem
    - `context.package_dir`: Absolute path to `src/<package_name>/`.
    - `context.drift_root`: Workspace root path (if present).
    - `context.workspace_config`: Active `WorkspaceConfig` domain instance (if present).
-   - `context.env`: Active environment snapshot.
+   - `context.secrets`: Private secrets dictionary loaded from `config/secrets.env` (`Dict[str, str]`).
+   - `context.env`: Active environment snapshot (including CLI envs and secrets).
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - `context.package_facts`: Dynamic package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_src_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
    - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
@@ -774,7 +782,10 @@ All lifecycle hooks execute in user space without `sudo`, with their working dir
 | `health` | During `drift health` probe execution |
 
 > [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
+> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). All hooks have complete access to `config/secrets.env`:
+> - **Python Hooks** (`drift_workspace.py`, `drift_package.py`): Directly inspect `context.secrets` (`Dict[str, str]`) and `context.env`.
+> - **Subprocess Lifecycle Hook Scripts** (`probe`, `pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`): Automatically inherit `secrets.env` variables in `os.environ` via Tier 5 precedence.
+> The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
 Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:

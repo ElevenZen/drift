@@ -36,6 +36,7 @@ def configure_package(context: PackageHookContext) -> Dict[str, Any]:
         - context.workspace_config: Parent WorkspaceConfig object (Optional[WorkspaceConfig]).
         - context.facts: Auto-detected system facts (drift_os, drift_arch, drift_distro, etc.).
         - context.package_facts: Package-specific facts (drift_package_name, drift_package_src_dir, etc.).
+        - context.secrets: Private secrets loaded from config/secrets.env (Dict[str, str]).
         - context.env: Current active environment variables snapshot (Dict[str, str]).
         - Helper properties: context.os, context.arch, context.distro, context.hostname, context.user.
 

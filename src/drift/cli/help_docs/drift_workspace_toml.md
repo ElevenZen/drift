@@ -160,6 +160,7 @@ The `context` object passed into `configure_workspace(context)` is an instance o
 * `context.config`: The workspace's raw configuration dictionary (from `drift_workspace.toml` and `.local.toml`).
 * `context.drift_root`: Absolute `Path` to the active Drift workspace root directory.
 * `context.discovered_packages`: List of all package directory names found under `src/` (`List[str]`).
+* `context.secrets`: Secrets loaded from `config/secrets.env` (`Dict[str, str]`).
 * `context.env`: Full host environment snapshot (`Dict[str, str]`).
 * `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 * Helper properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.

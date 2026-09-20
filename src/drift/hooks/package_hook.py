@@ -30,6 +30,7 @@ class PackageHookContext:
     drift_root: Optional[Path] = None
     workspace_config: Optional["WorkspaceConfig"] = None
     env: Dict[str, str] = field(default_factory=dict)
+    secrets: Dict[str, str] = field(default_factory=dict)
 
     @property
     def facts(self) -> Dict[str, str]:
@@ -139,6 +140,7 @@ def apply_package_hook(
         return config_dict, None
 
     drift_root = workspace_config.drift_root if workspace_config is not None else None
+    secrets = dict(workspace_config.secrets) if workspace_config is not None else {}
     context = PackageHookContext(
         config=config_dict,
         package_name=pkg_name,
@@ -146,6 +148,7 @@ def apply_package_hook(
         drift_root=drift_root,
         workspace_config=workspace_config,
         env=dict(os.environ),
+        secrets=secrets,
     )
 
     with env_scope(context.package_facts, overwrite=True, env_keep=INITIAL_ENV):

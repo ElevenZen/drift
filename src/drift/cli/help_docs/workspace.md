@@ -87,8 +87,9 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
 #### Hook Context Attributes (`WorkspaceHookContext`):
 *   **`context.config`**: The mutable configuration dictionary merged from `drift_workspace.toml` and `drift_workspace.local.toml`.
 *   **`context.drift_root`**: Resolved `Path` to the active Drift workspace root.
+*   **`context.secrets`**: Private secrets dictionary loaded from `config/secrets.env` (`Dict[str, str]`).
+*   **`context.env`**: Dictionary of all environment variables, host facts, and secrets.
 *   **`context.facts`**: Accessor dictionary for auto-detected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
-*   **`context.env`**: Dictionary of all environment variables and host facts.
 *   **`context.discovered_packages`**: List of all package directory names found in `src/`.
 *   **Helper properties**: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
 
@@ -106,17 +107,23 @@ GITHUB_TOKEN="ghp_exampleToken12345"
 WORK_EMAIL="jane.doe@company.com"
 ```
 
-### isolated Compilation Lifecycles
-Secrets are handled with maximum security during dotfiles compilation:
-1.  **Strict Variable Precedence**:
-    *   System Host Environment
-    *   Secret Vault (`config/secrets.env`)
-    *   Global Workspace Environment (`[env]` table inside TOML)
-2.  **Transient Isolation**:
-    *   At the start of **Render Package Primitive 2** (before templates rendering begins), Drift parses `secrets.env` and temporarily injects keys into `os.environ`.
-    *   It backs up any pre-existing environment variables.
-    *   During rendering, template engines (like `envsubst`) compile templates substituting these private variables in the sandboxed `render/` directory.
-    *   **Strict Restoration**: Before primitive 2 exits, Drift cleanses `os.environ` and completely restores the original host environment state, ensuring zero leakages to parent shell or child processes.
+### Ingestion & Isolated Compilation Lifecycles
+Secrets are handled with maximum security and performance during workspace and package operations:
+1.  **Strict 7-Tier Variable Precedence**:
+    *   **Tier 1**: Host Shell / CLI Environment (`os.environ`)
+    *   **Tier 2**: Package `[env.override]`
+    *   **Tier 3**: Package Facts (`drift_package_*`)
+    *   **Tier 4**: System Facts (`drift_*`)
+    *   **Tier 5**: Secret Vault (`config/secrets.env`)
+    *   **Tier 6**: Workspace Environment (`[env]` table in `drift_workspace.toml`)
+    *   **Tier 7**: Package `[env.fallback]`
+2.  **Single Ingestion & Explicit Workspace Cache**:
+    *   `config/secrets.env` is parsed **once** during workspace loading and stored on `WorkspaceConfig.secrets`.
+    *   Downstream Python hooks (`WorkspaceHookContext.secrets`, `PackageHookContext.secrets`) access secrets in $O(1)$ memory without repeated disk I/O.
+3.  **Transient Clean-Room Isolation (`secrets_env_scope`)**:
+    *   During workspace/package config loading, lifecycle hook execution, and template rendering, Drift enters `secrets_env_scope(workspace_config.secrets)`.
+    *   Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence (leaving CLI environment and host shell variables intact).
+    *   **Strict Restoration**: Upon exiting the scope, Drift completely restores the original host environment state, ensuring zero credential leakages to parent shells or unrelated processes.
 
 ---
 

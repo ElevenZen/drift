@@ -1233,7 +1233,37 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(str(rendered_dir_cfg.target_directory), f"{expected_src}/my_target")
         self.assertEqual(rendered_dir_cfg.env_fallback["FALLBACK_SRC"], expected_src)
 
+    def test_workspace_config_secrets_dict_and_scope(self) -> None:
+        """Verifies that secrets are loaded into WorkspaceConfig.secrets and secrets_env_scope accepts dict."""
+        from drift.config.workspace_config import load_workspace_config, WorkspaceConfig
+        from drift.utils.env_utils import secrets_env_scope
+
+        # Write secrets.env and workspace config
+        (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text("[workspace]\n[packages.enable]\n", encoding="utf-8")
+        secrets_file = self.config_dir / SECRETS_ENV_FILE_NAME
+        secrets_file.write_text("MY_SECRET_KEY=\"my_secret_val\"\n", encoding="utf-8")
+
+        # 1. Test via load_workspace_config
+        ws = load_workspace_config(self.drift_root)
+        self.assertEqual(ws.secrets, {"MY_SECRET_KEY": "my_secret_val"})
+
+        # Verify secrets are NOT leaked in os.environ outside scope
+        self.assertNotIn("MY_SECRET_KEY", os.environ)
+
+        # 2. Test secrets_env_scope with dict directly
+        with secrets_env_scope(ws.secrets):
+            self.assertEqual(os.environ["MY_SECRET_KEY"], "my_secret_val")
+        self.assertNotIn("MY_SECRET_KEY", os.environ)
+
+        # 3. Test direct WorkspaceConfig instantiation with manual secrets dict
+        manual_ws = WorkspaceConfig(
+            drift_root=self.drift_root,
+            secrets={"CUSTOM_SEC": "custom_val"}
+        )
+        self.assertEqual(manual_ws.secrets, {"CUSTOM_SEC": "custom_val"})
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

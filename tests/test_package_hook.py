@@ -427,6 +427,30 @@ def configure_package(context):
         self.assertEqual(hook_path, default_hook)
         self.assertEqual(res_dict["package"]["install_method"], "copy")
 
+    def test_package_hook_accesses_context_secrets_and_env(self) -> None:
+        """Package hook can inspect context.secrets and use them across primitives."""
+        from drift.core.constants import SECRETS_ENV_FILE_NAME
+        (self.drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME).write_text(
+            'API_KEY="my_secret_key"\n',
+            encoding="utf-8"
+        )
+        ws_config = load_workspace_config(self.drift_root)
+
+        hook_file = self.drift_root / "src" / "pkg1" / DEFAULT_PACKAGE_HOOK_FILE_NAME
+        hook_file.write_text("""
+def configure_package(context):
+    cfg = context.config
+    assert "API_KEY" in context.secrets
+    assert context.secrets["API_KEY"] == "my_secret_key"
+    assert "API_KEY" in context.env
+    cfg.setdefault("env", {}).setdefault("override", {})["INJECTED_API_KEY"] = context.secrets["API_KEY"]
+    return cfg
+""", encoding="utf-8")
+
+        pkg_dir = self.drift_root / "src" / "pkg1"
+        cfg = PackageConfig.from_source_dir(pkg_dir, ws_config)
+        self.assertEqual(cfg.env_override.get("INJECTED_API_KEY"), "my_secret_key")
+
 
 if __name__ == "__main__":
     unittest.main()
