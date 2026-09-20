@@ -1,5 +1,5 @@
 # engine/drift/__init__.py
-from .toml_utils import parse_toml
+from .toml_utils import parse_toml, get_first_from, validate_known_keys
 from .workspace_config import (
     WorkspaceConfig,
     WorkspaceSectionConfig,
@@ -58,6 +58,9 @@ from .constants import (
     inject_system_facts,
     update_initial_env,
     set_initial_env,
+    DEFAULT_HOOK_COMMON_ENVS,
+    DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
+    DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
 )
 from .host_facts import (
     SystemFacts,

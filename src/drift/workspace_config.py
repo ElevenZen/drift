@@ -7,7 +7,7 @@ import logging
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Iterator, Union, Any, Sequence, Mapping
+from typing import ClassVar, Dict, List, Optional, Tuple, Iterator, Union, Any, Sequence, Mapping
 
 from .constants import (
         add_envst_path,
@@ -25,7 +25,7 @@ from .constants import (
         inject_system_facts,
         INTERNAL_RENDER_COMMAND,
 )
-from .toml_utils import parse_toml, merge_toml
+from .toml_utils import parse_toml, merge_toml, get_first_from, validate_known_keys
 from .exceptions import ConfigError
 from .file_utils import expand_user_and_env
 from .env_utils import (
@@ -52,12 +52,30 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SettingsConfig:
     """Workspace-level settings defined in [settings] in drift_workspace.toml."""
+    PROBE_WAN_IP_KEYS: ClassVar[Tuple[str, ...]] = (
+        "probe_wan_ip",
+        "probe_network_ip",
+        "probe_internet_ip",
+    )
+    HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS: ClassVar[Tuple[str, ...]] = (
+        "hook_inject_non_interactive_envs",
+        "hook_inject_non_interactive_env",
+        "inject_hook_non_interactive_envs",
+    )
+    KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
+        *PROBE_WAN_IP_KEYS,
+        *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
+    )
+
     probe_wan_ip: bool = False
+    hook_inject_non_interactive_envs: bool = True
 
     def validate(self) -> None:
         """Validates settings types."""
         if not isinstance(self.probe_wan_ip, bool):
             raise ConfigError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
+        if not isinstance(self.hook_inject_non_interactive_envs, bool):
+            raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
 
     @classmethod
     def from_dict(cls, data: Any) -> "SettingsConfig":
@@ -66,21 +84,29 @@ class SettingsConfig:
             return cls()
         if not isinstance(data, dict):
             raise ConfigError("[settings] must be a TOML table.")
-        known_keys = {"probe_wan_ip", "probe_network_ip", "probe_internet_ip"}
-        for k in data:
-            if k not in known_keys:
-                raise ConfigError(f"Unknown option under [settings]: '{k}'")
 
-        raw_val = data.get("probe_wan_ip")
-        if raw_val is None:
-            raw_val = data.get("probe_network_ip")
-        if raw_val is None:
-            raw_val = data.get("probe_internet_ip", False)
+        validate_known_keys(data, cls.KNOWN_KEYS, context="[settings]")
 
+        raw_val = get_first_from(
+            data,
+            cls.PROBE_WAN_IP_KEYS,
+            default=False,
+        )
         if not isinstance(raw_val, bool):
             raise ConfigError("probe_wan_ip under [settings] must be a boolean.")
 
-        settings = cls(probe_wan_ip=bool(raw_val))
+        raw_hook_env = get_first_from(
+            data,
+            cls.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
+            default=True,
+        )
+        if not isinstance(raw_hook_env, bool):
+            raise ConfigError("hook_inject_non_interactive_envs under [settings] must be a boolean.")
+
+        settings = cls(
+            probe_wan_ip=bool(raw_val),
+            hook_inject_non_interactive_envs=bool(raw_hook_env),
+        )
         settings.validate()
         return settings
 
@@ -90,6 +116,16 @@ class SettingsConfig:
 @dataclass
 class WorkspaceSectionConfig:
     """Represents options defined under the [workspace] section in drift_workspace.toml."""
+    KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
+        "source_directory",
+        "render_directory",
+        "install_directory",
+        "backup_directory",
+        "default_target_directory",
+        "default_install_method",
+        "hook_file",
+    )
+
     source_directory: Path = Path("src")
     render_directory: Path = Path("render")
     install_directory: Path = Path("install")
@@ -152,18 +188,11 @@ class WorkspaceSectionConfig:
         """Builds a WorkspaceSectionConfig instance from a parsed TOML dictionary."""
         if not isinstance(data, dict):
             raise ConfigError("[workspace] must be a TOML table.")
-        known_workspace_keys = {
-            "source_directory",
-            "render_directory",
-            "install_directory",
-            "backup_directory",
-            "default_target_directory",
-            "default_install_method",
-            "hook_file",
-        }
-        for key in data:
-            if key not in known_workspace_keys:
-                raise ConfigError(f"Unknown workspace option: '{key}'")
+        validate_known_keys(
+            data,
+            cls.KNOWN_KEYS,
+            message_prefix="Unknown workspace option",
+        )
 
         raw_install_method = data.get("default_install_method", InstallMethod.STOW)
         try:
@@ -185,6 +214,16 @@ class WorkspaceSectionConfig:
 @dataclass
 class WorkspaceConfig:
     """Represents the global workspace configurations inside config/drift_workspace.toml."""
+    PACKAGES_ENABLE_DEFAULT_KEY: ClassVar[str] = "DEFAULT"
+    WORKSPACE_PACKAGES_DEFAULT_KEY: ClassVar[str] = PACKAGES_ENABLE_DEFAULT_KEY
+    KNOWN_TOP_SECTIONS: ClassVar[Tuple[str, ...]] = (
+        "workspace",
+        "packages",
+        "render",
+        "env",
+        "settings",
+    )
+
     drift_root: Path
     workspace: WorkspaceSectionConfig = field(default_factory=WorkspaceSectionConfig)
     packages_enable: Dict[str, bool] = field(default_factory=dict)
@@ -431,10 +470,11 @@ class WorkspaceConfig:
             raise ConfigError("Workspace configuration data must be a dictionary.")
 
         # Error for unknown top-level sections
-        known_top_sections = {"workspace", "packages", "render", "env", "settings"}
-        for key in data:
-            if key not in known_top_sections:
-                raise ConfigError(f"Unknown top-level config section: '{key}'")
+        validate_known_keys(
+            data,
+            cls.KNOWN_TOP_SECTIONS,
+            message_prefix="Unknown top-level config section",
+        )
 
         if "workspace" not in data:
             raise ConfigError("Missing '[workspace]' section in workspace configuration.")
@@ -450,8 +490,7 @@ class WorkspaceConfig:
         
         packages = {}
         for pkg, val in packages_enable_data.items():
-            # TODO: please extract 'DEFAULT' to a constant
-            if pkg == "DEFAULT":
+            if pkg == cls.PACKAGES_ENABLE_DEFAULT_KEY:
                 continue
             if isinstance(val, bool):
                 packages[pkg] = val
@@ -460,7 +499,7 @@ class WorkspaceConfig:
             else:
                 packages[pkg] = False
 
-        packages_enable_default = bool(packages_enable_data.get("DEFAULT", False))
+        packages_enable_default = bool(packages_enable_data.get(cls.PACKAGES_ENABLE_DEFAULT_KEY, False))
         if not packages_enable_default and len(packages) == 0:
             logger.warning("No packages are enabled in the workspace configuration. "
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")

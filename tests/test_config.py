@@ -21,6 +21,8 @@ from drift.toml_utils import (
     _parse_toml_fallback,
     parse_toml_value,
     split_array_elements,
+    get_first_from,
+    validate_known_keys,
 )
 from drift.exceptions import ConfigError
 from drift.workspace_config import (
@@ -35,6 +37,7 @@ from drift.workspace_config import (
 from drift.package_config import (
     PackageConfig,
     PackageHooks,
+    PackageRequirements,
     load_package_config_rendered,
     load_package_config_from_source_dir,
     load_package_config_from_render_dir,
@@ -83,6 +86,68 @@ class TestConfigParser(unittest.TestCase):
     def test_parse_toml_array_value(self) -> None:
         self.assertEqual(parse_toml_value('["a", "b"]'), ["a", "b"])
         self.assertEqual(parse_toml_value('[]'), [])
+
+    def test_get_first_from(self) -> None:
+        data = {"alias_b": "value_b", "disabled_flag": False}
+        self.assertEqual(get_first_from(data, ["alias_a", "alias_b", "alias_c"]), "value_b")
+        self.assertEqual(get_first_from(data, ["disabled_flag", "other"]), False)
+        self.assertIsNone(get_first_from(data, ["nonexistent_a", "nonexistent_b"]))
+        self.assertEqual(get_first_from(data, ["nonexistent"], default="fallback"), "fallback")
+        self.assertEqual(get_first_from(None, ["key"], default="fallback"), "fallback")
+
+        # Generator expression support (lazy, unmaterialized)
+        key_gen = (k for k in ["missing_1", "alias_b", "unreachable"])
+        self.assertEqual(get_first_from(data, key_gen), "value_b")
+
+        # Verify lazy short-circuiting: generator is not consumed past the first match
+        consumed = []
+        def track_gen():
+            for k in ["missing_1", "alias_b", "never_reached"]:
+                consumed.append(k)
+                yield k
+
+        val = get_first_from(data, track_gen())
+        self.assertEqual(val, "value_b")
+        self.assertEqual(consumed, ["missing_1", "alias_b"])
+
+    def test_validate_known_keys(self) -> None:
+        # None or non-mapping data does not raise
+        validate_known_keys(None, ["a", "b"])
+        validate_known_keys({}, ["a", "b"])
+        validate_known_keys("not_a_dict", ["a", "b"])  # type: ignore[arg-type]
+
+        # Valid keys do not raise
+        validate_known_keys({"a": 1, "b": 2}, ["a", "b", "c"])
+
+        # Single unknown key raises with default prefix
+        with self.assertRaises(ConfigError) as ctx:
+            validate_known_keys({"a": 1, "bad_key": 2}, ["a", "b"])
+        self.assertIn("Unknown option: 'bad_key'", str(ctx.exception))
+
+        # Single unknown key with context
+        with self.assertRaises(ConfigError) as ctx:
+            validate_known_keys({"bad_key": 1}, ["a"], context="[settings]")
+        self.assertIn("Unknown option under [settings]: 'bad_key'", str(ctx.exception))
+
+        # Multiple unknown keys reports all unknown keys
+        with self.assertRaises(ConfigError) as ctx:
+            validate_known_keys({"k1": 1, "k2": 2, "valid": 3}, ["valid"], context="[settings]")
+        self.assertIn("'k1'", str(ctx.exception))
+        self.assertIn("'k2'", str(ctx.exception))
+        self.assertIn("Unknown option under [settings]:", str(ctx.exception))
+
+        # Custom message_prefix and suffix
+        with self.assertRaises(ConfigError) as ctx:
+            validate_known_keys(
+                {"bad1": 1, "bad2": 2},
+                ["valid"],
+                message_prefix="Unknown hook option in package [hooks]",
+                suffix=" for package 'my_pkg'",
+            )
+        self.assertIn("Unknown hook option in package [hooks]:", str(ctx.exception))
+        self.assertIn("'bad1'", str(ctx.exception))
+        self.assertIn("'bad2'", str(ctx.exception))
+        self.assertTrue(str(ctx.exception).endswith(" for package 'my_pkg'"))
 
     def test_parse_toml_simple(self) -> None:
         toml_str = """
@@ -2051,29 +2116,46 @@ class TestSettingsConfig(unittest.TestCase):
         from drift.workspace_config import SettingsConfig
         settings = SettingsConfig()
         self.assertFalse(settings.probe_wan_ip)
+        self.assertTrue(settings.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict(self) -> None:
         from drift.workspace_config import SettingsConfig
-        s1 = SettingsConfig.from_dict({"probe_wan_ip": True})
+        s1 = SettingsConfig.from_dict({"probe_wan_ip": True, "hook_inject_non_interactive_envs": False})
         self.assertTrue(s1.probe_wan_ip)
+        self.assertFalse(s1.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict_aliases(self) -> None:
         from drift.workspace_config import SettingsConfig
-        s2 = SettingsConfig.from_dict({"probe_network_ip": True})
+        s2 = SettingsConfig.from_dict({"probe_network_ip": True, "hook_inject_non_interactive_env": False})
         self.assertTrue(s2.probe_wan_ip)
+        self.assertFalse(s2.hook_inject_non_interactive_envs)
 
-        s3 = SettingsConfig.from_dict({})
-        self.assertFalse(s3.probe_wan_ip)
+        s3 = SettingsConfig.from_dict({"inject_hook_non_interactive_envs": False})
+        self.assertFalse(s3.hook_inject_non_interactive_envs)
+
+        s4 = SettingsConfig.from_dict({})
+        self.assertFalse(s4.probe_wan_ip)
+        self.assertTrue(s4.hook_inject_non_interactive_envs)
 
     def test_settings_config_validation(self) -> None:
         from drift.workspace_config import SettingsConfig
         from drift.exceptions import ConfigError
 
-        with self.assertRaises(ConfigError):
+        with self.assertRaises(ConfigError) as ctx:
             SettingsConfig.from_dict({"unknown_setting": True})
+        self.assertIn("Unknown option under [settings]: 'unknown_setting'", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            SettingsConfig.from_dict({"unknown_1": 1, "unknown_2": 2})
+        self.assertIn("Unknown option under [settings]:", str(ctx.exception))
+        self.assertIn("'unknown_1'", str(ctx.exception))
+        self.assertIn("'unknown_2'", str(ctx.exception))
 
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"probe_wan_ip": "not_a_bool"})
+
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "not_a_bool"})
 
     def test_workspace_config_with_settings(self) -> None:
         toml_content = """
@@ -2090,10 +2172,31 @@ class TestSettingsConfig(unittest.TestCase):
 
         [settings]
         probe_wan_ip = true
+        hook_inject_non_interactive_envs = false
         """
         data = parse_toml(toml_content)
         ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
         self.assertTrue(ws_cfg.settings.probe_wan_ip)
+        self.assertFalse(ws_cfg.settings.hook_inject_non_interactive_envs)
+
+    def test_class_constants(self) -> None:
+        """Verifies schema and key ClassVars on configuration classes."""
+        self.assertEqual(WorkspaceConfig.PACKAGES_ENABLE_DEFAULT_KEY, "DEFAULT")
+        self.assertEqual(WorkspaceConfig.WORKSPACE_PACKAGES_DEFAULT_KEY, "DEFAULT")
+        self.assertIn("settings", WorkspaceConfig.KNOWN_TOP_SECTIONS)
+        self.assertIn("workspace", WorkspaceConfig.KNOWN_TOP_SECTIONS)
+
+        self.assertIn("source_directory", WorkspaceSectionConfig.KNOWN_KEYS)
+        self.assertIn("probe_wan_ip", SettingsConfig.PROBE_WAN_IP_KEYS)
+        self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS)
+        self.assertIn("probe_wan_ip", SettingsConfig.KNOWN_KEYS)
+        self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.KNOWN_KEYS)
+
+        self.assertIn("input_file", RenderEngineConfig.KNOWN_KEYS)
+        self.assertIn("os", PackageRequirements.KNOWN_KEYS)
+        self.assertIn("ip", PackageRequirements.IP_KEYS)
+        self.assertIn("package", PackageConfig.KNOWN_TOP_SECTIONS)
+        self.assertIn("source_directory", PackageConfig.KNOWN_PACKAGE_KEYS)
 
 
 class TestWorkspaceSectionConfig(unittest.TestCase):

@@ -292,15 +292,23 @@ IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
 
 INITIAL_ENV: List[str] = list(os.environ.keys())
 
-DEFAULT_HOOK_NON_INTERACTIVE_ENVS: Dict[str, str] = {
+DEFAULT_HOOK_COMMON_ENVS: Dict[str, str] = {
+    "DRIFT_HOOK": "1",
+    "DRIFT_NON_INTERACTIVE": "1",
+}
+
+DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS: Dict[str, str] = {
     "PAGER": "cat",
     "GIT_PAGER": "cat",
     "SYSTEMD_PAGER": "cat",
     "BAT_PAGER": "cat",
     "DEBIAN_FRONTEND": "noninteractive",
     "CI": "true",
-    "DRIFT_HOOK": "1",
-    "DRIFT_NON_INTERACTIVE": "1",
+}
+
+DEFAULT_HOOK_NON_INTERACTIVE_ENVS: Dict[str, str] = {
+    **DEFAULT_HOOK_COMMON_ENVS,
+    **DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
 }
 
 SYSTEM_FACT_KEYS: List[str] = [

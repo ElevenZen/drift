@@ -8,13 +8,15 @@ from pathlib import Path
 from typing import cast, Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .workspace_config import WorkspaceConfig
+    from .workspace_config import WorkspaceConfig, SettingsConfig
     from .render_engine_config import RenderEngineRegistry
 
 from .package_config import PackageConfig
 from .process_utils import run_command
 from .result_models import HookResult
 from .constants import (
+    DEFAULT_HOOK_COMMON_ENVS,
+    DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
     DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
     INITIAL_ENV,
     DRIFT_HOOKS_DIR_NAME,
@@ -49,10 +51,15 @@ class HookExecFlags:
     def resolve(
         cls,
         flags: Optional["HookExecFlags"] = None,
+        settings: Optional["SettingsConfig"] = None,
     ) -> "HookExecFlags":
-        """Resolves execution flags, falling back to defaults if not provided."""
+        """Resolves execution flags, falling back to workspace SettingsConfig defaults if flags are omitted."""
         if flags is not None:
             return flags
+        if settings is not None:
+            return cls(
+                inject_non_interactive_envs=settings.hook_inject_non_interactive_envs
+            )
         return cls()
 
 
@@ -165,7 +172,10 @@ def execute_hook_script(
     start_time = time.perf_counter()
     exec_flags = HookExecFlags.resolve(flags)
 
-    env_injections = DEFAULT_HOOK_NON_INTERACTIVE_ENVS if exec_flags.inject_non_interactive_envs else {}
+    env_injections = {
+        **DEFAULT_HOOK_COMMON_ENVS,
+        **(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS if exec_flags.inject_non_interactive_envs else {}),
+    }
     with env_scope(env_injections, overwrite=True):
         try:
             proc = execute_hook_command(
@@ -288,7 +298,7 @@ def trigger_package_hook_with_render(
     pkg_config_override: Optional pre-loaded PackageConfig. If not provided, loads from package source dir.
     engines_override: Optional pre-prepared RenderEngineRegistry (skips re-rendering engine input templates).
     """
-    exec_flags = HookExecFlags.resolve(flags)
+    exec_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     if exec_flags.no_hooks:
         return HookResult.skipped(package=package_name, hook_name=hook_name)
 

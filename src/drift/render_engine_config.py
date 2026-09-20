@@ -27,10 +27,11 @@ import logging
 from collections.abc import MutableMapping, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union, Mapping
+from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Mapping
 
 from .constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from .exceptions import ConfigError
+from .toml_utils import validate_known_keys
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,8 @@ logger = logging.getLogger(__name__)
 @dataclass
 class RenderEngineConfig:
     """Represents a render engine configuration inside workspace configuration."""
+    KNOWN_KEYS: ClassVar[Tuple[str, ...]] = ("input_file", "suffix", "render_command")
+
     name: str
     input_file: Path = Path("")
     suffix: str = ""
@@ -242,14 +245,10 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         if not isinstance(base_dir, Path):
             base_dir = Path(base_dir)
 
-        known_render_keys = {"input_file", "suffix", "render_command"}
-
         def build_engine(name: str, config_dict: Any) -> RenderEngineConfig:
             if not isinstance(config_dict, dict):
                 raise ConfigError(f"Render engine '{name}' configuration must be a dictionary.")
-            for key in config_dict:
-                if key not in known_render_keys:
-                    raise ConfigError(f"Unknown option under render.{name}: '{key}'")
+            validate_known_keys(config_dict, RenderEngineConfig.KNOWN_KEYS, context=f"render.{name}")
             raw_input = Path(config_dict.get("input_file", ""))
             input_path = (base_dir / raw_input) if (str(raw_input) not in ("", ".") and not raw_input.is_absolute()) else raw_input
             return RenderEngineConfig(

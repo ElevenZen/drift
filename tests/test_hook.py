@@ -689,20 +689,21 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertNotIn("CUSTOM_PKG_VAR=loaded_by_drift", res_unloaded.stdout or "")
 
     def test_hook_non_interactive_envs_flag_disabled(self) -> None:
-        """Verifies that setting inject_non_interactive_envs=False disables injecting DEFAULT_HOOK_NON_INTERACTIVE_ENVS."""
+        """Verifies that setting inject_non_interactive_envs=False suppresses external non-interactive envs while preserving common Drift hook envs."""
         from drift.lifecycle_hooks import HookExecFlags, execute_hook_script
         from drift.package_config import PackageConfig
 
         (self.drift_hooks_dir / "pre_source.sh").write_text(
             "#!/bin/sh\n"
             "echo \"PAGER=$PAGER\"\n"
-            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
+            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n"
+            "echo \"DRIFT_NON_INTERACTIVE=$DRIFT_NON_INTERACTIVE\"\n",
             encoding="utf-8"
         )
         pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
 
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
-            # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat
+            # 1. inject_non_interactive_envs=True (default) -> PAGER overwritten to cat, DRIFT_HOOK=1 and DRIFT_NON_INTERACTIVE=1 injected
             res_default = execute_hook_script(
                 hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
@@ -713,8 +714,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             )
             self.assertIn("PAGER=cat", res_default.stdout or "")
             self.assertIn("DRIFT_HOOK=1", res_default.stdout or "")
+            self.assertIn("DRIFT_NON_INTERACTIVE=1", res_default.stdout or "")
 
-            # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, DRIFT_HOOK not injected
+            # 2. inject_non_interactive_envs=False -> PAGER preserved as custom_more_pager, DRIFT_HOOK=1 and DRIFT_NON_INTERACTIVE=1 still injected
             res_disabled = execute_hook_script(
                 hook_path=self.drift_hooks_dir / "pre_source.sh",
                 pkg="pkg_hook",
@@ -724,7 +726,48 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 flags=HookExecFlags(inject_non_interactive_envs=False, streaming=False)
             )
             self.assertIn("PAGER=custom_more_pager", res_disabled.stdout or "")
-            self.assertNotIn("DRIFT_HOOK=1", res_disabled.stdout or "")
+            self.assertIn("DRIFT_HOOK=1", res_disabled.stdout or "")
+            self.assertIn("DRIFT_NON_INTERACTIVE=1", res_disabled.stdout or "")
+
+    def test_hook_exec_flags_resolve_with_settings(self) -> None:
+        """Verifies that HookExecFlags.resolve correctly respects SettingsConfig defaults."""
+        from drift.lifecycle_hooks import HookExecFlags, trigger_package_hook_with_render
+        from drift.workspace_config import SettingsConfig, WorkspaceConfig
+
+        # 1. No flags, no settings -> defaults to True
+        f1 = HookExecFlags.resolve()
+        self.assertTrue(f1.inject_non_interactive_envs)
+
+        # 2. No flags, settings with hook_inject_non_interactive_envs=False -> False
+        s_disabled = SettingsConfig(hook_inject_non_interactive_envs=False)
+        f2 = HookExecFlags.resolve(settings=s_disabled)
+        self.assertFalse(f2.inject_non_interactive_envs)
+
+        # 3. Explicit flags override settings
+        f_explicit = HookExecFlags(inject_non_interactive_envs=True)
+        f3 = HookExecFlags.resolve(flags=f_explicit, settings=s_disabled)
+        self.assertTrue(f3.inject_non_interactive_envs)
+
+        # 4. WorkspaceConfig integration via trigger_package_hook_with_render
+        ws_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            settings=SettingsConfig(hook_inject_non_interactive_envs=False)
+        )
+        (self.drift_hooks_dir / "pre_source.sh").write_text(
+            "#!/bin/sh\n"
+            "echo \"PAGER=$PAGER\"\n"
+            "echo \"DRIFT_HOOK=$DRIFT_HOOK\"\n",
+            encoding="utf-8"
+        )
+        with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
+            res = trigger_package_hook_with_render(
+                workspace_config=ws_config,
+                package_name="pkg_hook",
+                hook_name="pre_source",
+                flags=None,
+            )
+            self.assertIn("PAGER=custom_more_pager", res.stdout or "")
+            self.assertIn("DRIFT_HOOK=1", res.stdout or "")
 
     def test_package_hooks_methods_signatures_and_cwd(self) -> None:
         """Verifies lifecycle hook trigger methods default to hook_path.parent as CWD (or cwd_override)."""
@@ -1138,6 +1181,26 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.exit_code, 0)
         self.assertTrue((self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_source_out.txt").is_file())
+
+    def test_hook_environment_constants(self) -> None:
+        """Verifies definition and separation of hook environment constants."""
+        from drift.constants import (
+            DEFAULT_HOOK_COMMON_ENVS,
+            DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
+            DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
+        )
+
+        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("DRIFT_HOOK"), "1")
+        self.assertEqual(DEFAULT_HOOK_COMMON_ENVS.get("DRIFT_NON_INTERACTIVE"), "1")
+        self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("PAGER"), "cat")
+        self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("DEBIAN_FRONTEND"), "noninteractive")
+        self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.get("CI"), "true")
+
+        # Merged dictionary contains both
+        for k, v in DEFAULT_HOOK_COMMON_ENVS.items():
+            self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_ENVS[k], v)
+        for k, v in DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS.items():
+            self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_ENVS[k], v)
 
 
 if __name__ == "__main__":

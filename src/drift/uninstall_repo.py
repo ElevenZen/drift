@@ -306,7 +306,7 @@ def uninstall_one_package(
         else pkg_config.get_target_directory(workspace_config)
     )
     sudo = pkg_config.sudo
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
 
     # Check uninstall hook files exist before attempting uninstallation
     if not dry_run and not hook_flags.no_hooks:
@@ -376,7 +376,7 @@ def run_primitive_7_uninstall_packages(
         triggered if the package configuration file ('drift_package.toml') is available
         in the install/<pkg>/ directory.
     """
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
     registry = load_state_registry(state_file)

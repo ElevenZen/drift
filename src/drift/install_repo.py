@@ -787,7 +787,7 @@ def precheck_single_package(
             error=f"Package installation directory '{install_pkg_dir}' does not exist."
         )
 
-    hook_flags = HookExecFlags.resolve(options.flags)
+    hook_flags = HookExecFlags.resolve(options.flags, settings=workspace_config.settings)
     if not hook_flags.no_hooks:
         metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
 
@@ -850,7 +850,7 @@ def deploy_one_package_impl(
         )
 
     # 2. Lifecycle Hooks & State registry update
-    hook_flags = HookExecFlags.resolve(options.flags)
+    hook_flags = HookExecFlags.resolve(options.flags, settings=workspace_config.settings)
     try:
         if context.is_first_time:
             metadata.hooks.trigger_pre_install(flags=hook_flags)
@@ -1041,7 +1041,7 @@ def run_primitive_5_install_deployment(
     opts = options if options is not None else DeployOptions()
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
-    hook_flags = HookExecFlags.resolve(opts.flags)
+    hook_flags = HookExecFlags.resolve(opts.flags, settings=workspace_config.settings)
     
     state_registry = load_state_registry(state_file)
     

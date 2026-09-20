@@ -395,7 +395,7 @@ def render_package(
 ) -> PackageRenderResult:
     """Renders all templates and copies static files in a package folder into the render directory."""
     package_name = package_dir.name
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
 
     # Clear the target package render directory first to avoid sequence issues with template-rendered config files
     clear_render_package_dir(workspace_config, package_name)
@@ -445,7 +445,7 @@ def run_primitive_2_render_packages(
     flags: Optional[HookExecFlags] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []
     with secrets_env_scope(workspace_config.drift_root):
@@ -473,6 +473,8 @@ def run_primitive_2_render_packages(
                     err_msg = f"Render collision: {e}"
                 elif isinstance(e, RenderError):
                     err_msg = f"Render failed: {e}"
+                elif isinstance(e, ConfigError):
+                    err_msg = f"Config error: {e}"
                 else:
                     err_msg = f"Error: {e}"
                 logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")

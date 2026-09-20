@@ -165,7 +165,7 @@ def execute_sequential_compile_and_apply(
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
     completed_steps: List[CompletedStep] = []
-    hook_flags = HookExecFlags.resolve(flags)
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     
     # 1. Render raw templates to sandbox
     failed_step = "Step 1 (Template Rendering)"

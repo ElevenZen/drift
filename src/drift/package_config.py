@@ -8,6 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import (
+    ClassVar,
     List,
     Sequence,
     Optional,
@@ -20,7 +21,7 @@ from typing import (
     Mapping,
     TYPE_CHECKING,
 )
-from .toml_utils import parse_toml, merge_toml, dump_toml
+from .toml_utils import parse_toml, merge_toml, dump_toml, get_first_from, validate_known_keys
 
 if TYPE_CHECKING:
     from .lifecycle_hooks import HookExecFlags
@@ -110,6 +111,16 @@ def match_ip_addresses(patterns: Sequence[str], host_ips: Sequence[str]) -> bool
 @dataclass
 class PackageRequirements:
     """Declarative host platform and environment requirements for a package."""
+    IP_KEYS: ClassVar[Tuple[str, ...]] = ("ip", "ips", "ip_addresses")
+    KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
+        "os",
+        "arch",
+        "distro",
+        "binaries",
+        "env",
+        *IP_KEYS,
+    )
+
     os: List[str] = field(default_factory=list)
     arch: List[str] = field(default_factory=list)
     distro: List[str] = field(default_factory=list)
@@ -176,11 +187,8 @@ class PackageRequirements:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"[package.requirements] must be a table{name_str}.")
 
-        known_keys = {"os", "arch", "distro", "binaries", "env", "ip", "ips", "ip_addresses"}
-        for k in data:
-            if k not in known_keys:
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"Unknown option under requirements: '{k}'{name_str}")
+        name_str = f" for package '{package_name}'" if package_name else ""
+        validate_known_keys(data, cls.KNOWN_KEYS, context="requirements", suffix=name_str)
 
         def _to_list_str(val: Any, field_name: str) -> List[str]:
             if val is None:
@@ -201,7 +209,7 @@ class PackageRequirements:
             name_str = f" for package '{package_name}'" if package_name else ""
             raise ConfigError(f"'{field_name}' under requirements must be a string or list of strings{name_str}.")
 
-        raw_ip = data.get("ip") or data.get("ips") or data.get("ip_addresses")
+        raw_ip = get_first_from(data, cls.IP_KEYS)
 
         return cls(
             os=_to_list_str(data.get("os"), "os"),
@@ -305,11 +313,14 @@ class PackageHooks:
         if not is_subtable:
             known_keys |= set(WINDOWS_PLATFORM_ALIASES)
 
-        for key in hook_dict:
-            if key not in known_keys:
-                name_str = f" for package '{package_name}'" if package_name else ""
-                context = "package [hooks]" if not is_subtable else "platform hooks sub-table"
-                raise ConfigError(f"Unknown hook option in {context}: '{key}'{name_str}")
+        name_str = f" for package '{package_name}'" if package_name else ""
+        context = "package [hooks]" if not is_subtable else "platform hooks sub-table"
+        validate_known_keys(
+            hook_dict,
+            known_keys,
+            message_prefix=f"Unknown hook option in {context}",
+            suffix=name_str,
+        )
 
         for hook_name in LIFECYCLE_HOOK_NAMES:
             val = hook_dict.get(hook_name)
@@ -384,7 +395,7 @@ class PackageHooks:
 
         # On Windows, resolve platform-specific hook overrides from sub-tables
         if sys.platform == "win32":
-            win_hooks = next(filter(None, (data.get(alias) for alias in WINDOWS_PLATFORM_ALIASES)), {})
+            win_hooks = get_first_from(data, WINDOWS_PLATFORM_ALIASES, default={})
             for k, v in win_hooks.items():
                 if k in HOOK_CONFIG_OPTION_SET:
                     effective_hooks[k] = v
@@ -869,6 +880,27 @@ def resolve_and_interpolate_package_config(
 @dataclass
 class PackageConfig:
     """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
+    KNOWN_TOP_SECTIONS: ClassVar[Tuple[str, ...]] = (
+        "package",
+        "hooks",
+        "env",
+        "requirements",
+        "render",
+    )
+    KNOWN_PACKAGE_KEYS: ClassVar[Tuple[str, ...]] = (
+        "name",
+        "source_directory",
+        "enable_render",
+        "enable_install",
+        "install_method",
+        "target_directory",
+        "sudo",
+        "fully_controlled_dirs",
+        "requirements",
+        "hook_file",
+        *(f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES),
+    )
+
     name: str
     source_files: List[Path] = field(default_factory=list)
     source_directory: Path = field(default_factory=lambda: Path("."))
@@ -1198,11 +1230,13 @@ class PackageConfig:
         base_dir_path = Path(base_dir).resolve()
 
         # Error for unknown top-level sections
-        known_top_sections = {"package", "hooks", "env", "requirements", "render"}
-        for key in data:
-            if key not in known_top_sections:
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"Unknown top-level package config section: '{key}'{name_str}")
+        name_str = f" for package '{package_name}'" if package_name else ""
+        validate_known_keys(
+            data,
+            cls.KNOWN_TOP_SECTIONS,
+            message_prefix="Unknown top-level package config section",
+            suffix=name_str,
+        )
 
         package_data = data.get("package", {})
         hooks_data = data.get("hooks", {})
@@ -1212,22 +1246,12 @@ class PackageConfig:
         name = package_name
 
         # Error for unknown package options
-        known_package_keys = {
-            "name",
-            "source_directory",
-            "enable_render",
-            "enable_install",
-            "install_method",
-            "target_directory",
-            "sudo",
-            "fully_controlled_dirs",
-            "requirements",
-            "hook_file",
-        } | {f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES}
-        for key in package_data:
-            if key not in known_package_keys:
-                name_str = f" for package '{package_name}'" if package_name else ""
-                raise ConfigError(f"Unknown package option: '{key}'{name_str}")
+        validate_known_keys(
+            package_data,
+            cls.KNOWN_PACKAGE_KEYS,
+            message_prefix="Unknown package option",
+            suffix=name_str,
+        )
 
         # Parse package environment tables ([env.override], [env.fallback])
         override_map: Dict[str, str] = {}
@@ -1279,12 +1303,9 @@ class PackageConfig:
         # Expand home directory and env vars for target_directory on load
         target_dir = (val := package_data.get("target_directory")) and expand_user_and_env(val)
 
-        target_dir_windows_val = next(
-            filter(None, (package_data.get(f"target_directory_{alias}")
-                          for alias in WINDOWS_PLATFORM_ALIASES)),
-            None
-        )
-        target_dir_windows = target_dir_windows_val and expand_user_and_env(target_dir_windows_val)
+        target_dir_windows_raw = get_first_from(package_data,
+                (f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES))
+        target_dir_windows = target_dir_windows_raw and expand_user_and_env(target_dir_windows_raw)
 
         # resolve relative hook_file path to absolute path if common_base_dir is provided
         raw_hook_file = package_data.get("hook_file")
@@ -1603,7 +1624,11 @@ def load_package_config_from_source_dir(
             workspace_config=workspace_config,
         )
     except (TypeError, ValueError) as e:
-        raise ConfigError(f"Invalid package configuration for '{pkg_name}' in '{package_dir}': {e}") from e
+        package_dir_log = package_dir.relative_to(workspace_config.drift_root) if workspace_config else package_dir
+        err_msg = (f"Invalid configuration for package '{pkg_name}' in '{package_dir_log}' "
+                   f"from {[str(x.relative_to(package_dir)) for x in source_files]}: {e}")
+        logger.error(f"❌ {err_msg}")
+        raise ConfigError(err_msg) from e
     return config
 
 

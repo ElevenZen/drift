@@ -75,13 +75,14 @@ def trigger_hook_from_install(
             f"Please run 'drift deploy {package_name}' or 'drift apply {package_name}' first."
         ) from e
 
+    resolved_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     with pkg_config.package_envs(workspace_config):
         res = trigger_package_hook(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,
             cwd=cwd_override,
-            flags=flags,
+            flags=resolved_flags,
         )
     if res.status == "SKIPPED":
         raise ConfigError(

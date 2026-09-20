@@ -1,5 +1,7 @@
 import re
-from typing import Any, List
+from typing import Any, Iterable, List, Optional, Mapping, Sequence
+
+from .exceptions import ConfigError
 
 try:
     import tomllib  # type: ignore[import-not-found, unused-ignore] # pyright: ignore[reportMissingImports]
@@ -7,6 +9,68 @@ try:
 except ImportError:
     tomllib = None  # type: ignore[assignment]
     HAS_TOMLLIB = False
+
+
+def get_first_from(
+    data: Optional[Mapping[str, Any]],
+    keys: Iterable[str],
+    default: Any = None,
+) -> Any:
+    """Retrieves the first present value from a dictionary using an iterable of alternative key names.
+
+    Args:
+        data: Dictionary or mapping to search for keys.
+        keys: Candidate keys in order of precedence (can be a generator, tuple, list, etc.).
+        default: Fallback value if none of the candidate keys are present in data.
+
+    Returns:
+        The value of the first matching key in data, or default if no keys match.
+    """
+    if not isinstance(data, (dict, Mapping)):
+        return default
+    return next((data[key] for key in keys if key in data), default)
+
+
+def validate_known_keys(
+    data: Optional[Mapping[str, Any]],
+    known_keys: Iterable[str],
+    context: str = "",
+    message_prefix: Optional[str] = None,
+    suffix: str = "",
+) -> None:
+    """Validates that all keys in a mapping are within a set of known valid keys.
+
+    Uses a functional filter to gather all unknown keys and raises a ConfigError
+    reporting all unknown keys if any are found.
+
+    Args:
+        data: The dictionary or mapping to validate.
+        known_keys: Iterable of allowed/known key names.
+        context: Context descriptor (e.g. "[settings]", "requirements") used to build
+            the error message prefix if message_prefix is not explicitly provided.
+        message_prefix: Explicit prefix for the error message (e.g. "Unknown workspace option").
+        suffix: Suffix appended to the error message (e.g. " for package 'foo'").
+
+    Raises:
+        ConfigError: If any keys in data are not in known_keys.
+    """
+    if not data or not isinstance(data, (dict, Mapping)):
+        return
+
+    known_set = set(known_keys)
+    unknown_keys = list(filter(lambda k: k not in known_set, data.keys()))
+    if not unknown_keys:
+        return
+
+    keys_str = ", ".join(f"'{k}'" for k in unknown_keys)
+    if message_prefix is not None:
+        prefix = message_prefix
+    elif context:
+        prefix = f"Unknown option under {context}"
+    else:
+        prefix = "Unknown option"
+
+    raise ConfigError(f"{prefix}: {keys_str}{suffix}")
 
 
 def set_nested_val(data: dict, keys: list, value: Any) -> None:
