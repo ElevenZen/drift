@@ -130,7 +130,7 @@ Deploys configurations using an atomic two-stage compilation and application eng
 
 *   **Command Options**:
     - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active packages.
-    - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`deploying` in `install/state.toml`), and bypasses uncommitted modifications safeguards in `install/`. *(Note: Does **not** bypass `enable_install = false`).*
+    - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`installing` in `install/state.toml`), and bypasses uncommitted modifications safeguards in `install/`. *(Note: Does **not** bypass `enable_install = false`).*
     - `--redeploy`: Force full redeployment of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `--redeploy` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
@@ -159,7 +159,7 @@ When deploying globally without specific package names, Drift automatically exec
 Reverts failed midway deployments and restores system files to the last committed clean state.
 *   **Command Options**:
     - `packages...`: Optional package name(s) to rollback. If omitted, discovers all packages in the local state database.
-    - `--force / -f`: Bypasses the failed midway conflict state safeguard (`staging` or `deploying`), allowing a hard reset of packages to their last committed clean Git HEAD state even if they are currently in `installed` state.
+    - `--force / -f`: Bypasses the failed midway conflict state safeguard (`staging` or `installing`), allowing a hard reset of packages to their last committed clean Git HEAD state even if they are currently in `installed` state.
     - `--no-hooks / --no-hook`: Bypasses execution of lifecycle hooks during rollback.
     - `--json`: Outputs a list of rolled-back package names in JSON format.
 *   **Mechanism (Primitive 8)**:
@@ -317,9 +317,9 @@ Drift enforces a clear architectural distinction between **runtime safety safegu
 | Command | Primitive | What `--force` Overrides | Invariants Respected (Not Bypassed) |
 | :--- | :--- | :--- | :--- |
 | **`drift new <pkg> --force`** | Primitive 10 | Overwrites existing `drift_package.toml` in `src/<pkg>/` | Valid package naming rules |
-| **`drift deploy --force`** | Primitive 4, 5, Pipeline | • Bypasses Stage 1 Sentinel Drift audit (proceeds despite uncommitted host changes in `install/`)<br>• Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml`<br>• Bypasses uncommitted modifications check in `install/` | `enable_install = false` is strictly respected |
-| **`drift stage --force`** | Primitive 4 | • Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml`<br>• Ignores uncommitted modifications in `install/` | `enable_install = false` is strictly respected |
-| **`drift apply --force`** | Primitive 5 | Bypasses `"staging"` / `"deploying"` mid-failure state locks in `state.toml` | `enable_install = false` is strictly respected |
+| **`drift deploy --force`** | Primitive 4, 5, Pipeline | • Bypasses Stage 1 Sentinel Drift audit (proceeds despite uncommitted host changes in `install/`)<br>• Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Bypasses uncommitted modifications check in `install/` | `enable_install = false` is strictly respected |
+| **`drift stage --force`** | Primitive 4 | • Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml`<br>• Ignores uncommitted modifications in `install/` | `enable_install = false` is strictly respected |
+| **`drift apply --force`** | Primitive 5 | Bypasses `"staging"` / `"installing"` mid-failure state locks in `state.toml` | `enable_install = false` is strictly respected |
 | **`drift rollback --force`** | Primitive 8 | Bypasses conflict state check; forces hard reset to clean Git HEAD even for packages in `"installed"` state | Valid package tracking in `install/` |
 | **`drift adopt --force`** | Primitive Adopt | Bypasses Git cleanliness safeguard on target source files in `src/<pkg>/` (adopts drifts despite dirty source files) | Valid patch application |
 | **`drift uninstall --force`** | Primitive 7 | Bypasses active package safeguard (uninstalls packages still enabled in `drift_workspace.toml`) | Only installed packages are uninstalled |

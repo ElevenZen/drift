@@ -70,10 +70,12 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`ignore.create_stow_ignore_file(target_dir)`](../src/drift/ignore.py#L132): Generates `.stow-local-ignore`.
 
 ### [`state_registry.py`](../src/drift/state_registry.py) (State Database & Manifests)
-*   [`load_state_registry(path) -> StateRegistry`](../src/drift/state_registry.py#L140): Loads `install/state.toml`.
-*   [`registry.set_package_state(pkg, state, last_deployed=None, install_method=None)`](../src/drift/state_registry.py#L65): Updates package state (`"installed"`, `"staging"`, `"deploying"`, `"staged"`).
-*   [`registry.set_package_deployed_files(pkg, files)`](../src/drift/state_registry.py#L85): Writes deployed files manifest.
-*   [`registry.remove_package(pkg)`](../src/drift/state_registry.py#L105): Unregisters package from `state.toml`.
+*   [`load_state_registry(path) -> StateRegistry`](../src/drift/state_registry.py#L208): Loads `install/state.toml`.
+*   [`registry.set_package_state(pkg, state, last_deployed=None)`](../src/drift/state_registry.py#L49): Updates package state (`"installed"`, `"staging"`, `"installing"`, `"staged"`).
+*   [`registry.sync_deployed_files(pkg, target_directory, install_method, redeploy=False, deployable_files=(), package_changes=None)`](../src/drift/state_registry.py#L121): Updates target directory, install method, and deployed files manifest.
+*   [`registry.get_target_migrated_from(pkg, current_target) -> Optional[Path]`](../src/drift/state_registry.py#L69): Detects if package is migrating to a new destination.
+*   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/state_registry.py#L83): Builds destination ownership mapping across installed packages.
+*   [`registry.remove_package(pkg)`](../src/drift/state_registry.py#L148): Unregisters package from `state.toml`.
 
 ### [`workspace_config.py`](../src/drift/workspace_config.py) & [`package_config.py`](../src/drift/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/workspace_config.py#L210): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
@@ -97,7 +99,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`PackageHooks`](../src/drift/lifecycle_hooks.py#L110): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
 
 ### [`exceptions.py`](../src/drift/exceptions.py) & Standard Exit Codes
-*   [`InstallCollisionError`](../src/drift/exceptions.py#L31) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, or symlinked parent directory.
+*   [`InstallCollisionError`](../src/drift/exceptions.py#L31) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, cross-package file conflict, or symlinked parent directory.
 *   [`ConfigError`](../src/drift/exceptions.py#L20) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or DAG cyclic dependency.
 *   [`RenderError`](../src/drift/exceptions.py#L26) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure.
 *   [`HookExecutionError`](../src/drift/exceptions.py#L45): Script execution timeout or non-zero returncode.
@@ -138,6 +140,10 @@ This document provides a concise, high-density architecture reference, primitive
     *   **Strict `drift_hooks/` Placement & Dependencies**: All package lifecycle scripts and auxiliary helper dependencies must reside within `src/<pkg>/drift_hooks/` (or be absolute external system binaries). Relative hook paths outside `drift_hooks/` raise `ConfigError`.
     *   **Host Installation & Shared Dependencies via Symlinks**: If a hook script or a file needed by a hook must also be installed to the host target, or if sharing scripts across packages, place a symlink inside `src/<pkg>/drift_hooks/` pointing to the source directory file (or shared script).
     *   **Subfolder `source_directory` Payload Isolation**: If `source_directory` is configured (e.g. `source_directory = "dotfiles"`), source templates render from `src/<pkg>/<source_directory>/` directly to the package root in `render/<pkg>/`, while `src/<pkg>/drift_hooks/` is rendered into `render/<pkg>/.drift/hooks/` and completely excluded from host deployment.
+10. **Target Directory Migration & Cross-Package Conflict Audit**:
+    *   **Target Directory Migration**: Changing `target_directory` in package configuration triggers an atomic re-targeting during deployment: previous deployed files are undeployed/deleted from the old target, `redeploy = True` is enforced to populate the new target, while uninstallation hooks and backup restoration are NOT executed.
+    *   **Cross-Package Destination Conflict Audit**: Before executing physical deployment, Drift audits all destination path claims across the batch and external installed packages in `state.toml`, reporting all intra-batch and inter-package path collisions together (`InstallCollisionError`).
+    *   **Midway Transaction States**: `MIDWAY_TRANSACTION_STATES = ("staging", "installing")`. Packages in midway states require `--force` or `drift rollback` to proceed.
 
 ---
 

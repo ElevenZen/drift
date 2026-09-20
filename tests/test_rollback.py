@@ -5,7 +5,7 @@ import unittest
 import subprocess
 from pathlib import Path
 
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry
 from drift.rollback_repo import run_primitive_8_rollback_recovery
@@ -75,7 +75,13 @@ class TestRollback(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         registry.set_package_state("pkg_a", "installed")
-        registry.set_package_deployed_files("pkg_a", [Path("file.txt")])
+        registry.sync_deployed_files(
+            "pkg_a",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("file.txt")],
+        )
         save_state_registry(registry)
 
         # Initial commit in install repo
@@ -95,10 +101,10 @@ class TestRollback(unittest.TestCase):
         with open(self.pkg_a_install / "untracked.txt", "w", encoding="utf-8") as f:
             f.write("untracked")
 
-        # 3. We update state.toml to "deploying" (representing midway failure)
+        # 3. We update state.toml to "installing" (representing midway failure)
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state("pkg_a", "deploying")
+        registry.set_package_state("pkg_a", "installing")
         save_state_registry(registry)
 
         # 4. We also dirty the target system file
@@ -152,11 +158,17 @@ class TestRollback(unittest.TestCase):
         with open(pkg_install / "app_config.json", "w", encoding="utf-8") as f:
             f.write('{"installed": true}')
 
-        # 3. Simulate state.toml having recorded the package as "deploying" with deployed_files
+        # 3. Simulate state.toml having recorded the package as "installing" with deployed_files
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg_first, "deploying", install_method="copy")
-        registry.set_package_deployed_files(pkg_first, [Path("app_config.json")])
+        registry.set_package_state(pkg_first, "installing")
+        registry.sync_deployed_files(
+            pkg_first,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("app_config.json")],
+        )
         save_state_registry(registry)
 
         # 4. Simulate target host having the partially delivered file
@@ -233,12 +245,18 @@ class TestRollback(unittest.TestCase):
         # Put new file on host
         (self.system_target_dir / "brand_new.txt").write_text("brand new on host", encoding="utf-8")
 
-        # Set both packages to "deploying"
+        # Set both packages to "installing"
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state("pkg_a", "deploying")
-        registry.set_package_state(pkg_first, "deploying", install_method="copy")
-        registry.set_package_deployed_files(pkg_first, [Path("brand_new.txt")])
+        registry.set_package_state("pkg_a", "installing")
+        registry.set_package_state(pkg_first, "installing")
+        registry.sync_deployed_files(
+            pkg_first,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("brand_new.txt")],
+        )
         save_state_registry(registry)
 
         workspace_cfg = WorkspaceConfig(

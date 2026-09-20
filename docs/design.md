@@ -175,7 +175,7 @@ Reconciles the sandbox `render/` folder into the `install/` database:
 Applies changes to the physical active system:
 *   **Collision Guard**: Backs up colliding physical files to `backup/<package>/overwritten/`.
 *   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment.
-*   **State Machine**: Sets the package state to **`"deploying"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
+*   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
 *   **Stow Mode**: Executes individual manual symlinks (Incremental) or runs GNU Stow (Full Deploy).
 *   **Copy Mode**: Copies files to `target_directory` (prefixed with `sudo` if configured).
 
@@ -1046,7 +1046,7 @@ To safely determine whether a package should execute its `pre/post_install` or `
     deployed_files = ["config.ini"]
 
     [packages.wezterm]
-    state = "deploying"
+    state = "installing"
     install_method = "stow"
     deployed_files = []
     ```
@@ -1054,10 +1054,10 @@ To safely determine whether a package should execute its `pre/post_install` or `
     - **`"installed"`**: (Stable) The package is fully applied to the host system.
     - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
     - **`"staging"`**: (Transient) The package is currently undergoing database synchronization (Primitive 4).
-    - **`"deploying"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
+    - **`"installing"`**: (Transient) The package is currently being physically applied to the system (Primitive 5).
 *   **Safety Abort Logic**:
     When a package enters Primitive 4 or 5, the system checks its current state.
-    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"deploying"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity. Passing `--force` overrides this safety interlock.
+    - **Mid-Operation Safety Interlocks**: If the state is **`"staging"`** or **`"installing"`**, and the `force` flag is not passed, the operation **aborts immediately**. This indicates a previous execution failed midway, leaving the database or system in an inconsistent state. The user is instructed to run `drift rollback` to restore integrity. Passing `--force` overrides this safety interlock.
     - **Declarative Exclusions (`enable_install = false`)**: Packages with `enable_install = false` are never staged or deployed, regardless of whether `--force` is supplied. `--force` only overrides runtime safeguards, not declarative package rules.
     - **Nesting and Scope Safety Checks**: 
       The target directory written in the configuration (`target_directory` or `default_target_directory`) cannot be inside or equal to the `drift` workspace root (`drift_root`). If the absolute target directory is inside or equal to the absolute workspace root, the operation **aborts immediately** with a `ValueError`. This protects the workspace from accidentally being polluted or recursively linked.
@@ -1126,7 +1126,7 @@ The active configuration engine and orchestrator follow a strict sequence design
 #### 1. Discovery and Registry Check
 Deployment can be triggered in **Bulk Mode** (evaluating all declared active packages) or **Targeted Mode** (focusing on a specific package).
 *   **Discovery**: The orchestrator checks workspace declarations in `config/drift_workspace.toml` to identify enabled packages, then verifies that `enable_install` is `true` in each package's `drift_package.toml`.
-*   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"deploying"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
+*   **Mid-Operation Registry Interlock**: The state database at `install/state.toml` is queried. If any package is currently in a `"staging"` or `"installing"` state, execution is aborted unless the `--force` flag is supplied, preventing corruption from a previous midway failure.
 
 #### 2. Stage 1: Alignment Safeguard (System -> Install)
 *   The system executes **Primitive 1: Reverse Sync** on all target packages to capture and reconcile any manual, local modifications made directly on the active host system.
@@ -1153,7 +1153,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 1:1 fidelity. The only files present in `install/` that do not originate from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
-    - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"deploying"` state from a previous crash, staging is aborted unless `--force` is provided.
+    - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
         1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
         2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/`, `.drift/hooks/`, `.drift/render/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications).
@@ -1163,7 +1163,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:
 *   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root.
-*   **State Transition to `"deploying"`**: The state registry database `state.toml` is written to mark the package's state as `"deploying"`.
+*   **State Transition to `"installing"`**: The state registry database `state.toml` is written to mark the package's state as `"installing"`.
 *   **Collision Guard (Incremental/Full)**:
     - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
     - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` and removed from the active system to clear the path.

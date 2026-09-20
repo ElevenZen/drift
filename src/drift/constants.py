@@ -101,7 +101,7 @@ FORBIDDEN_PACKAGE_NAMES = (
     ".git",
     ".gitignore",
 )
-MIDWAY_TRANSACTION_STATES = ("staging", "deploying")
+MIDWAY_TRANSACTION_STATES = ("staging", "installing")
 
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES

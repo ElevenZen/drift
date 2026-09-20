@@ -7,7 +7,7 @@ from pathlib import Path
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.state_registry import load_state_registry, save_state_registry, PackageState
 from drift.uninstall_repo import run_primitive_7_uninstall_packages
-from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+from drift.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
@@ -76,8 +76,14 @@ class TestUninstall(unittest.TestCase):
         # 3. Setup state.toml
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="stow")
-        registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.STOW,
+            redeploy=True,
+            deployable_files=[Path("dot-bashrc")],
+        )
         save_state_registry(registry)
         
         # Commit initial state so git tracks it
@@ -129,8 +135,14 @@ class TestUninstall(unittest.TestCase):
         # 4. Setup state.toml
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="copy")
-        registry.set_package_deployed_files(pkg, [Path("config.txt")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("config.txt")],
+        )
         save_state_registry(registry)
 
         # Commit initial state so git tracks it
@@ -214,8 +226,14 @@ class TestUninstall(unittest.TestCase):
         # 4. Setup state.toml
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="stow")
-        registry.set_package_deployed_files(pkg, [Path("dot-bashrc")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.STOW,
+            redeploy=True,
+            deployable_files=[Path("dot-bashrc")],
+        )
         save_state_registry(registry)
         
         # Commit initial state so git tracks it
@@ -288,8 +306,14 @@ fi
 
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="copy")
-        registry.set_package_deployed_files(pkg, [Path("app.conf")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("app.conf")],
+        )
         save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -336,8 +360,14 @@ fi
 
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="copy")
-        registry.set_package_deployed_files(pkg, [Path("sample.txt")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("sample.txt")],
+        )
         save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
@@ -377,8 +407,14 @@ fi
 
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
-        registry.set_package_state(pkg, "installed", install_method="copy")
-        registry.set_package_deployed_files(pkg, [Path("sample.txt")])
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            redeploy=True,
+            deployable_files=[Path("sample.txt")],
+        )
         save_state_registry(registry)
 
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)

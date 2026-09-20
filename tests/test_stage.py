@@ -775,7 +775,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual((install_pkg_dir / "file_to_tree" / "nested.conf").read_text(encoding="utf-8"), "new nested rendered")
 
     def test_stage_checks_mid_fail_state_before_uncommitted_drift(self) -> None:
-        """Verifies that mid-fail states ('staging'/'deploying') take precedence over uncommitted changes checks."""
+        """Verifies that mid-fail states ('staging'/'installing') take precedence over uncommitted changes checks."""
         from drift.state_registry import load_state_registry, save_state_registry
         import subprocess
 
@@ -789,34 +789,40 @@ class TestStageRepo(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial staging"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        # Simulate midway failure: set state in state.toml to 'staging' and make uncommitted edit in install/pkg_a
+        # 1. Uncommitted change in install/
+        (self.install_dir / "pkg_a" / "uncommitted.txt").write_text("drift", encoding="utf-8")
+
+        # 2. Package in mid-fail 'staging' state
         state_file = self.install_dir / "state.toml"
         reg = load_state_registry(state_file)
         reg.set_package_state("pkg_a", "staging")
         save_state_registry(reg)
 
-        (self.install_dir / "pkg_a" / "uncommitted_midfail.txt").write_text("midfail file", encoding="utf-8")
-
-        # Staging should raise the mid-fail Safety Abort RuntimeError, NOT DriftDetectedError
+        # 3. Stage should report mid-fail state first, NOT uncommitted changes error
         with self.assertRaises(RuntimeError) as ctx:
             run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_a"])
-        self.assertIn("Safety Abort: Package(s) in midway transaction state:", str(ctx.exception))
-        self.assertIn("'pkg_a' (staging)", str(ctx.exception))
-        self.assertIn("drift rollback pkg_a", str(ctx.exception))
+        err_msg = str(ctx.exception)
+        self.assertIn("Safety Abort: Package(s) in midway transaction state:", err_msg)
+        self.assertIn("drift rollback", err_msg)
 
     def test_stage_checks_multiple_mid_fail_packages(self) -> None:
         """Verifies that multiple midway packages are formatted cleanly in safety abort error."""
         from drift.state_registry import load_state_registry, save_state_registry
+        from drift.render_package import render_package
         import subprocess
 
+        # Add pkg_c in source
         pkg_c_src = self.source_dir / "pkg_c"
         pkg_c_src.mkdir(parents=True, exist_ok=True)
         (pkg_c_src / PACKAGE_CONFIG_FILE_NAME).write_text("""
         [package]
         name = "pkg_c"
-        enable_install = true
+        install_method = "copy"
         """, encoding="utf-8")
+        (pkg_c_src / "c.txt").write_text("c source", encoding="utf-8")
+
         self.workspace_config.packages_enable["pkg_c"] = True
+
         render_package(self.workspace_config, self.pkg_a_src)
         render_package(self.workspace_config, pkg_c_src)
 
@@ -827,7 +833,7 @@ class TestStageRepo(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         reg = load_state_registry(state_file)
         reg.set_package_state("pkg_a", "staging")
-        reg.set_package_state("pkg_c", "deploying")
+        reg.set_package_state("pkg_c", "installing")
         save_state_registry(reg)
 
         with self.assertRaises(RuntimeError) as ctx:

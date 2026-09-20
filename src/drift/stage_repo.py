@@ -290,8 +290,7 @@ def stage_modified_packages(
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
     for pkg in packages_to_stage:
-        metadata = pkg_metadata[pkg]
-        state_registry.set_package_state(pkg, "staging", install_method=metadata.install_method)
+        state_registry.set_package_state(pkg, "staging")
     state_registry.save()
 
     # 3. Apply stage changes to install/ directory for each package with changes
@@ -324,7 +323,7 @@ def run_primitive_4_stage_render_to_install(
     Args:
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
-        force: If True, bypasses checks for midway failed package states ('staging' or 'deploying')
+        force: If True, bypasses checks for midway failed package states ('staging' or 'installing')
             and ignores uncommitted local modifications in the install/ directory.
             Note: Does NOT bypass 'enable_install = false' package configurations.
 
@@ -363,7 +362,7 @@ def run_primitive_4_stage_render_to_install(
         raise RuntimeError("No active packages are enabled for installation/deployment.")
 
     # 2. First verify package states from state registry before checking uncommitted changes.
-    # If a package is in 'staging' or 'deploying' state, a previous operation failed midway
+    # If a package is in 'staging' or 'installing' state, a previous operation failed midway
     # (which naturally causes uncommitted changes in install/), so we must report the mid-fail state first.
     state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)

@@ -10,24 +10,26 @@ Layer 5: Public Primitive Entry Points
             load_state_registry
             workspace_config.filter_install_packages_by_target
             PackageConfig.from_install_dir
-        2. Pre-flight Validation & Permission Checks:
+        2. Pre-flight Validation & Pre-Transaction Conflict Audit:
             precheck_deployment_packages [Layer 4]
                 check_sudo_privilege (if any target requires sudo)
                 check_hook_files (lifecycle hooks)
+                check_cross_package_file_conflicts [Layer 4]
         3. Execute Single-Package Deployments:
             deploy_one_package_with_error_wrapping [Layer 4]
                 deploy_one_package [Layer 4]
                     precheck_single_package [Layer 4] (midway transaction, drift root collisions, writable checks)
-                    state_registry.set_package_state("deploying") & save
+                    state_registry.set_package_state("installing") & save
                     pkg_config.package_envs context
                     deploy_one_package_impl [Layer 4]
+                        Target Directory Migration Detection -> cleanup old target & force redeploy
                         run_collision_guard [Layer 3]
                         ignore_handler.create_stow_ignore_file (if stow method)
-                        reconcile_orphaned_files [Layer 2] (if full redeploy)
+                        reconcile_orphaned_files [Layer 2] (if redeploy)
                         trigger pre_install / pre_update hook
-                        sync_deployed_files_manifest [Layer 3] & save
+                        state_registry.sync_deployed_files & save
                         Physical Delivery:
-                            run_full_file_delivery [Layer 3] (full redeploy)
+                            run_full_file_delivery [Layer 3] (redeploy)
                                 run_full_copy_deployment [Layer 3] / run_stow_deployment [Layer 3]
                             run_incremental_file_delivery [Layer 3] (incremental redeploy)
                                 deploy_single_stow_file [Layer 2] / deploy_single_copy_file [Layer 2]
@@ -60,9 +62,10 @@ Layers (ordered bottom-up by dependency):
         run_stow_deployment
         run_full_file_delivery
         run_incremental_file_delivery
-        sync_deployed_files_manifest
         update_state_registry_post_deployment
     Layer 4: Single-Package Pipeline & Pre-flight Validation
+        _gather_package_destination_targets
+        check_cross_package_file_conflicts
         precheck_single_package
         deploy_one_package_impl
         deploy_one_package
@@ -81,9 +84,11 @@ import logging
 import subprocess
 import datetime
 import shlex
+import collections
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Set, Sequence, Mapping, Iterable
+from typing import Dict, List, Optional, Tuple, Set, Sequence, Mapping, Iterable
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
@@ -686,50 +691,128 @@ def run_incremental_file_delivery(
             )
 
 
-def sync_deployed_files_manifest(
-    state_registry: StateRegistry,
-    pkg: str,
-    deployable_files: List[Path],
-    full_redeploy: bool,
-    package_changes: Optional[PackageStageChanges] = None
-) -> None:
-    """Updates the deployed_files manifest list for a package in the state registry."""
-    if full_redeploy or package_changes is None:
-        state_registry.set_package_deployed_files(pkg, deployable_files)
-    else:
-        current_deployed = set(state_registry.get_package_deployed_files(pkg))
-        updated_deployed = (current_deployed - set(package_changes.deployable_changes.deleted)) | set(package_changes.deployable_changes.added)
-        state_registry.set_package_deployed_files(pkg, sorted(list(updated_deployed)))
-
-
 def update_state_registry_post_deployment(
     state_registry: StateRegistry,
     pkg: str,
+    target_directory: Path,
     install_method: InstallMethod,
-    deployable_files: List[Path],
-    full_redeploy: bool,
-    package_changes: Optional[PackageStageChanges] = None
+    redeploy: bool,
+    deployable_files: Iterable[Path] = (),
+    package_changes: Optional[PackageStageChanges] = None,
 ) -> None:
-    """Updates and persists the package deployment state and deployed files manifest in state.toml."""
+    """Updates and persists the package deployment state, target directory, install method, and deployed files manifest in state.toml."""
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(
-        pkg, "installed", last_deployed=now_str, install_method=install_method
+        pkg,
+        "installed",
+        last_deployed=now_str,
     )
-
-    sync_deployed_files_manifest(
-        state_registry=state_registry,
+    state_registry.sync_deployed_files(
         pkg=pkg,
+        target_directory=target_directory,
+        install_method=install_method,
+        redeploy=redeploy,
         deployable_files=deployable_files,
-        full_redeploy=full_redeploy,
-        package_changes=package_changes
+        package_changes=package_changes,
     )
-
     state_registry.save()
 
 
 # =============================================================================
 # Layer 4: Single-Package Pipeline & Pre-flight Validation
 # =============================================================================
+
+def _gather_package_destination_targets(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    metadata: PackageConfig,
+) -> List[Tuple[Path, Path]]:
+    """Gathers (relative_source_file, absolute_host_target) for all deployable files in a package."""
+    if not metadata.enable_install:
+        return []
+    install_pkg_dir = workspace_config.install_path / pkg
+    ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
+    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    target_dir = metadata.get_target_directory(workspace_config)
+
+    return [
+        (rel_file, resolve_system_target(rel_file, target_dir))
+        for rel_file in deployable_files
+    ]
+
+
+def check_cross_package_file_conflicts(
+    workspace_config: WorkspaceConfig,
+    discovered_packages: Iterable[str],
+    pkg_metadata_map: Mapping[str, PackageConfig],
+    state_registry: StateRegistry,
+) -> None:
+    """Audits destination paths for cross-package collisions before executing deployments.
+
+    Validates:
+    1. Intra-batch conflicts: Two or more packages in current deployment batch claiming identical host paths.
+    2. Inter-package conflicts: A package in current batch claiming a host path already owned
+       by a different installed package recorded in state.toml (outside the current batch).
+
+    Collects all conflicting destination targets across the workspace and reports them together.
+
+    Raises:
+        InstallCollisionError: When one or more cross-package collisions are detected.
+    """
+    discovered_set = set(discovered_packages)
+
+    # 1. Gather destination claims from current batch packages
+    batch_claims: List[Tuple[Path, Tuple[str, str]]] = [
+        (dst_path, (pkg, "batch"))
+        for pkg in discovered_set
+        if (metadata := pkg_metadata_map.get(pkg)) and metadata.enable_install
+        for _, dst_path in _gather_package_destination_targets(workspace_config, pkg, metadata)
+    ]
+
+    # 2. Gather destination claims from installed packages outside the current batch
+    external_installed_ownership = state_registry.build_destination_ownership_map(
+        exclude_packages=discovered_set
+    )
+    installed_claims: List[Tuple[Path, Tuple[str, str]]] = [
+        (dst_path, (owner, "installed"))
+        for dst_path, owner in external_installed_ownership.items()
+    ]
+
+    # 3. Group and aggregate claims by destination path
+    claims_by_path: Dict[Path, List[Tuple[str, str]]] = collections.defaultdict(list)
+    for dst_path, claim in itertools.chain(batch_claims, installed_claims):
+        claims_by_path[dst_path].append(claim)
+
+    # 4. Filter for paths with multiple competing claims involving the current batch
+    conflicts = {
+        dst: claims
+        for dst, claims in claims_by_path.items()
+        if len(claims) > 1 and any(src == "batch" for _, src in claims)
+    }
+
+    if not conflicts:
+        return
+
+    # 5. Format comprehensive diagnostic report for all collisions
+    conflict_lines = [
+        f"❌ Cross-package destination conflicts detected ({len(conflicts)} collision(s)):",
+    ]
+    for dst in sorted(conflicts.keys(), key=lambda p: str(p)):
+        claims = conflicts[dst]
+        batch_claimants = sorted(set(pkg for pkg, src in claims if src == "batch"))
+        installed_owners = sorted(set(pkg for pkg, src in claims if src == "installed"))
+
+        if len(batch_claimants) > 1:
+            conflict_lines.append(
+                f"  • '{dst}': Intra-batch collision between packages {batch_claimants}"
+            )
+        elif installed_owners:
+            conflict_lines.append(
+                f"  • '{dst}': Package '{batch_claimants[0]}' (current batch) collides with '{installed_owners[0]}' (already installed)"
+            )
+
+    raise InstallCollisionError("\n".join(conflict_lines))
+
 
 def precheck_single_package(
     workspace_config: WorkspaceConfig,
@@ -795,7 +878,7 @@ def precheck_single_package(
     pkg_change = options.get_package_changes(pkg)
     if (options.redeploy == False
             and (pkg_change is None or not pkg_change.has_changes)
-            and (not state_registry.detect_target_directory_migration(pkg, target_dir))):
+            and (state_registry.get_target_migrated_from(pkg, target_dir) is None)):
         logger.info(f"Skipping package '{pkg}' deployment (no changes detected and redeploy is False).")
         return PackageInstallResult(
             package=pkg,
@@ -832,14 +915,34 @@ def deploy_one_package_impl(
     # Generate or update .stow-local-ignore file if using stow method
     if context.install_method == InstallMethod.STOW:
         context.ignore_handler.create_stow_ignore_file(context.install_pkg_dir)
-    
+
+    target_dir = context.target_dir
+    target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)
+    redeploy = options.redeploy
+
+    if target_migrated_from is not None:
+        logger.info(
+            f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
+            f"'{target_migrated_from}' -> '{target_dir}'. Undeploying from previous location."
+        )
+        old_deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
+        if old_deployed_files:
+            from .uninstall_repo import remove_deployed_files
+            remove_deployed_files(
+                pkg=context.pkg_name,
+                deployed_files=old_deployed_files,
+                target_dir=target_migrated_from,
+                sudo=context.sudo,
+            )
+        # Force redeploy to populate new target_dir completely
+        redeploy = True
+
     package_changes = options.get_package_changes(context.pkg_name)
-    full_redeploy = options.redeploy
     
     # Calculate current desired files list
     deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
 
-    if full_redeploy:
+    if redeploy:
         deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
         reconcile_orphaned_files(
             context=context,
@@ -866,19 +969,20 @@ def deploy_one_package_impl(
             logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Deployment stopped (no rollback needed).")
         raise
 
-    # Persist the full target file manifest to state.toml before hooks & physical delivery
-    # so that midway crashes have an authoritative list of files to uninstall
-    sync_deployed_files_manifest(
-        state_registry=state_registry,
+    # Persist the target file manifest to state.toml before hooks & physical delivery
+    # so that midway file deployment crashes have an authoritative list of files to uninstall/rollback
+    state_registry.sync_deployed_files(
         pkg=context.pkg_name,
+        target_directory=context.target_dir,
+        install_method=context.install_method,
+        redeploy=redeploy,
         deployable_files=deployable_files,
-        full_redeploy=full_redeploy,
-        package_changes=package_changes
+        package_changes=package_changes,
     )
     state_registry.save()
     
     # 3. Physical Deployment Execution
-    if full_redeploy:
+    if redeploy:
         run_full_file_delivery(
             context=context,
             deployable_files=deployable_files,
@@ -911,10 +1015,11 @@ def deploy_one_package_impl(
             update_state_registry_post_deployment(
                 state_registry=state_registry,
                 pkg=context.pkg_name,
+                target_directory=context.target_dir,
                 install_method=context.install_method,
+                redeploy=redeploy,
                 deployable_files=deployable_files,
-                full_redeploy=full_redeploy,
-                package_changes=package_changes
+                package_changes=package_changes,
             )
 
     logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
@@ -956,10 +1061,10 @@ def deploy_one_package(
     if skip_res is not None:
         return skip_res
     
-    state_registry.set_package_state(pkg, "deploying", install_method=metadata.get_install_method(workspace_config))
-    state_registry.save()
-    
     logger.info(f"🚀 Deploying package: {pkg}")
+    
+    state_registry.set_package_state(pkg, "installing")
+    state_registry.save()
     
     with metadata.package_envs(workspace_config):
         return deploy_one_package_impl(
@@ -1002,21 +1107,35 @@ def deploy_one_package_with_error_wrapping(
 
 def precheck_deployment_packages(
     workspace_config: WorkspaceConfig,
+    discovered_packages: Iterable[str],
     pkg_metadata_map: Mapping[str, PackageConfig],
     hook_flags: HookExecFlags,
+    state_registry: StateRegistry,
 ) -> None:
-    """Pre-flight checks for permissions and lifecycle hook scripts before deployment."""
-    needs_sudo = any(m.sudo for m in pkg_metadata_map.values() if m.enable_install)
-    if needs_sudo:
+    """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package file conflicts before deployment."""
+    active_packages = [
+        (pkg, metadata)
+        for pkg, metadata in pkg_metadata_map.items()
+        if metadata.enable_install
+    ]
+
+    if any(metadata.sudo for _, metadata in active_packages):
         from .file_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
     if not hook_flags.no_hooks:
-        for pkg, metadata in pkg_metadata_map.items():
-            if metadata.enable_install:
-                install_pkg_dir = workspace_config.install_path / pkg
-                if install_pkg_dir.is_dir():
-                    metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
+        for pkg, metadata in active_packages:
+            metadata.hooks.check_hook_files(
+                workspace_config.install_path / pkg,
+                is_source=False,
+            )
+
+    check_cross_package_file_conflicts(
+        workspace_config=workspace_config,
+        discovered_packages=discovered_packages,
+        pkg_metadata_map=pkg_metadata_map,
+        state_registry=state_registry,
+    )
 
 
 # =============================================================================
@@ -1052,10 +1171,15 @@ def run_primitive_5_install_deployment(
     pkg_metadata_map = {
         pkg: PackageConfig.from_install_dir(install_base / pkg)
         for pkg in discovered_packages
-        if (install_base / pkg).is_dir()
     }
 
-    precheck_deployment_packages(workspace_config, pkg_metadata_map, hook_flags)
+    precheck_deployment_packages(
+        workspace_config=workspace_config,
+        discovered_packages=discovered_packages,
+        pkg_metadata_map=pkg_metadata_map,
+        hook_flags=hook_flags,
+        state_registry=state_registry,
+    )
 
     results = [
         deploy_one_package_with_error_wrapping(

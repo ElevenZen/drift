@@ -13,6 +13,7 @@ from drift.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
+    InstallMethod,
 )
 from drift.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.package_config import PackageConfig, PackageHooks
@@ -23,6 +24,8 @@ from drift.state_registry import (
         StateRegistry,
         PackageState
 )
+from drift.exceptions import InstallCollisionError
+from drift.stage_repo import PackageStageChanges
 from drift.install_repo import (
         resolve_system_target,
         run_primitive_5_install_deployment,
@@ -34,6 +37,7 @@ from drift.install_repo import (
         deploy_one_package,
         DeployOptions,
         PackageInstallContext,
+        check_cross_package_file_conflicts,
 )
 from drift.file_utils import (
         ensure_dir_exists_with_sudo,
@@ -83,13 +87,13 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
         self.assertEqual(registry.packages, {})
         self.assertEqual(registry.state_file, state_file)
-        self.assertFalse(registry.has_deploying_package())
+        self.assertFalse(registry.has_installing_package())
 
         # Test setting and saving states using registry.save()
-        registry.set_package_state("nvim", "deploying")
+        registry.set_package_state("nvim", "installing")
         registry.set_package_state("tmux", "installed")
-        self.assertTrue(registry.has_deploying_package())
-        self.assertEqual(registry.get_package_state("nvim"), "deploying")
+        self.assertTrue(registry.has_installing_package())
+        self.assertEqual(registry.get_package_state("nvim"), "installing")
         self.assertEqual(registry.get_package_state("tmux"), "installed")
 
         registry.save()
@@ -98,13 +102,13 @@ class TestInstallRepo(unittest.TestCase):
         # Test loading from file
         loaded = load_state_registry(state_file)
         self.assertEqual(loaded.state_file, state_file)
-        self.assertEqual(loaded.get_package_state("nvim"), "deploying")
+        self.assertEqual(loaded.get_package_state("nvim"), "installing")
         self.assertEqual(loaded.get_package_state("tmux"), "installed")
-        self.assertTrue(loaded.has_deploying_package())
+        self.assertTrue(loaded.has_installing_package())
 
         # Test removing and saving again
         loaded.remove_package("nvim")
-        self.assertFalse(loaded.has_deploying_package())
+        self.assertFalse(loaded.has_installing_package())
         self.assertIsNone(loaded.get_package_state("nvim"))
         loaded.save()
 
@@ -112,7 +116,7 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies filter_by_states, get_midway_packages, and is_package_in_midway_state."""
         registry = StateRegistry()
         registry.set_package_state("pkg1", "staging")
-        registry.set_package_state("pkg2", "deploying")
+        registry.set_package_state("pkg2", "installing")
         registry.set_package_state("pkg3", "installed")
         registry.set_package_state("pkg4", "staged")
 
@@ -133,19 +137,19 @@ class TestInstallRepo(unittest.TestCase):
 
         # Test get_midway_packages with all packages
         midway_all = registry.get_midway_packages()
-        self.assertEqual(midway_all, [("pkg1", "staging"), ("pkg2", "deploying")])
+        self.assertEqual(midway_all, [("pkg1", "staging"), ("pkg2", "installing")])
 
         # Test get_midway_packages with package_names subset
         midway_subset = registry.get_midway_packages(["pkg2", "pkg3"])
-        self.assertEqual(midway_subset, [("pkg2", "deploying")])
+        self.assertEqual(midway_subset, [("pkg2", "installing")])
 
         # Test filter_by_states and get_midway_packages with lazy generators (unmaterialized)
-        states_gen = (s for s in ["staging", "deploying"])
+        states_gen = (s for s in ["staging", "installing"])
         pkgs_gen = (p for p in ["pkg1", "pkg3"])
         self.assertEqual(registry.filter_by_states(states_gen, package_names=pkgs_gen), [("pkg1", "staging")])
 
         pkgs_midway_gen = (p for p in ["pkg2", "pkg3"])
-        self.assertEqual(registry.get_midway_packages(pkgs_midway_gen), [("pkg2", "deploying")])
+        self.assertEqual(registry.get_midway_packages(pkgs_midway_gen), [("pkg2", "installing")])
 
 
     def test_package_state_dataclass(self) -> None:
@@ -157,8 +161,11 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(p_state.deployed_files, [Path("file1"), Path("file2")])
 
         # Test defaults
-        default_state = PackageState(state="deploying")
-        self.assertEqual(default_state.state, "deploying")
+        default_state = PackageState(state="installing")
+        self.assertEqual(default_state.state, "installing")
+        self.assertIsNone(default_state.last_deployed)
+        self.assertIsNone(default_state.install_method)
+        self.assertEqual(default_state.deployed_files, [])
         self.assertIsNone(default_state.last_deployed)
         self.assertIsNone(default_state.install_method)
         self.assertEqual(default_state.deployed_files, [])
@@ -1107,8 +1114,8 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_6_commit_install_repo(self.workspace_config, "No-op commit")
 
 
-    def test_deploy_failure_leaves_state_as_deploying(self) -> None:
-        """Verifies that if deployment fails midway, the package state remains 'deploying' in state.toml."""
+    def test_deploy_failure_leaves_state_as_installing(self) -> None:
+        """Verifies that if deployment fails midway, the package state remains 'installing' in state.toml."""
         pkg = "pkg_fail"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
         os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
@@ -1145,12 +1152,12 @@ class TestInstallRepo(unittest.TestCase):
         state_file = os.path.join(self.install_dir, "state.toml")
         from drift.state_registry import load_state_registry
         registry = load_state_registry(Path(state_file))
-        self.assertEqual(registry.get_package_state(pkg), "deploying")
-        self.assertTrue(registry.has_deploying_package())
+        self.assertEqual(registry.get_package_state(pkg), "installing")
+        self.assertTrue(registry.has_installing_package())
 
-    def test_deploy_aborts_if_already_deploying(self) -> None:
-        """Verifies that deployment aborts if a package is already in 'deploying' state."""
-        pkg = "pkg_deploying"
+    def test_deploy_aborts_if_already_installing(self) -> None:
+        """Verifies that deployment aborts if a package is already in 'installing' state."""
+        pkg = "pkg_installing"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
         os.makedirs(os.path.join(pkg_install_dir, DRIFT_INTERNAL_DIR_NAME), exist_ok=True)
 
@@ -1163,11 +1170,11 @@ class TestInstallRepo(unittest.TestCase):
             target_directory = "{self.system_target_dir}"
             """)
 
-        # Pre-set state to 'deploying'
+        # Pre-set state to 'installing'
         state_file = os.path.join(self.install_dir, "state.toml")
         from drift.state_registry import load_state_registry, save_state_registry
         registry = load_state_registry(Path(state_file))
-        registry.set_package_state(pkg, "deploying")
+        registry.set_package_state(pkg, "installing")
         save_state_registry(registry)
 
         # Attempt to deploy - should abort with Safety Abort
@@ -1175,7 +1182,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         
         self.assertIn("Safety Abort", str(ctx.exception))
-        self.assertIn("currently in 'deploying' state", str(ctx.exception))
+        self.assertIn("currently in 'installing' state", str(ctx.exception))
 
         # Attempt with force=True - should proceed (and succeed here)
         run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(force=True))
@@ -1219,8 +1226,8 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_name), "installed")
 
-    def test_skipped_package_not_set_to_deploying_state(self) -> None:
-        """Verifies that skipped packages (enable_install=False or missing dir) are not set to 'deploying' in state.toml."""
+    def test_skipped_package_not_set_to_installing_state(self) -> None:
+        """Verifies that skipped packages (enable_install=False or missing dir) are not set to 'installing' in state.toml."""
         from drift.install_repo import deploy_one_package
         from drift.state_registry import load_state_registry
 
@@ -1246,9 +1253,9 @@ class TestInstallRepo(unittest.TestCase):
             options=DeployOptions(resolve_symlinks=True, force=False)
         )
         self.assertEqual(res_disabled.status, "SKIPPED")
-        # Check that state.toml did not transition this package into 'deploying'
+        # Check that state.toml did not transition this package into 'installing'
         reloaded = load_state_registry(state_file)
-        self.assertNotEqual(reloaded.get_package_state(pkg_disabled), "deploying")
+        self.assertNotEqual(reloaded.get_package_state(pkg_disabled), "installing")
 
         # Also verify that force=True does NOT bypass enable_install=False
         res_forced = deploy_one_package(
@@ -1290,7 +1297,7 @@ class TestInstallRepo(unittest.TestCase):
             )
             self.assertEqual(res_missing.status, "SKIPPED")
             reloaded2 = load_state_registry(state_file)
-            self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "deploying")
+            self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "installing")
 
     def test_deploy_executes_hooks_ignored_in_drift_ignore(self) -> None:
         """Verifies that hook scripts listed in .drift_ignore are staged to install/, executed, and not deployed to host."""
@@ -1981,6 +1988,288 @@ class TestInstallRepo(unittest.TestCase):
             deployed_files=deployed_gen,
             resolve_symlinks=False,
         )
+
+    def test_cross_package_intra_batch_conflict_collects_all(self) -> None:
+        """Verifies that intra-batch cross-package destination collisions collect all conflicting paths in one report."""
+        # Create pkg_a, pkg_b, pkg_c
+        for pkg, files in [
+            ("pkg_a", ["dot-config/app/setting.json", "shared.txt"]),
+            ("pkg_b", ["dot-config/app/setting.json"]),
+            ("pkg_c", ["shared.txt"]),
+        ]:
+            pkg_dir = self.install_dir / pkg
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{pkg}"
+            install_method = "copy"
+            target_directory = "{self.system_target_dir}"
+            """, encoding="utf-8")
+            for f in files:
+                f_path = pkg_dir / f
+                f_path.parent.mkdir(parents=True, exist_ok=True)
+                f_path.write_text(f"content of {pkg} - {f}", encoding="utf-8")
+            self.workspace_config.packages_enable[pkg] = True
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+
+        pkg_metadata_map = {
+            pkg: PackageConfig.from_install_dir(self.install_dir / pkg)
+            for pkg in ["pkg_a", "pkg_b", "pkg_c"]
+        }
+
+        with self.assertRaises(InstallCollisionError) as ctx:
+            check_cross_package_file_conflicts(
+                workspace_config=self.workspace_config,
+                discovered_packages=["pkg_a", "pkg_b", "pkg_c"],
+                pkg_metadata_map=pkg_metadata_map,
+                state_registry=registry,
+            )
+
+        err_msg = str(ctx.exception)
+        self.assertIn("Cross-package destination conflicts detected (2 collision(s)):", err_msg)
+        self.assertIn(str(self.system_target_dir / ".config/app/setting.json"), err_msg)
+        self.assertIn(str(self.system_target_dir / "shared.txt"), err_msg)
+        self.assertIn("pkg_a", err_msg)
+        self.assertIn("pkg_b", err_msg)
+        self.assertIn("pkg_c", err_msg)
+
+    def test_cross_package_inter_package_conflict_excludes_redeploying_package(self) -> None:
+        """Verifies that inter-package conflicts exclude packages in the current deployment batch and report external collisions."""
+        # 1. Setup pkg_installed and deploy it
+        pkg_inst = "pkg_installed"
+        pkg_inst_dir = self.install_dir / pkg_inst
+        (pkg_inst_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_inst_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_inst}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_inst_dir / "dot-app" / "app.conf").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_inst_dir / "dot-app" / "app.conf").write_text("installed app conf", encoding="utf-8")
+        self.workspace_config.packages_enable[pkg_inst] = True
+
+        run_primitive_5_install_deployment(self.workspace_config, [pkg_inst])
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_state(pkg_inst), "installed")
+
+        # 2. Redeploy pkg_inst alone - should NOT conflict with itself
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg_inst])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # 3. Setup pkg_new attempting to claim the same destination
+        pkg_new = "pkg_new"
+        pkg_new_dir = self.install_dir / pkg_new
+        (pkg_new_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_new_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg_new}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_new_dir / "dot-app" / "app.conf").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_new_dir / "dot-app" / "app.conf").write_text("conflicting app conf", encoding="utf-8")
+        self.workspace_config.packages_enable[pkg_new] = True
+
+        with self.assertRaises(InstallCollisionError) as ctx:
+            run_primitive_5_install_deployment(self.workspace_config, [pkg_new])
+
+        err_msg = str(ctx.exception)
+        self.assertIn("Cross-package destination conflicts detected (1 collision(s)):", err_msg)
+        self.assertIn("Package 'pkg_new' (current batch) collides with 'pkg_installed' (already installed)", err_msg)
+
+    def test_target_directory_migration_clean_migration(self) -> None:
+        """Verifies that changing target_directory cleans up old deployed files, deploys to new target, and updates state."""
+        target_1 = self.system_target_dir / "target_1"
+        target_2 = self.system_target_dir / "target_2"
+        target_1.mkdir(parents=True, exist_ok=True)
+        target_2.mkdir(parents=True, exist_ok=True)
+
+        pkg = "pkg_mig"
+        pkg_dir = self.install_dir / pkg
+        (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{target_1}"
+        """, encoding="utf-8")
+        (pkg_dir / "file1.txt").write_text("content 1", encoding="utf-8")
+        (pkg_dir / "sub" / "file2.txt").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "sub" / "file2.txt").write_text("content 2", encoding="utf-8")
+        self.workspace_config.packages_enable[pkg] = True
+
+        # Initial deployment to target_1
+        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertTrue((target_1 / "file1.txt").is_file())
+        self.assertTrue((target_1 / "sub" / "file2.txt").is_file())
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        self.assertEqual(registry.get_package_target_directory(pkg), target_1)
+        self.assertEqual(registry.get_target_migrated_from(pkg, target_1), None)
+        self.assertEqual(registry.get_target_migrated_from(pkg, target_2), target_1)
+
+        # Update target_directory to target_2
+        (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{target_2}"
+        """, encoding="utf-8")
+
+        # Deploy with redeploy=False (migration automatically forces full deployment to target_2)
+        res_mig = run_primitive_5_install_deployment(
+            self.workspace_config,
+            [pkg],
+            options=DeployOptions(redeploy=False)
+        )
+        self.assertEqual(res_mig.status, "SUCCESS")
+
+        # Verify target_1 files were removed
+        self.assertFalse((target_1 / "file1.txt").exists())
+        self.assertFalse((target_1 / "sub" / "file2.txt").exists())
+
+        # Verify target_2 files were created
+        self.assertTrue((target_2 / "file1.txt").is_file())
+        self.assertTrue((target_2 / "sub" / "file2.txt").is_file())
+
+        # Verify state.toml has recorded target_2
+        registry_migrated = load_state_registry(state_file)
+        self.assertEqual(registry_migrated.get_package_target_directory(pkg), target_2)
+        self.assertEqual(registry_migrated.get_target_migrated_from(pkg, target_2), None)
+
+    def test_state_registry_sync_deployed_files(self) -> None:
+        """Verifies StateRegistry.sync_deployed_files with redeploy, incremental changes, target directory, and install method."""
+        registry = StateRegistry({
+            "test_pkg": PackageState(
+                state="installed",
+                deployed_files=[Path("a.txt"), Path("b.txt")]
+            )
+        })
+
+        # Overwrite with redeploy=True and record target_directory and install_method
+        registry.sync_deployed_files(
+            "test_pkg",
+            target_directory=Path("/home/user/target"),
+            install_method=InstallMethod.STOW,
+            redeploy=True,
+            deployable_files=[Path("c.txt"), Path("d.txt")]
+        )
+        self.assertEqual(
+            registry.get_package_target_directory("test_pkg"),
+            Path("/home/user/target")
+        )
+        self.assertEqual(
+            registry.get_package_install_method("test_pkg"),
+            InstallMethod.STOW
+        )
+        self.assertEqual(
+            registry.get_package_deployed_files("test_pkg"),
+            [Path("c.txt"), Path("d.txt")]
+        )
+
+        # Incremental sync with package_changes
+        pkg_changes = PackageStageChanges(
+            package_name="test_pkg",
+            deployable_changes=FolderDiff(
+                added=[Path("e.txt")],
+                modified=[],
+                deleted=[Path("c.txt")],
+                matches=[]
+            )
+        )
+        registry.sync_deployed_files(
+            "test_pkg",
+            target_directory=Path("/home/user/target_updated"),
+            install_method=InstallMethod.COPY,
+            redeploy=False,
+            package_changes=pkg_changes
+        )
+        self.assertEqual(
+            registry.get_package_target_directory("test_pkg"),
+            Path("/home/user/target_updated")
+        )
+        self.assertEqual(
+            registry.get_package_install_method("test_pkg"),
+            InstallMethod.COPY
+        )
+        self.assertEqual(
+            registry.get_package_deployed_files("test_pkg"),
+            [Path("d.txt"), Path("e.txt")]
+        )
+
+        # Test KeyError on unregistered package
+        with self.assertRaises(KeyError):
+            registry.sync_deployed_files("non_existent_pkg", target_directory=Path("/any"), install_method=InstallMethod.COPY)
+
+    def test_state_registry_get_target_migrated_from(self) -> None:
+        """Verifies StateRegistry.get_target_migrated_from detection under various state configurations."""
+        registry = StateRegistry({
+            "pkg_with_target": PackageState(
+                state="installed",
+                target_directory=Path("/home/user/.config")
+            ),
+            "pkg_no_target": PackageState(
+                state="installed",
+                target_directory=None
+            ),
+        })
+
+        # Missing package returns None
+        self.assertIsNone(registry.get_target_migrated_from("unknown", Path("/any")))
+
+        # Package without recorded target_directory returns None
+        self.assertIsNone(registry.get_target_migrated_from("pkg_no_target", Path("/any")))
+
+        # Same target directory returns None
+        self.assertIsNone(registry.get_target_migrated_from("pkg_with_target", Path("/home/user/.config")))
+
+        # Different target directory returns the old target directory
+        self.assertEqual(
+            registry.get_target_migrated_from("pkg_with_target", Path("/home/user/.dotfiles")),
+            Path("/home/user/.config")
+        )
+
+    def test_state_registry_build_destination_ownership_map(self) -> None:
+        """Verifies StateRegistry.build_destination_ownership_map with and without exclusions."""
+        target_a = Path("/target_a")
+        target_b = Path("/target_b")
+        registry = StateRegistry({
+            "pkg_a": PackageState(
+                state="installed",
+                target_directory=target_a,
+                deployed_files=[Path("dot-config/app.conf"), Path("readme.txt")]
+            ),
+            "pkg_b": PackageState(
+                state="installed",
+                target_directory=target_b,
+                deployed_files=[Path("main.py")]
+            ),
+            "pkg_staging": PackageState(
+                state="staging",
+                target_directory=target_a,
+                deployed_files=[Path("ignored.txt")]
+            ),
+        })
+
+        # Full ownership map
+        ownership = registry.build_destination_ownership_map()
+        self.assertEqual(ownership[target_a / ".config" / "app.conf"], "pkg_a")
+        self.assertEqual(ownership[target_a / "readme.txt"], "pkg_a")
+        self.assertEqual(ownership[target_b / "main.py"], "pkg_b")
+        self.assertNotIn(target_a / "ignored.txt", ownership)
+
+        # Ownership map excluding pkg_a
+        ownership_ex_a = registry.build_destination_ownership_map(exclude_packages=["pkg_a"])
+        self.assertNotIn(target_a / ".config" / "app.conf", ownership_ex_a)
+        self.assertNotIn(target_a / "readme.txt", ownership_ex_a)
+        self.assertEqual(ownership_ex_a[target_b / "main.py"], "pkg_b")
+        self.assertEqual(registry.get_file_owner(target_b / "main.py"), "pkg_b")
 
 
 class TestStowVersionDetection(unittest.TestCase):

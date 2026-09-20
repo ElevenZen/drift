@@ -40,56 +40,57 @@ class StateRegistry:
             return pkg_data.target_directory
         return None
 
-    def set_package_target_directory(self, pkg: str, target_dir: Path) -> None:
-        if pkg not in self.packages:
-            self.packages[pkg] = PackageState(state="unknown", target_directory=Path(target_dir))
-        else:
-            self.packages[pkg].target_directory = Path(target_dir)
+    def get_package_install_method(self, pkg: str) -> Optional[InstallMethod]:
+        pkg_data = self.packages.get(pkg)
+        if pkg_data:
+            return pkg_data.install_method
+        return None
 
     def set_package_state(
         self,
         pkg: str,
         state: str,
         last_deployed: Optional[str] = None,
-        install_method: Optional[InstallMethod] = None,
-        target_directory: Optional[Path] = None,
     ) -> None:
         if pkg not in self.packages:
             self.packages[pkg] = PackageState(
                 state=state,
-                target_directory=Path(target_directory) if target_directory is not None else None,
                 last_deployed=last_deployed,
-                install_method=install_method,
             )
         else:
             self.packages[pkg].state = state
             if last_deployed is not None:
                 self.packages[pkg].last_deployed = last_deployed
-            if install_method is not None:
-                self.packages[pkg].install_method = install_method
-            if target_directory is not None:
-                self.packages[pkg].target_directory = Path(target_directory)
 
-    def detect_target_directory_migration(self, pkg: str, new_target: Path) -> Optional[Path]:
-        """Checks if a package was previously deployed to a different target directory.
+    def get_target_migrated_from(self, pkg: str, current_target: Path) -> Optional[Path]:
+        """Returns the previous target directory if the package is migrating to a new destination, else None.
 
-        Returns the previous target directory if a migration is detected, or None otherwise.
+        If the package was previously deployed to a recorded target directory that differs from current_target,
+        returns that previous directory. If the package has no previous record, has no recorded target directory,
+        or the target directory has not changed, returns None.
         """
         pkg_data = self.packages.get(pkg)
         if pkg_data is None or pkg_data.target_directory is None:
             return None
-        if pkg_data.target_directory != Path(new_target):
+        if pkg_data.target_directory != Path(current_target):
             return pkg_data.target_directory
         return None
 
-    def build_destination_ownership_map(self) -> Dict[Path, str]:
+    def build_destination_ownership_map(
+        self,
+        exclude_packages: Optional[Iterable[str]] = None,
+    ) -> Dict[Path, str]:
         """Builds a mapping of absolute host destination paths to owning package names.
 
         Resolves each package's deployed_files relative to its recorded target_directory.
+        Optionally excludes packages in `exclude_packages` (e.g. packages currently being redeployed).
         """
         from .file_utils import resolve_system_target
+        exclude_set = set(exclude_packages) if exclude_packages is not None else set()
         ownership_map: Dict[Path, str] = {}
         for pkg, pkg_state in self.packages.items():
+            if pkg in exclude_set:
+                continue
             if pkg_state.state == "installed" and pkg_state.target_directory is not None:
                 for rel_file in pkg_state.deployed_files:
                     dst = resolve_system_target(rel_file, pkg_state.target_directory)
@@ -107,17 +108,48 @@ class StateRegistry:
             return pkg_data.deployed_files
         return []
 
-    def set_package_deployed_files(self, pkg: str, files: List[Path]) -> None:
+    def sync_deployed_files(
+        self,
+        pkg: str,
+        target_directory: Path,
+        install_method: InstallMethod,
+        redeploy: bool = False,
+        deployable_files: Iterable[Path] = (),
+        package_changes: Optional[Any] = None,
+    ) -> None:
+        """Updates the target directory, install method, and deployed_files manifest list for a package in the state registry.
+
+        Args:
+            pkg: Name of the package.
+            target_directory: Target directory on host system.
+            install_method: Method used to install package ('copy', 'stow').
+            redeploy: If True (or if package_changes is None), overwrites the manifest with deployable_files.
+            deployable_files: Full iterable of deployable files in the package (used during redeploy/full deploy).
+            package_changes: Incremental stage changes containing added and deleted file lists.
+
+        Raises:
+            KeyError: If pkg is not registered in the state registry.
+        """
         if pkg not in self.packages:
-            self.packages[pkg] = PackageState(state="unknown")
-        self.packages[pkg].deployed_files = [Path(x) for x in files]
+            raise KeyError(f"Package '{pkg}' not found in state registry.")
+
+        self.packages[pkg].target_directory = Path(target_directory)
+        self.packages[pkg].install_method = install_method
+
+        if redeploy or package_changes is None:
+            self.packages[pkg].deployed_files = [Path(x) for x in deployable_files]
+        else:
+            current_deployed = set(self.packages[pkg].deployed_files)
+            updated_deployed = (current_deployed - set(package_changes.deployable_changes.deleted)) | set(package_changes.deployable_changes.added)
+            self.packages[pkg].deployed_files = sorted(Path(x) for x in updated_deployed)
 
     def remove_package(self, pkg: str) -> None:
         if pkg in self.packages:
             del self.packages[pkg]
 
-    def has_deploying_package(self) -> bool:
-        return any(pkg_state.state == "deploying" for pkg_state in self.packages.values())
+    def has_installing_package(self) -> bool:
+        """Returns True if any package in the registry is in midway 'installing' state."""
+        return any(pkg_state.state == "installing" for pkg_state in self.packages.values())
 
     def filter_by_states(
         self,
@@ -146,7 +178,7 @@ class StateRegistry:
         self,
         package_names: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
-        """Finds packages currently in a midway transaction state ('staging' or 'deploying').
+        """Finds packages currently in a midway transaction state ('staging' or 'installing').
 
         Args:
             package_names: Optional subset of package names to check. If None, checks all packages in registry.

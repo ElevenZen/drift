@@ -238,7 +238,7 @@ target_directory = "{self.system_target_dir}"
             self.assertIn("Git configuration error: 'user.name' is not configured", str(context.exception))
 
     def test_deploy_post_update_hook_failure_with_rollback_on_failure_false(self) -> None:
-        """Verifies that when rollback_on_failure=False, a failing post_update hook stops and reports without leaving package in deploying state."""
+        """Verifies that when rollback_on_failure=False, a failing post_update hook stops and reports without leaving package in installing state."""
         # 1. First-time deploy succeeds
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertTrue((self.system_target_dir / "file.txt").is_file())
@@ -326,10 +326,10 @@ target_directory = "{self.system_target_dir}"
 
         self.assertIn("Midway crash", str(ctx.exception))
 
-        # 4. Verify package is in 'deploying' state requiring rollback
+        # 4. Verify package is in 'installing' state requiring rollback
         state_file = self.install_dir / "state.toml"
         state_registry = load_state_registry(state_file)
-        self.assertEqual(state_registry.get_package_state("pkg_a"), "deploying")
+        self.assertEqual(state_registry.get_package_state("pkg_a"), "installing")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
         from drift.install_repo import deploy_one_package_with_error_wrapping, DeployOptions
@@ -474,10 +474,10 @@ target_directory = "{self.system_target_dir}"
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertEqual(res1.status, "SUCCESS")
 
-        # 2. Simulate package in midway 'deploying' state
+        # 2. Simulate package in midway 'installing' state
         state_file = self.install_dir / "state.toml"
         state_registry = load_state_registry(state_file)
-        state_registry.set_package_state("pkg_a", state="deploying")
+        state_registry.set_package_state("pkg_a", state="installing")
         save_state_registry(state_registry)
 
         # 3. Deploy should abort and suggest drift rollback
