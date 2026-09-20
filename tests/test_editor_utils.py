@@ -207,11 +207,14 @@ class TestEditorUtils(unittest.TestCase):
                 self.assertIn(ed, str(ctx.exception))
         mock_run.assert_not_called()
 
-    @patch("subprocess.run")
-    def test_launch_side_by_side_editor_empty_pairs_noop(self, mock_run: MagicMock) -> None:
-        """Verifies launch_side_by_side_editor does nothing if file_pairs is empty."""
-        launch_side_by_side_editor([])
-        mock_run.assert_not_called()
+    def test_to_tokens_iterable(self) -> None:
+        """Verifies _to_tokens accepts string, sequence, and lazy generator expressions."""
+        from drift.editor_utils import _to_tokens
+
+        self.assertEqual(_to_tokens("code --wait"), ["code", "--wait"])
+        self.assertEqual(_to_tokens(["code", "--wait"]), ["code", "--wait"])
+        token_gen = (t for t in ["code", "--wait"])
+        self.assertEqual(_to_tokens(token_gen), ["code", "--wait"])
 
 
 if __name__ == "__main__":

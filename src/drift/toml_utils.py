@@ -1,5 +1,5 @@
 import re
-from typing import Any, Iterable, List, Optional, Mapping, Sequence
+from typing import Any, Iterable, List, Optional, Mapping
 
 from .exceptions import ConfigError
 

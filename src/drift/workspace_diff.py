@@ -46,7 +46,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import List, Tuple, Sequence
+from typing import List, Tuple, Sequence, Iterable
 
 from .constants import (
     DRIFT_GENERATED_FILES,
@@ -67,11 +67,12 @@ logger = logging.getLogger(__name__)
 
 def get_pending_delta_worklist(
     workspace_config: WorkspaceConfig,
-    packages: Sequence[str]
+    packages: Iterable[str]
 ) -> Tuple[List[Tuple[str, Path, Path]], List[str], List[str]]:
     """
     Classifies packages based on their presence in render/ and install/ directories.
     Returns (to_diff_list, new_package_names, orphan_package_names).
+    to_diff_list contains (package_names, install_pkg_dir, render_pkg_dir) .
     """
     to_diff = []
     new_pkgs = []

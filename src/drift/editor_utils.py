@@ -6,7 +6,7 @@ import shutil
 import logging
 import subprocess
 from pathlib import Path
-from typing import Sequence, Tuple, List, Union
+from typing import Iterable, List, Sequence, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
@@ -69,14 +69,14 @@ def launch_single_file_editor(file_path: Path) -> None:
         raise RuntimeError(f"Editor '{editor_bin}' exited with error code {e.returncode}.")
 
 
-def _to_tokens(editor_spec: Union[str, Sequence[str]]) -> List[str]:
-    """Helper to convert string or sequence into a list of command tokens."""
+def _to_tokens(editor_spec: Union[str, Iterable[str]]) -> List[str]:
+    """Helper to convert string or iterable into a list of command tokens."""
     if isinstance(editor_spec, str):
         return shlex.split(editor_spec)
     return list(editor_spec)
 
 
-def launch_vim_diff(editor_spec: Union[str, Sequence[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
+def launch_vim_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
     """Launches Neovim or Vim in a single session with tabpages and vertical diffsplit per tab."""
     editor_tokens = _to_tokens(editor_spec)
     editor_name = Path(editor_tokens[0]).name
@@ -91,7 +91,7 @@ def launch_vim_diff(editor_spec: Union[str, Sequence[str]], file_pairs: Sequence
     subprocess.run(cmd, check=False)
 
 
-def launch_vscode_diff(editor_spec: Union[str, Sequence[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
+def launch_vscode_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
     """Launches VS Code / VSCodium / Code-OSS opening all diff tabs in the active window."""
     editor_tokens = _to_tokens(editor_spec)
     editor_name = Path(editor_tokens[0]).name
@@ -103,7 +103,7 @@ def launch_vscode_diff(editor_spec: Union[str, Sequence[str]], file_pairs: Seque
     subprocess.run(editor_tokens + ["--diff", str(last_left), str(last_right), "--reuse-window", "--wait"], check=False)
 
 
-def launch_emacs_diff(editor_spec: Union[str, Sequence[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
+def launch_emacs_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
     """Launches GNU Emacs in a single session with side-by-side ediff and tab-bar-mode per tab."""
     editor_tokens = _to_tokens(editor_spec)
     logger.info(f"📝 Launching Emacs with {len(file_pairs)} diff tab(s)...")

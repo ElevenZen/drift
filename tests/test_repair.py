@@ -727,6 +727,22 @@ class TestPackageMetadataStructureCheckAndRepair(unittest.TestCase):
         self.assertIn("Forbidden local configuration file", str(ctx.exception))
 
 
+    def test_to_repair_result_generator(self) -> None:
+        """Verifies to_repair_result and build_repair_result accept unmaterialized generator expressions."""
+        from drift.workspace_repair import build_repair_result
+
+        report = WorkspaceHealthReport(
+            checks=[
+                CheckResult(name="Test Check", status=ComponentStatus.GOOD, details="All good")
+            ],
+            overall_status=ComponentStatus.GOOD
+        )
+        actions_gen = (f"action_{i}" for i in range(3))
+        res = build_repair_result(report, actions=actions_gen, dry_run=False)
+        self.assertEqual(res.actions_performed, ["action_0", "action_1", "action_2"])
+        self.assertEqual(res.overall_health, "good")
+
+
 if __name__ == "__main__":
     unittest.main()
 

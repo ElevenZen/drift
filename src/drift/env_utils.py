@@ -5,7 +5,7 @@ import re
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, Iterator, List, Mapping, MutableMapping, Optional, Sequence, Set, Tuple, Union, Iterable, Any, Type
+from typing import Dict, Iterator, List, Mapping, MutableMapping, Optional, Set, Tuple, Union, Iterable, Any, Type
 
 from .constants import (
     CONFIG_DIR_NAME,
@@ -16,7 +16,7 @@ from .exceptions import ConfigError, DriftError, RenderError
 
 logger = logging.getLogger(__name__)
 
-EnvInput = Union[Mapping[str, str], Sequence[Tuple[str, str]]]
+EnvInput = Union[Mapping[str, str], Iterable[Tuple[str, str]]]
 EnvSnapshot = Dict[str, Optional[str]]
 
 
@@ -60,15 +60,15 @@ def parse_secrets_env(drift_root: Path) -> Dict[str, str]:
 
 def update_env_dict(
     target: MutableMapping[str, str],
-    source: Optional[Union[Mapping[str, Any], Sequence[Tuple[str, Any]]]],
+    source: Optional[Union[Mapping[str, Any], Iterable[Tuple[str, Any]]]],
     overwrite: bool = True,
-    env_keep: Optional[Union[Set[str], Sequence[str], Iterable[str]]] = None,
+    env_keep: Optional[Iterable[str]] = None,
 ) -> Tuple[MutableMapping[str, str], EnvSnapshot]:
     """Updates target environment mapping with key-value pairs from source.
 
     Args:
         target: The mutable target mapping (e.g. dict or os.environ) to update in-place.
-        source: A mapping or sequence of (key, value) pairs to apply.
+        source: A mapping or iterable of (key, value) pairs to apply.
         overwrite: If True, overwrites existing keys in target unless protected by env_keep.
                    If False, only sets keys that are currently unset in target.
         env_keep: Optional set/iterable of variable names protected from being overwritten.
@@ -142,15 +142,15 @@ def restore_env_dict(
 def load_env_settings(
     envs: Optional[EnvInput],
     overwrite: bool = True,
-    env_keep: Optional[Union[Set[str], Sequence[str], Iterable[str]]] = None,
+    env_keep: Optional[Iterable[str]] = None,
 ) -> EnvSnapshot:
     """Loads environment settings into os.environ.
 
     Args:
-        envs: A mapping or sequence of (key, value) pairs.
+        envs: A mapping or iterable of (key, value) pairs.
         overwrite: If True, overwrite existing keys in os.environ (unless in env_keep).
                     If False, do not overwrite any keys already in os.environ.
-        env_keep: Optional set or sequence of keys that must NOT be overwritten.
+        env_keep: Optional set or iterable of keys that must NOT be overwritten.
 
     Returns:
         Dict[str, Optional[str]]: A dictionary of modified keys mapped to their original values
@@ -169,7 +169,7 @@ def unload_env_settings(original_envs: Mapping[str, Optional[str]] = {}) -> None
 def env_scope(
     envs: Optional[EnvInput],
     overwrite: bool = True,
-    env_keep: Optional[Union[Set[str], Sequence[str], Iterable[str]]] = None,
+    env_keep: Optional[Iterable[str]] = None,
 ) -> Iterator[None]:
     """Context manager for loading and unloading environment settings."""
     saved_envs = load_env_settings(envs, overwrite=overwrite, env_keep=env_keep)

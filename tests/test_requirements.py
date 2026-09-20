@@ -123,6 +123,11 @@ class TestPackageRequirements(unittest.TestCase):
         self.assertTrue(match_ip_addresses(["10.0.0.0/8", "172.16.*"], ["192.168.1.1", "172.16.50.2"]))
         self.assertFalse(match_ip_addresses(["10.0.0.0/8"], ["192.168.1.1", "172.16.50.2"]))
 
+        # match_ip_addresses with lazy generators (unmaterialized)
+        patterns_gen = (p for p in ["10.0.0.0/8", "172.16.*"])
+        ips_gen = (ip for ip in ["192.168.1.1", "172.16.50.2"])
+        self.assertTrue(match_ip_addresses(patterns_gen, ips_gen))
+
     def test_system_facts_dataclass(self) -> None:
         from drift.host_facts import SystemFacts
         facts = SystemFacts(

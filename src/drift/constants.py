@@ -5,7 +5,7 @@ import os
 import sys
 from enum import Enum, IntEnum
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Union, Tuple
+from typing import Dict, List, Optional, Union, Tuple
 
 def add_suffix_path(file: Path, suffix: str) -> Path:
     """Returns a new Path with the given suffix injected before the file extension.

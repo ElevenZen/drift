@@ -399,6 +399,20 @@ class TestDiff(unittest.TestCase):
         self.assertIn("drift repair", str(ctx.exception))
         self.assertIn("Package Metadata Structure", str(ctx.exception))
 
+    def test_get_pending_delta_worklist_with_generator(self) -> None:
+        """Verifies get_pending_delta_worklist accepts unmaterialized generator expressions."""
+        from drift.workspace_diff import get_pending_delta_worklist
+
+        (self.render_dir / "pkg_a").mkdir(parents=True, exist_ok=True)
+        (self.install_dir / "pkg_a").mkdir(parents=True, exist_ok=True)
+
+        pkg_gen = (p for p in ["pkg_a", "nonexistent"])
+        to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(self.workspace_config, pkg_gen)
+        self.assertEqual(len(to_diff), 1)
+        self.assertEqual(to_diff[0][0], "pkg_a")
+        self.assertEqual(new_pkgs, [])
+        self.assertEqual(orphan_pkgs, [])
+
 
 if __name__ == "__main__":
     unittest.main()

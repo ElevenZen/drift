@@ -139,6 +139,14 @@ class TestInstallRepo(unittest.TestCase):
         midway_subset = registry.get_midway_packages(["pkg2", "pkg3"])
         self.assertEqual(midway_subset, [("pkg2", "deploying")])
 
+        # Test filter_by_states and get_midway_packages with lazy generators (unmaterialized)
+        states_gen = (s for s in ["staging", "deploying"])
+        pkgs_gen = (p for p in ["pkg1", "pkg3"])
+        self.assertEqual(registry.filter_by_states(states_gen, package_names=pkgs_gen), [("pkg1", "staging")])
+
+        pkgs_midway_gen = (p for p in ["pkg2", "pkg3"])
+        self.assertEqual(registry.get_midway_packages(pkgs_midway_gen), [("pkg2", "deploying")])
+
 
     def test_package_state_dataclass(self) -> None:
         """Verifies the PackageState dataclass attributes and defaults."""
@@ -1945,6 +1953,34 @@ class TestInstallRepo(unittest.TestCase):
         # Verify untranslated dot- paths DO NOT exist on target
         self.assertFalse((self.system_target_dir / "dot-bashrc").exists())
         self.assertFalse((self.system_target_dir / "dot-config").exists())
+
+    def test_reconcile_orphaned_files_with_generators(self) -> None:
+        """Verifies reconcile_orphaned_files accepts unmaterialized generator expressions."""
+        from drift.install_repo import reconcile_orphaned_files, PackageInstallContext
+        from drift.ignore import DriftIgnore
+
+        context = PackageInstallContext(
+            pkg_name="pkg_test",
+            install_pkg_dir=self.install_dir / "pkg_test",
+            backup_pkg_dir=self.backup_dir / "pkg_test",
+            target_dir=self.system_target_dir,
+            install_method="copy",
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        deployable_gen = (Path(f"file_{i}.txt") for i in [1, 2])
+        deployed_gen = (Path(f"file_{i}.txt") for i in [1, 2, 3])
+
+        # file_3.txt is orphaned but doesn't exist on disk, so handle_collision is not triggered
+        reconcile_orphaned_files(
+            context=context,
+            deployable_files=deployable_gen,
+            deployed_files=deployed_gen,
+            resolve_symlinks=False,
+        )
 
 
 class TestStowVersionDetection(unittest.TestCase):

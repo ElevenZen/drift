@@ -1267,6 +1267,13 @@ class TestConfigLoaders(unittest.TestCase):
         self.assertEqual(res[0].path, drift_package_toml_path)
         self.assertEqual(res[1].path, local_path)
 
+        # 5. Lazy generator expression
+        config_gen = (f for f in config_files)
+        res_gen = get_package_config_file_info(config_gen, workspace_config.render_engine_configs)
+        self.assertEqual(len(res_gen), 2)
+        self.assertEqual(res_gen[0].path, drift_package_toml_path)
+        self.assertEqual(res_gen[1].path, local_path)
+
     def test_package_toml_template_rendering(self) -> None:
         # 1. Create config/drift_workspace.toml
         config_dir = self.drift_root / "config"

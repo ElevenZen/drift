@@ -730,6 +730,16 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         self.assertEqual(target3["CLI_VAR"], "cli_value")
         self.assertEqual(saved4, {})
 
+        # 5. Generator expressions for source pairs and env_keep
+        target5 = {"VAR_A": "old_a", "VAR_B": "old_b"}
+        source_pairs_gen = ((f"VAR_{x}", f"val_{x}") for x in ["A", "C"])
+        env_keep_gen = (k for k in ["VAR_A"])
+        _, saved5 = update_env_dict(target5, source_pairs_gen, overwrite=True, env_keep=env_keep_gen)
+        self.assertEqual(target5["VAR_A"], "old_a")
+        self.assertEqual(target5["VAR_B"], "old_b")
+        self.assertEqual(target5["VAR_C"], "val_C")
+        self.assertEqual(saved5, {"VAR_C": None})
+
     def test_topological_sort_env(self) -> None:
         """Verifies topological_sort_env computes correct evaluation order and catches cycles."""
         from drift.env_utils import topological_sort_env

@@ -51,7 +51,7 @@ Layers (ordered bottom-up by dependency):
 
 import logging
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import List, Iterable, Tuple
 
 from .constants import (
     add_envst_path,
@@ -585,7 +585,7 @@ def repair_drift_workspace(
 
 def build_repair_result(
     report: "WorkspaceHealthReport",
-    actions: Sequence[str] = (),
+    actions: Iterable[str] = (),
     dry_run: bool = False
 ):
     """Converts a WorkspaceHealthReport and performed actions into a RepairResult object."""

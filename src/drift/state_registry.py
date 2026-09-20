@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, List, Mapping, Sequence, Tuple
+from typing import Dict, Optional, List, Mapping, Tuple, Iterable, Any
 from .toml_utils import parse_toml
 from .exceptions import ConfigError
 from .constants import MIDWAY_TRANSACTION_STATES, InstallMethod
@@ -121,13 +121,13 @@ class StateRegistry:
 
     def filter_by_states(
         self,
-        states: Sequence[str],
-        package_names: Optional[Sequence[str]] = None,
+        states: Iterable[str],
+        package_names: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
         """Filters packages matching any of the specified states.
 
         Args:
-            states: A sequence of state names to filter by.
+            states: An iterable of state names to filter by.
             package_names: Optional subset of package names to check. If None, checks all packages in registry.
 
         Returns:
@@ -144,7 +144,7 @@ class StateRegistry:
 
     def get_midway_packages(
         self,
-        package_names: Optional[Sequence[str]] = None,
+        package_names: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
         """Finds packages currently in a midway transaction state ('staging' or 'deploying').
 

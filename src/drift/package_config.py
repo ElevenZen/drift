@@ -9,6 +9,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import (
     ClassVar,
+    Iterable,
     List,
     Sequence,
     Optional,
@@ -99,13 +100,14 @@ def match_ip_address(pattern: str, ip: str) -> bool:
     return False
 
 
-def match_ip_addresses(patterns: Sequence[str], host_ips: Sequence[str]) -> bool:
+def match_ip_addresses(patterns: Iterable[str], host_ips: Iterable[str]) -> bool:
     """Returns True if any host IP matches any of the given IP patterns."""
-    for pattern in patterns:
-        for host_ip in host_ips:
-            if match_ip_address(pattern, host_ip):
-                return True
-    return False
+    resolved_host_ips = tuple(host_ips)
+    return any(
+        match_ip_address(p, ip)
+        for p in patterns
+        for ip in resolved_host_ips
+    )
 
 
 @dataclass
@@ -1434,7 +1436,7 @@ class PackageConfigFileInfo:
 
 
 def get_package_config_file_info(
-    config_files: Sequence[Path],
+    config_files: Iterable[Path],
     render_engines: RenderEngineRegistry,
 ) -> List[PackageConfigFileInfo]:
     """Finds the package config file (or template) for an arbitrary list of rendered candidate paths.

@@ -60,7 +60,7 @@ import logging
 from enum import Enum
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import List, Optional, Iterable
 
 from .workspace_config import WorkspaceConfig
 
@@ -147,7 +147,7 @@ class WorkspaceHealthReport:
 
     def to_repair_result(
         self,
-        actions: Sequence[str] = (),
+        actions: Iterable[str] = (),
         dry_run: bool = False
     ):
         """Converts this health report and any performed repair actions into a RepairResult object."""

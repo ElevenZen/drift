@@ -83,7 +83,7 @@ import datetime
 import shlex
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple, Set, Sequence, Mapping
+from typing import List, Optional, Tuple, Set, Sequence, Mapping, Iterable
 
 from .workspace_config import WorkspaceConfig
 from .package_config import PackageConfig
@@ -429,8 +429,8 @@ def deploy_single_copy_file(
 
 def reconcile_orphaned_files(
     context: PackageInstallContext,
-    deployable_files: List[Path],
-    deployed_files: Sequence[Path],
+    deployable_files: Iterable[Path],
+    deployed_files: Iterable[Path],
     resolve_symlinks: bool,
     ops: Optional[FileOperations] = None,
 ) -> None:
