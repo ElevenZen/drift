@@ -49,8 +49,8 @@ def get_git_status_porcelain(
     cmd = ["git", "-C", str(repo_path), "status", "--porcelain"]
     if pkg_path:
         cmd.append(str(pkg_path))
-    res = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if res.returncode != 0 or not res.stdout.strip():
+    res = run_command(cmd, text=True, check=False, suppress_output=True)
+    if res.returncode != 0 or not res.stdout or not res.stdout.strip():
         return []
     return res.stdout.splitlines()
 
@@ -138,13 +138,13 @@ def _is_pkg_stageable(repo_path: Path, pkg: str) -> bool:
     """Checks if a package folder exists on disk or has files tracked in git."""
     if (repo_path / pkg).exists():
         return True
-    res = subprocess.run(
+    res = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
-        capture_output=True,
         text=True,
         check=False,
+        suppress_output=True,
     )
-    return bool(res.stdout.strip())
+    return bool(res.stdout and res.stdout.strip())
 
 
 def _resolve_pkg_stage_targets(repo_path: Path, target_pkgs: Sequence[str]) -> List[str]:
@@ -209,16 +209,13 @@ def commit_repo_changes(
 
 def is_git_tracked(dir_path: Path) -> bool:
     """Checks if a directory is inside a Git repository."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return res.returncode == 0
-    except Exception:
-        return False
+    res = run_command(
+        ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
+        text=True,
+        check=False,
+        suppress_output=True,
+    )
+    return res.returncode == 0
 
 
 def get_drift_root(dir_path: Path, force: bool = False) -> Path:
@@ -244,46 +241,37 @@ def get_drift_root(dir_path: Path, force: bool = False) -> Path:
 
 def is_bare_repository(dir_path: Path) -> bool:
     """Checks if the Git repository is a bare repository."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(dir_path), "rev-parse", "--is-bare-repository"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return res.returncode == 0 and res.stdout.strip() == "true"
-    except Exception:
-        return False
+    res = run_command(
+        ["git", "-C", str(dir_path), "rev-parse", "--is-bare-repository"],
+        text=True,
+        check=False,
+        suppress_output=True,
+    )
+    return res.returncode == 0 and res.stdout.strip() == "true"
 
 
 def is_detached_head(dir_path: Path) -> bool:
     """Checks if the Git repository is in a detached HEAD state."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(dir_path), "symbolic-ref", "-q", "HEAD"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return res.returncode != 0
-    except Exception:
-        return False
+    res = run_command(
+        ["git", "-C", str(dir_path), "symbolic-ref", "-q", "HEAD"],
+        text=True,
+        check=False,
+        suppress_output=True,
+    )
+    return res.returncode != 0
 
 
 def is_merge_or_rebase_in_progress(dir_path: Path) -> bool:
     """Checks if a merge or rebase operation is currently in progress."""
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res.returncode != 0:
-            return False
-        git_dir = (dir_path / res.stdout.strip()).resolve()
-    except Exception:
+    res = run_command(
+        ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
+        text=True,
+        check=False,
+        suppress_output=True,
+    )
+    if res.returncode != 0 or not res.stdout:
         return False
+    git_dir = (dir_path / res.stdout.strip()).resolve()
 
     return (
         (git_dir / "MERGE_HEAD").exists()
@@ -314,13 +302,13 @@ def check_repo_can_commit(repo_path: Path) -> None:
     # Query user.name
     has_env_name = bool(os.environ.get("GIT_AUTHOR_NAME") or os.environ.get("GIT_COMMITTER_NAME"))
     if not has_env_name:
-        res = subprocess.run(
+        res = run_command(
             ["git", "-C", str(repo_path), "config", "user.name"],
-            capture_output=True,
             text=True,
             check=False,
+            suppress_output=True,
         )
-        if res.returncode != 0 or not res.stdout.strip():
+        if res.returncode != 0 or not res.stdout or not res.stdout.strip():
             raise RuntimeError(
                 f"Git configuration error: 'user.name' is not configured in the repository or globally for '{repo_path}'. "
                 "Please run: git config --global user.name \"Your Name\""
@@ -329,13 +317,13 @@ def check_repo_can_commit(repo_path: Path) -> None:
     # Query user.email
     has_env_email = bool(os.environ.get("GIT_AUTHOR_EMAIL") or os.environ.get("GIT_COMMITTER_EMAIL"))
     if not has_env_email:
-        res = subprocess.run(
+        res = run_command(
             ["git", "-C", str(repo_path), "config", "user.email"],
-            capture_output=True,
             text=True,
             check=False,
+            suppress_output=True,
         )
-        if res.returncode != 0 or not res.stdout.strip():
+        if res.returncode != 0 or not res.stdout or not res.stdout.strip():
             raise RuntimeError(
                 f"Git configuration error: 'user.email' is not configured in the repository or globally for '{repo_path}'. "
                 "Please run: git config --global user.email \"you@example.com\""
@@ -348,16 +336,15 @@ def git_init_repo(dir_path: Path, name: str) -> bool:
     Raises RuntimeError if initialization fails, returns True on success.
     """
     dir_path.mkdir(parents=True, exist_ok=True)
-    res = subprocess.run(
-        ["git", "init"],
-        cwd=str(dir_path),
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res.returncode != 0:
-        raise RuntimeError(f"Failed to initialize {name} git repository: {res.stderr}")
-    return True
+    try:
+        run_command(
+            ["git", "init"],
+            cwd=str(dir_path),
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Failed to initialize {name} git repository: {e.stderr}")
 
 
 def append_to_gitignore(drift_root: Path, folders_to_ignore: Sequence[str]) -> None:

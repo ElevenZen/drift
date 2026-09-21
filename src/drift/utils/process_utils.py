@@ -5,7 +5,6 @@ import os
 import sys
 import shlex
 import logging
-import threading
 import subprocess
 from typing import Optional, Union, List, Any
 
@@ -106,146 +105,72 @@ def check_sudo_privilege(sudo_required: bool = True) -> None:
 def run_command(
     cmd: Union[str, List[str]],
     streaming: bool = False,
+    suppress_output: bool = False,
     **kwargs: Any
 ) -> "subprocess.CompletedProcess[Any]":
     """Logs the command before executing it with subprocess.
 
-    If streaming=True, stdout and stderr are streamed to sys.stdout and sys.stderr in real time
-    while executing, output is captured in CompletedProcess without ANSI escape codes, and no
-    debug dump is logged after completion.
-
-    If streaming=False, subprocess.run is used with capture_output=True, and clean stdout/stderr
-    (stripped of ANSI styling) are logged to logger.debug after process finishes.
+    Modes:
+      - streaming=False (default): subprocess.run is executed with capture_output=True (by default).
+        Output is cleaned of ANSI escape codes. If suppress_output=False, stdout and stderr are dumped
+        to logger.debug on success. On failure (CalledProcessError), error details are always logged.
+      - streaming=True: Child processes inherit standard file descriptors (stdin, stdout, stderr) directly
+        without in-memory buffering, allowing real-time terminal streaming and interactive user inputs (e.g.
+        typing into interactive editor sessions, sudo passwords, or hook scripts). Consequently,
+        CompletedProcess.stdout and CompletedProcess.stderr will be None. Supports standard timeout parameter,
+        raising subprocess.TimeoutExpired on timeout.
     """
-    logger.debug(f"External: {cmd if isinstance(cmd, str) else shlex.join(cmd)}")
+    cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
+    logger.debug(f"External: {cmd_str}")
 
-    if not streaming:
-        params: Any = {"check": True, "capture_output": True}
+    if streaming:
+        params: Any = {"check": True}
         params.update(kwargs)
+        params.pop("capture_output", None)
         try:
-            res = subprocess.run(cmd, **params)
-            cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
-            logger.debug(f"Command finished with exit code {res.returncode}: {cmd_str}")
+            return subprocess.run(cmd, **params)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Command failed with exit code {e.returncode}: {cmd_str}")
+            raise
+
+    params = {"check": True, "capture_output": True}
+    params.update(kwargs)
+    try:
+        res = subprocess.run(cmd, **params)
+        logger.debug(f"Command finished with exit code {res.returncode}: {cmd_str}")
+        if not suppress_output:
             stdout_msg = format_output(res.stdout)
             if stdout_msg:
                 logger.debug(f"stdout:\n{stdout_msg}")
             stderr_msg = format_output(res.stderr)
             if stderr_msg:
                 logger.debug(f"stderr:\n{stderr_msg}")
-            res.stdout = clean_stream_val(res.stdout)
-            res.stderr = clean_stream_val(res.stderr)
-            return res
-        except subprocess.CalledProcessError as e:
-            cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
-            logger.error(f"Command failed with exit code {e.returncode}: {cmd_str}")
-            stdout_msg = format_output(e.stdout)
-            if stdout_msg:
-                logger.debug(f"stdout:\n{stdout_msg}")
-            stderr_msg = format_output(e.stderr)
-            if stderr_msg:
-                logger.debug(f"stderr:\n{stderr_msg}")
-            e.stdout = clean_stream_val(e.stdout)
-            e.stderr = clean_stream_val(e.stderr)
-            raise
-
-    # Streaming mode:
-    params = dict(kwargs)
-    check = params.pop("check", True)
-    timeout = params.pop("timeout", None)
-    text = params.pop("text", None)
-    universal_newlines = params.pop("universal_newlines", None)
-    params.pop("capture_output", None)
-
-    is_text = True if text or universal_newlines else False
-
-    # Force stdout and stderr to PIPE so we can read and forward them in real time
-    params["stdout"] = subprocess.PIPE
-    params["stderr"] = subprocess.PIPE
-    if is_text:
-        params["text"] = True
-
-    proc = subprocess.Popen(cmd, **params)
-
-    stdout_chunks: List[Any] = []
-    stderr_chunks: List[Any] = []
-
-    def _reader(pipe: Any, target_stream: Any, collector: List[Any]) -> None:
-        try:
-            if is_text:
-                for line in iter(pipe.readline, ""):
-                    collector.append(line)
-                    try:
-                        target_stream.write(line)
-                        target_stream.flush()
-                    except Exception:
-                        pass
-            else:
-                for chunk in iter(lambda: pipe.read(4096), b""):
-                    collector.append(chunk)
-                    try:
-                        if hasattr(target_stream, "buffer"):
-                            target_stream.buffer.write(chunk)
-                            target_stream.buffer.flush()
-                        else:
-                            target_stream.write(chunk.decode("utf-8", errors="replace"))
-                            target_stream.flush()
-                    except Exception:
-                        pass
-        finally:
-            try:
-                pipe.close()
-            except Exception:
-                pass
-
-    t_out = threading.Thread(target=_reader, args=(proc.stdout, sys.stdout, stdout_chunks), daemon=True)
-    t_err = threading.Thread(target=_reader, args=(proc.stderr, sys.stderr, stderr_chunks), daemon=True)
-    t_out.start()
-    t_err.start()
-
-    try:
-        retcode = proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        try:
-            proc.wait(timeout=1.0)
-        except Exception:
-            pass
-        t_out.join(timeout=1.0)
-        t_err.join(timeout=1.0)
-        stdout_val = "".join(stdout_chunks) if is_text else b"".join(stdout_chunks)
-        stderr_val = "".join(stderr_chunks) if is_text else b"".join(stderr_chunks)
-        stdout_val = clean_stream_val(stdout_val)
-        stderr_val = clean_stream_val(stderr_val)
-        raise subprocess.TimeoutExpired(cmd, timeout, output=stdout_val, stderr=stderr_val)
-
-    t_out.join()
-    t_err.join()
-
-    stdout_val = "".join(stdout_chunks) if is_text else b"".join(stdout_chunks)
-    stderr_val = "".join(stderr_chunks) if is_text else b"".join(stderr_chunks)
-    stdout_val = clean_stream_val(stdout_val)
-    stderr_val = clean_stream_val(stderr_val)
-
-    if check and retcode != 0:
-        raise subprocess.CalledProcessError(retcode, cmd, output=stdout_val, stderr=stderr_val)
-
-    return subprocess.CompletedProcess(
-        args=cmd,
-        returncode=retcode,
-        stdout=stdout_val,
-        stderr=stderr_val
-    )
+        res.stdout = clean_stream_val(res.stdout)
+        res.stderr = clean_stream_val(res.stderr)
+        return res
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Command failed with exit code {e.returncode}: {cmd_str}")
+        stdout_msg = format_output(e.stdout)
+        if stdout_msg:
+            logger.debug(f"stdout:\n{stdout_msg}")
+        stderr_msg = format_output(e.stderr)
+        if stderr_msg:
+            logger.debug(f"stderr:\n{stderr_msg}")
+        e.stdout = clean_stream_val(e.stdout)
+        e.stderr = clean_stream_val(e.stderr)
+        raise
 
 
 def run_sudo_command(
     cmd: Union[str, List[str]],
     sudo: bool = True,
     streaming: bool = False,
+    suppress_output: bool = False,
     **kwargs: Any
 ) -> "subprocess.CompletedProcess[Any]":
     """Executes a command with cross-platform privilege handling.
 
-    On Linux/macOS: prepends \x27sudo\x27 if sudo is True and user is not already root (euid != 0).
+    On Linux/macOS: prepends 'sudo' if sudo is True and user is not already root (euid != 0).
     On Windows: verifies admin privileges if sudo is True, or runs command directly.
     """
     if sudo:
@@ -265,4 +190,4 @@ def run_sudo_command(
                     if not cmd.startswith("sudo "):
                         cmd = f"sudo {cmd}"
 
-    return run_command(cmd, streaming=streaming, **kwargs)
+    return run_command(cmd, streaming=streaming, suppress_output=suppress_output, **kwargs)

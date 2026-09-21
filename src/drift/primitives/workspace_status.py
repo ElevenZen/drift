@@ -11,6 +11,7 @@ from .reverse_sync import run_primitive_1_reverse_sync
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.constants import DRIFT_GENERATED_FILES
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
+from ..utils.file_utils import run_command
 from ..core.state_registry import load_state_registry
 from ..core.result_models import PackageStatus, StatusResult
 
@@ -30,11 +31,13 @@ def audit_repo_package_status(
     if not pkg_dir.exists():
         return "EMPTY", None
 
-    res_tracked = subprocess.run(
+    res_tracked = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
-        capture_output=True, text=True, check=False
+        text=True,
+        check=False,
+        suppress_output=True,
     )
-    if not res_tracked.stdout.strip():
+    if not res_tracked.stdout or not res_tracked.stdout.strip():
         return "NEW", None
 
     git_status = parse_git_status_porcelain(repo_path, pkg)

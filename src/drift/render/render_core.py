@@ -164,7 +164,7 @@ def render_template(
     )
 
     try:
-        result = run_command(cmd, shell=True, text=True)
+        result = run_command(cmd, shell=True, text=True, suppress_output=True)
         return result.stdout
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         if engine_config.name == "envsubst":

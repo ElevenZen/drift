@@ -301,6 +301,7 @@ def render_package_files(
     """
     from ..core.ignore import DriftIgnore
     package_name = package_dir.name
+    logger.info(f"📦 Rendering package '{package_name}'...")
 
     # Trigger pre_source hook before reading / processing source files
     trigger_pre_source_hook(

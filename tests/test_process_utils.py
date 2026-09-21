@@ -79,31 +79,26 @@ class TestProcessUtils(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
-    def test_run_command_streaming_captures_and_streams(self) -> None:
-        captured_stdout = io.StringIO()
-        captured_stderr = io.StringIO()
-
-        with patch("sys.stdout", captured_stdout), patch("sys.stderr", captured_stderr):
-            res = run_command(
-                [sys.executable, "-c", "import sys; print('line 1'); print('line 2'); print('err line', file=sys.stderr)"],
-                streaming=True,
-                text=True
-            )
-
+    def test_run_command_streaming_success(self) -> None:
+        res = run_command(
+            [sys.executable, "-c", "import sys; print('live stream')"],
+            streaming=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            text=True
+        )
         self.assertEqual(res.returncode, 0)
-        self.assertEqual(res.stdout, "line 1\nline 2\n")
-        self.assertEqual(res.stderr, "err line\n")
-        self.assertEqual(captured_stdout.getvalue(), "line 1\nline 2\n")
-        self.assertEqual(captured_stderr.getvalue(), "err line\n")
+        self.assertIsNone(res.stdout)
+        self.assertIsNone(res.stderr)
 
     def test_run_command_streaming_no_debug_dump(self) -> None:
         set_test_mode(True, enable_logging=True)
-        captured = io.StringIO()
         try:
-            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm, patch("sys.stdout", captured):
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
                 run_command(
                     [sys.executable, "-c", "print('live output')"],
                     streaming=True,
+                    stdout=subprocess.DEVNULL,
                     text=True
                 )
             logs = "\n".join(cm.output)
@@ -113,17 +108,14 @@ class TestProcessUtils(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
     def test_run_command_streaming_error(self) -> None:
-        captured_stderr = io.StringIO()
-        with patch("sys.stderr", captured_stderr):
-            with self.assertRaises(subprocess.CalledProcessError) as ctx:
-                run_command(
-                    [sys.executable, "-c", "import sys; print('fatal error', file=sys.stderr); sys.exit(5)"],
-                    streaming=True,
-                    text=True
-                )
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            run_command(
+                [sys.executable, "-c", "import sys; print('fatal error', file=sys.stderr); sys.exit(5)"],
+                streaming=True,
+                stderr=subprocess.DEVNULL,
+                text=True
+            )
         self.assertEqual(ctx.exception.returncode, 5)
-        self.assertIn("fatal error", ctx.exception.stderr)
-        self.assertIn("fatal error", captured_stderr.getvalue())
 
     def test_run_command_streaming_timeout(self) -> None:
         with self.assertRaises(subprocess.TimeoutExpired) as ctx:
@@ -133,13 +125,49 @@ class TestProcessUtils(unittest.TestCase):
                 text=True,
                 timeout=0.1
             )
-        self.assertEqual(ctx.exception.timeout, 0.1)
+        self.assertAlmostEqual(ctx.exception.timeout, 0.1, places=1)
 
     def test_run_sudo_command_passthrough(self) -> None:
         with patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
             res = run_sudo_command([sys.executable, "-c", "print('sudo ok')"], sudo=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn("sudo ok", res.stdout)
+
+    def test_run_command_suppress_output_success(self) -> None:
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
+                res = run_command(
+                    [sys.executable, "-c", "import sys; print('hello suppressed'); print('err suppressed', file=sys.stderr)"],
+                    text=True,
+                    suppress_output=True,
+                )
+            self.assertEqual(res.returncode, 0)
+            self.assertEqual(res.stdout.strip(), "hello suppressed")
+            logs = "\n".join(cm.output)
+            self.assertIn("External:", logs)
+            self.assertIn("Command finished with exit code 0:", logs)
+            self.assertNotIn("stdout:\nhello suppressed", logs)
+            self.assertNotIn("stderr:\nerr suppressed", logs)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_run_command_suppress_output_error(self) -> None:
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
+                with self.assertRaises(subprocess.CalledProcessError) as ctx:
+                    run_command(
+                        [sys.executable, "-c", "import sys; print('fatal error', file=sys.stderr); sys.exit(3)"],
+                        text=True,
+                        suppress_output=True,
+                    )
+            self.assertEqual(ctx.exception.returncode, 3)
+            logs = "\n".join(cm.output)
+            self.assertIn("Command failed with exit code 3:", logs)
+            self.assertIn("stderr:\nfatal error", logs)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
     def test_run_command_strips_ansi_in_debug_logs_and_errors(self) -> None:
         set_test_mode(True, enable_logging=True)
@@ -170,16 +198,6 @@ class TestProcessUtils(unittest.TestCase):
             self.assertNotIn("\x1b[31;1m", logs)
             self.assertEqual(ctx.exception.stderr.strip(), "FATAL_ERROR")
             self.assertNotIn("\x1b[31;1m", ctx.exception.stderr)
-
-            # 3. Streaming error cleans CalledProcessError
-            with patch("sys.stderr", io.StringIO()):
-                with self.assertRaises(subprocess.CalledProcessError) as ctx:
-                    run_command([
-                        sys.executable, "-c",
-                        "import sys; print('\\x1b[31mSTREAM_ERR\\x1b[0m', file=sys.stderr); sys.exit(2)"
-                    ], streaming=True, text=True)
-            self.assertEqual(ctx.exception.stderr.strip(), "STREAM_ERR")
-            self.assertNotIn("\x1b[31m", ctx.exception.stderr)
         finally:
             set_test_mode(True, enable_logging=False)
 

@@ -53,7 +53,7 @@ class TestEditorUtils(unittest.TestCase):
         self.assertEqual(tokens, ["/usr/local/bin/my nvim", "-u", "init config.lua"])
         self.assertEqual(name, "my nvim")
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_single_file_editor_terminal(self, mock_run: MagicMock) -> None:
         """Verifies launch_single_file_editor launches terminal editors directly."""
         mock_run.return_value = MagicMock(returncode=0)
@@ -61,9 +61,9 @@ class TestEditorUtils(unittest.TestCase):
 
         with patch.dict(os.environ, {"EDITOR": "nvim", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["nvim", str(file_path)], check=True)
+            mock_run.assert_called_once_with(["nvim", str(file_path)], streaming=True, check=True)
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_single_file_editor_vscode(self, mock_run: MagicMock) -> None:
         """Verifies launch_single_file_editor passes --wait for VS Code variants."""
         mock_run.return_value = MagicMock(returncode=0)
@@ -71,14 +71,14 @@ class TestEditorUtils(unittest.TestCase):
 
         with patch.dict(os.environ, {"EDITOR": "code", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["code", "--wait", str(file_path)], check=True)
+            mock_run.assert_called_once_with(["code", "--wait", str(file_path)], streaming=True, check=True)
 
         mock_run.reset_mock()
         with patch.dict(os.environ, {"EDITOR": "/usr/bin/codium", "VISUAL": ""}, clear=True):
             launch_single_file_editor(file_path)
-            mock_run.assert_called_once_with(["/usr/bin/codium", "--wait", str(file_path)], check=True)
+            mock_run.assert_called_once_with(["/usr/bin/codium", "--wait", str(file_path)], streaming=True, check=True)
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_single_file_editor_missing_binary(self, mock_run: MagicMock) -> None:
         """Verifies launch_single_file_editor handles missing binary gracefully."""
         mock_run.side_effect = FileNotFoundError("Executable not found")
@@ -87,17 +87,18 @@ class TestEditorUtils(unittest.TestCase):
                 launch_single_file_editor(Path("/tmp/test.txt"))
             self.assertIn("not found", str(ctx.exception))
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_vim_diff_single_pair(self, mock_run: MagicMock) -> None:
         """Verifies launch_vim_diff with a single file pair."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
         launch_vim_diff("nvim", [p1])
         mock_run.assert_called_once_with(
             ["nvim", str(p1[0]), "-c", f"vert diffsplit {p1[1]}"],
+            streaming=True,
             check=False
         )
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_vim_diff_multiple_pairs(self, mock_run: MagicMock) -> None:
         """Verifies launch_vim_diff with multiple file pairs creates tabpages."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
@@ -111,9 +112,9 @@ class TestEditorUtils(unittest.TestCase):
             "-c", f"vert diffsplit {p2[1]}",
             "-c", "tabfirst",
         ]
-        mock_run.assert_called_once_with(expected_cmd, check=False)
+        mock_run.assert_called_once_with(expected_cmd, streaming=True, check=False)
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_vscode_diff_single_and_multiple_pairs(self, mock_run: MagicMock) -> None:
         """Verifies launch_vscode_diff uses --reuse-window and --wait on the final pair."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
@@ -123,6 +124,7 @@ class TestEditorUtils(unittest.TestCase):
         launch_vscode_diff("code", [p1])
         mock_run.assert_called_once_with(
             ["code", "--diff", str(p1[0]), str(p1[1]), "--reuse-window", "--wait"],
+            streaming=True,
             check=False
         )
 
@@ -131,11 +133,11 @@ class TestEditorUtils(unittest.TestCase):
         launch_vscode_diff("code-oss", [p1, p2])
         self.assertEqual(mock_run.call_count, 2)
         mock_run.assert_has_calls([
-            call(["code-oss", "--diff", str(p1[0]), str(p1[1]), "--reuse-window"], check=False),
-            call(["code-oss", "--diff", str(p2[0]), str(p2[1]), "--reuse-window", "--wait"], check=False),
+            call(["code-oss", "--diff", str(p1[0]), str(p1[1]), "--reuse-window"], streaming=True, check=False),
+            call(["code-oss", "--diff", str(p2[0]), str(p2[1]), "--reuse-window", "--wait"], streaming=True, check=False),
         ])
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_emacs_diff_single_and_multiple_pairs(self, mock_run: MagicMock) -> None:
         """Verifies launch_emacs_diff evaluates ediff and tab-bar-mode expressions."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
@@ -153,6 +155,7 @@ class TestEditorUtils(unittest.TestCase):
         )
         mock_run.assert_called_once_with(
             ["emacs", "--eval", expected_single_elisp],
+            streaming=True,
             check=False
         )
 
@@ -173,10 +176,11 @@ class TestEditorUtils(unittest.TestCase):
         )
         mock_run.assert_called_once_with(
             ["emacs", "--eval", expected_elisp],
+            streaming=True,
             check=False
         )
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_side_by_side_editor_dispatcher(self, mock_run: MagicMock) -> None:
         """Verifies launch_side_by_side_editor dispatches to appropriate editor adapters."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))
@@ -195,7 +199,7 @@ class TestEditorUtils(unittest.TestCase):
             launch_side_by_side_editor([p1])
             mock_run.assert_called_once()
 
-    @patch("subprocess.run")
+    @patch("drift.utils.editor_utils.run_command")
     def test_launch_side_by_side_editor_unsupported_raises_error(self, mock_run: MagicMock) -> None:
         """Verifies launch_side_by_side_editor raises RuntimeError for unsupported editors."""
         p1 = (Path("/tmp/f1_a.txt"), Path("/tmp/f1_b.txt"))

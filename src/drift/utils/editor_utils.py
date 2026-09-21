@@ -8,6 +8,8 @@ import subprocess
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple, Union
 
+from .process_utils import run_command
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_EDITORS = ("nvim", "vim", "code", "codium", "code-oss", "code-insiders", "emacs")
@@ -62,7 +64,7 @@ def launch_single_file_editor(file_path: Path) -> None:
     logger.info(f"⏳ Waiting for '{editor_bin}' to close '{file_path.name}'...")
 
     try:
-        subprocess.run(cmd, check=True)
+        run_command(cmd, streaming=True, check=True)
     except FileNotFoundError:
         raise RuntimeError(f"Editor executable '{editor_bin}' not found.")
     except subprocess.CalledProcessError as e:
@@ -88,7 +90,7 @@ def launch_vim_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence
         cmd.extend(["-c", "tabfirst"])
     logger.info(f"📝 Launching {editor_name} with {len(file_pairs)} diff pair(s) across tabpages...")
     logger.info(f"⏳ Waiting for '{editor_tokens[0]}' diff session to be closed...")
-    subprocess.run(cmd, check=False)
+    run_command(cmd, streaming=True, check=False)
 
 
 def launch_vscode_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
@@ -97,10 +99,10 @@ def launch_vscode_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Seque
     editor_name = Path(editor_tokens[0]).name
     logger.info(f"📝 Opening {len(file_pairs)} diff tab(s) in {editor_name}...")
     for left, right in file_pairs[:-1]:
-        subprocess.run(editor_tokens + ["--diff", str(left), str(right), "--reuse-window"], check=False)
+        run_command(editor_tokens + ["--diff", str(left), str(right), "--reuse-window"], streaming=True, check=False)
     last_left, last_right = file_pairs[-1]
     logger.info(f"⏳ Waiting for '{editor_tokens[0]}' diff session to be closed...")
-    subprocess.run(editor_tokens + ["--diff", str(last_left), str(last_right), "--reuse-window", "--wait"], check=False)
+    run_command(editor_tokens + ["--diff", str(last_left), str(last_right), "--reuse-window", "--wait"], streaming=True, check=False)
 
 
 def launch_emacs_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequence[Tuple[Path, Path]]) -> None:
@@ -126,7 +128,7 @@ def launch_emacs_diff(editor_spec: Union[str, Iterable[str]], file_pairs: Sequen
     elisp = f"(progn {' '.join(steps)})"
     cmd = editor_tokens + ["--eval", elisp]
     logger.info(f"⏳ Waiting for '{editor_tokens[0]}' diff session to be closed...")
-    subprocess.run(cmd, check=False)
+    run_command(cmd, streaming=True, check=False)
 
 
 def launch_side_by_side_editor(file_pairs: Sequence[Tuple[Path, Path]]) -> None:
