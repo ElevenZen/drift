@@ -116,7 +116,7 @@ class WorkspaceHealthReport:
     def is_healthy(self) -> bool:
         return self.overall_status == ComponentStatus.GOOD
 
-    def is_fresh(self) -> bool:
+    def is_uninitialized(self) -> bool:
         return self.overall_status == ComponentStatus.NOT_FOUND
 
     def is_broken(self) -> bool:
@@ -183,15 +183,11 @@ def probe_existing_workspace_structure(drift_root: Path) -> bool:
         indicating a partially initialized or broken workspace.
     """
     candidates = [
-        drift_root / "src",
         drift_root / "render",
         drift_root / "install",
         drift_root / CONFIG_DIR_NAME,
-        drift_root / "backup",
-        drift_root / CONFIG_DIR_NAME / "drift.toml",
-        drift_root / CONFIG_DIR_NAME / "drift.local.toml",
-        drift_root / CONFIG_DIR_NAME / "drift.envst.toml",
-        drift_root / CONFIG_DIR_NAME / "drift.local.envst.toml",
+        *(drift_root / CONFIG_DIR_NAME / x for x in CURRENT_WORKSPACE_CONFIG_FILE_NAMES),
+        *(drift_root / CONFIG_DIR_NAME / x for x in LEGACY_WORKSPACE_CONFIG_FILE_NAMES),
         drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME,
     ]
     return any(p.exists() for p in candidates)

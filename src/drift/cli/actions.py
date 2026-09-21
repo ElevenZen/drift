@@ -1,4 +1,56 @@
-"""Core action implementations for drift CLI backend triggers using pathlib."""
+"""Core action implementations for drift CLI backend triggers using pathlib.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+This module is the shared action layer invoked by both the Typer CLI backend
+(src/drift/cli/typer_app.py) and the plain CLI backend. Each execute_* function
+is a thin orchestration wrapper that:
+  1. Optionally validates the workspace via ensure_workspace_healthy().
+  2. Loads WorkspaceConfig via load_workspace_config_default().
+  3. Delegates to the corresponding primitive entry point (P1–P16).
+  4. Handles JSON output and exit codes.
+
+-------------------------------------------------------------------------------
+Actions Classified by Workspace Dependency
+-------------------------------------------------------------------------------
+
+Requires a healthy workspace (calls ensure_workspace_healthy):
+  execute_render          -> P2  run_primitive_2_render_packages
+  execute_render_commit   -> P3  run_primitive_3_commit_render_repo
+  execute_stage           -> P4  run_primitive_4_stage_render_to_install
+  execute_apply           -> P5  run_primitive_5_install_deployment
+  execute_install_commit  -> P6  run_primitive_6_commit_install_repo
+  execute_uninstall       -> P7  run_primitive_7_uninstall_packages
+  execute_rollback        -> P8  run_primitive_8_rollback_recovery
+  execute_gc              -> P9  run_primitive_9_purge_workspace_garbage
+  execute_new_package     -> P10 run_primitive_10_create_new_package
+  execute_add             -> P11 run_primitive_11_add_resources
+  execute_deploy          ->     run_primitive_deploy_pipeline_with_error_handling
+  execute_adopt           ->     run_primitive_adopt_drifts
+  execute_diff            -> P15 run_primitive_15_workspace_diff
+  execute_status          -> P16 run_primitive_status
+  execute_reverse_sync    -> P1  run_primitive_1_reverse_sync
+
+Does NOT require a healthy workspace (bypasses ensure_workspace_healthy):
+  execute_init            ->     init_drift_workspace       (creates the workspace)
+  execute_repair          ->     repair_drift_workspace     (fixes a broken workspace)
+  execute_clone           ->     run_primitive_clone        (no local workspace yet)
+  execute_health          ->     run_primitive_health_checks (reads install/ directly)
+  execute_hook            ->     run_primitive_trigger_hook  (operates on install/)
+  execute_help            ->     print_help_document        (static docs, no workspace)
+  execute_complete        ->     generate_completion_script (static output, no workspace)
+
+-------------------------------------------------------------------------------
+Workspace Guard Helpers
+-------------------------------------------------------------------------------
+  check_sudo_and_root(drift_root)    -- Blocks sudo/root misuse on user workspaces.
+  ensure_workspace_healthy(drift_root, command_name)
+                                     -- Raises ConfigError on is_uninitialized() (NOT_FOUND) or BROKEN.
+  load_workspace_config_default(drift_root) -> WorkspaceConfig
+===============================================================================
+"""
 
 import sys
 import os
@@ -131,11 +183,22 @@ def ensure_workspace_healthy(
     drift_root: Path,
     command_name: str = "diff",
 ) -> None:
-    """Ensures workspace structure is up to date before executing commands."""
+    """Ensures workspace structure is present and up to date before executing commands.
+
+    Raises ConfigError with a user-friendly hint if:
+    - The workspace is uninitialized (no drift artifacts detected at drift_root).
+    - The workspace is BROKEN (outdated or missing components).
+    """
     check_sudo_and_root(drift_root)
     from ..primitives.workspace_check import check_existing_workspace_status, ComponentStatus
 
     report = check_existing_workspace_status(drift_root)
+    if report.is_uninitialized():
+        raise ConfigError(
+            f"No Drift workspace found at '{drift_root}'.\n\n"
+            f"To create a new workspace here, run:  drift init\n"
+            f"To clone an existing workspace, run:  drift clone <url>"
+        )
     if report.is_broken():
         broken_checks = [c for c in report.checks if c.status != ComponentStatus.GOOD]
         details = "\n".join(f"  - {c.name}: {c.details}" for c in broken_checks)
