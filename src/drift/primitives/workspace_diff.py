@@ -176,12 +176,30 @@ def collect_pending_delta_pairs(
     """
     Collects file pairs between install/ (left/deployed) and render/ (right/candidate).
     Calls compare_folders instead of 'git diff --no-index' to avoid content-based diffing and focus on file presence and structure.
+    NEW packages (render only) appear as all-added pairs; ORPHAN packages (install only) as all-deleted pairs.
     """
-    to_diff, _, _ = get_pending_delta_worklist(workspace_config, packages)
+    from ..utils.file_utils import tree_relative_files
+    to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
     pairs: List[Tuple[Path, Path]] = []
 
     def is_valid_file(rel_f: Path) -> bool:
         return rel_f.name not in ignored_files and not is_editor_or_os_temporary_file(rel_f)
+
+    for pkg in new_pkgs:
+        render_pkg = workspace_config.render_path / pkg
+        for rel_f in filter(is_valid_file, tree_relative_files(render_pkg)):
+            empty_left = temp_dir / "empty" / pkg / rel_f
+            empty_left.parent.mkdir(parents=True, exist_ok=True)
+            empty_left.touch()
+            pairs.append((empty_left, render_pkg / rel_f))
+
+    for pkg in orphan_pkgs:
+        install_pkg = workspace_config.install_path / pkg
+        for rel_f in filter(is_valid_file, tree_relative_files(install_pkg)):
+            empty_right = temp_dir / "empty" / pkg / rel_f
+            empty_right.parent.mkdir(parents=True, exist_ok=True)
+            empty_right.touch()
+            pairs.append((install_pkg / rel_f, empty_right))
 
     for pkg, _, _ in to_diff:
         install_pkg = workspace_config.install_path / pkg
@@ -267,12 +285,15 @@ def run_repo_diff(
     packages: Sequence[str],
     git_options: Sequence[str],
     ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
-) -> None:
-    """Helper to run git diff within a specific repository for a set of packages."""
+) -> bool:
+    """Helper to run git diff within a specific repository for a set of packages.
+    Returns True if any diff output was produced, False otherwise.
+    """
     if not repo_path.exists():
         logger.warning(f"Repository directory does not exist: {repo_path}")
-        return
+        return False
 
+    had_output = False
     for pkg in packages:
         # We use pathspecs after '--' to avoid revision ambiguity
         cmd = [
@@ -284,8 +305,10 @@ def run_repo_diff(
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if res.stdout:
             sys.stdout.write(res.stdout)
+            had_output = True
         if res.stderr:
             sys.stderr.write(res.stderr)
+    return had_output
 
 
 def run_pending_delta_diff(
@@ -293,19 +316,38 @@ def run_pending_delta_diff(
     packages: Sequence[str],
     git_options: Sequence[str],
     exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
-) -> None:
-    """Helper to run git diff --no-index between render/ and install/ layers."""
+) -> bool:
+    """Helper to run git diff --no-index between render/ and install/ layers.
+    NEW packages diff as all-added against an empty directory; ORPHAN packages diff as all-deleted.
+    Returns True if any diff output was produced, False otherwise.
+    """
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
 
-    for pkg in new_pkgs:
-        logger.info(f"✨ Package '{pkg}' is NEW (exists in render but not install).")
-    for pkg in orphan_pkgs:
-        logger.info(f"⚠️  Package '{pkg}' is ORPHAN (exists in install but not render).")
-
-    if not to_diff:
-        return
-
+    had_output = False
     base_cmd = ["git", "diff", "--no-index", *git_options]
+
+    if new_pkgs or orphan_pkgs:
+        with tempfile.TemporaryDirectory() as empty_td:
+            empty_dir = Path(empty_td)
+            for pkg in new_pkgs:
+                logger.info(f"✨ Package '{pkg}' is NEW (exists in render but not install).")
+                cmd = [*base_cmd, str(empty_dir), str(workspace_config.render_path / pkg), "--", *exclude_patterns]
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.stdout:
+                    sys.stdout.write(res.stdout)
+                    had_output = True
+                if res.stderr:
+                    sys.stderr.write(res.stderr)
+            for pkg in orphan_pkgs:
+                logger.info(f"⚠️  Package '{pkg}' is ORPHAN (exists in install but not render).")
+                cmd = [*base_cmd, str(workspace_config.install_path / pkg), str(empty_dir), "--", *exclude_patterns]
+                res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.stdout:
+                    sys.stdout.write(res.stdout)
+                    had_output = True
+                if res.stderr:
+                    sys.stderr.write(res.stderr)
+
     for _, rel_install, rel_render in to_diff:
         cmd = [*base_cmd, str(rel_install), str(rel_render), "--", *exclude_patterns]
         res = subprocess.run(
@@ -317,8 +359,10 @@ def run_pending_delta_diff(
         )
         if res.stdout:
             sys.stdout.write(res.stdout)
+            had_output = True
         if res.stderr:
             sys.stderr.write(res.stderr)
+    return had_output
 
 
 # =====================================================================
@@ -344,6 +388,9 @@ def run_side_by_side_diff(
             pairs = collect_pending_delta_pairs(workspace_config, packages, temp_dir)
         else:
             pairs = []
+        if not pairs:
+            logger.info("✨ No differences detected.")
+            return
         launch_side_by_side_editor(pairs)
 
 
@@ -358,17 +405,21 @@ def run_terminal_diff(
     if stat:
         git_options.append("--stat")
 
+    had_output = False
     if diff_type == DiffType.TEMPLATE:
         logger.info("🔍 [Diff A] Visualizing Template Evolution (src/ -> render/)...")
-        run_repo_diff(workspace_config.render_path, packages, git_options)
+        had_output = run_repo_diff(workspace_config.render_path, packages, git_options)
 
     elif diff_type == DiffType.SYSTEM:
         logger.info("🔍 [Diff B] Visualizing System Drift (System -> install/)...")
-        run_repo_diff(workspace_config.install_path, packages, git_options)
+        had_output = run_repo_diff(workspace_config.install_path, packages, git_options)
 
     elif diff_type == DiffType.PENDING:
         logger.info("🔍 [Diff Δ] Visualizing Pending Delta (render/ -> install/)...")
-        run_pending_delta_diff(workspace_config, packages, git_options)
+        had_output = run_pending_delta_diff(workspace_config, packages, git_options)
+
+    if not had_output:
+        logger.info("✨ No differences detected.")
 
 
 # =====================================================================

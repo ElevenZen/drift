@@ -137,7 +137,7 @@ def launch_side_by_side_editor(file_pairs: Sequence[Tuple[Path, Path]]) -> None:
     Delegates to the appropriate editor adapter.
     """
     if not file_pairs:
-        logger.info("✨ No differences detected between layers.")
+        logger.debug("No input pairs for side-by-side editor, skipping launch.")
         return
 
     editor_cmd = get_configured_editor()
