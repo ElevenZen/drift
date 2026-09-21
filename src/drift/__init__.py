@@ -174,7 +174,6 @@ from .utils import (
     prune_empty_parents,
     clear_readonly,
     run_command,
-    run_sudo_command,
     check_sudo_privilege,
     format_output,
     strip_ansi,

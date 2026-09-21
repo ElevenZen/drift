@@ -891,7 +891,7 @@ class TestStageRepo(unittest.TestCase):
         with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:
             changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes1), 1)
-            mock_sudo.assert_called_once_with(True)
+            mock_sudo.assert_called_once_with()
 
         # Second staging with ZERO changes: check_sudo_privilege must NOT be called
         with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:

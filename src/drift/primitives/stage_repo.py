@@ -286,7 +286,7 @@ def stage_modified_packages(
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
     needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage)
     if needs_sudo:
-        check_sudo_privilege(True)
+        check_sudo_privilege()
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
     for pkg in packages_to_stage:

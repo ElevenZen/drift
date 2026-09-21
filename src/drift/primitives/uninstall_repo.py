@@ -408,7 +408,7 @@ def run_primitive_7_uninstall_packages(
     if not dry_run:
         needs_sudo = any(pkg_cfg.sudo for pkg_cfg in pkg_config_map.values())
         if needs_sudo:
-            check_sudo_privilege(True)
+            check_sudo_privilege()
 
         if not detach and not hook_flags.no_hooks:
             for pkg, pkg_config in pkg_config_map.items():

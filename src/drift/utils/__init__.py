@@ -37,7 +37,6 @@ from .file_ops import (
 
 from .process_utils import (
     run_command,
-    run_sudo_command,
     check_sudo_privilege,
     format_output,
     strip_ansi,
@@ -138,7 +137,6 @@ __all__ = [
     "prune_empty_parents",
     "clear_readonly",
     "run_command",
-    "run_sudo_command",
     "check_sudo_privilege",
     "format_output",
     "strip_ansi",

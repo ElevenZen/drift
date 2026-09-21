@@ -533,14 +533,14 @@ class TestFileUtils(unittest.TestCase):
             self.assertEqual(expand_path("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
 
     def test_has_admin_privileges_and_run_sudo_command(self) -> None:
-        from drift.utils.process_utils import has_admin_privileges, run_sudo_command
+        from drift.utils.process_utils import has_admin_privileges, run_command
 
         # Linux non-root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
             self.assertFalse(has_admin_privileges())
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                run_sudo_command(["echo", "hello"], sudo=True)
+                run_command(["echo", "hello"], sudo=True)
                 mock_run.assert_called_with(["sudo", "echo", "hello"], check=True, capture_output=True)
 
         # Linux root
@@ -548,39 +548,36 @@ class TestFileUtils(unittest.TestCase):
             self.assertTrue(has_admin_privileges())
             with patch("subprocess.run") as mock_run:
                 mock_run.return_value = MagicMock(returncode=0)
-                run_sudo_command(["echo", "hello"], sudo=True)
+                run_command(["echo", "hello"], sudo=True)
                 mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
 
     def test_check_sudo_privilege(self) -> None:
         from drift.utils.process_utils import check_sudo_privilege
 
-        # If sudo is not required, does nothing
-        check_sudo_privilege(sudo_required=False)
-
         # Linux root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
-            check_sudo_privilege(sudo_required=True)
+            check_sudo_privilege()
 
         # Linux non-root success
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
             with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
-                check_sudo_privilege(sudo_required=True)
+                check_sudo_privilege()
                 mock_run.assert_called_with(["sudo", "-v"], check=False)
 
         # Linux non-root failure
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
             with patch("subprocess.run", return_value=MagicMock(returncode=1)):
                 with self.assertRaises(PermissionError):
-                    check_sudo_privilege(sudo_required=True)
+                    check_sudo_privilege()
 
         # Windows non-admin failure
         with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=False):
             with self.assertRaises(PermissionError):
-                check_sudo_privilege(sudo_required=True)
+                check_sudo_privilege()
 
         # Windows admin success
         with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
-            check_sudo_privilege(sudo_required=True)
+            check_sudo_privilege()
 
     def test_is_binary_file(self) -> None:
         from drift.utils.file_inspect import is_binary_file

@@ -12,7 +12,6 @@ from drift.utils.process_utils import (
     has_admin_privileges,
     check_sudo_privilege,
     run_command,
-    run_sudo_command,
 )
 from drift.core.constants import set_test_mode
 
@@ -129,7 +128,7 @@ class TestProcessUtils(unittest.TestCase):
 
     def test_run_sudo_command_passthrough(self) -> None:
         with patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
-            res = run_sudo_command([sys.executable, "-c", "print('sudo ok')"], sudo=True, text=True)
+            res = run_command([sys.executable, "-c", "print('sudo ok')"], sudo=True, text=True)
             self.assertEqual(res.returncode, 0)
             self.assertIn("sudo ok", res.stdout)
 

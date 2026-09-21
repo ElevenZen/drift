@@ -67,15 +67,13 @@ def has_admin_privileges() -> bool:
         return os.geteuid() == 0
 
 
-def check_sudo_privilege(sudo_required: bool = True) -> None:
+def check_sudo_privilege() -> None:
     """Checks if administrative/root privileges are available before staging or installing.
 
     On Windows: ensures the current process is running in an elevated Administrator terminal.
     On POSIX: executes a test probe ('sudo -v' or 'sudo true') to authenticate and prompt the user early.
     If the user fails to authenticate, interrupts, or is not an administrator, raises PermissionError.
     """
-    if not sudo_required:
-        return
 
     if sys.platform == "win32":
         if not has_admin_privileges():
@@ -104,11 +102,16 @@ def check_sudo_privilege(sudo_required: bool = True) -> None:
 
 def run_command(
     cmd: Union[str, List[str]],
+    sudo: bool = False,
     streaming: bool = False,
     suppress_output: bool = False,
     **kwargs: Any
 ) -> "subprocess.CompletedProcess[Any]":
-    """Logs the command before executing it with subprocess.
+    """Executes a command via subprocess with logging, ANSI cleanup, and optional privilege elevation.
+
+    If sudo is True:
+      - On Linux/macOS: prepends 'sudo' if user is not already root (euid != 0).
+      - On Windows: verifies admin privileges, raising DriftError if not elevated.
 
     Modes:
       - streaming=False (default): subprocess.run is executed with capture_output=True (by default).
@@ -120,6 +123,23 @@ def run_command(
         CompletedProcess.stdout and CompletedProcess.stderr will be None. Supports standard timeout parameter,
         raising subprocess.TimeoutExpired on timeout.
     """
+    if sudo:
+        if sys.platform == "win32":
+            if not has_admin_privileges():
+                from ..core.exceptions import DriftError
+                raise DriftError(
+                    "This operation requires elevated Administrator privileges (sudo = true). "
+                    "Please run drift from an elevated Administrator terminal / PowerShell window."
+                )
+        else:
+            if not has_admin_privileges():
+                if isinstance(cmd, list):
+                    if not cmd or cmd[0] != "sudo":
+                        cmd = ["sudo"] + list(cmd)
+                elif isinstance(cmd, str):
+                    if not cmd.startswith("sudo "):
+                        cmd = f"sudo {cmd}"
+
     cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
     logger.debug(f"External: {cmd_str}")
 
@@ -159,35 +179,3 @@ def run_command(
         e.stdout = clean_stream_val(e.stdout)
         e.stderr = clean_stream_val(e.stderr)
         raise
-
-
-def run_sudo_command(
-    cmd: Union[str, List[str]],
-    sudo: bool = True,
-    streaming: bool = False,
-    suppress_output: bool = False,
-    **kwargs: Any
-) -> "subprocess.CompletedProcess[Any]":
-    """Executes a command with cross-platform privilege handling.
-
-    On Linux/macOS: prepends 'sudo' if sudo is True and user is not already root (euid != 0).
-    On Windows: verifies admin privileges if sudo is True, or runs command directly.
-    """
-    if sudo:
-        if sys.platform == "win32":
-            if not has_admin_privileges():
-                from ..core.exceptions import DriftError
-                raise DriftError(
-                    "This operation requires elevated Administrator privileges (sudo = true). "
-                    "Please run drift from an elevated Administrator terminal / PowerShell window."
-                )
-        else:
-            if not has_admin_privileges():
-                if isinstance(cmd, list):
-                    if not cmd or cmd[0] != "sudo":
-                        cmd = ["sudo"] + list(cmd)
-                elif isinstance(cmd, str):
-                    if not cmd.startswith("sudo "):
-                        cmd = f"sudo {cmd}"
-
-    return run_command(cmd, streaming=streaming, suppress_output=suppress_output, **kwargs)

@@ -118,7 +118,7 @@ from ..utils.file_ops import (
     ensure_dir,
     remove,
 )
-from ..utils.process_utils import run_command, run_sudo_command
+from ..utils.process_utils import run_command
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.result_models import FileOperations, PackageInstallResult, InstallDeploymentResult
 
@@ -618,7 +618,7 @@ def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bo
     ]
     logger.info(f"🔗 Linking files: {pkg} (stow)")
     logger.debug(f"   Command: {shlex.join(stow_cmd)}")
-    run_sudo_command(stow_cmd, sudo=sudo, cwd=str(install_base))
+    run_command(stow_cmd, sudo=sudo, cwd=str(install_base))
 
 
 def run_full_file_delivery(
@@ -1122,7 +1122,7 @@ def precheck_deployment_packages(
 
     if any(metadata.sudo for _, metadata in active_packages):
         from ..utils.process_utils import check_sudo_privilege
-        check_sudo_privilege(True)
+        check_sudo_privilege()
 
     if not hook_flags.no_hooks:
         for pkg, metadata in active_packages:
