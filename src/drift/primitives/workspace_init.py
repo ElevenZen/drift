@@ -29,11 +29,11 @@ from .workspace_check import check_existing_workspace_status, ComponentStatus
 from ..utils.git_utils import (
     is_git_tracked,
     get_drift_root,
-    ensure_git_repository_health,
+    assert_git_repository_health,
     git_init_repo,
     append_to_gitignore,
 )
-from ..utils.file_ops import ensure_writable
+from ..utils.file_ops import assert_writable
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     Only works if the directory is empty or tracked by git, unless force is True.
     """
     # 1. Ensure the provided drift_root path is valid and read-writable
-    ensure_writable(drift_root, sudo=False)
+    assert_writable(drift_root, sudo=False)
 
     # 2. Check if the directory is tracked by git
     is_git = is_git_tracked(drift_root)
@@ -64,7 +64,8 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
         drift_root = get_drift_root(drift_root, force=force)
 
     # Validate main git repo health (bare, detached head, merge/rebase in progress)
-    ensure_git_repository_health(drift_root, force=force)
+    if not force:
+        assert_git_repository_health(drift_root)
 
     # Check if already initialized or partially initialized
     if not force:

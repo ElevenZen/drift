@@ -12,9 +12,9 @@ Layer 5: Public Primitive Entry Points
             PackageConfig.from_install_dir
         2. Pre-flight Validation & Pre-Transaction Conflict Audit:
             precheck_deployment_packages [Layer 4]
-                check_sudo_privilege (if any target requires sudo)
-                check_hook_files (lifecycle hooks)
-                check_cross_package_file_conflicts [Layer 4]
+                assert_can_escalate (if any target requires sudo)
+                assert_hooks_exist (lifecycle hooks)
+                assert_no_cross_package_conflicts [Layer 4]
         3. Execute Single-Package Deployments:
             deploy_one_package_with_error_wrapping [Layer 4]
                 deploy_one_package [Layer 4]
@@ -65,7 +65,7 @@ Layers (ordered bottom-up by dependency):
         update_state_registry_post_deployment
     Layer 4: Single-Package Pipeline & Pre-flight Validation
         _gather_package_destination_targets
-        check_cross_package_file_conflicts
+        assert_no_cross_package_conflicts
         precheck_single_package
         deploy_one_package_impl
         deploy_one_package
@@ -114,7 +114,7 @@ from ..utils.file_inspect import find_symlink_ancestor
 from ..utils.file_ops import (
     copy_file,
     create_symlink,
-    ensure_writable,
+    assert_writable,
     ensure_dir,
     remove,
 )
@@ -742,7 +742,7 @@ def _gather_package_destination_targets(
     ]
 
 
-def check_cross_package_file_conflicts(
+def assert_no_cross_package_conflicts(
     workspace_config: WorkspaceConfig,
     discovered_packages: Iterable[str],
     pkg_metadata_map: Mapping[str, PackageConfig],
@@ -850,7 +850,7 @@ def precheck_single_package(
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
         )
     
-    ensure_writable(target_dir, metadata.sudo)
+    assert_writable(target_dir, metadata.sudo)
     
     if not options.force and state_registry.is_package_in_midway_state(pkg):
         current_state = state_registry.get_package_state(pkg)
@@ -873,7 +873,7 @@ def precheck_single_package(
 
     hook_flags = HookExecFlags.resolve(options.flags, settings=workspace_config.settings)
     if not hook_flags.no_hooks:
-        metadata.hooks.check_hook_files(install_pkg_dir, is_source=False)
+        metadata.hooks.assert_hooks_exist(install_pkg_dir, is_source=False)
 
     # non-deployable changes is counted as changes and will trigger hooks even if no files are deployed.
     pkg_change = options.get_package_changes(pkg)
@@ -1121,17 +1121,17 @@ def precheck_deployment_packages(
     ]
 
     if any(metadata.sudo for _, metadata in active_packages):
-        from ..utils.process_utils import check_sudo_privilege
-        check_sudo_privilege()
+        from ..utils.process_utils import assert_can_escalate
+        assert_can_escalate()
 
     if not hook_flags.no_hooks:
         for pkg, metadata in active_packages:
-            metadata.hooks.check_hook_files(
+            metadata.hooks.assert_hooks_exist(
                 workspace_config.install_path / pkg,
                 is_source=False,
             )
 
-    check_cross_package_file_conflicts(
+    assert_no_cross_package_conflicts(
         workspace_config=workspace_config,
         discovered_packages=discovered_packages,
         pkg_metadata_map=pkg_metadata_map,

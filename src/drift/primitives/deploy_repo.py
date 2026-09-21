@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
-from ..utils.git_utils import get_git_status_porcelain, check_repo_can_commit
+from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
 from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
@@ -303,8 +303,8 @@ def run_primitive_deploy_pipeline(
     """
     # 0. Pre-flight checks: Verify render/ and install/ repositories can commit successfully
     logger.info("🔍 Running pre-flight Git configuration checks...")
-    check_repo_can_commit(workspace_config.render_path)
-    check_repo_can_commit(workspace_config.install_path)
+    assert_repo_can_commit(workspace_config.render_path)
+    assert_repo_can_commit(workspace_config.install_path)
 
     # Discover target active packages from source directory
     target_pkgs = workspace_config.filter_source_packages_by_target(target_packages=packages_to_deploy or None)

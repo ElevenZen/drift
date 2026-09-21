@@ -114,8 +114,8 @@ suffix = "envst"
                 engine.validate()
             self.assertIn(f"Render engine suffix '{suffix}' is a forbidden reserved keyword.", str(ctx.exception))
 
-    def test_package_hooks_from_dict_and_check_hook_files(self) -> None:
-        """Verifies PackageHooks resolves drift_hooks/ paths into .drift/hooks/ and check_hook_files validates both stages."""
+    def test_package_hooks_from_dict_and_assert_hooks_exist(self) -> None:
+        """Verifies PackageHooks resolves drift_hooks/ paths into .drift/hooks/ and assert_hooks_exist validates both stages."""
         pkg_src = self.src_dir / "pkg_a"
         pkg_src.mkdir(parents=True)
         dh_src = pkg_src / DRIFT_HOOKS_DIR_NAME
@@ -138,20 +138,20 @@ suffix = "envst"
         )
         self.assertEqual(hooks.get_relative_path("post_install"), Path("drift_hooks/post_install.sh"))
 
-        # 2. check_hook_files with is_source=True
-        hooks.check_hook_files(pkg_src, is_source=True, hook_names=["post_install"])
+        # 2. assert_hooks_exist with is_source=True
+        hooks.assert_hooks_exist(pkg_src, is_source=True, hook_names=["post_install"])
 
-        # 3. check_hook_files with is_source=False before staging raises FileNotFoundError
+        # 3. assert_hooks_exist with is_source=False before staging raises FileNotFoundError
         pkg_install = self.install_dir / "pkg_a"
         pkg_install.mkdir(parents=True)
         with self.assertRaises(FileNotFoundError):
-            hooks.check_hook_files(pkg_install, is_source=False, hook_names=["post_install"])
+            hooks.assert_hooks_exist(pkg_install, is_source=False, hook_names=["post_install"])
 
         # Create staged file in .drift/hooks/
         dh_install = pkg_install / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
         dh_install.mkdir(parents=True)
         (dh_install / "post_install.sh").write_text("#!/bin/sh\n", encoding="utf-8")
-        hooks.check_hook_files(pkg_install, is_source=False, hook_names=["post_install"])
+        hooks.assert_hooks_exist(pkg_install, is_source=False, hook_names=["post_install"])
 
     def test_render_and_deploy_drift_hooks_end_to_end(self) -> None:
         """End-to-end integration test:

@@ -37,11 +37,11 @@ from drift.primitives.install_repo import (
         deploy_one_package,
         DeployOptions,
         PackageInstallContext,
-        check_cross_package_file_conflicts,
+        assert_no_cross_package_conflicts,
 )
 from drift.utils.file_ops import (
         ensure_dir,
-        ensure_writable,
+        assert_writable,
 )
 
 
@@ -2020,7 +2020,7 @@ class TestInstallRepo(unittest.TestCase):
         }
 
         with self.assertRaises(InstallCollisionError) as ctx:
-            check_cross_package_file_conflicts(
+            assert_no_cross_package_conflicts(
                 workspace_config=self.workspace_config,
                 discovered_packages=["pkg_a", "pkg_b", "pkg_c"],
                 pkg_metadata_map=pkg_metadata_map,

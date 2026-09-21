@@ -8,6 +8,10 @@
 * **Structured & Typed Return Boundaries**: Use dataclasses or typed result containers (`PackageRenderResult`, `HookResult`, etc.) rather than raw dictionaries or arbitrary tuples across module interfaces to ensure strong type safety and explicit inspection.
 * **Boundary Normalization & Validation**: Normalize and validate inputs (e.g., resolving paths to absolute `Path` objects, validating enum keys) at ingestion entry points (`from_dict`, config loaders) so core primitives operate strictly on canonical, validated domain structures without defensive guessing.
 * **No Backward Compatibility Burden**: Backward compatibility is not considered at this early development stage. Obsolete arguments, dead functions, legacy aliases, and transitional optional inputs should be removed cleanly and directly rather than retaining compatibility layers or shims.
+* **`ensure_` vs `assert_` vs `check_` Naming Convention**:
+  * Use **`ensure_`** for functions that **create or modify** state to guarantee a postcondition (e.g., `ensure_dir` creates a directory if missing, `ensure_rendered_file_hook_permissions` chmods hook files).
+  * Use **`assert_`** for **read-only validation** guards that **raise an exception** on failure without modifying state (e.g., `assert_writable` checks permissions, `assert_can_escalate` verifies sudo availability, `assert_hooks_exist` validates hook files, `assert_no_cyclic_dependencies` validates dependency graphs).
+  * Use **`check_`** for **read-only inspection** functions that **return a result value** (e.g., `bool`, `CheckResult`, or status object) without raising exceptions or modifying state (e.g., `check_existing_workspace_status` returns a report, `check_patch_conflicts` returns a `bool`). Never use `check_` for guards that throw.
 
 ## 2. Architecture & Documentation Standards
 * **Layered Call Chain Overviews**: Preserve and maintain the `Architecture & Call Chain Overview` docstrings at the top of primitive modules (ordered by dependency layers).

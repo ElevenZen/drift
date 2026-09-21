@@ -586,7 +586,7 @@ def load_workspace_config_file_with_render(rendered_config_path: Path) -> Option
     return parse_toml(content)
 
 
-def check_for_legacy_workspace_config(drift_root: Path) -> None:
+def assert_no_legacy_workspace_config(drift_root: Path) -> None:
     """Checks for deprecated legacy workspace config files and aborts with a prominent error if found."""
     import sys
     config_dir = Path(drift_root) / CONFIG_DIR_NAME
@@ -684,7 +684,7 @@ def load_workspace_config(
     """
     root = Path(drift_root).resolve()
     if check_legacy:
-        check_for_legacy_workspace_config(root)
+        assert_no_legacy_workspace_config(root)
 
     load_configs_from = list(config_files_override) if config_files_override else [
             root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME,

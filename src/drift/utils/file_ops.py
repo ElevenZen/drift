@@ -23,7 +23,7 @@ Direct Operations:
     remove_with_parents(file_path, limit_dir) — Remove + prune empty ancestors.
     create_symlink(src, dst, sudo) — Create symlink with cleanup.
     ensure_dir(path, sudo) — mkdir -p with optional elevation.
-    ensure_writable(path, sudo) — Writability check walking up parents.
+    assert_writable(path, sudo) — Writability check walking up parents.
     prune_empty_parents(dir_path, limit_dir) — Remove empty dirs up to limit.
     clear_readonly(path) — Windows read-only attribute clearing (no-op on POSIX).
 
@@ -106,7 +106,7 @@ def ensure_dir(path: Path, sudo: bool = False) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def ensure_writable(path: Path, sudo: bool = False) -> None:
+def assert_writable(path: Path, sudo: bool = False) -> None:
     """Checks if a directory path (or its closest existing parent) is writable."""
     if sudo:
         return  # With sudo, we assume target is writable or handled by elevation

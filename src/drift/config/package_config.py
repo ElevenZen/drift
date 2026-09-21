@@ -726,13 +726,13 @@ class PackageHooks:
             flags=flags,
         )
 
-    def check_hook_files(
+    def assert_hooks_exist(
         self,
         base_dir: Path,
         is_source: bool,
         hook_names: Sequence[str] = ()
     ) -> None:
-        """Checks that configured lifecycle hook files exist in base_dir and are regular files.
+        """Validates that configured lifecycle hook files exist in base_dir and are regular files.
 
         Args:
             base_dir: Directory containing package files (e.g. src/<pkg>, render/<pkg>, or install/<pkg>).
@@ -921,14 +921,14 @@ class PackageConfig:
     env_fallback: Dict[str, str] = field(default_factory=dict)
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
 
-    def check_hook_files(
+    def assert_hooks_exist(
         self,
         base_dir: Path,
         is_source: bool,
         hook_names: Sequence[str] = ()
     ) -> None:
-        """Checks that configured lifecycle hook files exist in base_dir and are regular files."""
-        self.hooks.check_hook_files(base_dir, is_source=is_source, hook_names=hook_names)
+        """Validates that configured lifecycle hook files exist in base_dir and are regular files."""
+        self.hooks.assert_hooks_exist(base_dir, is_source=is_source, hook_names=hook_names)
 
     def __init__(
         self,

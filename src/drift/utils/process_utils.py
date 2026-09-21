@@ -67,7 +67,7 @@ def has_admin_privileges() -> bool:
         return os.geteuid() == 0
 
 
-def check_sudo_privilege() -> None:
+def assert_can_escalate() -> None:
     """Checks if administrative/root privileges are available before staging or installing.
 
     On Windows: ensures the current process is running in an elevated Administrator terminal.

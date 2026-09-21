@@ -9,7 +9,7 @@ from .render_core import (
 )
 from .render_input import (
     get_engine_dependency,
-    check_cyclic_dependencies,
+    assert_no_cyclic_dependencies,
     resolve_static_input_file,
     resolve_dependencies,
     render_input_templates,
@@ -35,7 +35,7 @@ __all__ = [
     "render_template_to_file",
     "python_envsubst",
     "get_engine_dependency",
-    "check_cyclic_dependencies",
+    "assert_no_cyclic_dependencies",
     "resolve_static_input_file",
     "resolve_dependencies",
     "render_input_templates",

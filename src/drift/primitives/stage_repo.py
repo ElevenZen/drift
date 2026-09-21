@@ -11,14 +11,14 @@ Layer 5: Primitive Entry Point
             PackageConfig.from_render_dir
         2. Transaction Safety & Sentinel Checks:
             state_registry.get_midway_packages
-            ensure_install_pkg_dir_clean [Layer 1]
+            assert_install_pkg_dir_clean [Layer 1]
         3. Diff & Change Classification:
             compute_package_stage_diff(pkg, install_base, render_base) [Layer 2]
                 compare_folders (deployable diff with DriftIgnore)
                 compare_folders (physical diff without DriftIgnore)
         4. Staging Transaction Execution (if packages have physical changes):
             stage_modified_packages(packages_to_stage, pkg_metadata, ...) [Layer 4]
-                check_sudo_privilege (if sudo required)
+                assert_can_escalate (if sudo required)
                 state_registry.set_package_state("staging") & save
                 apply_package_stage_changes(pkg, ...) [Layer 3]
                     remove_with_parents (direct physical deletion)
@@ -30,7 +30,7 @@ Layer 5: Primitive Entry Point
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
-        ensure_install_pkg_dir_clean
+        assert_install_pkg_dir_clean
         generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
         compute_package_stage_diff
@@ -58,7 +58,7 @@ from ..utils.file_ops import (
     copy_file,
     copy_permissions,
 )
-from ..utils.process_utils import check_sudo_privilege
+from ..utils.process_utils import assert_can_escalate
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.ignore import DriftIgnore
 from ..utils.git_utils import has_uncommitted_modifications
@@ -127,7 +127,7 @@ class PackageStageChanges:
 # Layer 1: Pre-flight Verification & File Operations
 # =====================================================================
 
-def ensure_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
+def assert_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
     """Verifies that the package directory in install/ has no uncommitted local git changes."""
     install_pkg_dir = install_base / pkg
     if not install_pkg_dir.is_dir():
@@ -286,7 +286,7 @@ def stage_modified_packages(
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
     needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage)
     if needs_sudo:
-        check_sudo_privilege()
+        assert_can_escalate()
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
     for pkg in packages_to_stage:
@@ -354,7 +354,7 @@ def run_primitive_4_stage_render_to_install(
         if not metadata.enable_install:
             continue
         # Verify hook files exist and are regular files in render/ sandbox
-        metadata.hooks.check_hook_files(render_base / pkg, is_source=False)
+        metadata.hooks.assert_hooks_exist(render_base / pkg, is_source=False)
         pkg_metadata[pkg] = metadata
 
     # Check if active_packages is empty after filtering by enable_install
@@ -382,7 +382,7 @@ def run_primitive_4_stage_render_to_install(
         # Check every package folder in install/ if it has uncommitted local modifications.
         # If so and the force flag is not present, raise a DriftDetectedError.
         for pkg in pkg_metadata.keys():
-            ensure_install_pkg_dir_clean(install_base, pkg)
+            assert_install_pkg_dir_clean(install_base, pkg)
 
     logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
 

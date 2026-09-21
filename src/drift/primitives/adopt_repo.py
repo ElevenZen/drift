@@ -63,7 +63,7 @@ Layer 2: Single-File Reconciliation Actions
 Layer 1: Inspection & Git Patch Primitives
     get_drifted_packages
         Parses git status porcelain across install/ to discover all packages with local host modifications.
-    check_source_file_clean
+    assert_source_file_clean
         Enforces scoped Git cleanliness safeguard on target source file before applying modifications.
     get_package_drifts
         Categorizes Git porcelain status into additions, deletions, modifications, and renames.
@@ -136,7 +136,7 @@ def get_drifted_packages(workspace_config: WorkspaceConfig) -> List[str]:
     return sorted(drifted)
 
 
-def check_source_file_clean(
+def assert_source_file_clean(
     src_file: Path,
     pkg: str,
     force: bool = False
@@ -516,7 +516,7 @@ def handle_single_addition(
         return False
 
     target_src_file = src_dir_to_render / rel_path
-    check_source_file_clean(target_src_file, force=force, pkg=install_pkg_dir.name)
+    assert_source_file_clean(target_src_file, force=force, pkg=install_pkg_dir.name)
 
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
@@ -558,7 +558,7 @@ def handle_single_deletion(
             print(f"\n⚠️  [SKIP] Cannot adopt deletion '{rel_path}' because the target does not exist in source. Skipping.")
         return True
 
-    check_source_file_clean(target_existing_src, pkg=pkg, force=force)
+    assert_source_file_clean(target_existing_src, pkg=pkg, force=force)
 
     if not interactive:
         adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
@@ -739,7 +739,7 @@ def handle_single_rename(
     old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel_path)
     has_patch_conflict = False
     if old_src_file and old_src_file.exists():
-        check_source_file_clean(old_src_file, force=force, pkg=pkg)
+        assert_source_file_clean(old_src_file, force=force, pkg=pkg)
         patch_content = generate_adjusted_patch(
             install_base,
             pkg,
@@ -924,7 +924,7 @@ def handle_single_modification(
             install_pkg_dir, rel_path, interactive, force=force
         )
 
-    check_source_file_clean(src_file, force=force, pkg=pkg)
+    assert_source_file_clean(src_file, force=force, pkg=pkg)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
     patch_content = generate_unified_patch(install_base, pkg_rel_path)

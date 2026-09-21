@@ -229,7 +229,8 @@ def get_drift_root(dir_path: Path, force: bool = False) -> Path:
         )
         return Path(res.stdout.strip()).resolve()
     except subprocess.CalledProcessError as e:
-        ensure_git_repository_health(dir_path, force=force)
+        if not force:
+            assert_git_repository_health(dir_path)
         # Check if the error is due to not being inside a Git repo
         if not is_git_tracked(dir_path):
             raise RuntimeError(
@@ -281,9 +282,9 @@ def is_merge_or_rebase_in_progress(dir_path: Path) -> bool:
     )
 
 
-def ensure_git_repository_health(dir_path: Path, force: bool = False) -> None:
+def assert_git_repository_health(dir_path: Path) -> None:
     """Validates that the Git repository at dir_path is healthy and compatible with drift."""
-    if force or not is_git_tracked(dir_path):
+    if not is_git_tracked(dir_path):
         return
     if is_bare_repository(dir_path):
         raise RuntimeError("Bare Git repositories are not supported for drift workspace.")
@@ -293,7 +294,7 @@ def ensure_git_repository_health(dir_path: Path, force: bool = False) -> None:
         raise RuntimeError("Git repository is currently in the middle of a merge or rebase operation.")
 
 
-def check_repo_can_commit(repo_path: Path) -> None:
+def assert_repo_can_commit(repo_path: Path) -> None:
     """Verifies that Git user.name and user.email are configured for the repository.
     Raises a RuntimeError if either configuration is missing, preventing commit failures.
     """

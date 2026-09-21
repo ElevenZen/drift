@@ -821,8 +821,8 @@ class TestConfigClasses(unittest.TestCase):
             # Should not raise or exit
             check_sudo_and_root(Path.cwd())
 
-    def test_package_hooks_check_hook_files(self) -> None:
-        """Verifies check_hook_files validates existence and regular file status of configured hook files."""
+    def test_package_hooks_assert_hooks_exist(self) -> None:
+        """Verifies assert_hooks_exist validates existence and regular file status of configured hook files."""
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
             scripts_dir = base / "scripts"
@@ -835,26 +835,26 @@ class TestConfigClasses(unittest.TestCase):
                 post_install=base / "scripts/post_install.sh"
             )
             # 1. Valid hook files pass
-            hooks.check_hook_files(base, is_source=False)
+            hooks.assert_hooks_exist(base, is_source=False)
 
             # 2. Missing hook file raises FileNotFoundError
             hooks.post_update = base / "scripts/missing.sh"
             with self.assertRaises(FileNotFoundError) as cm:
-                hooks.check_hook_files(base, is_source=False)
+                hooks.assert_hooks_exist(base, is_source=False)
             self.assertIn("missing.sh", str(cm.exception))
 
             # 3. Hook path pointing to directory raises ValueError
             (scripts_dir / "dir_hook").mkdir()
             hooks.post_update = base / "scripts/dir_hook"
             with self.assertRaises(ValueError) as cm:
-                hooks.check_hook_files(base, is_source=False)
+                hooks.assert_hooks_exist(base, is_source=False)
             self.assertIn("not a regular file", str(cm.exception))
 
             # 4. Filtered hook_names ignores unrequested broken hooks
             (scripts_dir / "pre_uninstall.sh").write_text("#!/bin/bash\n", encoding="utf-8")
             hooks.pre_uninstall = base / "scripts/pre_uninstall.sh"
             # Checking only pre_uninstall passes even though post_update is broken
-            hooks.check_hook_files(base, is_source=False, hook_names=["pre_uninstall"])
+            hooks.assert_hooks_exist(base, is_source=False, hook_names=["pre_uninstall"])
 
             # 5. Check drift_hooks/ routing for is_source=True vs is_source=False
             drift_hooks_src = base / "src_pkg" / "drift_hooks"
@@ -871,9 +871,9 @@ class TestConfigClasses(unittest.TestCase):
                 base_dir=base / "src_pkg"
             )
             # is_source=True checks src_pkg/drift_hooks/post_install.sh
-            hooks_dh.check_hook_files(base / "src_pkg", is_source=True)
+            hooks_dh.assert_hooks_exist(base / "src_pkg", is_source=True)
             # is_source=False checks install_pkg/.drift/hooks/post_install.sh
-            hooks_dh.check_hook_files(base / "install_pkg", is_source=False)
+            hooks_dh.assert_hooks_exist(base / "install_pkg", is_source=False)
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""

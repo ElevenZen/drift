@@ -26,7 +26,7 @@ from drift.utils.file_ops import (
     remove_with_parents,
     copy_tree,
     move_tree,
-    ensure_writable,
+    assert_writable,
     ensure_dir,
     remove,
     create_symlink,
@@ -249,24 +249,24 @@ class TestFileUtils(unittest.TestCase):
         self.assertFalse((self.root / "a").exists())  # Empty parent cleaned up
         self.assertTrue(self.root.exists())
 
-    def test_ensure_directory_writable(self) -> None:
+    def test_assert_writable(self) -> None:
         writable_dir = self.root / "writable"
         writable_dir.mkdir()
         
         # Should complete gracefully
-        ensure_writable(writable_dir, sudo=False)
-        ensure_writable(writable_dir, sudo=True)
+        assert_writable(writable_dir, sudo=False)
+        assert_writable(writable_dir, sudo=True)
 
         # Non-existent dir resolves closest parent
-        ensure_writable(writable_dir / "nonexistent" / "subdir", sudo=False)
+        assert_writable(writable_dir / "nonexistent" / "subdir", sudo=False)
 
-    def test_ensure_dir_exists_with_sudo(self) -> None:
+    def test_ensure_dir(self) -> None:
         path = self.root / "new_dir"
         ensure_dir(path, sudo=False)
         self.assertTrue(path.is_dir())
 
     @patch("subprocess.run")
-    def test_ensure_dir_exists_with_sudo_and_true(self, mock_run) -> None:
+    def test_ensure_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "sudo_dir"
         ensure_dir(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
@@ -551,33 +551,33 @@ class TestFileUtils(unittest.TestCase):
                 run_command(["echo", "hello"], sudo=True)
                 mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
 
-    def test_check_sudo_privilege(self) -> None:
-        from drift.utils.process_utils import check_sudo_privilege
+    def test_assert_can_escalate(self) -> None:
+        from drift.utils.process_utils import assert_can_escalate
 
         # Linux root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=0):
-            check_sudo_privilege()
+            assert_can_escalate()
 
         # Linux non-root success
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
             with patch("subprocess.run", return_value=MagicMock(returncode=0)) as mock_run:
-                check_sudo_privilege()
+                assert_can_escalate()
                 mock_run.assert_called_with(["sudo", "-v"], check=False)
 
         # Linux non-root failure
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
             with patch("subprocess.run", return_value=MagicMock(returncode=1)):
                 with self.assertRaises(PermissionError):
-                    check_sudo_privilege()
+                    assert_can_escalate()
 
         # Windows non-admin failure
         with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=False):
             with self.assertRaises(PermissionError):
-                check_sudo_privilege()
+                assert_can_escalate()
 
         # Windows admin success
         with patch("sys.platform", "win32"), patch("drift.utils.process_utils.has_admin_privileges", return_value=True):
-            check_sudo_privilege()
+            assert_can_escalate()
 
     def test_is_binary_file(self) -> None:
         from drift.utils.file_inspect import is_binary_file

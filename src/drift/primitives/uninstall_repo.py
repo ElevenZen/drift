@@ -11,8 +11,8 @@ Layer 4: Primitive Entry Point
             filter_uninstallable_packages [Layer 1]
         2. Pre-flight Validation & Privilege Checks:
             load_package_config_for_uninstall [Layer 1] (gather package configs for all targets)
-            check_sudo_privilege (if any package config requires sudo)
-            check_hook_files (UNINSTALL_HOOK_NAMES, skipped in detach mode)
+            assert_can_escalate (if any package config requires sudo)
+            assert_hooks_exist (UNINSTALL_HOOK_NAMES, skipped in detach mode)
         3. Execute Single-Package Actions:
             detach_one_package [Layer 3] (if detach=True)
                 replace symlinks with physical copies
@@ -61,7 +61,7 @@ from typing import List, Optional, Tuple, Dict, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..core.state_registry import load_state_registry, PackageState, StateRegistry
-from ..utils.process_utils import check_sudo_privilege
+from ..utils.process_utils import assert_can_escalate
 from ..utils.file_ops import (
     remove,
     prune_empty_parents,
@@ -311,7 +311,7 @@ def uninstall_one_package(
 
     # Check uninstall hook files exist before attempting uninstallation
     if not dry_run and not hook_flags.no_hooks:
-        pkg_config.hooks.check_hook_files(install_pkg_dir, is_source=False, hook_names=UNINSTALL_HOOK_NAMES)
+        pkg_config.hooks.assert_hooks_exist(install_pkg_dir, is_source=False, hook_names=UNINSTALL_HOOK_NAMES)
 
     with pkg_config.package_envs(workspace_config):
         # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
@@ -408,11 +408,11 @@ def run_primitive_7_uninstall_packages(
     if not dry_run:
         needs_sudo = any(pkg_cfg.sudo for pkg_cfg in pkg_config_map.values())
         if needs_sudo:
-            check_sudo_privilege()
+            assert_can_escalate()
 
         if not detach and not hook_flags.no_hooks:
             for pkg, pkg_config in pkg_config_map.items():
-                pkg_config.hooks.check_hook_files(
+                pkg_config.hooks.assert_hooks_exist(
                     workspace_config.install_path / pkg, is_source=False, hook_names=UNINSTALL_HOOK_NAMES
                 )
 

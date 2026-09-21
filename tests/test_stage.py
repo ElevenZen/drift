@@ -870,7 +870,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse((self.install_dir / "pkg_a" / "new_diff_file.txt").exists())
 
     def test_stage_defers_sudo_check_when_no_changes(self) -> None:
-        """Verifies that check_sudo_privilege is deferred and NOT called if a sudo package has no changes."""
+        """Verifies that assert_can_escalate is deferred and NOT called if a sudo package has no changes."""
         from unittest.mock import patch
 
         # 1. Setup pkg_sudo with sudo = true
@@ -887,14 +887,14 @@ class TestStageRepo(unittest.TestCase):
         self.workspace_config.packages_enable["pkg_sudo"] = True
         render_package(self.workspace_config, pkg_sudo_src)
 
-        # Initial staging: changes exist, so check_sudo_privilege MUST be called
-        with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:
+        # Initial staging: changes exist, so assert_can_escalate MUST be called
+        with patch("drift.primitives.stage_repo.assert_can_escalate") as mock_sudo:
             changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes1), 1)
             mock_sudo.assert_called_once_with()
 
-        # Second staging with ZERO changes: check_sudo_privilege must NOT be called
-        with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:
+        # Second staging with ZERO changes: assert_can_escalate must NOT be called
+        with patch("drift.primitives.stage_repo.assert_can_escalate") as mock_sudo:
             changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes2), 0)
             mock_sudo.assert_not_called()

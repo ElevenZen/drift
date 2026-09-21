@@ -8,7 +8,7 @@ Layer 3: Engine Input Rendering & Path Mutation (Public Entry Point)
     render_input_templates(engines, drift_root, output_dir)
         1. Dependency Graph & Cycle Detection:
             resolve_dependencies [Layer 2]
-            check_cyclic_dependencies [Layer 1]
+            assert_no_cyclic_dependencies [Layer 1]
         2. Recursive Topological Input Rendering:
             get_or_render_input_file
                 resolve_static_input_file [Layer 1]
@@ -22,7 +22,7 @@ Layer 2: Dependency Graph Construction
 
 Layer 1: Validation & Inspection Helpers
     get_engine_dependency
-    check_cyclic_dependencies
+    assert_no_cyclic_dependencies
     resolve_static_input_file
 ===============================================================================
 """
@@ -55,7 +55,7 @@ def get_engine_dependency(
     return dep_engine.name if (dep_engine and dep_engine.name != engine.name) else None
 
 
-def check_cyclic_dependencies(dependency_map: Mapping[str, Optional[str]]) -> None:
+def assert_no_cyclic_dependencies(dependency_map: Mapping[str, Optional[str]]) -> None:
     """Checks if the dependency map contains any cyclic dependencies.
 
     Raises:
@@ -139,7 +139,7 @@ def render_input_templates(
         ValueError: If a cyclic dependency is detected.
     """
     dependency_map = resolve_dependencies(engines)
-    check_cyclic_dependencies(dependency_map)
+    assert_no_cyclic_dependencies(dependency_map)
 
     target_output_dir = Path(output_dir)
     memo: Dict[str, Path] = {}

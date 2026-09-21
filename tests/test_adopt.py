@@ -21,7 +21,7 @@ from drift.config.render_engine_config import RenderEngineRegistry
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.primitives.adopt_repo import (
     get_drifted_packages,
-    check_source_file_clean,
+    assert_source_file_clean,
     get_package_drifts,
     generate_unified_patch,
     check_patch_conflicts,
@@ -134,33 +134,33 @@ class TestAdopt(unittest.TestCase):
         # Root metadata files must not appear in drifted packages
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg])
 
-    def test_check_source_file_clean(self) -> None:
+    def test_assert_source_file_clean(self) -> None:
         pkg = "pkg_a"
         src_pkg_dir = self.src_dir / pkg
         src_pkg_dir.mkdir(parents=True, exist_ok=True)
 
         # Non-existent file should pass
         non_existent = src_pkg_dir / "non_existent.txt"
-        check_source_file_clean(non_existent, force=False, pkg=pkg)
+        assert_source_file_clean(non_existent, force=False, pkg=pkg)
 
         # Clean tracked file should pass
         clean_file = src_pkg_dir / "clean.txt"
         clean_file.write_text("tracked content", encoding="utf-8")
         subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "add clean.txt"], cwd=str(self.workspace_path), check=True, capture_output=True)
-        check_source_file_clean(clean_file, force=False, pkg=pkg)
+        assert_source_file_clean(clean_file, force=False, pkg=pkg)
 
         # Modify file to make it dirty
         clean_file.write_text("dirty uncommitted change", encoding="utf-8")
 
         # Clean check should raise RuntimeError with guidance message
         with self.assertRaises(RuntimeError) as ctx:
-            check_source_file_clean(clean_file, force=False, pkg=pkg)
+            assert_source_file_clean(clean_file, force=False, pkg=pkg)
         self.assertIn("has uncommitted local modifications", str(ctx.exception))
         self.assertIn(f"drift adopt {pkg} --force", str(ctx.exception))
 
         # Passing force=True should bypass check without error
-        check_source_file_clean(clean_file, force=True, pkg=pkg)
+        assert_source_file_clean(clean_file, force=True, pkg=pkg)
 
     def test_get_package_drifts(self) -> None:
         pkg = "pkg_a"

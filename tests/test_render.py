@@ -24,7 +24,7 @@ from drift.config.render_engine_config import RenderEngineRegistry
 from drift.render.render_core import render_template, render_template_to_file, RenderError
 from drift.render.render_input import (
     resolve_dependencies,
-    check_cyclic_dependencies,
+    assert_no_cyclic_dependencies,
     render_input_templates,
 )
 from drift.utils.toml_utils import parse_toml
@@ -367,21 +367,21 @@ class TestDependencyResolver(unittest.TestCase):
         self_deps = resolve_dependencies(self_dep_registry)
         self.assertEqual(self_deps, {"envsubst": None})
 
-    def test_check_cyclic_dependencies(self) -> None:
+    def test_assert_no_cyclic_dependencies(self) -> None:
         # No cycle
         clean_deps = {"envsubst": None, "mustache": "envsubst"}
-        check_cyclic_dependencies(clean_deps) # should not raise error
+        assert_no_cyclic_dependencies(clean_deps)  # should not raise error
 
         # Direct cycle
         cyclic_deps = {"envsubst": "mustache", "mustache": "envsubst"}
         with self.assertRaises(ValueError) as ctx:
-            check_cyclic_dependencies(cyclic_deps)
+            assert_no_cyclic_dependencies(cyclic_deps)
         self.assertIn("Cyclic dependency detected", str(ctx.exception))
 
         # Self cycle
         self_cycle = {"self_engine": "self_engine"}
         with self.assertRaises(ValueError) as ctx:
-            check_cyclic_dependencies(self_cycle)
+            assert_no_cyclic_dependencies(self_cycle)
         self.assertIn("Cyclic dependency detected", str(ctx.exception))
 
     def test_render_input_templates_success(self) -> None:
