@@ -52,28 +52,19 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SettingsConfig:
     """Workspace-level settings defined in [settings] in drift_workspace.toml."""
-    PROBE_WAN_IP_KEYS: ClassVar[Tuple[str, ...]] = (
-        "probe_wan_ip",
-        "probe_network_ip",
-        "probe_internet_ip",
-    )
     HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS: ClassVar[Tuple[str, ...]] = (
         "hook_inject_non_interactive_envs",
         "hook_inject_non_interactive_env",
         "inject_hook_non_interactive_envs",
     )
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
-        *PROBE_WAN_IP_KEYS,
         *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
     )
 
-    probe_wan_ip: bool = False
     hook_inject_non_interactive_envs: bool = True
 
     def validate(self) -> None:
         """Validates settings types."""
-        if not isinstance(self.probe_wan_ip, bool):
-            raise ConfigError(f"probe_wan_ip under [settings] must be a boolean, got {type(self.probe_wan_ip).__name__}.")
         if not isinstance(self.hook_inject_non_interactive_envs, bool):
             raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
 
@@ -87,14 +78,6 @@ class SettingsConfig:
 
         validate_known_keys(data, cls.KNOWN_KEYS, context="[settings]")
 
-        raw_val = get_first_from(
-            data,
-            cls.PROBE_WAN_IP_KEYS,
-            default=False,
-        )
-        if not isinstance(raw_val, bool):
-            raise ConfigError("probe_wan_ip under [settings] must be a boolean.")
-
         raw_hook_env = get_first_from(
             data,
             cls.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
@@ -104,7 +87,6 @@ class SettingsConfig:
             raise ConfigError("hook_inject_non_interactive_envs under [settings] must be a boolean.")
 
         settings = cls(
-            probe_wan_ip=bool(raw_val),
             hook_inject_non_interactive_envs=bool(raw_hook_env),
         )
         settings.validate()
@@ -709,19 +691,13 @@ def load_workspace_config(
             root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     ]
 
-    # Ensure system facts are present before rendering workspace config (default: no WAN probe)
-    inject_system_facts(probe_wan_ip=False)
+    # Ensure system facts are present before rendering workspace config
+    inject_system_facts()
 
     secrets = parse_secrets_env(root)
 
     with secrets_env_scope(secrets):
         combined_dict = load_workspace_config_files_layered(load_configs_from)
-
-        # If [settings] enables probe_wan_ip, re-inject system facts with WAN probe enabled
-        settings_dict = combined_dict.get("settings", {})
-        if isinstance(settings_dict, dict) and (
-                settings_dict.get("probe_wan_ip") or settings_dict.get("probe_network_ip")):
-            inject_system_facts(probe_wan_ip=True)
 
         # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
         from ..hooks.workspace_hook import apply_workspace_hook

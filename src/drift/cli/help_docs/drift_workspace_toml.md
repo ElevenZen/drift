@@ -111,10 +111,6 @@ render_command = "mustache %i %s"
 # Workspace Behavioral Settings
 # ---------------------------------------------------------------------
 [settings]
-# Probe outbound WAN / Internet routing IP address when collecting system facts.
-# Defaults to false (only local system tables and interfaces are inspected, no network traffic).
-# probe_wan_ip = false
-
 # Automatically inject non-interactive environment variables (PAGER=cat, CI=true, etc.)
 # during lifecycle hook executions. Defaults to true.
 # hook_inject_non_interactive_envs = true

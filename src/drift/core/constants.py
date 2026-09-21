@@ -611,10 +611,10 @@ def in_test_mode() -> bool:
     return IN_TEST_MODE
 
 
-def inject_system_facts(probe_wan_ip: bool = False) -> None:
+def inject_system_facts() -> None:
     """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
     from ..utils.host_facts import get_system_facts
-    facts = get_system_facts(probe_wan_ip=probe_wan_ip)
+    facts = get_system_facts()
     for k, v in facts.items():
         if k not in INITIAL_ENV:
             os.environ[k] = v

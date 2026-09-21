@@ -119,14 +119,50 @@ class TestPackageRequirements(unittest.TestCase):
         # Invalid CIDR handled gracefully
         self.assertFalse(match_ip_address("invalid/cidr/999", "10.0.0.1"))
 
+        # IPv6 exact match
+        self.assertTrue(match_ip_address("2001:db8::1", "2001:db8::1"))
+        self.assertFalse(match_ip_address("2001:db8::1", "2001:db8::2"))
+
+        # IPv6 CIDR match
+        self.assertTrue(match_ip_address("2001:db8::/32", "2001:db8::abcd"))
+        self.assertFalse(match_ip_address("2001:db8::/32", "2001:db9::1"))
+        self.assertTrue(match_ip_address("fd00::/8", "fd12:3456:789a::1"))
+        self.assertTrue(match_ip_address("fe80::/10", "fe80::1"))
+
+        # IPv6 wildcard match
+        self.assertTrue(match_ip_address("2001:db8:*", "2001:db8:abcd::1"))
+        self.assertFalse(match_ip_address("2001:db8:*", "2001:db9::1"))
+
+        # Cross-version mismatch handled gracefully (should not crash)
+        self.assertFalse(match_ip_address("192.168.1.0/24", "2001:db8::1"))
+        self.assertFalse(match_ip_address("2001:db8::/32", "192.168.1.1"))
+
         # match_ip_addresses list test
         self.assertTrue(match_ip_addresses(["10.0.0.0/8", "172.16.*"], ["192.168.1.1", "172.16.50.2"]))
         self.assertFalse(match_ip_addresses(["10.0.0.0/8"], ["192.168.1.1", "172.16.50.2"]))
+
+        # match_ip_addresses with mixed IPv4 + IPv6
+        self.assertTrue(match_ip_addresses(["fd00::/8"], ["192.168.1.1", "fd12::1"]))
+        self.assertFalse(match_ip_addresses(["fd00::/8"], ["192.168.1.1", "2001:db8::1"]))
 
         # match_ip_addresses with lazy generators (unmaterialized)
         patterns_gen = (p for p in ["10.0.0.0/8", "172.16.*"])
         ips_gen = (ip for ip in ["192.168.1.1", "172.16.50.2"])
         self.assertTrue(match_ip_addresses(patterns_gen, ips_gen))
+
+    def test_is_useful_ip_filter(self) -> None:
+        from drift.utils.host_facts import _is_useful_ip
+        # IPv4
+        self.assertTrue(_is_useful_ip("192.168.1.1"))
+        self.assertTrue(_is_useful_ip("10.0.0.1"))
+        self.assertFalse(_is_useful_ip("127.0.0.1"))
+        self.assertFalse(_is_useful_ip("127.0.1.1"))
+        # IPv6
+        self.assertTrue(_is_useful_ip("2001:db8::1"))
+        self.assertTrue(_is_useful_ip("fd00::1"))
+        self.assertFalse(_is_useful_ip("::1"))
+        self.assertFalse(_is_useful_ip("fe80::1"))
+        self.assertFalse(_is_useful_ip("fe80::abcd:1234"))
 
     def test_system_facts_dataclass(self) -> None:
         from drift.utils.host_facts import SystemFacts

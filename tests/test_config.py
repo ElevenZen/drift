@@ -2170,26 +2170,22 @@ class TestSettingsConfig(unittest.TestCase):
     def test_settings_config_defaults(self) -> None:
         from drift.config.workspace_config import SettingsConfig
         settings = SettingsConfig()
-        self.assertFalse(settings.probe_wan_ip)
         self.assertTrue(settings.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict(self) -> None:
         from drift.config.workspace_config import SettingsConfig
-        s1 = SettingsConfig.from_dict({"probe_wan_ip": True, "hook_inject_non_interactive_envs": False})
-        self.assertTrue(s1.probe_wan_ip)
+        s1 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": False})
         self.assertFalse(s1.hook_inject_non_interactive_envs)
 
     def test_settings_config_from_dict_aliases(self) -> None:
         from drift.config.workspace_config import SettingsConfig
-        s2 = SettingsConfig.from_dict({"probe_network_ip": True, "hook_inject_non_interactive_env": False})
-        self.assertTrue(s2.probe_wan_ip)
+        s2 = SettingsConfig.from_dict({"hook_inject_non_interactive_env": False})
         self.assertFalse(s2.hook_inject_non_interactive_envs)
 
         s3 = SettingsConfig.from_dict({"inject_hook_non_interactive_envs": False})
         self.assertFalse(s3.hook_inject_non_interactive_envs)
 
         s4 = SettingsConfig.from_dict({})
-        self.assertFalse(s4.probe_wan_ip)
         self.assertTrue(s4.hook_inject_non_interactive_envs)
 
     def test_settings_config_validation(self) -> None:
@@ -2205,9 +2201,6 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertIn("Unknown option under [settings]:", str(ctx.exception))
         self.assertIn("'unknown_1'", str(ctx.exception))
         self.assertIn("'unknown_2'", str(ctx.exception))
-
-        with self.assertRaises(ConfigError):
-            SettingsConfig.from_dict({"probe_wan_ip": "not_a_bool"})
 
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "not_a_bool"})
@@ -2226,12 +2219,10 @@ class TestSettingsConfig(unittest.TestCase):
         DEFAULT = true
 
         [settings]
-        probe_wan_ip = true
         hook_inject_non_interactive_envs = false
         """
         data = parse_toml(toml_content)
         ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
-        self.assertTrue(ws_cfg.settings.probe_wan_ip)
         self.assertFalse(ws_cfg.settings.hook_inject_non_interactive_envs)
 
     def test_class_constants(self) -> None:
@@ -2242,9 +2233,7 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertIn("workspace", WorkspaceConfig.KNOWN_TOP_SECTIONS)
 
         self.assertIn("source_directory", WorkspaceSectionConfig.KNOWN_KEYS)
-        self.assertIn("probe_wan_ip", SettingsConfig.PROBE_WAN_IP_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS)
-        self.assertIn("probe_wan_ip", SettingsConfig.KNOWN_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.KNOWN_KEYS)
 
         self.assertIn("input_file", RenderEngineConfig.KNOWN_KEYS)
@@ -2295,22 +2284,6 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
             WorkspaceSectionConfig(default_target_directory=Path("relative/path")).validate()
         with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(default_install_method="invalid_method").validate()
-
-    def test_get_host_ip_addresses_no_wan_activity_by_default(self) -> None:
-        from drift.utils.host_facts import get_host_ip_addresses
-        from unittest.mock import MagicMock
-
-        with patch("socket.socket") as mock_sock_cls:
-            mock_sock = MagicMock()
-            mock_sock_cls.return_value = mock_sock
-
-            # 1. By default, probe_wan_ip is False -> socket.connect is NEVER called with public WAN target (8.8.8.8)
-            get_host_ip_addresses(probe_wan_ip=False)
-            self.assertFalse(any(call[0][0][0] == "8.8.8.8" for call in mock_sock.connect.call_args_list))
-
-            # 2. When probe_wan_ip is True -> socket.connect is called with public WAN target
-            get_host_ip_addresses(probe_wan_ip=True)
-            self.assertTrue(any(call[0][0][0] == "8.8.8.8" for call in mock_sock.connect.call_args_list))
 
     def test_get_package_names_from_dir_filtering_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as td:

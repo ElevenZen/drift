@@ -5,13 +5,13 @@ Architecture & Call Chain Overview
 ===============================================================================
 
 Layer 3: Public Fact Ingestion Entry Point
-    get_system_facts(os_release_path_override, probe_wan_ip)
-        SystemFacts.probe(os_release_path_override, probe_wan_ip) [Layer 2]
+    get_system_facts(os_release_path_override)
+        SystemFacts.probe(os_release_path_override) [Layer 2]
         SystemFacts.to_envs(ip_separator=";") [Layer 2]
 
 Layer 2: Structured Data Model & System Facts Aggregator
     SystemFacts (dataclass)
-        .probe(os_release_path_override, probe_wan_ip)
+        .probe(os_release_path_override)
             get_host_os [Layer 1]
             get_host_arch [Layer 1]
             get_host_distro [Layer 1] (parse_os_release)
@@ -29,9 +29,10 @@ Layer 1: Low-Level OS, Hardware & Network Probing Primitives
     get_host_distro: Normalizes Linux/BSD distro (ubuntu, arch, debian, etc.) or OS name.
     get_host_hostname: Retrieves local hostname without FQDN suffix.
     get_host_user: Retrieves current login username.
-    _get_ips_from_getifaddrs: Direct POSIX libc network interface enumeration via ctypes.
-    _get_ips_from_windows: Windows adapter IP resolution via socket.gethostbyname_ex.
-    get_host_ip_addresses: Aggregates non-loopback IPv4 addresses with UDP routing fallback.
+    _is_useful_ip: Filters out loopback and link-local addresses (IPv4 and IPv6).
+    _get_ips_from_getifaddrs: Direct POSIX libc network interface enumeration via ctypes (IPv4 + IPv6).
+    _get_ips_from_windows: Windows adapter IP resolution via socket APIs (IPv4 + IPv6).
+    get_host_ip_addresses: Aggregates non-loopback IPv4/IPv6 addresses with UDP routing fallback.
 
 ===============================================================================
 """
@@ -128,8 +129,21 @@ def get_host_user() -> str:
         return os.environ.get("USER", os.environ.get("USERNAME", "unknown"))
 
 
+def _is_useful_ip(ip_str: str) -> bool:
+    """Returns True if the IP address is not loopback or link-local (IPv4 and IPv6)."""
+    return (
+        not ip_str.startswith("127.")      # IPv4 loopback
+        and ip_str != "::1"                # IPv6 loopback
+        and not ip_str.startswith("fe80:")  # IPv6 link-local
+    )
+
+
 def _get_ips_from_getifaddrs() -> List[str]:
-    """Enumerates all network interface IPs using POSIX libc getifaddrs (macOS, Linux, FreeBSD)."""
+    """Enumerates all network interface IPs using POSIX libc getifaddrs (macOS, Linux, FreeBSD).
+
+    Collects both IPv4 (AF_INET) and IPv6 (AF_INET6) addresses, filtering out
+    loopback and link-local addresses.
+    """
     try:
         import ctypes
         import ctypes.util
@@ -161,20 +175,26 @@ def _get_ips_from_getifaddrs() -> List[str]:
             ifa = curr.contents
             if ifa.ifa_addr:
                 addr_ptr = ifa.ifa_addr
-                # Detect AF_INET (IPv4): on BSD/macOS sa_family is at byte offset 1; on Linux at offset 0
-                # Because Python Ctypes parse raw memory returned be getifaddrs(),
-                # we need to read the family field directly from the memory address.
-                # check 'struct sockaddr' layout for different platforms.
+                # Detect address family from sockaddr header.
+                # On BSD/macOS sa_family is at byte offset 1 (uint8); on Linux at offset 0 (uint16).
+                # See 'struct sockaddr' layout for each platform.
                 if sys.platform == "darwin" or sys.platform.startswith("freebsd"):
                     family = ctypes.c_uint8.from_address(addr_ptr + 1).value
                 else:
                     family = ctypes.c_uint16.from_address(addr_ptr).value
 
+                ip_str = None
                 if family == socket.AF_INET:
+                    # sockaddr_in: address at offset 4, 4 bytes
                     raw_ip = ctypes.string_at(addr_ptr + 4, 4)
                     ip_str = socket.inet_ntoa(raw_ip)
-                    if not ip_str.startswith("127.") and ip_str not in ips:
-                        ips.append(ip_str)
+                elif family == socket.AF_INET6:
+                    # sockaddr_in6: address at offset 8 (after family+port+flowinfo), 16 bytes
+                    raw_ip = ctypes.string_at(addr_ptr + 8, 16)
+                    ip_str = socket.inet_ntop(socket.AF_INET6, raw_ip)
+
+                if ip_str and _is_useful_ip(ip_str) and ip_str not in ips:
+                    ips.append(ip_str)
             curr = ifa.ifa_next
 
         libc.freeifaddrs(addrs)
@@ -184,33 +204,34 @@ def _get_ips_from_getifaddrs() -> List[str]:
 
 
 def _get_ips_from_windows() -> List[str]:
-    """Enumerates adapter IP addresses on Windows."""
+    """Enumerates adapter IP addresses on Windows via getaddrinfo (IPv4 + IPv6)."""
     ips: List[str] = []
     try:
         hostname = socket.gethostname()
-        _, _, host_ips = socket.gethostbyname_ex(hostname)
-        for ip in host_ips:
-            if ip and not ip.startswith("127.") and ip not in ips:
+        infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC)
+        for info in infos:
+            ip = info[4][0]
+            if ip and _is_useful_ip(ip) and ip not in ips:
                 ips.append(ip)
     except (socket.error, OSError):
         pass
     return ips
 
 
-def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
-    """Returns a list of local non-loopback IPv4 addresses for the host across network interfaces.
+def get_host_ip_addresses() -> List[str]:
+    """Returns a list of local non-loopback IP addresses (IPv4 and IPv6) across network interfaces.
 
     Primary discovery uses kernel interface enumeration (libc `getifaddrs` on POSIX,
-    `gethostbyname_ex` on Windows). Supplementary connectionless UDP routing table probes
+    `getaddrinfo` on Windows). Supplementary connectionless UDP routing table probes
     are then performed to discover virtual/VPN adapter IPs on Windows and serve as a
     zero-dependency fallback if interface enumeration fails.
 
-    Args:
-        probe_wan_ip: If True, also queries the kernel routing table for the default
-            outbound internet gateway interface (probing `8.8.8.8:80`). Defaults to False.
+    Note: UDP SOCK_DGRAM connect() does NOT send any packet — it is a purely local
+    kernel routing table query that reveals which source address the OS would use to
+    reach a given destination. All probes are safe and invisible to the network.
 
     Returns:
-        A deduplicated list of non-loopback IPv4 address strings.
+        A deduplicated list of non-loopback, non-link-local IP address strings (IPv4 and IPv6).
     """
     ips: List[str] = []
 
@@ -220,28 +241,30 @@ def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
     else:
         ips.extend(_get_ips_from_windows())
 
-    # 2. Supplementary UDP routing table probes.
-    # Note: On POSIX where getifaddrs() succeeds, all interface IPs are already collected,
-    # making this probe redundant for IP discovery. However, this probe serves two key purposes:
-    #   a) Primary supplement on Windows, where gethostbyname_ex() frequently misses VPNs,
+    # 2. Supplementary UDP routing table probes (no packets sent).
+    # On POSIX where getifaddrs() succeeds, all interface IPs are already collected,
+    # making this probe redundant for IP discovery. However, this probe serves two purposes:
+    #   a) Primary supplement on Windows, where getaddrinfo() may miss VPNs,
     #      Hyper-V/WSL virtual adapters, and secondary network interfaces.
     #   b) Zero-dependency fallback on POSIX systems where ctypes / libc getifaddrs() fails
     #      (e.g., restricted containers, sandboxes, or minimal Python runtimes).
     probe_destinations = [
-        ("10.255.255.255", 1),
-        ("172.31.255.255", 1),
-        ("192.168.255.255", 1),
+        # IPv4: RFC1918 private subnets + default internet route
+        (socket.AF_INET, "10.255.255.255", 1),
+        (socket.AF_INET, "172.31.255.255", 1),
+        (socket.AF_INET, "192.168.255.255", 1),
+        (socket.AF_INET, "8.8.8.8", 80),
+        # IPv6: ULA (fd00::/8) + default internet route (Google Public DNS)
+        (socket.AF_INET6, "fd00::1", 1),
+        (socket.AF_INET6, "2001:4860:4860::8888", 80),
     ]
-    if probe_wan_ip:
-        probe_destinations.append(("8.8.8.8", 80))
 
-    for dst_ip, port in probe_destinations:
+    for family, dst_ip, port in probe_destinations:
         try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect((dst_ip, port))
-            ip = s.getsockname()[0]
-            s.close()
-            if ip and not ip.startswith("127.") and ip not in ips:
+            with socket.socket(family, socket.SOCK_DGRAM) as s:
+                s.connect((dst_ip, port))
+                ip = s.getsockname()[0]
+            if ip and _is_useful_ip(ip) and ip not in ips:
                 ips.append(ip)
         except (socket.error, OSError):
             pass
@@ -263,7 +286,6 @@ class SystemFacts:
     def probe(
         cls,
         os_release_path_override: Optional[Path] = None,
-        probe_wan_ip: bool = False
     ) -> "SystemFacts":
         """Probes the current host system facts."""
         return cls(
@@ -272,7 +294,7 @@ class SystemFacts:
             distro=get_host_distro(os_release_path_override=os_release_path_override),
             hostname=get_host_hostname(),
             user=get_host_user(),
-            ip_addresses=get_host_ip_addresses(probe_wan_ip=probe_wan_ip),
+            ip_addresses=get_host_ip_addresses(),
         )
 
     def to_envs(self, ip_separator: str = ";") -> Dict[str, str]:
@@ -289,7 +311,6 @@ class SystemFacts:
 
 def get_system_facts(
     os_release_path_override: Optional[Path] = None,
-    probe_wan_ip: bool = False
 ) -> Dict[str, str]:
     """Returns the dictionary of auto-populated lowercase drift host facts."""
-    return SystemFacts.probe(os_release_path_override=os_release_path_override, probe_wan_ip=probe_wan_ip).to_envs()
+    return SystemFacts.probe(os_release_path_override=os_release_path_override).to_envs()

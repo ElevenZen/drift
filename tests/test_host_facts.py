@@ -116,7 +116,7 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
 
     def test_get_host_ip_addresses_enumerates_interfaces(self) -> None:
         from drift.utils.host_facts import get_host_ip_addresses
-        ips = get_host_ip_addresses(probe_wan_ip=False)
+        ips = get_host_ip_addresses()
         self.assertIsInstance(ips, list)
         for ip in ips:
             self.assertIsInstance(ip, str)
