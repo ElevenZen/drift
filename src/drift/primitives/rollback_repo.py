@@ -169,7 +169,14 @@ def run_primitive_8_rollback_recovery(
     state_registry = load_state_registry(state_file)
 
     # 1. Discover target packages
-    discovered = sorted(set(workspace_config.filter_install_packages_by_target(target_packages=package_names or None)))
+    discovered = sorted(
+        set(
+            workspace_config.filter_install_packages_by_target(
+                target_packages=package_names or None,
+                missing_ok=True,
+            )
+        )
+    )
     if not discovered:
         logger.info("✨ No active packages found to rollback.")
         return RollbackResult(

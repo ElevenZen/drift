@@ -299,7 +299,35 @@ class TestRollback(unittest.TestCase):
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.restored_packages, ["pkg_a"])
 
+    def test_rollback_not_found_package_graceful_noop(self) -> None:
+        """Verifies that rollback gracefully no-ops when target package is not found in install/."""
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_never_staged"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.target_packages, ["pkg_never_staged"])
+        self.assertEqual(res.restored_packages, [])
+
+    def test_rollback_mixed_found_and_not_found_packages(self) -> None:
+        """Verifies that rollback restores found midway packages while gracefully skipping not found packages."""
+        # Dirty pkg_a and set to installing
+        with open(self.pkg_a_install / "file.txt", "w", encoding="utf-8") as f:
+            f.write("dirty failed content")
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installing")
+        save_state_registry(registry)
+
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a", "pkg_never_staged"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.target_packages, ["pkg_a", "pkg_never_staged"])
+        self.assertEqual(res.restored_packages, ["pkg_a"])
+
+        # Verify pkg_a is restored
+        self.assertEqual((self.pkg_a_install / "file.txt").read_text(encoding="utf-8"), "clean content")
+        reloaded_registry = load_state_registry(state_file)
+        self.assertEqual(reloaded_registry.get_package_state("pkg_a"), "installed")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

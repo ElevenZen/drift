@@ -377,6 +377,7 @@ class WorkspaceConfig:
     def filter_source_packages_by_target(
         self,
         target_packages: Optional[Sequence[str]] = None,
+        missing_ok: bool = False,
     ) -> List[str]:
         """Discovers and validates packages in the source directory (src/).
 
@@ -388,11 +389,13 @@ class WorkspaceConfig:
             available_packages=candidates,
             target_packages=target_packages,
             error_context_dir=self.source_path,
+            missing_ok=missing_ok,
         )
 
     def filter_render_packages_by_target(
         self,
         target_packages: Optional[Sequence[str]] = None,
+        missing_ok: bool = False,
     ) -> List[str]:
         """Discovers and validates compiled packages in the render directory (render/).
 
@@ -403,11 +406,13 @@ class WorkspaceConfig:
             available_packages=discovered,
             target_packages=target_packages,
             error_context_dir=self.render_path,
+            missing_ok=missing_ok,
         )
 
     def filter_install_packages_by_target(
         self,
         target_packages: Optional[Sequence[str]] = None,
+        missing_ok: bool = False,
     ) -> List[str]:
         """Discovers and validates staged/installed packages in the install directory (install/).
 
@@ -418,12 +423,14 @@ class WorkspaceConfig:
             available_packages=discovered,
             target_packages=target_packages,
             error_context_dir=self.install_path,
+            missing_ok=missing_ok,
         )
 
     def filter_custom_dir_packages_by_target(
         self,
         custom_dir: Path,
         target_packages: Optional[Sequence[str]] = None,
+        missing_ok: bool = False,
     ) -> List[str]:
         """Discovers packages in the given directory containing a literal drift_package.toml,
 
@@ -434,6 +441,7 @@ class WorkspaceConfig:
             available_packages=discovered,
             target_packages=target_packages,
             error_context_dir=custom_dir,
+            missing_ok=missing_ok,
         )
 
     def filter_given_packages_by_target(
@@ -441,13 +449,16 @@ class WorkspaceConfig:
         available_packages: Sequence[str],
         target_packages: Optional[Sequence[str]] = None,
         error_context_dir: Optional[Path] = None,
+        missing_ok: bool = False,
     ) -> List[str]:
         """Filters available packages by target_packages and workspace enablement.
 
         If target_packages is None, returns all available packages enabled in the workspace config.
         If target_packages is an empty sequence (), returns an empty list [].
-        If target_packages contains package names, validates that all target packages exist in available_packages,
-        raising a ValueError if any are missing.
+        If target_packages contains package names:
+            - If missing_ok is False (default), validates that all target packages exist in available_packages,
+              raising a ValueError if any are missing.
+            - If missing_ok is True, logs an info message for any missing package and returns the matching ones.
         """
         if target_packages is None:
             return [pkg for pkg in available_packages if self.is_package_enabled(pkg)]
@@ -457,11 +468,17 @@ class WorkspaceConfig:
 
         remaining_packages = [x for x in target_packages if x not in available_packages]
         if remaining_packages:
-            if error_context_dir:
-                raise ValueError(
-                    f"Given target packages not found in directory '{error_context_dir}': {remaining_packages}"
-                )
-            raise ValueError(f"Given target packages not found: {remaining_packages}")
+            if not missing_ok:
+                if error_context_dir:
+                    raise ValueError(
+                        f"Given target packages not found in directory '{error_context_dir}': {remaining_packages}"
+                    )
+                raise ValueError(f"Given target packages not found: {remaining_packages}")
+            for pkg in remaining_packages:
+                if error_context_dir:
+                    logger.info(f"Package '{pkg}' not found in directory '{error_context_dir}'. Skipping.")
+                else:
+                    logger.info(f"Package '{pkg}' not found. Skipping.")
 
         return [x for x in target_packages if x in available_packages]
 

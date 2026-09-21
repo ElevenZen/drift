@@ -1806,6 +1806,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(config.filter_render_packages_by_target(target_packages=["pkg_b"]), ["pkg_b"])
             with self.assertRaises(ValueError):
                 config.filter_render_packages_by_target(target_packages=["pkg_c"])
+            self.assertEqual(config.filter_render_packages_by_target(target_packages=["pkg_b", "pkg_c"], missing_ok=True), ["pkg_b"])
 
             # 3. filter_install_packages_by_target
             # install/ only has pkg_a
@@ -1813,6 +1814,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(config.filter_install_packages_by_target(target_packages=()), [])
             with self.assertRaises(ValueError):
                 config.filter_install_packages_by_target(target_packages=["pkg_b"])
+            self.assertEqual(config.filter_install_packages_by_target(target_packages=["pkg_a", "pkg_b"], missing_ok=True), ["pkg_a"])
+            self.assertEqual(config.filter_install_packages_by_target(target_packages=["pkg_b"], missing_ok=True), [])
 
             # 4. filter_custom_dir_packages_by_target
             custom_dir = root / "custom"
@@ -1822,11 +1825,14 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             config.packages_enable_default = True
             self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=None), ["pkg_x"])
             self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=()), [])
+            self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=["pkg_x", "pkg_non_existent"], missing_ok=True), ["pkg_x"])
 
             # 5. filter_given_packages_by_target without error_context_dir
             with self.assertRaises(ValueError) as ctx:
                 config.filter_given_packages_by_target(["pkg_1"], ["pkg_2"])
             self.assertEqual(str(ctx.exception), "Given target packages not found: ['pkg_2']")
+            self.assertEqual(config.filter_given_packages_by_target(["pkg_1"], ["pkg_1", "pkg_2"], missing_ok=True), ["pkg_1"])
+            self.assertEqual(config.filter_given_packages_by_target(["pkg_1"], ["pkg_2"], missing_ok=True), [])
 
     def test_load_workspace_config_layered_functions(self) -> None:
         """Verifies load_workspace_config_file_with_render and load_workspace_config_files_layered functions."""
