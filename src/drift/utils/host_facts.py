@@ -210,7 +210,7 @@ def _get_ips_from_windows() -> List[str]:
         hostname = socket.gethostname()
         infos = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC)
         for info in infos:
-            ip = info[4][0]
+            ip: str = str(info[4][0])
             if ip and _is_useful_ip(ip) and ip not in ips:
                 ips.append(ip)
     except (socket.error, OSError):

@@ -63,7 +63,6 @@ from ..core.constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCo
 from ..core.exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, InstallCollisionError
 from ..config.workspace_config import WorkspaceConfig, load_workspace_config
 from ..primitives.workspace_init import init_drift_workspace
-from ..utils.git_utils import get_drift_root
 from ..core.result_models import (
     SerializableModel,
     StatusResult,
@@ -94,9 +93,6 @@ from ..core.result_models import (
 )
 
 logger = logging.getLogger(__name__)
-
-# Disable unused import warning for get_drift_root, as it may be used in CLI backends.
-_ = get_drift_root
 
 
 def is_directory_owned_by_root(path: Path) -> bool:

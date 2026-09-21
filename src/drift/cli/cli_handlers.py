@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import Optional, List, Any, Dict, Callable, Sequence
 
 from .actions import (
-    get_drift_root,
     execute_render,
     execute_init,
     execute_stage,
@@ -28,6 +27,7 @@ from .actions import (
     execute_complete,
 )
 from ..core.result_models import DiffType
+from ..utils.git_utils import get_drift_root
 from .error_boundary import cli_error_boundary
 
 
