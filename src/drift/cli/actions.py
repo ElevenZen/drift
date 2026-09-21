@@ -15,7 +15,7 @@ from ..utils.git_utils import get_drift_root
 from ..core.result_models import (
     SerializableModel,
     StatusResult,
-    PackageStatusSummary,
+    PackageStatus,
     DeployResult,
     DeployFailure,
     NextActionType,
@@ -311,13 +311,20 @@ def execute_uninstall(
         raise RuntimeError(res.error_message or "Package uninstallation failed.")
 
 
-def execute_status(drift_root: Path, package_names: Sequence[str] = (), json_mode: bool = False) -> None:
+def execute_status(
+    drift_root: Path,
+    package_names: Sequence[str] = (),
+    list_only: bool = False,
+    json_mode: bool = False
+) -> None:
     """Core function to audit workspace status, shared by both CLI backends."""
     from ..primitives.workspace_status import run_primitive_status
     
     ensure_workspace_healthy(drift_root, command_name="status")
     workspace_config = load_workspace_config_default(drift_root)
-    status_result = run_primitive_status(workspace_config, target_pkgs=package_names)
+    status_result = run_primitive_status(
+        workspace_config, target_pkgs=package_names, list_only=list_only
+    )
     
     if json_mode:
         print(status_result.to_json())
@@ -326,7 +333,7 @@ def execute_status(drift_root: Path, package_names: Sequence[str] = (), json_mod
         if text:
             print(text)
 
-    if status_result.overall_status == "DRIFTED":
+    if not list_only and status_result.overall_status == "DRIFTED":
         sys.exit(ExitCode.DRIFT_DETECTED)
 
 
@@ -389,15 +396,17 @@ def execute_diff(
     diff_type_enum = diff_type if isinstance(diff_type, DiffType) else DiffType(diff_type)
     ensure_workspace_healthy(drift_root, command_name="diff")
     workspace_config = load_workspace_config_default(drift_root)
-    # use the status primitive to get a diff result in JSON mode, otherwise use the diff primitive for text output
-    if json_mode:
-        from ..primitives.workspace_status import run_primitive_status
-        status_res = run_primitive_status(workspace_config, target_pkgs=package_names)
-        print(status_res.to_diff_result(diff_type=diff_type_enum).to_json())
-        return
-
     from ..primitives.workspace_diff import run_primitive_15_workspace_diff
-    run_primitive_15_workspace_diff(workspace_config, package_names=package_names, diff_type=diff_type_enum, side_by_side=side_by_side, stat=stat)
+    diff_result = run_primitive_15_workspace_diff(
+        workspace_config,
+        package_names=package_names,
+        diff_type=diff_type_enum,
+        side_by_side=side_by_side,
+        stat=stat,
+        quiet=json_mode,
+    )
+    if json_mode:
+        print(diff_result.to_json())
 
 
 def execute_add(

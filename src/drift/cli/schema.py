@@ -450,7 +450,13 @@ def build_completion_schema() -> CompletionSchema:
                         required=False
                     )
                 ],
-                options=[]
+                options=[
+                    OptionSpec(
+                        flags=["-l", "--list"],
+                        description="List installed packages and deployment info (skips render and compare)",
+                        dest="list_only"
+                    ),
+                ]
             ),
             "diff": CommandSpec(
                 name="diff",

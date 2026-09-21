@@ -110,19 +110,24 @@ class TestStatus(unittest.TestCase):
         
         # 5. Verify formatting methods
         text = results.format_text()
+        self.assertIn("Enabled Packages: pkg_a", text)
         self.assertIn("Package: pkg_a", text)
+        self.assertIn("State:    installed", text)
+        self.assertIn("Target:   ", text)
+        self.assertIn("Method:   copy", text)
         self.assertIn("[A] Template: MODIFIED", text)
         self.assertIn("[B] System:   DRIFTED", text)
         self.assertIn("[Δ] Pending:  STAGED", text)
 
-        status_model = results.to_status_result()
-        self.assertEqual(status_model.overall_status, "DRIFTED")
-        self.assertEqual(len(status_model.packages), 1)
+        self.assertEqual(results.overall_status, "DRIFTED")
+        self.assertEqual(len(results.packages), 1)
 
-        diff_model = results.to_diff_result()
-        self.assertEqual(diff_model.command, "diff")
-        self.assertEqual(len(diff_model.packages), 1)
-        self.assertTrue(diff_model.packages[0].has_changes)
+        from drift.primitives.workspace_diff import run_primitive_15_workspace_diff
+        from drift.core.result_models import DiffType
+        diff_res = run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING, quiet=True)
+        self.assertEqual(diff_res.command, "diff")
+        self.assertEqual(len(diff_res.packages), 1)
+        self.assertTrue(diff_res.packages[0].has_changes)
 
     def test_status_managed_config_files(self):
         """Verifies changing drift_package.toml marks template MODIFIED and pending STAGED."""
@@ -155,12 +160,69 @@ class TestStatus(unittest.TestCase):
         modified_res = run_primitive_status(self.workspace_config)
         self.assertEqual(modified_res[0].template_status, "MODIFIED")
         self.assertEqual(modified_res[0].pending_status, "STAGED")
+        self.assertIsNotNone(modified_res[0].pending_changes)
         self.assertTrue(any("drift_package.toml" in str(p) for p in modified_res[0].pending_changes.modified))
+
+    def test_status_list_only(self):
+        """Verifies status list_only (-l, --list) returns fast metadata without render/compare."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("content")
+
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # Run status with list_only=True
+        res = run_primitive_status(self.workspace_config, list_only=True)
+        self.assertEqual(res.overall_status, "UNKNOWN")
+        self.assertTrue(res.list_only)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].state, "installed")
+        self.assertEqual(res[0].install_method, "copy")
+        self.assertEqual(res[0].template_status, "UNKNOWN")
+        self.assertEqual(res[0].system_status, "UNKNOWN")
+        self.assertEqual(res[0].pending_status, "UNKNOWN")
+        self.assertIsNotNone(res[0].last_deployed)
+
+        text = res.format_text()
+        self.assertIn("Enabled Packages: pkg_a", text)
+        self.assertIn("Package: pkg_a", text)
+        self.assertIn("State:    installed", text)
+        self.assertIn("Method:   copy", text)
+        self.assertIn("Deployed:", text)
+        self.assertNotIn("[A] Template:", text)
+
+    def test_status_new_template(self):
+        """Verifies status detects a brand new untracked package as Template: NEW and Pending: NEW."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("content")
+
+        res = run_primitive_status(self.workspace_config)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0].template_status, "NEW")
+        self.assertEqual(res[0].pending_status, "NEW")
+        self.assertIsNone(res[0].template_changes)
+
+        text = res.format_text()
+        self.assertIn("[A] Template: NEW", text)
+        self.assertIn("[Δ] Pending:  NEW", text)
 
     def test_status_empty(self):
         """Verifies empty workspace status format."""
-        from drift.primitives.workspace_status import WorkspaceStatusResult
-        empty_res = WorkspaceStatusResult(packages=[])
+        from drift.core.result_models import StatusResult
+        empty_res = StatusResult(packages=[])
         self.assertEqual(len(empty_res), 0)
         self.assertEqual(empty_res.format_text(), "")
         self.assertEqual(empty_res.overall_status, "CLEAN")

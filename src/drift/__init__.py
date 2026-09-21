@@ -116,7 +116,7 @@ from .core import (
     DeployFailure,
     DeployResult,
     RollbackResult,
-    PackageStatusSummary,
+    PackageStatus,
     StatusResult,
     DiffType,
     DiffResult,

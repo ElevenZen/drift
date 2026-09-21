@@ -102,6 +102,7 @@ from ..core.constants import DRIFT_IGNORE_FILE_NAME
 from ..core.result_models import AdoptResult, PackageAdoptResult
 from ..utils.git_utils import (
     get_git_status_porcelain,
+    parse_git_status_porcelain,
     has_uncommitted_modifications,
     get_drift_root,
 )
@@ -173,44 +174,9 @@ def check_source_file_clean(
 
 def get_package_drifts(install_base: Path, pkg: str) -> Tuple[List[Path], List[Path], List[Path], List[Tuple[Path, Path]]]:
     """Returns lists of additions, deletions, modifications, and renames relative to the package directory."""
-    lines = get_git_status_porcelain(install_base, pkg)
-    additions = []
-    deletions = []
-    modifications = []
-    renames = []
-    for line in lines:
-        if len(line) < 4:
-            continue
-
-        status = line[:2]
-        path_str = line[3:].strip()
-
-        # Handle Renames (R status), which are reported as "old_path -> new_path"
-        if status.strip().startswith("R") and " -> " in path_str:
-            # includes "R " and "RM" status
-            old_path_str, new_path_str = path_str.split(" -> ", 1)
-            try:
-                old_rel_path = Path(old_path_str).relative_to(pkg)
-                new_rel_path = Path(new_path_str).relative_to(pkg)
-                renames.append((old_rel_path, new_rel_path))
-            except ValueError:
-                pass
-            continue
-
-        # Parse relative path inside the package folder
-        try:
-            rel_path = Path(path_str).relative_to(pkg)
-        except ValueError:
-            continue
-        
-        if "?" in status or "A" in status:
-            additions.append(rel_path)
-        elif "D" in status:
-            deletions.append(rel_path)
-        elif "M" in status:
-            modifications.append(rel_path)
-            
-    return sorted(additions), sorted(deletions), sorted(modifications), sorted(renames, key=lambda x: x[1])
+    diff = parse_git_status_porcelain(install_base, pkg)
+    renames = [(r.old_path, r.new_path) for r in diff.renamed]
+    return sorted(diff.added), sorted(diff.deleted), sorted(diff.modified), sorted(renames, key=lambda x: x[1])
 
 
 def generate_unified_patch(install_base: Path,

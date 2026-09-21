@@ -244,14 +244,15 @@ def handle_rollback(
 
 def handle_status(
     ctx: Any,
-    packages: Optional[Sequence[str]] = None
+    packages: Optional[Sequence[str]] = None,
+    list_only: bool = False
 ) -> None:
     """Audit and aggregate configuration status across active packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_status(drift_root, pkgs, json_mode=cli_ctx.json_mode)
+        execute_status(drift_root, pkgs, list_only=list_only, json_mode=cli_ctx.json_mode)
 
 
 def handle_diff(

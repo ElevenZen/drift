@@ -161,6 +161,13 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("packages", res)
         self.assertTrue(any(p["name"] == "pkg_a" for p in res["packages"]))
 
+    def test_status_list_json(self) -> None:
+        res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "status", "-l", "--json"])
+        self.assertEqual(res["command"], "status")
+        self.assertEqual(res["overall_status"], "UNKNOWN")
+        self.assertTrue(res["list_only"])
+        self.assertIn("packages", res)
+
     def test_diff_json(self) -> None:
         res = self._run_cli_json(["-C", self.drift_root, "--no-git-root", "diff", "--json"])
         self.assertEqual(res["command"], "diff")

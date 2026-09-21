@@ -56,6 +56,9 @@ from .env_utils import (
     interpolate_config_dict,
 )
 from .git_utils import (
+    GitRename,
+    GitStatusDiff,
+    parse_git_status_porcelain,
     commit_repo_changes,
     is_git_tracked,
     get_drift_root,
@@ -142,6 +145,9 @@ __all__ = [
     "topological_sort_env",
     "resolve_env_references",
     "interpolate_config_dict",
+    "GitRename",
+    "GitStatusDiff",
+    "parse_git_status_porcelain",
     "commit_repo_changes",
     "is_git_tracked",
     "get_drift_root",

@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
 from .constants import InstallMethod
+from .folder_diff import FolderDiff
+from ..utils.git_utils import GitStatusDiff
 
 
 class NextActionType(str, Enum):
@@ -324,27 +326,113 @@ class RollbackResult(SerializableModel):
 # =============================================================================
 
 @dataclass
-class PackageStatusSummary(SerializableModel):
+class PackageStatus(SerializableModel):
+    """Unified status and deployment metadata model for a single package."""
     name: str
     enabled: bool = True
-    template_status: str = "CLEAN"
-    system_drift_status: str = "CLEAN"
-    staging_status: str = "CLEAN"
-    drifted_files: List[str] = field(default_factory=list)
-    pending_files: List[str] = field(default_factory=list)
+    state: str = "unknown"
+    target_directory: Optional[str] = None
+    install_method: Optional[str] = None
+    last_deployed: Optional[str] = None
+    deployed_files_count: Optional[int] = None
+    template_status: str = "UNKNOWN"
+    system_status: str = "UNKNOWN"
+    pending_status: str = "UNKNOWN"
+    template_changes: Optional[GitStatusDiff] = None
+    system_changes: Optional[GitStatusDiff] = None
+    pending_changes: Optional[FolderDiff] = None
+
+    def format_list_text(self) -> str:
+        """Formats slim deployment metadata block for this package."""
+        lines = [f"Package: {self.name}"]
+        lines.append(f"  State:    {self.state}")
+        if self.target_directory:
+            lines.append(f"  Target:   {self.target_directory}")
+        if self.install_method:
+            lines.append(f"  Method:   {self.install_method}")
+        if self.last_deployed:
+            lines.append(f"  Deployed: {self.last_deployed}")
+        if self.deployed_files_count is not None:
+            lines.append(f"  Files:    {self.deployed_files_count} deployed")
+        return "\n".join(lines)
+
+    def format_text(self) -> str:
+        """Formats the full status block for this package."""
+        lines = [f"Package: {self.name}"]
+        if self.state != "unknown":
+            lines.append(f"  State:    {self.state}")
+        if self.target_directory:
+            lines.append(f"  Target:   {self.target_directory}")
+        if self.install_method:
+            lines.append(f"  Method:   {self.install_method}")
+        if self.last_deployed:
+            lines.append(f"  Deployed: {self.last_deployed}")
+        if self.deployed_files_count is not None:
+            lines.append(f"  Files:    {self.deployed_files_count} deployed")
+        lines.append(f"  [A] Template: {self.template_status}")
+        if self.template_changes is not None:
+            plus = len(self.template_changes.added)
+            tilde = len(self.template_changes.modified)
+            minus = len(self.template_changes.deleted)
+            rn = len(self.template_changes.renamed)
+            parts = [f"+{plus}", f"~{tilde}", f"-{minus}"]
+            if rn > 0:
+                parts.append(f"->{rn}")
+            lines.append(f"      ({', '.join(parts)} files)")
+        lines.append(f"  [B] System:   {self.system_status}")
+        if self.system_changes is not None:
+            plus = len(self.system_changes.added)
+            tilde = len(self.system_changes.modified)
+            minus = len(self.system_changes.deleted)
+            rn = len(self.system_changes.renamed)
+            parts = [f"+{plus}", f"~{tilde}", f"-{minus}"]
+            if rn > 0:
+                parts.append(f"->{rn}")
+            lines.append(f"      ({', '.join(parts)} files)")
+        lines.append(f"  [Δ] Pending:  {self.pending_status}")
+        if self.pending_changes is not None and self.pending_status == "STAGED":
+            plus = len(self.pending_changes.added)
+            tilde = len(self.pending_changes.modified)
+            minus = len(self.pending_changes.deleted)
+            lines.append(f"      (+{plus}, ~{tilde}, -{minus} files)")
+        return "\n".join(lines)
 
 
 @dataclass
 class StatusResult(SerializableModel):
+    """Container representing the aggregated status of the drift workspace across packages."""
     command: str = "status"
-    overall_status: str = "CLEAN"  # "CLEAN", "DRIFTED", "PENDING", "BROKEN"
-    packages: List[PackageStatusSummary] = field(default_factory=list)
+    overall_status: str = "CLEAN"  # "CLEAN", "DRIFTED", "PENDING", "UNKNOWN", "BROKEN"
+    list_only: bool = False
+    packages: List[PackageStatus] = field(default_factory=list)
+
+    def __iter__(self):
+        return iter(self.packages)
+
+    def __len__(self):
+        return len(self.packages)
+
+    def __getitem__(self, index):
+        return self.packages[index]
+
+    def format_text(self) -> str:
+        """Formats the human-readable workspace status output."""
+        if not self.packages:
+            return ""
+        pkg_names = [pkg.name for pkg in self.packages]
+        header = f"Enabled Packages: {', '.join(pkg_names)}\n"
+        if self.list_only:
+            body = "\n\n".join(pkg.format_list_text() for pkg in self.packages)
+        else:
+            body = "\n\n".join(pkg.format_text() for pkg in self.packages)
+        return header + "\n" + body
 
 
 @dataclass
 class FileDiffDetail(SerializableModel):
     path: str
-    change_type: str  # "added", "modified", "deleted"
+    change_type: str  # "added", "modified", "deleted", "renamed"
+    renamed_from: Optional[str] = None
     patch: Optional[str] = None
 
 

@@ -53,9 +53,10 @@ from ..core.constants import (
     DEFAULT_DIFF_EXCLUDE_PATTERNS,
 )
 from ..config.workspace_config import WorkspaceConfig
-from ..core.result_models import DiffType
+from ..core.result_models import DiffType, DiffResult, PackageDiffDetail, FileDiffDetail
 from ..core.folder_diff import compare_folders
 from ..utils.file_utils import is_editor_or_os_temporary_file
+from ..utils.git_utils import parse_git_status_porcelain
 from ..utils.editor_utils import launch_side_by_side_editor
 
 logger = logging.getLogger(__name__)
@@ -204,8 +205,62 @@ def collect_pending_delta_pairs(
 
 
 # =====================================================================
-# Layer 3: Terminal Git Diff Runners
+# Layer 3: Terminal Git Diff Runners & Structured Diff Collectors
 # =====================================================================
+
+def collect_git_repo_diff_details(
+    repo_path: Path,
+    pkg: str,
+    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+) -> List[FileDiffDetail]:
+    """Collects FileDiffDetail list for a package in a git repository against HEAD."""
+    diff = parse_git_status_porcelain(repo_path, pkg, ignored_files=ignored_files)
+    files: List[FileDiffDetail] = []
+    for p in diff.added:
+        files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
+    for p in diff.modified:
+        files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="modified"))
+    for p in diff.deleted:
+        files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
+    for r in diff.renamed:
+        files.append(FileDiffDetail(path=str(Path(pkg) / r.new_path), change_type="renamed", renamed_from=str(Path(pkg) / r.old_path)))
+    return files
+
+
+def collect_pending_folder_diff_details(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+) -> List[FileDiffDetail]:
+    """Collects FileDiffDetail list between install/ and render/ for a package."""
+    render_pkg = workspace_config.render_path / pkg
+    install_pkg = workspace_config.install_path / pkg
+    files: List[FileDiffDetail] = []
+
+    if render_pkg.exists() and install_pkg.exists():
+        diff = compare_folders(render_pkg, install_pkg)
+        for p in diff.added:
+            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
+        for p in diff.modified:
+            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="modified"))
+        for p in diff.deleted:
+            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
+    elif render_pkg.exists() and not install_pkg.exists():
+        from ..utils.file_utils import tree_relative_files
+        for p in tree_relative_files(render_pkg):
+            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
+    elif not render_pkg.exists() and install_pkg.exists():
+        from ..utils.file_utils import tree_relative_files
+        for p in tree_relative_files(install_pkg):
+            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
+
+    return files
+
 
 def run_repo_diff(
     repo_path: Path,
@@ -325,12 +380,14 @@ def run_primitive_15_workspace_diff(
     package_names: Sequence[str] = (),
     diff_type: DiffType = DiffType.PENDING,
     side_by_side: bool = False,
-    stat: bool = False
-) -> None:
+    stat: bool = False,
+    quiet: bool = False
+) -> DiffResult:
     """
-    Visualizes changes between configuration layers.
+    Visualizes changes between configuration layers and returns structured DiffResult.
     1. Ensures repositories are up-to-date (Transient Render/Reverse-Sync).
-    2. Executes appropriate git diff command or side-by-side editor.
+    2. Executes appropriate git diff command or side-by-side editor if not quiet.
+    3. Returns DiffResult containing package and file diff details.
     """
     # Identify target packages
     discovered_in_install = workspace_config.get_package_names_from_dir(workspace_config.install_path)
@@ -343,7 +400,7 @@ def run_primitive_15_workspace_diff(
     )
     if not packages and package_names:
         logger.warning(f"No packages found matching: {', '.join(package_names)}")
-        return
+        return DiffResult(command="diff", diff_type=diff_type, packages=[])
 
     # Update repositories to reflect latest state
     from .reverse_sync import run_primitive_1_reverse_sync
@@ -358,8 +415,24 @@ def run_primitive_15_workspace_diff(
         if renderable:
             run_primitive_2_render_packages(workspace_config, target_pkgs=renderable)
 
-    if side_by_side:
-        run_side_by_side_diff(workspace_config, packages, diff_type)
-    else:
-        run_terminal_diff(workspace_config, packages, diff_type, stat=stat)
+    # Collect structured diff details
+    package_details: List[PackageDiffDetail] = []
+    for pkg in packages:
+        if diff_type == DiffType.TEMPLATE:
+            files = collect_git_repo_diff_details(workspace_config.render_path, pkg)
+        elif diff_type == DiffType.SYSTEM:
+            files = collect_git_repo_diff_details(workspace_config.install_path, pkg)
+        elif diff_type == DiffType.PENDING:
+            files = collect_pending_folder_diff_details(workspace_config, pkg)
+        else:
+            files = []
+        package_details.append(PackageDiffDetail(package=pkg, has_changes=bool(files), files=files))
+
+    if not quiet:
+        if side_by_side:
+            run_side_by_side_diff(workspace_config, packages, diff_type)
+        else:
+            run_terminal_diff(workspace_config, packages, diff_type, stat=stat)
+
+    return DiffResult(command="diff", diff_type=diff_type, packages=package_details)
 
