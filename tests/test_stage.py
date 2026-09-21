@@ -199,15 +199,13 @@ class TestStageRepo(unittest.TestCase):
         with open(os.path.join(pkg_b_render, "file_b.txt"), "w", encoding="utf-8") as f:
             f.write("Should not be copied")
 
-        with self.assertRaises(RuntimeError) as cm:
-            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
-        self.assertIn("No active packages are enabled", str(cm.exception))
+        res = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
+        self.assertEqual(res, {})
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
         # Force should also not stage a package whose enable_install is False
-        with self.assertRaises(RuntimeError) as cm_force:
-            run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b", force=True)
-        self.assertIn("No active packages are enabled", str(cm_force.exception))
+        res_force = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b", force=True)
+        self.assertEqual(res_force, {})
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
     def test_stage_stow_ignores_and_symlinking(self) -> None:

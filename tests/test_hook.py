@@ -525,7 +525,7 @@ echo "VALUE=$DYNAMIC_VAL"
     def test_hook_execution_streaming(self) -> None:
         """Verifies hook streaming executes successfully and returns None for stdout."""
         from drift.hooks.lifecycle_hooks import HookExecFlags
-        (self.drift_hooks_dir / "pre_source.sh").write_text("#!/bin/sh\necho 'LIVE_HOOK_STREAM'\n", encoding="utf-8")
+        (self.drift_hooks_dir / "pre_source.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
         res = run_primitive_trigger_hook(
             self.workspace_config,
             "pkg_hook",

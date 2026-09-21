@@ -357,9 +357,10 @@ def run_primitive_4_stage_render_to_install(
         metadata.hooks.check_hook_files(render_base / pkg, is_source=False)
         pkg_metadata[pkg] = metadata
 
-    # Check if active_packages is empty after filtering by enable_install, and if so, raise an error
+    # Check if active_packages is empty after filtering by enable_install
     if not pkg_metadata:
-        raise RuntimeError("No active packages are enabled for installation/deployment.")
+        logger.info("No active packages are enabled for installation/deployment. Skipping.")
+        return {}
 
     # 2. First verify package states from state registry before checking uncommitted changes.
     # If a package is in 'staging' or 'installing' state, a previous operation failed midway
@@ -371,7 +372,7 @@ def run_primitive_4_stage_render_to_install(
         if midway_pkgs:
             pkg_names = [pkg for pkg, _ in midway_pkgs]
             pkg_cmd_str = shlex.join(pkg_names)
-            details = ", ".join(f"'{p}' ({st})" for p, st in midway_pkgs)
+            details = ", ".join(f"'{pkg}' ({state})" for pkg, state in midway_pkgs)
             raise RuntimeError(
                 f"Safety Abort: Package(s) in midway transaction state: {details}, "
                 f"indicating a previous operation failed midway. "
