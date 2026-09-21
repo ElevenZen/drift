@@ -30,7 +30,8 @@ def cli_error_boundary(json_mode: bool = False, use_rich: bool = False, raw_erro
         if not json_mode:
             if use_rich:
                 from rich import print as rprint
-                rprint(f"[bold red]❌ [ERROR][/bold red] [red]{de}[/red]", file=sys.stderr)
+                from rich.markup import escape
+                rprint(f"[bold red]❌ [ERROR][/bold red] [red]{escape(str(de))}[/red]", file=sys.stderr)
             else:
                 print(f"❌ [ERROR] {de}", file=sys.stderr)
         if use_rich:
@@ -41,7 +42,8 @@ def cli_error_boundary(json_mode: bool = False, use_rich: bool = False, raw_erro
         if not json_mode:
             if use_rich:
                 from rich import print as rprint
-                rprint(f"[bold red]❌ [ERROR][/bold red] [red]{e}[/red]", file=sys.stderr)
+                from rich.markup import escape
+                rprint(f"[bold red]❌ [ERROR][/bold red] [red]{escape(str(e))}[/red]", file=sys.stderr)
             else:
                 print(f"❌ [ERROR] {e}", file=sys.stderr)
         if use_rich:
