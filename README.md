@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-794%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-796%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -208,7 +208,7 @@ Unlike monolithic dotfile managers that force you to deploy entire configuration
 A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
 
 > [!TIP]
-> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `cfg["env"]` before downstream templates compile.  
+> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `workspace_config["env"]` or `package_config["env"]["override"]` before downstream templates compile. See `drift help workspace` for more information.  
 
 *   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
     You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:

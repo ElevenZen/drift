@@ -172,7 +172,10 @@ def collect_pending_delta_pairs(
     temp_dir: Path,
     ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
 ) -> List[Tuple[Path, Path]]:
-    """Collects file pairs between install/ (left/deployed) and render/ (right/candidate)."""
+    """
+    Collects file pairs between install/ (left/deployed) and render/ (right/candidate).
+    Calls compare_folders instead of 'git diff --no-index' to avoid content-based diffing and focus on file presence and structure.
+    """
     to_diff, _, _ = get_pending_delta_worklist(workspace_config, packages)
     pairs: List[Tuple[Path, Path]] = []
 
