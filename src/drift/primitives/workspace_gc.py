@@ -99,35 +99,23 @@ def remove_purged_folders(
             shutil.rmtree(base_path / name)
 
 
-def purge_zombie_folders(
-        base_path: Path,
-        ignore_names: Sequence[str],
-        db_name: str,
-        dry_run: bool) -> List[str]:
-    """Purges directories in base_path that lack any valid package config file."""
-    items = filter_candidate_package_dirs(base_path, ignore_names)
-    zombie_items = filter_zombie_package_dirs(items)
-    zombies = [item.name for item in zombie_items]
-    remove_purged_folders(base_path, zombies, db_name, dry_run=dry_run)
-    return zombies
-
-
 def purge_render_folders(
     workspace_config: WorkspaceConfig,
     dry_run: bool = False,
 ) -> List[str]:
     """
     Purges obsolete, disabled, or zombie folders from render/ database:
-    1. Folders without any valid package config file (zombies).
-    2. Package folders that are disabled in the workspace configuration.
-    3. Package folders whose source directory in src/ has been removed.
+    1. Stray forbidden-name directories (e.g. 'config/', 'backup/' leftover from old versions).
+    2. Folders without any valid package config file (zombies).
+    3. Package folders that are disabled in the workspace configuration.
+    4. Package folders whose source directory in src/ has been removed.
     """
     render_path = workspace_config.render_path
-    ignore_names = set(FORBIDDEN_PACKAGE_NAMES) | {CONFIG_DIR_NAME}
-    items = filter_candidate_package_dirs(render_path, ignore_names)
+    items = filter_candidate_package_dirs(render_path)
     purged_items = filter(
         lambda item: (
-            is_zombie_package_dir(item)
+            item.name in FORBIDDEN_PACKAGE_NAMES
+            or is_zombie_package_dir(item)
             or not workspace_config.is_package_enabled(item.name)
             or not (workspace_config.source_path / item.name).is_dir()
         ),
@@ -144,8 +132,9 @@ def purge_install_folders(
 ) -> List[str]:
     """
     Purges obsolete or zombie folders from install/ database:
-    1. Folders without any valid package config file (zombies).
-    2. Folders not registered in state.toml and disabled in workspace or missing from src/.
+    1. Stray forbidden-name directories (e.g. leftover from old versions).
+    2. Folders without any valid package config file (zombies).
+    3. Folders not registered in state.toml and disabled in workspace or missing from src/.
     """
     install_path = workspace_config.install_path
     registry_path = install_path / "state.toml"
@@ -157,11 +146,12 @@ def purge_install_folders(
         except Exception:
             pass
 
-    ignore_names = set(FORBIDDEN_PACKAGE_NAMES)
-    items = filter_candidate_package_dirs(install_path, ignore_names)
+
+    items = filter_candidate_package_dirs(install_path)
     purged_items = filter(
         lambda item: (
-            is_zombie_package_dir(item)
+            item.name in FORBIDDEN_PACKAGE_NAMES
+            or is_zombie_package_dir(item)
             or (
                 item.name not in registered_pkgs
                 and (

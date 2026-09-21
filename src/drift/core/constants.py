@@ -60,7 +60,7 @@ LEGACY_WORKSPACE_CONFIG_FILE_NAMES = (
 )
 PACKAGE_CONFIG_FILE_NAME = "drift_package.toml"
 PACKAGE_CONFIG_LOCAL_FILE_NAME = "drift_package.local.toml"
-PACKAGE_CONFIG_FILE_NAME_LIST = [PACKAGE_CONFIG_FILE_NAME]
+PACKAGE_CONFIG_FILE_NAME_LIST = (PACKAGE_CONFIG_FILE_NAME, )
 SECRETS_ENV_FILE_NAME = "secrets.env"
 DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
 DRIFT_IGNORE_LEGACY_FILE_NAME = ".driftignore"
@@ -72,21 +72,21 @@ DRIFT_INTERNAL_DIR_NAME = ".drift"
 DRIFT_HOOKS_DIR_NAME = "drift_hooks"
 DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
 DRIFT_INTERNAL_RENDER_DIR_NAME = "render"
-FORBIDDEN_RENDER_ENGINE_SUFFIXES = (
+FORBIDDEN_RENDER_ENGINE_SUFFIXES: frozenset = frozenset({
     "drift_package",
     "drift_hook",
     "drift_ignore",
     "drift_workspace",
     "drift_hooks",
     "drift",
-)
+})
 INTERNAL_RENDER_COMMAND = "internal"
 DRIFT_GENERATED_FILES = (STOW_LOCAL_IGNORE_FILE_NAME,)
 DEFAULT_PACKAGE_HOOK_FILE_NAME = "drift_package.py"
 PACKAGE_HOOK_FUNCTION_NAME = "configure_package"
 
 MANAGED_CONFIG_FILES = DRIFT_GENERATED_FILES
-FORBIDDEN_PACKAGE_NAMES = (
+FORBIDDEN_PACKAGE_NAMES: frozenset = frozenset({
     CONFIG_DIR_NAME,
     "install",
     "render",
@@ -100,8 +100,8 @@ FORBIDDEN_PACKAGE_NAMES = (
     DRIFT_HOOKS_DIR_NAME,
     ".git",
     ".gitignore",
-)
-MIDWAY_TRANSACTION_STATES = ("staging", "installing")
+})
+MIDWAY_TRANSACTION_STATES: frozenset = frozenset({"staging", "installing"})
 
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES

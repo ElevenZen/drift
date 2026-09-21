@@ -12,7 +12,6 @@ from drift.primitives.workspace_gc import (
     run_primitive_9_purge_workspace_garbage,
     purge_render_folders,
     purge_install_folders,
-    purge_zombie_folders,
 )
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME
 from drift.cli.actions import execute_gc
@@ -61,7 +60,7 @@ class TestWorkspaceGc(unittest.TestCase):
         (self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
         (self.render_dir / pkg / "rendered_file.txt").write_text("rendered", encoding="utf-8")
 
-        # Create config/ directory in render/ which should be preserved
+        # Create a stray config/ directory in render/ — a forbidden-name dir that should be purged.
         (self.render_dir / CONFIG_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (self.render_dir / CONFIG_DIR_NAME / "drift_workspace.toml").write_text("# config", encoding="utf-8")
 
@@ -72,7 +71,9 @@ class TestWorkspaceGc(unittest.TestCase):
         self.assertEqual(result.status, "SUCCESS")
         self.assertIn(pkg, result.purged_render_zombies)
         self.assertFalse((self.render_dir / pkg).exists())
-        self.assertTrue((self.render_dir / CONFIG_DIR_NAME).exists())
+        # Stray forbidden-name dirs in render/ are now purged.
+        self.assertIn(CONFIG_DIR_NAME, result.purged_render_zombies)
+        self.assertFalse((self.render_dir / CONFIG_DIR_NAME).exists())
 
     def test_gc_purges_missing_source_package_from_render(self) -> None:
         """Verifies that packages in render/ whose source directory is deleted from src/ are purged."""

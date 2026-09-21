@@ -70,7 +70,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """A completely fresh directory must return NOT_FOUND across all checks and overall."""
         report = check_existing_workspace_status(self.drift_root)
         self.assertEqual(report.overall_status, ComponentStatus.NOT_FOUND)
-        self.assertTrue(report.is_fresh())
+        self.assertTrue(report.is_uninitialized())
         self.assertFalse(report.is_healthy())
         self.assertFalse(report.is_broken())
         self.assertFalse(bool(report))
@@ -83,11 +83,11 @@ class TestCheckRepoModular(unittest.TestCase):
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertEqual(report.overall_status, ComponentStatus.NOT_FOUND)
-        self.assertTrue(report.is_fresh())
+        self.assertTrue(report.is_uninitialized())
 
     def test_missing_workspace_config_with_existing_artifacts_is_broken(self) -> None:
         """If workspace artifacts exist but drift_workspace.toml is missing, status is BROKEN."""
-        (self.drift_root / "src").mkdir(parents=True)
+        (self.drift_root / "render").mkdir(parents=True)
         self.assertTrue(probe_existing_workspace_structure(self.drift_root))
 
         report = check_existing_workspace_status(self.drift_root)
@@ -104,7 +104,7 @@ class TestCheckRepoModular(unittest.TestCase):
 
         self.assertEqual(report.overall_status, ComponentStatus.GOOD)
         self.assertTrue(report.is_healthy())
-        self.assertFalse(report.is_fresh())
+        self.assertFalse(report.is_uninitialized())
         self.assertFalse(report.is_broken())
         self.assertTrue(bool(report))
 

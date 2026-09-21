@@ -346,13 +346,12 @@ class WorkspaceConfig:
         }
 
         # Step 2: Check for forbidden directory names and warn
-        forbidden_set = set(FORBIDDEN_PACKAGE_NAMES)
-        forbidden_found = subdirs & forbidden_set
+        forbidden_found = subdirs & FORBIDDEN_PACKAGE_NAMES
         if forbidden_found:
             for name in sorted(forbidden_found):
                 logger.warning(f"⚠️  Ignoring directory with reserved package name '{name}' in '{custom_dir.name}/'.")
 
-        valid_packages = subdirs - forbidden_set
+        valid_packages = subdirs - FORBIDDEN_PACKAGE_NAMES
         return sorted(list(valid_packages))
 
     @classmethod
