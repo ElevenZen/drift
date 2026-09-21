@@ -143,8 +143,11 @@ def purge_install_folders(
         try:
             registry = load_state_registry(registry_path)
             registered_pkgs = set(registry.packages.keys())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                f"⚠️  Failed to load state registry at '{registry_path}': {exc}. "
+                f"Proceeding with folder-based purge only."
+            )
 
 
     items = filter_candidate_package_dirs(install_path)

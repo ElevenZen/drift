@@ -41,7 +41,8 @@ def run_primitive_10_create_new_package(
     package_dir = workspace_config.source_path / package_name
     
     package_dir.mkdir(parents=True, exist_ok=True)
-    existing_info = workspace_config.render_engine_configs.find_source_file_for_rendered_names(package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
+    existing_info = workspace_config.render_engine_configs.find_source_file_for_rendered_names(
+            package_dir, PACKAGE_CONFIG_FILE_NAME_LIST)
     if existing_info and not force:
         raise FileExistsError(
             f"Configuration file already exists: {existing_info.path}. "

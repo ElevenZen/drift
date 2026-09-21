@@ -217,5 +217,5 @@ def render_template_to_file(
     output_file_path.write_text(rendered_content, encoding="utf-8")
     try:
         shutil.copymode(template_file_path, output_file_path)
-    except Exception:
-        pass
+    except OSError as exc:
+        logger.debug(f"Failed to copy permissions from '{template_file_path}' to '{output_file_path}': {exc}")

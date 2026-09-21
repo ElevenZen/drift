@@ -450,7 +450,7 @@ def get_default_package_config_content(
         data = pkgutil.get_data("drift", "templates/drift_package_default.toml")
         if data:
             template_str = data.decode("utf-8")
-    except Exception:
+    except (ImportError, OSError, LookupError):
         pass
 
     if template_str is None:
@@ -511,7 +511,7 @@ def get_default_drift_workspace_toml_content() -> str:
         data = pkgutil.get_data("drift", "templates/drift_workspace_default.toml")
         if data:
             return data.decode("utf-8")
-    except Exception:
+    except (ImportError, OSError, LookupError):
         pass
 
     template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_workspace_default.toml"
@@ -529,7 +529,7 @@ def get_default_package_hook_content(package_name: str) -> str:
         data = pkgutil.get_data("drift", "templates/drift_package_default.py")
         if data:
             template_str = data.decode("utf-8")
-    except Exception:
+    except (ImportError, OSError, LookupError):
         pass
 
     if template_str is None:
@@ -549,7 +549,7 @@ def get_default_workspace_hook_content() -> str:
         data = pkgutil.get_data("drift", "templates/drift_workspace_default.py")
         if data:
             return data.decode("utf-8")
-    except Exception:
+    except (ImportError, OSError, LookupError):
         pass
 
     template_path = Path(__file__).resolve().parent.parent / "templates" / "drift_workspace_default.py"
@@ -569,7 +569,7 @@ def configure_utf8_streams() -> None:
         if stream is not None and hasattr(stream, "reconfigure"):
             try:
                 stream.reconfigure(encoding="utf-8", errors="replace")
-            except Exception:
+            except (OSError, AttributeError, ValueError):
                 pass
 
 

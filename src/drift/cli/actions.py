@@ -107,7 +107,7 @@ def is_directory_owned_by_root(path: Path) -> bool:
             cur = cur.parent
         if cur.exists():
             return cur.stat().st_uid == 0
-    except Exception:
+    except (OSError, AttributeError):
         pass
     return False
 

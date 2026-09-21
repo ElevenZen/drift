@@ -107,8 +107,8 @@ def build_hook_execution_command_posix(hook_path: Path) -> List[str]:
                 shebang_args = shlex.split(shebang)
                 if shebang_args:
                     return shebang_args + [str(hook_path)]
-    except Exception:
-        pass
+    except (OSError, ValueError) as exc:
+        logger.debug(f"Could not parse shebang from '{hook_path}': {exc}")
 
     return ["/bin/bash", str(hook_path)]
 

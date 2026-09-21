@@ -265,8 +265,8 @@ def copy_file_mode_with_sudo(src: Path, dst: Path, sudo: bool = False) -> None:
     if not sudo:
         try:
             dst.chmod(mode)
-        except Exception:
-            pass
+        except OSError as exc:
+            logger.warning(f"Failed to copy file mode from '{src}' to '{dst}': {exc}")
     else:
         octal_mode = oct(mode & 0o777)[2:]
         cmd = ["chmod", octal_mode, str(dst)]
@@ -346,15 +346,15 @@ def unlock_file_or_dir_if_windows(path: Path) -> None:
             for d in dirs:
                 try:
                     os.chmod(os.path.join(root, d), stat.S_IWRITE | stat.S_IREAD | stat.S_IEXEC)
-                except Exception:
-                    pass
+                except OSError as exc:
+                    logger.debug(f"Failed to unlock directory '{os.path.join(root, d)}': {exc}")
             for f in files:
                 try:
                     os.chmod(os.path.join(root, f), stat.S_IWRITE | stat.S_IREAD)
-                except Exception:
-                    pass
-    except Exception:
-        pass
+                except OSError as exc:
+                    logger.debug(f"Failed to unlock file '{os.path.join(root, f)}': {exc}")
+    except OSError as exc:
+        logger.debug(f"Failed to walk/unlock '{path}': {exc}")
 
 
 unlock_file_if_windows = unlock_file_or_dir_if_windows
@@ -380,8 +380,8 @@ def atomic_copy_symlink(src: Path, dst: Path) -> None:
         if temp_path.exists() or temp_path.is_symlink():
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"Failed to clean up temporary symlink '{temp_path}': {exc}")
 
 
 def atomic_copy_file(
@@ -419,8 +419,8 @@ def atomic_copy_file(
             temp_path.write_bytes(converted)
             try:
                 shutil.copymode(src, temp_path, follow_symlinks=follow_symlinks)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"Failed to copy file mode from '{src}' to '{temp_path}': {exc}")
         else:
             shutil.copy2(src, temp_path, follow_symlinks=follow_symlinks)
 
@@ -430,8 +430,8 @@ def atomic_copy_file(
         if temp_path and (temp_path.exists() or temp_path.is_symlink()):
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"Failed to clean up temporary file '{temp_path}': {exc}")
 
 
 def delete_one_file(
@@ -593,8 +593,8 @@ def write_file_contents_with_sudo(
         if permission is not None:
             try:
                 temp_path.chmod(permission)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.warning(f"Failed to set permissions ({oct(permission)}) on '{dst}': {exc}")
         if sys.platform == "win32" or not sudo:
             unlock_file_or_dir_if_windows(dst)
             os.replace(temp_path, dst)
@@ -606,8 +606,8 @@ def write_file_contents_with_sudo(
         if temp_path and (temp_path.exists() or temp_path.is_symlink()):
             try:
                 temp_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"Failed to clean up temporary file '{temp_path}': {exc}")
 
 
 def atomic_copy_file_with_sudo(
@@ -658,16 +658,16 @@ def atomic_copy_file_with_sudo(
             run_sudo_command(["cp", "-p", str(src), temp_path_str], sudo=True)
             run_sudo_command(["mv", "-f", temp_path_str, str(dst)], sudo=True)
             return
-    except Exception:
+    except Exception as exc:
         # Fallback to direct elevated cp if mktemp fails
-        pass
+        logger.debug(f"Atomic sudo copy via mktemp failed for '{dst}': {exc}, falling back to direct cp.")
     finally:
         # Clean up temporary file if an error occurred before mv
         if temp_path_str and Path(temp_path_str).name != dst.name:
             try:
                 run_sudo_command(["rm", "-f", temp_path_str], sudo=True)
-            except Exception:
-                pass
+            except OSError as exc:
+                logger.debug(f"Failed to clean up elevated temporary file '{temp_path_str}': {exc}")
 
     # Direct fallback from Exception
     cmd = ["cp", "-p", str(src), str(dst)]

@@ -139,7 +139,7 @@ def get_help_page(topic: Optional[str]) -> str:
         data = pkgutil.get_data("drift.cli", f"help_docs/{topic_file_name}.md")
         if data:
             return data.decode("utf-8")
-    except Exception:
+    except (ImportError, OSError, LookupError):
         pass
 
     help_dir = Path(__file__).resolve().parent / "help_docs"

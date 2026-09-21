@@ -192,7 +192,7 @@ def _get_ips_from_windows() -> List[str]:
         for ip in host_ips:
             if ip and not ip.startswith("127.") and ip not in ips:
                 ips.append(ip)
-    except Exception:
+    except (socket.error, OSError):
         pass
     return ips
 
@@ -243,7 +243,7 @@ def get_host_ip_addresses(probe_wan_ip: bool = False) -> List[str]:
             s.close()
             if ip and not ip.startswith("127.") and ip not in ips:
                 ips.append(ip)
-        except Exception:
+        except (socket.error, OSError):
             pass
 
     return ips

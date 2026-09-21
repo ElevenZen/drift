@@ -409,7 +409,7 @@ def deploy_single_stow_file(
                     or (system_target.parent / link_target_raw).resolve() == src_file.resolve()):
                 logger.debug(f"   Skipping symlink creation for '{system_target}' as it already points to '{relative_target}'")
                 return
-        except Exception:
+        except OSError:
             pass
 
     create_symlink_manually_with_sudo(relative_target, system_target, sudo)

@@ -95,7 +95,7 @@ def match_ip_address(pattern: str, ip: str) -> bool:
             addr = ipaddress.ip_address(ip)
             if addr in net:
                 return True
-        except ValueError:
+        except (ValueError, TypeError):
             pass
     return False
 

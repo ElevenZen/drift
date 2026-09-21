@@ -27,7 +27,7 @@ import logging
 from collections.abc import MutableMapping, Iterator, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Mapping
+from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, Mapping
 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
@@ -304,7 +304,7 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
     def find_source_file_for_rendered_names(
         self, 
         directory: Path, 
-        target_names: List[str]
+        target_names: Sequence[str]
     ) -> Optional[RenderSourceMatch]:
         """
         Locates a file or directory in the given directory that will render to one of the rendered names.
