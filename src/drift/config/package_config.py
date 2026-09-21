@@ -47,7 +47,7 @@ from .workspace_config import RenderEngineConfig, WorkspaceConfig
 from .render_engine_config import RenderEngineRegistry
 from ..utils.env_utils import resolve_env_references, interpolate_config_dict, update_env_dict, load_env_settings
 from ..core.exceptions import ConfigError
-from ..utils.file_utils import expand_user_and_env, is_relative_to
+from ..utils.path_utils import expand_path, is_relative_to
 from ..core.result_models import HookResult
 
 from dataclasses import dataclass, field
@@ -976,8 +976,8 @@ class PackageConfig:
         self.enable_render = enable_render
         self.enable_install = enable_install
         self.install_method = install_method
-        self.target_directory = expand_user_and_env(target_directory) if target_directory else None
-        self.target_directory_windows = expand_user_and_env(target_directory_windows) if target_directory_windows else None
+        self.target_directory = expand_path(target_directory) if target_directory else None
+        self.target_directory_windows = expand_path(target_directory_windows) if target_directory_windows else None
         self.sudo = sudo
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
         self.hooks = hooks if hooks is not None else PackageHooks()
@@ -1086,8 +1086,8 @@ class PackageConfig:
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
         if sys.platform == "win32"and self.target_directory_windows is not None:
-            return expand_user_and_env(self.target_directory_windows)
-        return expand_user_and_env(self.target_directory or workspace_config.default_target_path)
+            return expand_path(self.target_directory_windows)
+        return expand_path(self.target_directory or workspace_config.default_target_path)
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
         if sys.platform == "win32":
@@ -1316,11 +1316,11 @@ class PackageConfig:
             source_dir = Path(".")
 
         # Expand home directory and env vars for target_directory on load
-        target_dir = (val := package_data.get("target_directory")) and expand_user_and_env(val)
+        target_dir = (val := package_data.get("target_directory")) and expand_path(val)
 
         target_dir_windows_raw = get_first_from(package_data,
                 (f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES))
-        target_dir_windows = target_dir_windows_raw and expand_user_and_env(target_dir_windows_raw)
+        target_dir_windows = target_dir_windows_raw and expand_path(target_dir_windows_raw)
 
         # resolve relative hook_file path to absolute path if common_base_dir is provided
         raw_hook_file = package_data.get("hook_file")

@@ -55,7 +55,7 @@ from ..core.constants import (
 from ..config.workspace_config import WorkspaceConfig
 from ..core.result_models import DiffType, DiffResult, PackageDiffDetail, FileDiffDetail
 from ..core.folder_diff import compare_folders
-from ..utils.file_utils import is_editor_or_os_temporary_file
+from ..utils.file_inspect import is_temp_file
 from ..utils.git_utils import parse_git_status_porcelain
 from ..utils.editor_utils import launch_side_by_side_editor
 
@@ -132,7 +132,7 @@ def collect_repo_diff_pairs(
                 continue
             status, rel_path_str = parts[0], parts[1]
             rel_path = Path(rel_path_str)
-            if is_editor_or_os_temporary_file(rel_path):
+            if is_temp_file(rel_path):
                 continue
 
             working_file = repo_path / rel_path
@@ -178,16 +178,16 @@ def collect_pending_delta_pairs(
     Calls compare_folders instead of 'git diff --no-index' to avoid content-based diffing and focus on file presence and structure.
     NEW packages (render only) appear as all-added pairs; ORPHAN packages (install only) as all-deleted pairs.
     """
-    from ..utils.file_utils import tree_relative_files
+    from ..utils.file_inspect import tree_files
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
     pairs: List[Tuple[Path, Path]] = []
 
     def is_valid_file(rel_f: Path) -> bool:
-        return rel_f.name not in ignored_files and not is_editor_or_os_temporary_file(rel_f)
+        return rel_f.name not in ignored_files and not is_temp_file(rel_f)
 
     for pkg in new_pkgs:
         render_pkg = workspace_config.render_path / pkg
-        for rel_f in filter(is_valid_file, tree_relative_files(render_pkg)):
+        for rel_f in filter(is_valid_file, tree_files(render_pkg)):
             empty_left = temp_dir / "empty" / pkg / rel_f
             empty_left.parent.mkdir(parents=True, exist_ok=True)
             empty_left.touch()
@@ -195,7 +195,7 @@ def collect_pending_delta_pairs(
 
     for pkg in orphan_pkgs:
         install_pkg = workspace_config.install_path / pkg
-        for rel_f in filter(is_valid_file, tree_relative_files(install_pkg)):
+        for rel_f in filter(is_valid_file, tree_files(install_pkg)):
             empty_right = temp_dir / "empty" / pkg / rel_f
             empty_right.parent.mkdir(parents=True, exist_ok=True)
             empty_right.touch()
@@ -258,23 +258,23 @@ def collect_pending_folder_diff_details(
     if render_pkg.exists() and install_pkg.exists():
         diff = compare_folders(render_pkg, install_pkg)
         for p in diff.added:
-            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+            if p.name not in ignored_files and not is_temp_file(p):
                 files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
         for p in diff.modified:
-            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+            if p.name not in ignored_files and not is_temp_file(p):
                 files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="modified"))
         for p in diff.deleted:
-            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+            if p.name not in ignored_files and not is_temp_file(p):
                 files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
     elif render_pkg.exists() and not install_pkg.exists():
-        from ..utils.file_utils import tree_relative_files
-        for p in tree_relative_files(render_pkg):
-            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+        from ..utils.file_inspect import tree_files
+        for p in tree_files(render_pkg):
+            if p.name not in ignored_files and not is_temp_file(p):
                 files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
     elif not render_pkg.exists() and install_pkg.exists():
-        from ..utils.file_utils import tree_relative_files
-        for p in tree_relative_files(install_pkg):
-            if p.name not in ignored_files and not is_editor_or_os_temporary_file(p):
+        from ..utils.file_inspect import tree_files
+        for p in tree_files(install_pkg):
+            if p.name not in ignored_files and not is_temp_file(p):
                 files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
 
     return files

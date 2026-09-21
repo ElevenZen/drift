@@ -21,16 +21,16 @@ Layer 4: Primitive Entry Point
                 pkg_config.package_envs context
                 trigger_pre_uninstall (hook)
                 remove_deployed_files [Layer 2]
-                    resolve_system_target
-                    remove_file_or_dir_with_sudo
-                    rmdir_parents
+                    resolve_target_path
+                    remove
+                    prune_empty_parents
                 restore_backups [Layer 2]
                     copy_or_move_file_or_dir_external (move=True)
-                    rmdir_parents
+                    prune_empty_parents
                 trigger_post_uninstall (hook)
                 clean_up_package_directories [Layer 1]
                     shutil.rmtree (install/<pkg>)
-                    rmdir_parents (backup/<pkg>)
+                    prune_empty_parents (backup/<pkg>)
         4. State Registry & Install Repo Synchronization:
             registry.remove_package
             registry.save
@@ -61,14 +61,15 @@ from typing import List, Optional, Tuple, Dict, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..core.state_registry import load_state_registry, PackageState, StateRegistry
-from ..utils.file_utils import (
-    check_sudo_privilege,
-    remove_file_or_dir_with_sudo,
-    rmdir_parents,
-    copy_or_move_file_or_dir_external,
-    tree_relative_files,
-    resolve_system_target,
+from ..utils.process_utils import check_sudo_privilege
+from ..utils.file_ops import (
+    remove,
+    prune_empty_parents,
+    copy_tree,
+    move_tree,
 )
+from ..utils.file_inspect import tree_files
+from ..utils.path_utils import resolve_target_path
 from ..core.constants import UNINSTALL_HOOK_NAMES, BackupSubfolder, InstallMethod
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.result_models import PackageUninstallResult, UninstallResult, RestoredBackup
@@ -142,7 +143,7 @@ def clean_up_package_directories(workspace_config: WorkspaceConfig, pkg: str) ->
 
     # Clean up backup/pkg directory if empty
     backup_pkg_dir = workspace_config.backup_path / pkg
-    rmdir_parents(backup_pkg_dir, workspace_config.backup_path)
+    prune_empty_parents(backup_pkg_dir, workspace_config.backup_path)
 
 
 # =====================================================================
@@ -160,16 +161,16 @@ def remove_deployed_files(
     removed: List[Tuple[Path, Path]] = []
     # Sort in reverse to handle nested files/dirs (files before their parent dirs)
     for rel_file in sorted(deployed_files, reverse=True):
-        system_target = resolve_system_target(rel_file, target_dir)
+        system_target = resolve_target_path(rel_file, target_dir)
         
         if system_target.exists() or system_target.is_symlink():
             if dry_run:
                 logger.info(f"🔍 [DRY RUN] Would remove: {system_target}")
             else:
                 logger.debug(f"   Removing: {system_target}")
-                remove_file_or_dir_with_sudo(system_target, sudo)
+                remove(system_target, sudo)
                 # Cleanup empty parent dirs up to target_dir
-                rmdir_parents(system_target.parent, target_dir)
+                prune_empty_parents(system_target.parent, target_dir)
             removed.append((rel_file, system_target))
     
     if not dry_run and removed:
@@ -191,8 +192,8 @@ def restore_backups(
         return restored  # No backups to restore
 
     # We assume we can just move symlinks in the backup without resolving,
-    # so we can safely use tree_relative_files
-    backup_files = tree_relative_files(backup_pkg_overwritten)
+    # so we can safely use tree_files
+    backup_files = tree_files(backup_pkg_overwritten)
     if not backup_files:
         return restored  # No backups to restore
 
@@ -201,20 +202,20 @@ def restore_backups(
     
     for rel_backup in backup_files:
         src = backup_pkg_overwritten / rel_backup
-        system_target = resolve_system_target(rel_backup, target_dir)
+        system_target = resolve_target_path(rel_backup, target_dir)
         
         if dry_run:
             logger.info(f"🔍 [DRY RUN] Would restore: {system_target}")
         else:
             logger.debug(f"   Restoring: {system_target}")
             # Use move=True to clean up backup as we restore it
-            copy_or_move_file_or_dir_external(src, system_target, sudo, move=True)
+            move_tree(src, system_target, sudo)
         restored.append(RestoredBackup(source_backup=str(src), restored_to=str(system_target)))
     
     if not dry_run:
         logger.info(f"✨ Restored {len(restored)} file(s) for {pkg}")
         # Clean up the 'overwritten' directory if it's now empty
-        rmdir_parents(backup_pkg_overwritten, workspace_config.backup_path)
+        prune_empty_parents(backup_pkg_overwritten, workspace_config.backup_path)
 
     return restored
 
@@ -245,7 +246,7 @@ def detach_one_package(
     converted_symlinks = []
 
     for rel_file in pkg_state.deployed_files:
-        system_target = resolve_system_target(rel_file, target_dir)
+        system_target = resolve_target_path(rel_file, target_dir)
         if not system_target.is_symlink():
             continue
         # Log the file that will be replaced in both dry-run and live modes
@@ -258,9 +259,9 @@ def detach_one_package(
             logger.error(f"❌ Source file not found in install/ directory for package '{pkg}': {src_file}")
             continue
         logger.info(f"   Replacing symlink with actual copy: {system_target}")
-        remove_file_or_dir_with_sudo(system_target, sudo)
+        remove(system_target, sudo)
         system_target.parent.mkdir(parents=True, exist_ok=True)
-        copy_or_move_file_or_dir_external(src_file, system_target, sudo, move=False)
+        copy_tree(src_file, system_target, sudo)
         converted_symlinks.append(str(rel_file))
 
     if not dry_run:

@@ -85,7 +85,7 @@ class StateRegistry:
         Resolves each package's deployed_files relative to its recorded target_directory.
         Optionally excludes packages in `exclude_packages` (e.g. packages currently being redeployed).
         """
-        from ..utils.file_utils import resolve_system_target
+        from ..utils.path_utils import resolve_target_path
         exclude_set = set(exclude_packages) if exclude_packages is not None else set()
         ownership_map: Dict[Path, str] = {}
         for pkg, pkg_state in self.packages.items():
@@ -93,7 +93,7 @@ class StateRegistry:
                 continue
             if pkg_state.state == "installed" and pkg_state.target_directory is not None:
                 for rel_file in pkg_state.deployed_files:
-                    dst = resolve_system_target(rel_file, pkg_state.target_directory)
+                    dst = resolve_target_path(rel_file, pkg_state.target_directory)
                     ownership_map[dst] = pkg
         return ownership_map
 

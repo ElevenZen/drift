@@ -103,21 +103,22 @@ from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
 from ..core.folder_diff import compare_folders, list_folder_paths
 from .stage_repo import PackageStageChanges
-from ..utils.file_utils import (
-    resolve_system_target,
-    translate_dot_prefixes,
-    translate_dot_prefixes_reverse,
-    atomic_copy_file_with_sudo,
-    create_symlink_manually_with_sudo,
-    get_relative_path,
-    get_symlinked_parent,
-    ensure_directory_writable,
-    ensure_dir_exists_with_sudo,
-    remove_file_or_dir_with_sudo,
+from ..utils.path_utils import (
+    resolve_target_path,
+    encode_dot_prefix,
+    decode_dot_prefix,
+    relative_path_between,
     is_relative_to,
-    run_command,
-    run_sudo_command,
 )
+from ..utils.file_inspect import find_symlink_ancestor
+from ..utils.file_ops import (
+    copy_file,
+    create_symlink,
+    ensure_writable,
+    ensure_dir,
+    remove,
+)
+from ..utils.process_utils import run_command, run_sudo_command
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.result_models import FileOperations, PackageInstallResult, InstallDeploymentResult
 
@@ -232,7 +233,7 @@ def handle_collision_error(
     logger.debug(f"   Backing up to: {backup_path}")
     backup_file_or_dir_external(system_target, backup_path, context.sudo, resolve_symlinks=resolve_symlinks)
     # After backup, remove the colliding item to clear the way
-    remove_file_or_dir_with_sudo(system_target, context.sudo)
+    remove(system_target, context.sudo)
     if ops is not None:
         if backup_subfolder == BackupSubfolder.DELETED_FILES:
             ops.deleted_backup.append(str(backup_rel_path))
@@ -246,8 +247,8 @@ def delete_single_system_file_or_dir(
     sudo: bool
 ) -> None:
     """Helper to delete a single file on host system (for incremental deletions)."""
-    system_target = resolve_system_target(rel_file, target_dir)
-    remove_file_or_dir_with_sudo(system_target, sudo)
+    system_target = resolve_target_path(rel_file, target_dir)
+    remove(system_target, sudo)
 
 
 # =============================================================================
@@ -288,7 +289,7 @@ def find_internal_symlink_conflicts(
     pkg_items = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
 
     def _expand_path_ancestors(rel: Path) -> Set[Path]:
-        target_rel = translate_dot_prefixes(rel)
+        target_rel = encode_dot_prefix(rel)
         return {target_rel, *target_rel.parents} - {Path(".")}
 
     # 2. Build the set of target relative paths and all intermediate parent directories
@@ -307,7 +308,7 @@ def find_internal_symlink_conflicts(
             return False
 
     return [
-        (translate_dot_prefixes_reverse(t_rel), context.target_dir / t_rel)
+        (decode_dot_prefix(t_rel), context.target_dir / t_rel)
         for t_rel in sorted_candidates
         if _is_internal_drift_link(context.target_dir / t_rel)
     ]
@@ -357,7 +358,7 @@ def resolve_single_internal_symlink_conflict(
 
     # If repo expects a directory here, recreate it as physical to avoid cycles
     if install_file_path.is_dir() and not install_file_path.is_symlink():
-        ensure_dir_exists_with_sudo(system_target, context.sudo)
+        ensure_dir(system_target, context.sudo)
 
 
 def handle_internal_symlink_conflicts(
@@ -398,8 +399,8 @@ def deploy_single_stow_file(
 ) -> None:
     """Helper to deploy a single file using Stow method."""
     src_file = install_pkg_dir / rel_file
-    system_target = resolve_system_target(rel_file, target_dir)
-    relative_target = get_relative_path(system_target.parent, src_file)
+    system_target = resolve_target_path(rel_file, target_dir)
+    relative_target = relative_path_between(system_target.parent, src_file)
 
     # If the target already points into the source, do not create the symlink again
     if system_target.is_symlink():
@@ -412,7 +413,7 @@ def deploy_single_stow_file(
         except OSError:
             pass
 
-    create_symlink_manually_with_sudo(relative_target, system_target, sudo)
+    create_symlink(relative_target, system_target, sudo)
 
 
 def deploy_single_copy_file(
@@ -423,8 +424,8 @@ def deploy_single_copy_file(
 ) -> None:
     """Helper to deploy a single file using Copy method."""
     src_file = install_pkg_dir / rel_file
-    system_target = resolve_system_target(rel_file, target_dir)
-    atomic_copy_file_with_sudo(
+    system_target = resolve_target_path(rel_file, target_dir)
+    copy_file(
         src_file,
         system_target,
         sudo,
@@ -445,7 +446,7 @@ def reconcile_orphaned_files(
         return
     logger.info(f"🔍 Reconciling desired state: Pruning {len(orphaned_files)} orphaned files")
     for orphaned in sorted(orphaned_files):
-        system_target = resolve_system_target(orphaned, context.target_dir)
+        system_target = resolve_target_path(orphaned, context.target_dir)
         if system_target.exists() or system_target.is_symlink():
             handle_collision_error(
                 context=context,
@@ -470,7 +471,7 @@ def run_collision_guard(
     """Handles collision backing up before any file deployment using FolderDiff."""
     # 0. Safety Abort Check for parents ABOVE or AT target_dir
     # This detects if our target base itself is a symlink into drift_root
-    parent_symlink = get_symlinked_parent(context.target_dir, context.drift_root)
+    parent_symlink = find_symlink_ancestor(context.target_dir, context.drift_root)
     if parent_symlink:
         raise InstallCollisionError(
             f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
@@ -505,7 +506,7 @@ def run_collision_guard(
             continue
         processed_paths.add(rel)
 
-        system_target = resolve_system_target(rel, context.target_dir)
+        system_target = resolve_target_path(rel, context.target_dir)
         if context.ignore_handler.match_path(rel):
             # Clean up now-ignored files
             handle_collision_error(
@@ -535,7 +536,7 @@ def run_collision_guard(
             continue
         processed_paths.add(rel)
 
-        system_target = resolve_system_target(rel, context.target_dir)
+        system_target = resolve_target_path(rel, context.target_dir)
 
         # If the file is modified, then it cannot pointing to the same file.
         # If the symlink points to anywhere inside install_pkg_dir but not the same pkg_install_dir,
@@ -576,7 +577,7 @@ def run_collision_guard(
                 continue
             processed_paths.add(rel)
 
-            system_target = resolve_system_target(rel, context.target_dir)
+            system_target = resolve_target_path(rel, context.target_dir)
             if not system_target.is_symlink():
                 handle_collision_error(
                     context=context,
@@ -596,7 +597,7 @@ def run_full_copy_deployment(
     deployable_files: List[Path]
 ) -> None:
     """Executes copy deployment of deployable_files to target_dir."""
-    ensure_dir_exists_with_sudo(target_dir, sudo)
+    ensure_dir(target_dir, sudo)
     pkg = src_pkg_dir.name
     logger.info(f"🚚 Syncing files: {pkg} (copy)")
 
@@ -606,7 +607,7 @@ def run_full_copy_deployment(
 
 def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool) -> None:
     """Invokes GNU Stow for package deployment."""
-    ensure_dir_exists_with_sudo(target_dir, sudo)
+    ensure_dir(target_dir, sudo)
     stow_cmd = [
         "stow",
         "--no-folding",
@@ -670,8 +671,8 @@ def run_incremental_file_delivery(
             continue
 
         if rel_file.is_dir():
-            ensure_dir_exists_with_sudo(
-                resolve_system_target(rel_file, context.target_dir), context.sudo
+            ensure_dir(
+                resolve_target_path(rel_file, context.target_dir), context.sudo
             )
             continue
 
@@ -736,7 +737,7 @@ def _gather_package_destination_targets(
     target_dir = metadata.get_target_directory(workspace_config)
 
     return [
-        (rel_file, resolve_system_target(rel_file, target_dir))
+        (rel_file, resolve_target_path(rel_file, target_dir))
         for rel_file in deployable_files
     ]
 
@@ -849,7 +850,7 @@ def precheck_single_package(
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
         )
     
-    ensure_directory_writable(target_dir, metadata.sudo)
+    ensure_writable(target_dir, metadata.sudo)
     
     if not options.force and state_registry.is_package_in_midway_state(pkg):
         current_state = state_registry.get_package_state(pkg)
@@ -1120,7 +1121,7 @@ def precheck_deployment_packages(
     ]
 
     if any(metadata.sudo for _, metadata in active_packages):
-        from ..utils.file_utils import check_sudo_privilege
+        from ..utils.process_utils import check_sudo_privilege
         check_sudo_privilege(True)
 
     if not hook_flags.no_hooks:

@@ -11,7 +11,7 @@ from .reverse_sync import run_primitive_1_reverse_sync
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.constants import DRIFT_GENERATED_FILES
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
-from ..utils.file_utils import run_command
+from ..utils.process_utils import run_command
 from ..core.state_registry import load_state_registry
 from ..core.result_models import PackageStatus, StatusResult
 

@@ -31,7 +31,8 @@ from .render_core import render_template_to_file, RenderError
 from ..core.exceptions import ConfigError, RenderCollisionError
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.result_models import PackageRenderResult, RenderResult
-from ..utils.file_utils import remove_file_or_dir, atomic_copy_file, translate_dot_prefixes, is_relative_to
+from ..utils.file_ops import remove, copy_file
+from ..utils.path_utils import encode_dot_prefix, is_relative_to
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: st
     """Clears the sandbox package directory inside the render folder to preserve the render/.git repository."""
     render_pkg_dir = workspace_config.render_path / package_name
     if render_pkg_dir.exists() or render_pkg_dir.is_symlink():
-        remove_file_or_dir(render_pkg_dir)
+        remove(render_pkg_dir)
 
 
 def _validate_not_driftignore_target(
@@ -51,7 +52,7 @@ def _validate_not_driftignore_target(
 ) -> None:
     """Validates that a template or pseudo-dot file is not used to dynamically generate .driftignore."""
     target_name = Path(target_rel_path).name
-    translated_name = translate_dot_prefixes(Path(target_name)).name
+    translated_name = encode_dot_prefix(Path(target_name)).name
     if translated_name in DRIFT_IGNORE_FILE_NAME_LIST:
         if is_template:
             raise ConfigError(
@@ -143,7 +144,7 @@ def render_or_copy_file(
         logger.info(f"📄 Copying: {rel_path}")
         logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(file_path, dest_path)
+        copy_file(file_path, dest_path)
         dest_rel = rel_path.as_posix()
         is_rendered = False
 
@@ -277,14 +278,14 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
                 f"The misspelled file '{DRIFT_IGNORE_LEGACY_FILE_NAME}' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
             )
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(correct_path, dest_correct)
+        copy_file(correct_path, dest_correct)
     elif misspelled_path.is_file():
         logger.warning(
             f"Package '{package_name}' contains a misspelled ignore file '{DRIFT_IGNORE_LEGACY_FILE_NAME}'. "
             f"Please rename it to '{DRIFT_IGNORE_FILE_NAME}'."
         )
         dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(misspelled_path, dest_correct)
+        copy_file(misspelled_path, dest_correct)
 
 
 def render_package_files(

@@ -27,7 +27,7 @@ from ..core.constants import (
 )
 from ..utils.toml_utils import parse_toml, merge_toml, get_first_from, validate_known_keys, get_nested_from
 from ..core.exceptions import ConfigError
-from ..utils.file_utils import expand_user_and_env
+from ..utils.path_utils import expand_path
 from ..utils.env_utils import (
     parse_env_text,
     parse_env_file,
@@ -144,7 +144,7 @@ class WorkspaceSectionConfig:
         self.render_directory = Path(render_directory)
         self.install_directory = Path(install_directory)
         self.backup_directory = Path(backup_directory)
-        self.default_target_directory = expand_user_and_env(Path(default_target_directory))
+        self.default_target_directory = expand_path(Path(default_target_directory))
         self.default_install_method = default_install_method
         self.hook_file = Path(hook_file) if hook_file is not None else None
 

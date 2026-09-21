@@ -21,8 +21,8 @@ Layer 5: Primitive Entry Point
                 check_sudo_privilege (if sudo required)
                 state_registry.set_package_state("staging") & save
                 apply_package_stage_changes(pkg, ...) [Layer 3]
-                    delete_one_file (direct physical deletion)
-                    atomic_copy_file / copy_file_mode_with_sudo (additions & modifications)
+                    remove_with_parents (direct physical deletion)
+                    copy_file / copy_permissions (additions & modifications)
                     generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
                 state_registry.set_package_state("staged") & save
         5. Return Summary Map of Changed Packages
@@ -52,13 +52,13 @@ from dataclasses import dataclass, field
 from ..core.constants import DRIFT_GENERATED_FILES
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..utils.file_utils import (
-    delete_one_file,
-    remove_file_or_dir,
-    atomic_copy_file,
-    copy_file_mode_with_sudo,
+from ..utils.file_ops import (
+    remove_with_parents,
+    remove,
+    copy_file,
+    copy_permissions,
 )
-from ..utils import file_utils
+from ..utils.process_utils import check_sudo_privilege
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.ignore import DriftIgnore
 from ..utils.git_utils import has_uncommitted_modifications
@@ -225,18 +225,18 @@ def apply_package_stage_changes(
         # but if they do, remove them directly.
         if install_file.is_symlink():
             logger.warning(f"⚠️  [BUG] Unexpected symlink found for deletion: {pkg}/{rel_file}. Removing.")
-            remove_file_or_dir(install_file)
+            remove(install_file)
             continue
 
         # If directory exists in deleted list, it means it's an empty directory that should be removed.
         if install_file.is_dir():
             if any(install_file.iterdir()):
                 logger.warning(f"⚠️  [BUG] Non-empty directory found for deletion: {pkg}/{rel_file}. Removing.")
-            remove_file_or_dir(install_file)
+            remove(install_file)
             continue
 
         logger.info(f"🗑️  Deleting: {pkg}/{rel_file}")
-        delete_one_file(install_file, limit_dir=install_pkg_dir)
+        remove_with_parents(install_file, limit_dir=install_pkg_dir)
 
     # B. Process Additions
     for rel_file in all_diff.added:
@@ -246,7 +246,7 @@ def apply_package_stage_changes(
             dst.mkdir(parents=True, exist_ok=True)
             continue
         logger.info(f"📦 Adding: {pkg}/{rel_file}")
-        atomic_copy_file(src, dst)
+        copy_file(src, dst)
 
     # C. Process Modifications
     for rel_file in all_diff.modified:
@@ -257,9 +257,9 @@ def apply_package_stage_changes(
             continue
         logger.info(f"🔄 Modifying: {pkg}/{rel_file}")
         if all_diff.is_mode_only_change(rel_file, render_pkg_dir, install_pkg_dir):
-            copy_file_mode_with_sudo(src, dst, sudo=False)
+            copy_permissions(src, dst, sudo=False)
         else:
-            atomic_copy_file(src, dst)
+            copy_file(src, dst)
 
     # Generate .stow-local-ignore for GNU Stow compatibility
     generate_stage_stow_ignore(
@@ -286,7 +286,7 @@ def stage_modified_packages(
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
     needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage)
     if needs_sudo:
-        file_utils.check_sudo_privilege(True)
+        check_sudo_privilege(True)
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
     for pkg in packages_to_stage:

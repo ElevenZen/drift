@@ -8,25 +8,30 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from drift.core.constants import set_test_mode
-from drift.utils.file_utils import (
+from drift.utils.path_utils import (
     is_relative_to,
-    resolve_system_target,
-    translate_dot_prefixes,
-    translate_dot_prefixes_reverse,
-    tree_relative_files,
-    get_relative_path,
-    compute_file_hash,
-    file_contents_differ,
-    rmdir_parents,
-    get_symlinked_parent,
-    delete_one_file,
-    copy_or_move_file_or_dir_external,
-    ensure_directory_writable,
-    ensure_dir_exists_with_sudo,
-    remove_file_or_dir_with_sudo,
-    create_symlink_manually_with_sudo,
-    atomic_copy_file_with_sudo,
-    atomic_copy_symlink,
+    resolve_target_path,
+    encode_dot_prefix,
+    decode_dot_prefix,
+    relative_path_between,
+)
+from drift.utils.file_inspect import (
+    tree_files,
+    file_hash,
+    contents_differ,
+    find_symlink_ancestor,
+)
+from drift.utils.file_ops import (
+    prune_empty_parents,
+    remove_with_parents,
+    copy_tree,
+    move_tree,
+    ensure_writable,
+    ensure_dir,
+    remove,
+    create_symlink,
+    copy_file,
+    copy_symlink,
 )
 from drift.core.sync_ops import (
     backup_file_or_dir_external,
@@ -62,48 +67,48 @@ class TestFileUtils(unittest.TestCase):
         rel_path1 = Path("dot-config/nvim/init.lua")
         rel_path2 = Path("normal_dir/file.txt")
 
-        res1 = resolve_system_target(rel_path1, base)
-        res2 = resolve_system_target(rel_path2, base)
+        res1 = resolve_target_path(rel_path1, base)
+        res2 = resolve_target_path(rel_path2, base)
 
         self.assertEqual(res1, base / ".config" / "nvim" / "init.lua")
         self.assertEqual(res2, base / "normal_dir" / "file.txt")
 
     def test_translate_dot_prefixes(self) -> None:
-        """Verifies translate_dot_prefixes converts 'dot-' to leading '.', skips 'dot-'/'dot-.',
+        """Verifies encode_dot_prefix converts 'dot-' to leading '.', skips 'dot-'/'dot-.',
         and only translates segments that start with 'dot-'.
         """
-        self.assertEqual(translate_dot_prefixes(Path("dot-bashrc")), Path(".bashrc"))
-        self.assertEqual(translate_dot_prefixes(Path("dot-config/nvim/init.lua")), Path(".config/nvim/init.lua"))
-        self.assertEqual(translate_dot_prefixes(Path("dot-config/dot-vimrc")), Path(".config/.vimrc"))
-        self.assertEqual(translate_dot_prefixes(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
+        self.assertEqual(encode_dot_prefix(Path("dot-bashrc")), Path(".bashrc"))
+        self.assertEqual(encode_dot_prefix(Path("dot-config/nvim/init.lua")), Path(".config/nvim/init.lua"))
+        self.assertEqual(encode_dot_prefix(Path("dot-config/dot-vimrc")), Path(".config/.vimrc"))
+        self.assertEqual(encode_dot_prefix(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
 
         # Segments 'dot-' and 'dot-.' are preserved (not translated to '.' or '..')
-        self.assertEqual(translate_dot_prefixes(Path("dot-")), Path("dot-"))
-        self.assertEqual(translate_dot_prefixes(Path("dot-.")), Path("dot-."))
-        self.assertEqual(translate_dot_prefixes(Path("config/dot-/file.txt")), Path("config/dot-/file.txt"))
-        self.assertEqual(translate_dot_prefixes(Path("config/dot-./file.txt")), Path("config/dot-./file.txt"))
+        self.assertEqual(encode_dot_prefix(Path("dot-")), Path("dot-"))
+        self.assertEqual(encode_dot_prefix(Path("dot-.")), Path("dot-."))
+        self.assertEqual(encode_dot_prefix(Path("config/dot-/file.txt")), Path("config/dot-/file.txt"))
+        self.assertEqual(encode_dot_prefix(Path("config/dot-./file.txt")), Path("config/dot-./file.txt"))
 
         # Segments starting with 'dot-'
-        self.assertEqual(translate_dot_prefixes(Path("dot--foo")), Path(".-foo"))
-        self.assertEqual(translate_dot_prefixes(Path("dot-.bar")), Path("..bar"))
+        self.assertEqual(encode_dot_prefix(Path("dot--foo")), Path(".-foo"))
+        self.assertEqual(encode_dot_prefix(Path("dot-.bar")), Path("..bar"))
 
     def test_translate_dot_prefixes_reverse(self) -> None:
-        """Verifies translate_dot_prefixes_reverse converts leading '.' to 'dot-',
+        """Verifies decode_dot_prefix converts leading '.' to 'dot-',
         and never translates '.' or '..' segments.
         """
-        self.assertEqual(translate_dot_prefixes_reverse(Path(".bashrc")), Path("dot-bashrc"))
-        self.assertEqual(translate_dot_prefixes_reverse(Path(".config/nvim/init.lua")), Path("dot-config/nvim/init.lua"))
-        self.assertEqual(translate_dot_prefixes_reverse(Path(".config/.vimrc")), Path("dot-config/dot-vimrc"))
-        self.assertEqual(translate_dot_prefixes_reverse(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
+        self.assertEqual(decode_dot_prefix(Path(".bashrc")), Path("dot-bashrc"))
+        self.assertEqual(decode_dot_prefix(Path(".config/nvim/init.lua")), Path("dot-config/nvim/init.lua"))
+        self.assertEqual(decode_dot_prefix(Path(".config/.vimrc")), Path("dot-config/dot-vimrc"))
+        self.assertEqual(decode_dot_prefix(Path("normal_dir/file.txt")), Path("normal_dir/file.txt"))
 
         # '.' and '..' segments are preserved and never converted to 'dot-'
-        self.assertEqual(translate_dot_prefixes_reverse(Path(".")), Path("."))
-        self.assertEqual(translate_dot_prefixes_reverse(Path("..")), Path(".."))
-        self.assertEqual(translate_dot_prefixes_reverse(Path("config/./file.txt")), Path("config/file.txt"))
+        self.assertEqual(decode_dot_prefix(Path(".")), Path("."))
+        self.assertEqual(decode_dot_prefix(Path("..")), Path(".."))
+        self.assertEqual(decode_dot_prefix(Path("config/./file.txt")), Path("config/file.txt"))
 
         # Other leading dot names
-        self.assertEqual(translate_dot_prefixes_reverse(Path("..bar")), Path("dot-.bar"))
-        self.assertEqual(translate_dot_prefixes_reverse(Path(".-foo")), Path("dot--foo"))
+        self.assertEqual(decode_dot_prefix(Path("..bar")), Path("dot-.bar"))
+        self.assertEqual(decode_dot_prefix(Path(".-foo")), Path("dot--foo"))
 
     def test_tree_relative_files(self) -> None:
         subdir = self.root / "subdir"
@@ -115,11 +120,11 @@ class TestFileUtils(unittest.TestCase):
         file2 = subsubdir / "file2.txt"
         file2.touch()
 
-        files = tree_relative_files(subdir)
+        files = tree_files(subdir)
         self.assertEqual(files, [Path("file1.txt"), Path("nested/file2.txt")])
 
         # Test non-existent dir
-        self.assertEqual(tree_relative_files(self.root / "nonexistent"), [])
+        self.assertEqual(tree_files(self.root / "nonexistent"), [])
 
     def test_get_relative_path(self) -> None:
         dir1 = self.root / "a" / "b" / "c"
@@ -129,7 +134,7 @@ class TestFileUtils(unittest.TestCase):
         dir1.mkdir(parents=True, exist_ok=True)
         dir2.mkdir(parents=True, exist_ok=True)
 
-        rel = get_relative_path(dir1, dir2)
+        rel = relative_path_between(dir1, dir2)
         self.assertEqual(rel, Path("../../d/e"))
 
     def test_compute_file_hash_and_differ(self) -> None:
@@ -141,39 +146,39 @@ class TestFileUtils(unittest.TestCase):
         file2.write_text("hello", encoding="utf-8")
         file3.write_text("world", encoding="utf-8")
 
-        hash1 = compute_file_hash(file1)
-        hash2 = compute_file_hash(file2)
-        hash3 = compute_file_hash(file3)
+        hash1 = file_hash(file1)
+        hash2 = file_hash(file2)
+        hash3 = file_hash(file3)
 
         self.assertEqual(hash1, hash2)
         self.assertNotEqual(hash1, hash3)
 
-        self.assertFalse(file_contents_differ(file1, file2))
-        self.assertTrue(file_contents_differ(file1, file3))
+        self.assertFalse(contents_differ(file1, file2))
+        self.assertTrue(contents_differ(file1, file3))
 
         # Edge cases:
         # 1. Both files do not exist
         non_existent1 = self.root / "non_existent1.txt"
         non_existent2 = self.root / "non_existent2.txt"
-        self.assertFalse(file_contents_differ(non_existent1, non_existent2))
+        self.assertFalse(contents_differ(non_existent1, non_existent2))
 
         # 2. One file exists, the other doesn't
-        self.assertTrue(file_contents_differ(file1, non_existent1))
-        self.assertTrue(file_contents_differ(non_existent1, file1))
+        self.assertTrue(contents_differ(file1, non_existent1))
+        self.assertTrue(contents_differ(non_existent1, file1))
 
         # 3. Same resolved path
-        self.assertFalse(file_contents_differ(file1, file1))
+        self.assertFalse(contents_differ(file1, file1))
 
         # 4. Non-file path (e.g., directory) raises ValueError
         dir_path = self.root / "some_directory"
         dir_path.mkdir()
         with self.assertRaises(ValueError):
-            file_contents_differ(file1, dir_path)
+            contents_differ(file1, dir_path)
 
         # 5. Different file sizes
         file_large = self.root / "large.txt"
         file_large.write_text("hello world long text", encoding="utf-8")
-        self.assertTrue(file_contents_differ(file1, file_large))
+        self.assertTrue(contents_differ(file1, file_large))
 
     def test_rmdir_parents(self) -> None:
         nested = self.root / "a" / "b" / "c"
@@ -182,14 +187,14 @@ class TestFileUtils(unittest.TestCase):
         file_path.touch()
 
         # It won't remove since it's not empty
-        rmdir_parents(nested, self.root)
+        prune_empty_parents(nested, self.root)
         self.assertTrue(nested.exists())
 
         # Delete the file
         file_path.unlink()
 
-        # Run rmdir_parents
-        rmdir_parents(nested, self.root)
+        # Run prune_empty_parents
+        prune_empty_parents(nested, self.root)
 
         # nested "a/b/c" and "a/b" and "a" should be cleaned up
         self.assertFalse((self.root / "a").exists())
@@ -212,18 +217,18 @@ class TestFileUtils(unittest.TestCase):
         # File is nested_app/file.txt
         file_path = symlink_dir / "file.txt"
 
-        parent_symlink = get_symlinked_parent(file_path, drift_root)
+        parent_symlink = find_symlink_ancestor(file_path, drift_root)
         self.assertEqual(parent_symlink, symlink_dir)
 
         # 1. file_path itself is a symlink pointing into link_target_range -> returns file_path
         file_symlink = target_dir / "direct_symlink"
         file_symlink.symlink_to(src_dir / "file.txt")
-        self.assertEqual(get_symlinked_parent(file_symlink, drift_root), file_symlink)
+        self.assertEqual(find_symlink_ancestor(file_symlink, drift_root), file_symlink)
 
         # 2. No symlinked parent -> returns None
         normal_file = target_dir / "normal_file.txt"
         normal_file.touch()
-        self.assertIsNone(get_symlinked_parent(normal_file, drift_root))
+        self.assertIsNone(find_symlink_ancestor(normal_file, drift_root))
 
         # 3. Parent is a symlink pointing OUTSIDE of link_target_range -> returns None
         external_dir = self.root / "external_dir"
@@ -231,14 +236,14 @@ class TestFileUtils(unittest.TestCase):
         external_symlink = target_dir / "external_symlink"
         external_symlink.symlink_to(external_dir)
         nested_file_external = external_symlink / "some_file.txt"
-        self.assertIsNone(get_symlinked_parent(nested_file_external, drift_root))
+        self.assertIsNone(find_symlink_ancestor(nested_file_external, drift_root))
 
     def test_delete_one_file(self) -> None:
         file_path = self.root / "a" / "b" / "file.txt"
         file_path.parent.mkdir(parents=True)
         file_path.write_text("original content", encoding="utf-8")
 
-        delete_one_file(file_path, limit_dir=self.root)
+        remove_with_parents(file_path, limit_dir=self.root)
 
         self.assertFalse(file_path.exists())
         self.assertFalse((self.root / "a").exists())  # Empty parent cleaned up
@@ -249,35 +254,35 @@ class TestFileUtils(unittest.TestCase):
         writable_dir.mkdir()
         
         # Should complete gracefully
-        ensure_directory_writable(writable_dir, sudo=False)
-        ensure_directory_writable(writable_dir, sudo=True)
+        ensure_writable(writable_dir, sudo=False)
+        ensure_writable(writable_dir, sudo=True)
 
         # Non-existent dir resolves closest parent
-        ensure_directory_writable(writable_dir / "nonexistent" / "subdir", sudo=False)
+        ensure_writable(writable_dir / "nonexistent" / "subdir", sudo=False)
 
     def test_ensure_dir_exists_with_sudo(self) -> None:
         path = self.root / "new_dir"
-        ensure_dir_exists_with_sudo(path, sudo=False)
+        ensure_dir(path, sudo=False)
         self.assertTrue(path.is_dir())
 
     @patch("subprocess.run")
     def test_ensure_dir_exists_with_sudo_and_true(self, mock_run) -> None:
         path = self.root / "sudo_dir"
-        ensure_dir_exists_with_sudo(path, sudo=True)
+        ensure_dir(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
 
     @patch("subprocess.run")
     def test_remove_file_or_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "file_to_remove"
         path.touch()
-        remove_file_or_dir_with_sudo(path, sudo=True)
+        remove(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True)
 
     @patch("subprocess.run")
     def test_create_symlink_manually_with_sudo(self, mock_run) -> None:
         src = self.root / "src_file"
         dst = self.root / "dst_link"
-        create_symlink_manually_with_sudo(src, dst, sudo=True)
+        create_symlink(src, dst, sudo=True)
         # Verify run was called with sudo ln -s
         mock_run.assert_any_call(["sudo", "ln", "-s", str(src), str(dst)], check=True, capture_output=True)
 
@@ -291,7 +296,7 @@ class TestFileUtils(unittest.TestCase):
         mock_proc.stdout = str(self.root / ".tmp_dst_file_123456")
         mock_run.return_value = mock_proc
 
-        atomic_copy_file_with_sudo(src, dst, sudo=True)
+        copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "mktemp", "-p", str(dst.parent), f".tmp_{dst.name}_XXXXXX"], check=True, capture_output=True, text=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(self.root / ".tmp_dst_file_123456")], check=True, capture_output=True)
         mock_run.assert_any_call(["sudo", "mv", "-f", str(self.root / ".tmp_dst_file_123456"), str(dst)], check=True, capture_output=True)
@@ -299,7 +304,7 @@ class TestFileUtils(unittest.TestCase):
         # 2. Fallback when mktemp fails
         mock_run.reset_mock()
         mock_run.side_effect = [Exception("mktemp failed"), MagicMock()]
-        atomic_copy_file_with_sudo(src, dst, sudo=True)
+        copy_file(src, dst, sudo=True)
         mock_run.assert_any_call(["sudo", "cp", "-p", str(src), str(dst)], check=True, capture_output=True)
 
     @patch("subprocess.run")
@@ -308,17 +313,17 @@ class TestFileUtils(unittest.TestCase):
         dst = self.root / "dst_file"
 
         # 1. Non-sudo copy file (resolve_symlinks=True)
-        copy_or_move_file_or_dir_external(src, dst, sudo=False, chown=False, move=False, resolve_symlinks=True)
+        copy_tree(src, dst, sudo=False, chown=False, resolve_symlinks=True)
         mock_run.assert_any_call(["cp", "-L", str(src), str(dst)], check=True, capture_output=True)
 
         # 2. Sudo copy dir (resolve_symlinks=False, chown=True)
         dir_src = self.root / "src_dir"
         dir_src.mkdir()
-        copy_or_move_file_or_dir_external(dir_src, dst, sudo=True, chown=True, move=False, resolve_symlinks=False)
+        copy_tree(dir_src, dst, sudo=True, chown=True, resolve_symlinks=False)
         mock_run.assert_any_call(["sudo", "cp", "-RP", str(dir_src), str(dst)], check=True, capture_output=True)
 
         # 3. Move file (sudo=False, resolve_symlinks=False)
-        copy_or_move_file_or_dir_external(src, dst, sudo=False, chown=False, move=True, resolve_symlinks=False)
+        move_tree(src, dst, sudo=False, chown=False, resolve_symlinks=False)
         mock_run.assert_any_call(["mv", str(src), str(dst)], check=True, capture_output=True)
 
     def test_file_operations_windows_fallback(self) -> None:
@@ -329,26 +334,26 @@ class TestFileUtils(unittest.TestCase):
         target_dir = self.root / "win_dir"
 
         with patch("sys.platform", "win32"), patch("subprocess.run") as mock_run:
-            # 1. ensure_dir_exists_with_sudo
-            ensure_dir_exists_with_sudo(target_dir, sudo=True)
+            # 1. ensure_dir
+            ensure_dir(target_dir, sudo=True)
             self.assertTrue(target_dir.is_dir())
             mock_run.assert_not_called()
 
-            # 2. atomic_copy_file_with_sudo
-            atomic_copy_file_with_sudo(src_file, dst_file, sudo=True)
+            # 2. copy_file
+            copy_file(src_file, dst_file, sudo=True)
             self.assertTrue(dst_file.exists())
             self.assertEqual(dst_file.read_text(encoding="utf-8"), "windows file content")
             mock_run.assert_not_called()
 
-            # 3. copy_or_move_file_or_dir_external (copy)
+            # 3. copy_tree
             dst_copy = self.root / "win_copy.txt"
-            copy_or_move_file_or_dir_external(src_file, dst_copy, sudo=True)
+            copy_tree(src_file, dst_copy, sudo=True)
             self.assertTrue(dst_copy.exists())
             self.assertEqual(dst_copy.read_text(encoding="utf-8"), "windows file content")
             mock_run.assert_not_called()
 
-            # 4. remove_file_or_dir_with_sudo
-            remove_file_or_dir_with_sudo(dst_copy, sudo=True)
+            # 4. remove
+            remove(dst_copy, sudo=True)
             self.assertFalse(dst_copy.exists())
             mock_run.assert_not_called()
 
@@ -400,7 +405,7 @@ class TestFileUtils(unittest.TestCase):
         src.symlink_to("another_non_existent")
         dst = self.root / "dst_link"
         
-        atomic_copy_symlink(src, dst)
+        copy_symlink(src, dst)
         self.assertTrue(dst.is_symlink())
         self.assertEqual(os.readlink(dst), "another_non_existent")
 
@@ -411,7 +416,7 @@ class TestFileUtils(unittest.TestCase):
         src_valid.symlink_to(target_file)
         dst_valid = self.root / "dst_valid_link"
 
-        atomic_copy_symlink(src_valid, dst_valid)
+        copy_symlink(src_valid, dst_valid)
         self.assertTrue(dst_valid.is_symlink())
         self.assertEqual(os.readlink(dst_valid), str(target_file))
 
@@ -493,42 +498,42 @@ class TestFileUtils(unittest.TestCase):
         self.assertEqual(os.readlink(dest_link), "nested_non_existent")
 
     def test_expand_user_and_env(self) -> None:
-        from drift.utils.file_utils import expand_user_and_env
+        from drift.utils.path_utils import expand_path
 
         # 1. Test empty string
-        self.assertEqual(expand_user_and_env(""), Path("."))
+        self.assertEqual(expand_path(""), Path("."))
 
         # 2. Test '~' expansion
         home = Path.home()
-        self.assertEqual(expand_user_and_env("~"), home)
-        self.assertEqual(expand_user_and_env("~/my_config"), home / "my_config")
-        self.assertEqual(expand_user_and_env(r"~\my_config"), home / "my_config")
+        self.assertEqual(expand_path("~"), home)
+        self.assertEqual(expand_path("~/my_config"), home / "my_config")
+        self.assertEqual(expand_path(r"~\my_config"), home / "my_config")
 
         # 3. Test Windows %VAR% expansion when platform is win32
         with patch("sys.platform", "win32"):
             with patch.dict(os.environ, {"CUSTOM_APP_PATH": "/custom/path", "USERPROFILE": "/custom/user"}):
-                self.assertEqual(expand_user_and_env("%CUSTOM_APP_PATH%/sub"), Path("/custom/path/sub"))
-                self.assertEqual(expand_user_and_env("%USERPROFILE%/config"), Path("/custom/user/config"))
+                self.assertEqual(expand_path("%CUSTOM_APP_PATH%/sub"), Path("/custom/path/sub"))
+                self.assertEqual(expand_path("%USERPROFILE%/config"), Path("/custom/user/config"))
 
             # Test Windows %VAR% expansion with fallback dictionary (when not in os.environ)
             with patch.dict(os.environ, {}, clear=True):
-                res_appdata = expand_user_and_env("%APPDATA%/myapp")
+                res_appdata = expand_path("%APPDATA%/myapp")
                 self.assertEqual(res_appdata, home / "AppData" / "Roaming" / "myapp")
 
-                res_localappdata = expand_user_and_env("%LOCALAPPDATA%/myapp")
+                res_localappdata = expand_path("%LOCALAPPDATA%/myapp")
                 self.assertEqual(res_localappdata, home / "AppData" / "Local" / "myapp")
 
         # 4. Test non-Windows platform preserves %VAR% literally
         with patch("sys.platform", "linux"):
-            self.assertEqual(expand_user_and_env("%USERPROFILE%/config"), Path("%USERPROFILE%/config"))
+            self.assertEqual(expand_path("%USERPROFILE%/config"), Path("%USERPROFILE%/config"))
 
         # 5. Test POSIX $VAR / ${VAR} expansion across platforms
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": "/xdg/config"}):
-            self.assertEqual(expand_user_and_env("$XDG_CONFIG_HOME/app"), Path("/xdg/config/app"))
-            self.assertEqual(expand_user_and_env("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
+            self.assertEqual(expand_path("$XDG_CONFIG_HOME/app"), Path("/xdg/config/app"))
+            self.assertEqual(expand_path("${XDG_CONFIG_HOME}/app"), Path("/xdg/config/app"))
 
     def test_has_admin_privileges_and_run_sudo_command(self) -> None:
-        from drift.utils.file_utils import has_admin_privileges, run_sudo_command
+        from drift.utils.process_utils import has_admin_privileges, run_sudo_command
 
         # Linux non-root
         with patch("sys.platform", "linux"), patch("os.geteuid", return_value=1000):
@@ -547,7 +552,7 @@ class TestFileUtils(unittest.TestCase):
                 mock_run.assert_called_with(["echo", "hello"], check=True, capture_output=True)
 
     def test_check_sudo_privilege(self) -> None:
-        from drift.utils.file_utils import check_sudo_privilege
+        from drift.utils.process_utils import check_sudo_privilege
 
         # If sudo is not required, does nothing
         check_sudo_privilege(sudo_required=False)
@@ -578,7 +583,7 @@ class TestFileUtils(unittest.TestCase):
             check_sudo_privilege(sudo_required=True)
 
     def test_is_binary_file(self) -> None:
-        from drift.utils.file_utils import is_binary_file
+        from drift.utils.file_inspect import is_binary_file
 
         text_file = self.root / "sample.txt"
         text_file.write_text("Hello world!\nLine 2\n", encoding="utf-8")
@@ -589,59 +594,59 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(is_binary_file(bin_file))
 
     def test_normalize_newlines_bytes(self) -> None:
-        from drift.utils.file_utils import normalize_newlines_bytes
+        from drift.utils.file_inspect import normalize_newlines
         from drift.core.constants import LineEnding
 
         # to CRLF
         raw_lf = b"line1\nline2\nline3"
-        self.assertEqual(normalize_newlines_bytes(raw_lf, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
+        self.assertEqual(normalize_newlines(raw_lf, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
 
         # to CRLF idempotent with existing CRLF
         mixed = b"line1\r\nline2\nline3"
-        self.assertEqual(normalize_newlines_bytes(mixed, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
+        self.assertEqual(normalize_newlines(mixed, line_ending=LineEnding.CRLF), b"line1\r\nline2\r\nline3")
 
         # to LF
         crlf = b"line1\r\nline2\r\nline3"
-        self.assertEqual(normalize_newlines_bytes(crlf, line_ending=LineEnding.LF), b"line1\nline2\nline3")
+        self.assertEqual(normalize_newlines(crlf, line_ending=LineEnding.LF), b"line1\nline2\nline3")
 
         # PRESERVE
-        self.assertEqual(normalize_newlines_bytes(raw_lf, line_ending=LineEnding.PRESERVE), raw_lf)
+        self.assertEqual(normalize_newlines(raw_lf, line_ending=LineEnding.PRESERVE), raw_lf)
 
     def test_write_file_contents_with_sudo(self) -> None:
-        from drift.utils.file_utils import write_file_contents_with_sudo
+        from drift.utils.file_ops import write_file
 
         target_file = self.root / "nested" / "dir" / "out.txt"
-        write_file_contents_with_sudo(target_file, "text content", sudo=False, permission=0o755)
+        write_file(target_file, "text content", sudo=False, permission=0o755)
 
         self.assertTrue(target_file.is_file())
         self.assertEqual(target_file.read_text(encoding="utf-8"), "text content")
         self.assertTrue(bool(target_file.stat().st_mode & 0o111))
 
     def test_atomic_copy_file_with_sudo_crlf_translation(self) -> None:
-        from drift.utils.file_utils import atomic_copy_file_with_sudo
+        from drift.utils.file_ops import copy_file
         from drift.core.constants import LineEnding
 
         # 1. Text file: LF -> CRLF
         src_text = self.root / "src_text.txt"
         src_text.write_bytes(b"hello\nworld\n")
         dst_crlf = self.root / "dst_crlf.txt"
-        atomic_copy_file_with_sudo(src_text, dst_crlf, sudo=False, line_ending=LineEnding.CRLF)
+        copy_file(src_text, dst_crlf, sudo=False, line_ending=LineEnding.CRLF)
         self.assertEqual(dst_crlf.read_bytes(), b"hello\r\nworld\r\n")
 
         # 2. Text file: CRLF -> LF
         dst_lf = self.root / "dst_lf.txt"
-        atomic_copy_file_with_sudo(dst_crlf, dst_lf, sudo=False, line_ending=LineEnding.LF)
+        copy_file(dst_crlf, dst_lf, sudo=False, line_ending=LineEnding.LF)
         self.assertEqual(dst_lf.read_bytes(), b"hello\nworld\n")
 
         # 3. Binary file: remains byte-identical regardless of line_ending
         src_bin = self.root / "src.bin"
         src_bin.write_bytes(b"data\x00with\nnulls\r\n")
         dst_bin = self.root / "dst.bin"
-        atomic_copy_file_with_sudo(src_bin, dst_bin, sudo=False, line_ending=LineEnding.CRLF)
+        copy_file(src_bin, dst_bin, sudo=False, line_ending=LineEnding.CRLF)
         self.assertEqual(dst_bin.read_bytes(), b"data\x00with\nnulls\r\n")
 
     def test_file_contents_differ_convert_line_endings(self) -> None:
-        from drift.utils.file_utils import file_contents_differ
+        from drift.utils.file_inspect import contents_differ
 
         f1 = self.root / "f1.txt"
         f2 = self.root / "f2.txt"
@@ -650,24 +655,24 @@ class TestFileUtils(unittest.TestCase):
         f2.write_bytes(b"line1\r\nline2\r\n")
 
         # convert_line_endings=True: they match
-        self.assertFalse(file_contents_differ(f1, f2, convert_line_endings=True))
+        self.assertFalse(contents_differ(f1, f2, convert_line_endings=True))
 
         # convert_line_endings=False: they differ
-        self.assertTrue(file_contents_differ(f1, f2, convert_line_endings=False))
+        self.assertTrue(contents_differ(f1, f2, convert_line_endings=False))
 
     def test_unlock_file_or_dir_if_windows(self) -> None:
-        from drift.utils.file_utils import unlock_file_or_dir_if_windows, remove_file_or_dir
+        from drift.utils.file_ops import clear_readonly, remove
 
         # 1. On non-windows: does nothing without errors
         target_file = self.root / "locked_file.txt"
         target_file.write_text("locked", encoding="utf-8")
         target_file.chmod(0o444)
         with patch("sys.platform", "linux"):
-            unlock_file_or_dir_if_windows(target_file)
+            clear_readonly(target_file)
 
         # 2. On windows: removes read-only attribute
         with patch("sys.platform", "win32"):
-            unlock_file_or_dir_if_windows(target_file)
+            clear_readonly(target_file)
             # Check that write permission is restored
             self.assertTrue(bool(target_file.stat().st_mode & 0o200))
 
@@ -679,49 +684,51 @@ class TestFileUtils(unittest.TestCase):
         child_file.chmod(0o444)
 
         with patch("sys.platform", "win32"):
-            unlock_file_or_dir_if_windows(target_dir)
+            clear_readonly(target_dir)
             self.assertTrue(bool(child_file.stat().st_mode & 0o200))
 
         # Clean removal
-        remove_file_or_dir(target_file)
-        remove_file_or_dir(target_dir)
+        remove(target_file)
+        remove(target_dir)
         self.assertFalse(target_file.exists())
         self.assertFalse(target_dir.exists())
 
     def test_atomic_copy_file(self) -> None:
-        from drift.utils.file_utils import atomic_copy_file, LineEnding
+        from drift.utils.file_ops import copy_file
+        from drift.core.constants import LineEnding
         src = self.root / "source.txt"
         dst = self.root / "dest_dir" / "dest.txt"
         src.write_text("hello atomic copy", encoding="utf-8")
 
         # 1. Normal atomic copy to new destination
-        atomic_copy_file(src, dst)
+        copy_file(src, dst)
         self.assertTrue(dst.exists())
         self.assertEqual(dst.read_text(encoding="utf-8"), "hello atomic copy")
 
         # 2. Overwrite existing file atomically
         src.write_text("updated atomic copy", encoding="utf-8")
-        atomic_copy_file(src, dst)
+        copy_file(src, dst)
         self.assertEqual(dst.read_text(encoding="utf-8"), "updated atomic copy")
 
         # 3. Copy with CRLF normalization
         src_crlf = self.root / "crlf.txt"
         src_crlf.write_bytes(b"line1\r\nline2\r\n")
         dst_lf = self.root / "dest_dir" / "dest_lf.txt"
-        atomic_copy_file(src_crlf, dst_lf, line_ending=LineEnding.LF)
+        copy_file(src_crlf, dst_lf, line_ending=LineEnding.LF)
         self.assertEqual(dst_lf.read_bytes(), b"line1\nline2\n")
 
         # 4. Copy symlink without following
         symlink_src = self.root / "sym_src.txt"
         symlink_src.symlink_to(src)
         dst_sym = self.root / "dest_dir" / "dest_sym.txt"
-        atomic_copy_file(symlink_src, dst_sym, follow_symlinks=False)
+        copy_file(symlink_src, dst_sym, follow_symlinks=False)
         self.assertTrue(dst_sym.is_symlink())
         self.assertEqual(os.readlink(dst_sym), str(src))
 
     def test_file_permissions_differ_and_mode_only(self) -> None:
         import sys
-        from drift.utils.file_utils import file_permissions_differ, is_mode_only_change, copy_file_mode_with_sudo, atomic_copy_file
+        from drift.utils.file_inspect import permissions_differ, is_mode_only_change
+        from drift.utils.file_ops import copy_permissions, copy_file
         if sys.platform == "win32":
             return
 
@@ -732,23 +739,23 @@ class TestFileUtils(unittest.TestCase):
         f1.chmod(0o755)
         f2.chmod(0o644)
 
-        self.assertTrue(file_permissions_differ(f1, f2))
+        self.assertTrue(permissions_differ(f1, f2))
         self.assertTrue(is_mode_only_change(f1, f2))
 
         # Copy mode directly
-        copy_file_mode_with_sudo(f1, f2, sudo=False)
-        self.assertFalse(file_permissions_differ(f1, f2))
+        copy_permissions(f1, f2, sudo=False)
+        self.assertFalse(permissions_differ(f1, f2))
         self.assertFalse(is_mode_only_change(f1, f2))
 
-        # Test atomic_copy_file mode-only update
+        # Test copy_file mode-only update
         f2.chmod(0o644)
-        atomic_copy_file(f1, f2)
+        copy_file(f1, f2)
         self.assertTrue(bool(f2.stat().st_mode & 0o111))
 
     def test_run_command_debug_logging(self) -> None:
         """Verifies run_command logs external command and stdout/stderr in debug mode."""
         import sys
-        from drift.utils.file_utils import run_command
+        from drift.utils.process_utils import run_command
 
         set_test_mode(True, enable_logging=True)
         try:
@@ -764,31 +771,31 @@ class TestFileUtils(unittest.TestCase):
 
 
     def test_is_editor_or_os_temporary_file(self) -> None:
-        """Verifies is_editor_or_os_temporary_file correctly matches temporary files and ignores normal files."""
-        from drift.utils.file_utils import is_editor_or_os_temporary_file
+        """Verifies is_temp_file correctly matches temporary files and ignores normal files."""
+        from drift.utils.file_inspect import is_temp_file
 
         # Temporary / editor / OS files
-        self.assertTrue(is_editor_or_os_temporary_file(".stow-local-ignore"))
-        self.assertTrue(is_editor_or_os_temporary_file(".gitignore"))
-        self.assertTrue(is_editor_or_os_temporary_file("#file.txt#"))
-        self.assertTrue(is_editor_or_os_temporary_file(".#file.txt"))
-        self.assertTrue(is_editor_or_os_temporary_file("file.txt~"))
-        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swp"))
-        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swo"))
-        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.swa"))
-        self.assertTrue(is_editor_or_os_temporary_file(".file.txt.un~"))
-        self.assertTrue(is_editor_or_os_temporary_file(".DS_Store"))
-        self.assertTrue(is_editor_or_os_temporary_file("Thumbs.db"))
-        self.assertTrue(is_editor_or_os_temporary_file("/path/to/nested/#emacs_save#"))
+        self.assertTrue(is_temp_file(".stow-local-ignore"))
+        self.assertTrue(is_temp_file(".gitignore"))
+        self.assertTrue(is_temp_file("#file.txt#"))
+        self.assertTrue(is_temp_file(".#file.txt"))
+        self.assertTrue(is_temp_file("file.txt~"))
+        self.assertTrue(is_temp_file(".file.txt.swp"))
+        self.assertTrue(is_temp_file(".file.txt.swo"))
+        self.assertTrue(is_temp_file(".file.txt.swa"))
+        self.assertTrue(is_temp_file(".file.txt.un~"))
+        self.assertTrue(is_temp_file(".DS_Store"))
+        self.assertTrue(is_temp_file("Thumbs.db"))
+        self.assertTrue(is_temp_file("/path/to/nested/#emacs_save#"))
 
         # Normal and configuration files
-        self.assertFalse(is_editor_or_os_temporary_file("drift_package.toml"))
-        self.assertFalse(is_editor_or_os_temporary_file("drift_package.local.toml"))
-        self.assertFalse(is_editor_or_os_temporary_file(".drift_ignore"))
-        self.assertFalse(is_editor_or_os_temporary_file("file.txt"))
-        self.assertFalse(is_editor_or_os_temporary_file("main.py"))
-        self.assertFalse(is_editor_or_os_temporary_file("README.md"))
-        self.assertFalse(is_editor_or_os_temporary_file("swp_file.py"))
+        self.assertFalse(is_temp_file("drift_package.toml"))
+        self.assertFalse(is_temp_file("drift_package.local.toml"))
+        self.assertFalse(is_temp_file(".drift_ignore"))
+        self.assertFalse(is_temp_file("file.txt"))
+        self.assertFalse(is_temp_file("main.py"))
+        self.assertFalse(is_temp_file("README.md"))
+        self.assertFalse(is_temp_file("swp_file.py"))
 
 
 if __name__ == "__main__":

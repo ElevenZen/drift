@@ -9,12 +9,12 @@ from ..config.workspace_config import WorkspaceConfig, RenderEngineConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.result_models import AddResourceResult
-from ..utils.file_utils import (
-    translate_dot_prefixes_reverse,
+from ..utils.path_utils import (
+    decode_dot_prefix,
     is_relative_to,
-    resolve_system_target,
-    atomic_copy_file,
+    resolve_target_path,
 )
+from ..utils.file_ops import copy_file
 from ..core.ignore import DriftIgnore, IgnoreHandler
 from ..core.folder_diff import list_folder_paths
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
@@ -74,7 +74,7 @@ def generate_import_worklist(
         
         rel_root_target = abs_import.relative_to(target_base)
         # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
-        repo_prefix = translate_dot_prefixes_reverse(rel_root_target)
+        repo_prefix = decode_dot_prefix(rel_root_target)
 
         # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
         class ScopedIgnore(IgnoreHandler):
@@ -156,7 +156,7 @@ def run_primitive_11_add_resources(
     # 5. Execution Phase
     imported_files: List[str] = [str(src_on_system) for src_on_system, _ in full_worklist]
     for src_on_system, rel_target in full_worklist:
-        rel_src = translate_dot_prefixes_reverse(rel_target)
+        rel_src = decode_dot_prefix(rel_target)
         dest_path = src_dir_to_render / rel_src
         
         if dry_run:
@@ -167,7 +167,7 @@ def run_primitive_11_add_resources(
         logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
 
         dest_path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(src_on_system, dest_path)
+        copy_file(src_on_system, dest_path)
 
     if dry_run:
         return AddResourceResult(

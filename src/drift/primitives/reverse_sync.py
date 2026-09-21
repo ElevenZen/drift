@@ -7,13 +7,13 @@ from typing import List, Optional, Union, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..core.constants import MANAGED_CONFIG_FILES
 from ..core.ignore import DriftIgnore, IgnoreHandler
-from ..utils.file_utils import (
+from ..utils.path_utils import (
     is_relative_to,
-    resolve_system_target,
-    translate_dot_prefixes,
-    translate_dot_prefixes_reverse,
-    remove_file_or_dir,
+    resolve_target_path,
+    encode_dot_prefix,
+    decode_dot_prefix,
 )
+from ..utils.file_ops import remove
 from ..core.folder_diff import compare_folders
 from ..core.sync_ops import reverse_sync_file_or_dir
 from ..config.package_config import PackageConfig
@@ -33,7 +33,7 @@ def sync_file_to_install(
     Returns (drifted_file_str, synced_file_str).
     """
     system_file = target_dir_path / rel
-    repo_rel = translate_dot_prefixes_reverse(rel)
+    repo_rel = decode_dot_prefix(rel)
     repo_file = install_pkg_dir / repo_rel
     reverse_sync_file_or_dir(system_file, repo_file, ignore_handler=ignore_handler)
     return str(rel), str(repo_rel)
@@ -51,7 +51,7 @@ def filter_added_files_to_sync(
     2. Or a parent directory was deleted in repo (promoted tracked file).
     Internal managed config files are ignored.
     """
-    normalized_fcds = [translate_dot_prefixes(f) for f in fully_controlled_dirs]
+    normalized_fcds = [encode_dot_prefix(f) for f in fully_controlled_dirs]
     to_sync = []
     for rel in added_files:
         if rel.name in MANAGED_CONFIG_FILES:
@@ -101,7 +101,7 @@ def sync_tracked_files(
             continue
         if ignore_handler and ignore_handler.match_path(repo_rel):
             continue
-        target_rel = translate_dot_prefixes(repo_rel)
+        target_rel = encode_dot_prefix(repo_rel)
         system_target = target_dir_path / target_rel
         repo_file = install_pkg_dir / repo_rel
 
@@ -118,7 +118,7 @@ def sync_tracked_files(
             # Host target is missing -> System Deletion
             if repo_file.exists() or repo_file.is_symlink():
                 logger.info(f"System Deletion: '{system_target}' is missing. Deleting counterpart '{repo_file}' from install/...")
-                remove_file_or_dir(repo_file)
+                remove(repo_file)
                 record_sync_result(str(target_rel), str(repo_rel), drifted_files, synced_files)
 
     # 2. Handle system modifications (items modified on host)
@@ -127,7 +127,7 @@ def sync_tracked_files(
             continue
         if ignore_handler and ignore_handler.match_path(repo_rel):
             continue
-        target_rel = translate_dot_prefixes(repo_rel)
+        target_rel = encode_dot_prefix(repo_rel)
         drifted_str, synced_str = sync_file_to_install(
             rel=target_rel,
             target_dir_path=target_dir_path,
@@ -138,7 +138,7 @@ def sync_tracked_files(
 
     # 3. Handle diff.deleted (sub-items created inside directories on host when repo was a file)
     for target_rel in diff.deleted:
-        repo_rel = translate_dot_prefixes_reverse(target_rel)
+        repo_rel = decode_dot_prefix(target_rel)
         if repo_rel.name in MANAGED_CONFIG_FILES:
             continue
         if ignore_handler and ignore_handler.match_path(repo_rel):
@@ -163,8 +163,8 @@ def sync_single_fcd(
     synced_files: List[str]
 ) -> None:
     """Reverse-syncs wild additions, modifications, and deletions within a single Fully-Controlled Directory."""
-    fcd_repo_rel = translate_dot_prefixes_reverse(fcd)
-    fcd_target_rel = translate_dot_prefixes(fcd)
+    fcd_repo_rel = decode_dot_prefix(fcd)
+    fcd_target_rel = encode_dot_prefix(fcd)
     fcd_system_dir = target_dir_path / fcd_target_rel
     fcd_install_dir = install_pkg_dir / fcd_repo_rel
 
@@ -185,7 +185,7 @@ def sync_single_fcd(
 
     class ScopedIgnore(IgnoreHandler):
         def match_path(self, rel_path: Path) -> bool:
-            repo_sub = fcd_repo_rel / translate_dot_prefixes_reverse(rel_path) if rel_path != Path("") else fcd_repo_rel
+            repo_sub = fcd_repo_rel / decode_dot_prefix(rel_path) if rel_path != Path("") else fcd_repo_rel
             return ignore_handler.match_path(repo_sub)
 
     fcd_diff = compare_folders(
@@ -198,14 +198,14 @@ def sync_single_fcd(
 
     # 1. Process deletions first to resolve multi-level type changes and clear obsolete paths
     for sub_rel in fcd_diff.deleted:
-        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
+        full_repo_rel = fcd_repo_rel / decode_dot_prefix(sub_rel) if sub_rel != Path("") else fcd_repo_rel
         if full_repo_rel.name in MANAGED_CONFIG_FILES or ignore_handler.match_path(full_repo_rel):
             continue
         repo_file = install_pkg_dir / full_repo_rel
         if repo_file.exists() or repo_file.is_symlink():
             full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
             logger.info(f"System Deletion (FCD): '{target_dir_path / full_target_rel}' is missing. Deleting counterpart '{repo_file}' from install/...")
-            remove_file_or_dir(repo_file)
+            remove(repo_file)
             record_sync_result(str(full_target_rel), str(full_repo_rel), drifted_files, synced_files)
 
     # 2. Process additions and modifications after deletions
@@ -213,7 +213,7 @@ def sync_single_fcd(
         if sub_rel.name in MANAGED_CONFIG_FILES:
             continue
         full_target_rel = fcd_target_rel / sub_rel if sub_rel != Path("") else fcd_target_rel
-        full_repo_rel = fcd_repo_rel / translate_dot_prefixes_reverse(sub_rel) if sub_rel != Path("") else fcd_repo_rel
+        full_repo_rel = fcd_repo_rel / decode_dot_prefix(sub_rel) if sub_rel != Path("") else fcd_repo_rel
         if ignore_handler.match_path(full_repo_rel):
             continue
         drifted_str, synced_str = sync_file_to_install(

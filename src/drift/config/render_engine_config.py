@@ -352,9 +352,9 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         Returns RenderSourceMatch with status="match" if it's an exact rendering match,
         or status="block" if an intermediate path segment is blocked by a file.
         """
-        from ..utils.file_utils import translate_dot_prefixes_reverse
+        from ..utils.path_utils import decode_dot_prefix
         
-        translated_path = translate_dot_prefixes_reverse(rel_target_path)
+        translated_path = decode_dot_prefix(rel_target_path)
         parts = translated_path.parts
         
         current_dir = src_pkg_dir

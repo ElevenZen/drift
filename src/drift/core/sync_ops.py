@@ -5,14 +5,13 @@ from pathlib import Path
 from typing import Optional
 
 from .folder_diff import compare_folders
-from ..utils.file_utils import (
-    remove_file_or_dir,
-    remove_file_or_dir_with_sudo,
-    copy_or_move_file_or_dir_external,
-    atomic_copy_file,
-    atomic_copy_symlink,
-    run_command,
+from ..utils.file_ops import (
+    remove,
+    move_tree,
+    copy_file,
+    copy_symlink,
 )
+from ..utils.process_utils import run_command
 from .constants import MANAGED_CONFIG_FILES, LineEnding
 from .ignore import IgnoreHandler
 
@@ -35,7 +34,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
             continue
         target_dst = dst / rel_file if rel_file != Path("") else dst
         logger.info(f"System Deletion: '{src / rel_file if rel_file != Path('') else src}' is missing. Deleting counterpart '{target_dst}' from install/...")
-        remove_file_or_dir(target_dst)
+        remove(target_dst)
 
     # Process additions and modifications
     for rel_file in diff.added + diff.modified:
@@ -57,13 +56,13 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
                 is_broken = True
 
         if is_broken:
-            atomic_copy_symlink(target_src, target_dst)
+            copy_symlink(target_src, target_dst)
             continue
 
         logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
-        remove_file_or_dir(target_dst)
+        remove(target_dst)
         target_dst.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(
+        copy_file(
             target_src,
             target_dst,
             line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
@@ -79,10 +78,10 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
         return
 
     # Safely remove backup_dest if it already exists, to avoid conflicts.
-    remove_file_or_dir_with_sudo(backup_dest, sudo)
+    remove(backup_dest, sudo)
 
     if not resolve_symlinks:
-        copy_or_move_file_or_dir_external(src, backup_dest, sudo, move=True, resolve_symlinks=False)
+        move_tree(src, backup_dest, sudo, resolve_symlinks=False)
         return
 
     # resolve_symlinks is True: Use FolderDiff to plan recursive backup/move
@@ -112,11 +111,11 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
 
         if is_broken:
             # For broken links, we can't resolve, so we copy the link itself and then remove source
-            copy_or_move_file_or_dir_external(target_src, target_dst, sudo, move=True, resolve_symlinks=False)
+            move_tree(target_src, target_dst, sudo, resolve_symlinks=False)
         else:
             # For normal files and healthy links: move them (copy then remove source)
-            copy_or_move_file_or_dir_external(target_src, target_dst, sudo, move=True, resolve_symlinks=True)
+            move_tree(target_src, target_dst, sudo, resolve_symlinks=True)
 
     # After moving all children, if src was a directory, we need to remove the empty directory shell
     if src.is_dir() and not src.is_symlink():
-        remove_file_or_dir_with_sudo(src, sudo)
+        remove(src, sudo)

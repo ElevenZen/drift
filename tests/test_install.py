@@ -27,7 +27,7 @@ from drift.core.state_registry import (
 from drift.core.exceptions import InstallCollisionError
 from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
-        resolve_system_target,
+        resolve_target_path,
         run_primitive_5_install_deployment,
         get_stow_version,
         is_stow_version_sufficient,
@@ -39,9 +39,9 @@ from drift.primitives.install_repo import (
         PackageInstallContext,
         check_cross_package_file_conflicts,
 )
-from drift.utils.file_utils import (
-        ensure_dir_exists_with_sudo,
-        ensure_directory_writable,
+from drift.utils.file_ops import (
+        ensure_dir,
+        ensure_writable,
 )
 
 
@@ -173,15 +173,15 @@ class TestInstallRepo(unittest.TestCase):
     def test_resolve_system_target(self) -> None:
         """Verifies resolves system targets correctly, translating dot- prefixes to dot."""
         # Simple file resolution
-        resolved = resolve_system_target(Path("dot-bashrc"), self.system_target_dir)
+        resolved = resolve_target_path(Path("dot-bashrc"), self.system_target_dir)
         self.assertEqual(resolved, self.system_target_dir / ".bashrc")
 
         # Nested folder and file resolution
-        resolved = resolve_system_target(Path("dot-config/nvim/dot-init.lua"), self.system_target_dir)
+        resolved = resolve_target_path(Path("dot-config/nvim/dot-init.lua"), self.system_target_dir)
         self.assertEqual(resolved, self.system_target_dir / ".config" / "nvim" / ".init.lua")
 
         # Non-prefixed parts remain untouched
-        resolved = resolve_system_target(Path("regular_dir/regular_file.txt"), self.system_target_dir)
+        resolved = resolve_target_path(Path("regular_dir/regular_file.txt"), self.system_target_dir)
         self.assertEqual(resolved, self.system_target_dir / "regular_dir" / "regular_file.txt")
 
     def test_install_stow_incremental_deployment(self) -> None:
@@ -745,7 +745,7 @@ class TestInstallRepo(unittest.TestCase):
             os.path.abspath(os.path.join(nested_src_dir, "config.json"))
         )
 
-    @patch("drift.primitives.install_repo.ensure_dir_exists_with_sudo")
+    @patch("drift.primitives.install_repo.ensure_dir")
     @patch("subprocess.run")
     def test_run_stow_deployment(self, mock_run, mock_ensure_dir) -> None:
         """Verifies that run_stow_deployment builds the correct stow command, ensures target exists, and runs it."""
@@ -1379,9 +1379,9 @@ class TestInstallRepo(unittest.TestCase):
 
         # 3. Setup system target directory:
         # A. valid_file.txt already points to pkg_install_dir / valid_file.txt (valid stow link)
-        from drift.utils.file_utils import get_relative_path
+        from drift.utils.path_utils import relative_path_between
         system_valid = self.system_target_dir / "valid_file.txt"
-        system_valid.symlink_to(get_relative_path(self.system_target_dir, pkg_install_dir / "valid_file.txt"))
+        system_valid.symlink_to(relative_path_between(self.system_target_dir, pkg_install_dir / "valid_file.txt"))
 
         # B. ignored_hook.sh on system is an obsolete file
         system_ignored = self.system_target_dir / "ignored_hook.sh"
@@ -1873,7 +1873,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_target.is_symlink())
         self.assertEqual(len(processed_paths), 0)
 
-    @patch("drift.primitives.install_repo.create_symlink_manually_with_sudo")
+    @patch("drift.primitives.install_repo.create_symlink")
     def test_deploy_single_stow_file_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
         """Verifies deploy_single_stow_file skips recreating symlink if target already points to source."""
         pkg = "pkg_stow_skip"

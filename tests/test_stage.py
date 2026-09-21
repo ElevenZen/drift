@@ -327,13 +327,13 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("misspelled_ignored.txt", stow_content)
 
     def test_tree_relative_files_utility(self) -> None:
-        """Tests tree_relative_files utility function."""
-        from drift.utils.file_utils import tree_relative_files
+        """Tests tree_files utility function."""
+        from drift.utils.file_inspect import tree_files
         nested_dir = self.drift_root / "nested_util"
         nested_dir.mkdir(parents=True, exist_ok=True)
         
         # Test empty or nonexistent dir
-        self.assertEqual(tree_relative_files(self.drift_root / "nonexistent"), [])
+        self.assertEqual(tree_files(self.drift_root / "nonexistent"), [])
         
         # Create nested files
         with open(nested_dir / "file1.txt", "w") as f:
@@ -343,11 +343,11 @@ class TestStageRepo(unittest.TestCase):
         with open(sub / "file2.txt", "w") as f:
             f.write("f2")
             
-        self.assertEqual(tree_relative_files(nested_dir), [Path("file1.txt"), Path("subdir/file2.txt")])
+        self.assertEqual(tree_files(nested_dir), [Path("file1.txt"), Path("subdir/file2.txt")])
 
     def test_file_contents_differ_utility(self) -> None:
-        """Tests file_contents_differ utility function."""
-        from drift.utils.file_utils import file_contents_differ
+        """Tests contents_differ utility function."""
+        from drift.utils.file_inspect import contents_differ
         util_dir = self.drift_root / "util_differ"
         util_dir.mkdir(parents=True, exist_ok=True)
         
@@ -363,13 +363,13 @@ class TestStageRepo(unittest.TestCase):
             f.write("hello world different")
             
         # Same contents and size
-        self.assertFalse(file_contents_differ(f1, f2))
+        self.assertFalse(contents_differ(f1, f2))
         # Different size/contents
-        self.assertTrue(file_contents_differ(f1, f3))
+        self.assertTrue(contents_differ(f1, f3))
 
     def test_rmdir_parents_utility(self) -> None:
-        """Tests rmdir_parents utility function."""
-        from drift.utils.file_utils import rmdir_parents
+        """Tests prune_empty_parents utility function."""
+        from drift.utils.file_ops import prune_empty_parents
         limit = self.drift_root / "limit_dir"
         limit.mkdir(parents=True, exist_ok=True)
         
@@ -377,7 +377,7 @@ class TestStageRepo(unittest.TestCase):
         sub.mkdir(parents=True, exist_ok=True)
         
         # Pruning from grandchild up to limit
-        rmdir_parents(sub, limit)
+        prune_empty_parents(sub, limit)
         
         # grandchild, child, and parent should be removed
         self.assertFalse((limit / "parent").exists())
@@ -509,8 +509,8 @@ class TestStageRepo(unittest.TestCase):
         self.assertTrue((pkg_install / "app.json").is_file())
 
     def test_delete_one_file_utility(self) -> None:
-        """Tests delete_one_file utility function."""
-        from drift.utils.file_utils import delete_one_file
+        """Tests remove_with_parents utility function."""
+        from drift.utils.file_ops import remove_with_parents
         util_dir = self.drift_root / "util_delete"
         util_dir.mkdir(parents=True, exist_ok=True)
         
@@ -523,7 +523,7 @@ class TestStageRepo(unittest.TestCase):
         with open(file_path, "w") as f:
             f.write("hello file")
             
-        delete_one_file(file_path, limit_dir=limit_dir)
+        remove_with_parents(file_path, limit_dir=limit_dir)
         
         # Verify file is deleted
         self.assertFalse(file_path.exists())
@@ -888,13 +888,13 @@ class TestStageRepo(unittest.TestCase):
         render_package(self.workspace_config, pkg_sudo_src)
 
         # Initial staging: changes exist, so check_sudo_privilege MUST be called
-        with patch("drift.utils.file_utils.check_sudo_privilege") as mock_sudo:
+        with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:
             changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes1), 1)
             mock_sudo.assert_called_once_with(True)
 
         # Second staging with ZERO changes: check_sudo_privilege must NOT be called
-        with patch("drift.utils.file_utils.check_sudo_privilege") as mock_sudo:
+        with patch("drift.primitives.stage_repo.check_sudo_privilege") as mock_sudo:
             changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, ["pkg_sudo"])
             self.assertEqual(len(changes2), 0)
             mock_sudo.assert_not_called()

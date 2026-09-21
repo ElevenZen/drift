@@ -33,7 +33,7 @@ from ..utils.git_utils import (
     git_init_repo,
     append_to_gitignore,
 )
-from ..utils.file_utils import ensure_directory_writable
+from ..utils.file_ops import ensure_writable
 
 
 logger = logging.getLogger(__name__)
@@ -45,7 +45,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     Only works if the directory is empty or tracked by git, unless force is True.
     """
     # 1. Ensure the provided drift_root path is valid and read-writable
-    ensure_directory_writable(drift_root, sudo=False)
+    ensure_writable(drift_root, sudo=False)
 
     # 2. Check if the directory is tracked by git
     is_git = is_git_tracked(drift_root)

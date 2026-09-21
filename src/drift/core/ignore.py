@@ -186,10 +186,10 @@ class DriftIgnore(IgnoreHandler):
         The input should not contain any symlink to other directories.
         The returned list excludes files that match the ignore patterns.
         """
-        from ..utils.file_utils import tree_relative_files
+        from ..utils.file_inspect import tree_files
         return [
             rel_file
-            for rel_file in tree_relative_files(install_pkg_dir)
+            for rel_file in tree_files(install_pkg_dir)
             if not self.match_path(rel_file)
         ]
 

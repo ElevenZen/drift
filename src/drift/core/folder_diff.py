@@ -22,21 +22,18 @@ class FolderDiff:
         translate_mode: Optional[str] = None
     ) -> bool:
         """Checks if a relative path in modified list is a mode-only change (content matches, executable mode differs)."""
-        from ..utils.file_utils import (
-            is_mode_only_change as _is_mode_only,
-            translate_dot_prefixes,
-            translate_dot_prefixes_reverse
-        )
+        from ..utils.file_inspect import is_mode_only_change
+        from ..utils.path_utils import encode_dot_prefix, decode_dot_prefix
 
         src_file = src_dir / rel_path
         if translate_mode == "forward":
-            dst_file = dst_dir / translate_dot_prefixes(rel_path)
+            dst_file = dst_dir / encode_dot_prefix(rel_path)
         elif translate_mode == "reverse":
-            dst_file = dst_dir / translate_dot_prefixes_reverse(rel_path)
+            dst_file = dst_dir / decode_dot_prefix(rel_path)
         else:
             dst_file = dst_dir / rel_path
 
-        return _is_mode_only(src_file, dst_file)
+        return is_mode_only_change(src_file, dst_file)
 
 def compare_folders(
     src_dir: Path,
@@ -69,28 +66,23 @@ def compare_folders(
       - Ensure destination directories inside internal state stores do not contain symlinks pointing
         into source directories.
     """
-    from ..utils.file_utils import (
-        file_contents_differ,
-        file_permissions_differ,
-        translate_dot_prefixes, 
-        translate_dot_prefixes_reverse,
-        is_relative_to
-    )
+    from ..utils.file_inspect import contents_differ, permissions_differ
+    from ..utils.path_utils import encode_dot_prefix, decode_dot_prefix, is_relative_to
 
     diff = FolderDiff()
 
     def _translate(rel: Path) -> Path:
         if translate_mode == "forward":
-            return translate_dot_prefixes(rel)
+            return encode_dot_prefix(rel)
         if translate_mode == "reverse":
-            return translate_dot_prefixes_reverse(rel)
+            return decode_dot_prefix(rel)
         return rel
 
     def _untranslate(rel: Path) -> Path:
         if translate_mode == "forward":
-            return translate_dot_prefixes_reverse(rel)
+            return decode_dot_prefix(rel)
         if translate_mode == "reverse":
-            return translate_dot_prefixes(rel)
+            return encode_dot_prefix(rel)
         return rel
 
     def visited_test_add(visited: set, rel: Path) -> Optional[Path]:
@@ -108,7 +100,7 @@ def compare_folders(
         """rel is relative to src_dir."""
         repo_rel = rel
         if translate_mode == "reverse":
-            repo_rel = translate_dot_prefixes_reverse(rel)
+            repo_rel = decode_dot_prefix(rel)
 
         if ignore_handler and ignore_handler.match_path(repo_rel):
             return
@@ -147,7 +139,7 @@ def compare_folders(
         """rel is relative to src_dir."""
         repo_rel = rel
         if translate_mode == "reverse":
-            repo_rel = translate_dot_prefixes_reverse(rel)
+            repo_rel = decode_dot_prefix(rel)
 
         if ignore_handler and ignore_handler.match_path(repo_rel):
             return
@@ -292,7 +284,7 @@ def compare_folders(
                 visited.remove(pair_key)
 
         elif p_src.is_file() and p_dst.is_file():
-            if file_contents_differ(p_src, p_dst) or file_permissions_differ(p_src, p_dst):
+            if contents_differ(p_src, p_dst) or permissions_differ(p_src, p_dst):
                 diff.modified.append(rel)
             else:
                 diff.matches.append(rel)
@@ -305,7 +297,7 @@ def compare_folders(
         # two kinds of visited keys: (src_resolved, dst_resolved) for directories, and src_resolved for files/symlinks
         repo_rel = rel
         if translate_mode == "reverse":
-            repo_rel = translate_dot_prefixes_reverse(rel)
+            repo_rel = decode_dot_prefix(rel)
             
         is_src_ignored = ignore_handler and ignore_handler.match_path(repo_rel)
         if is_src_ignored:
@@ -353,7 +345,7 @@ def list_folder_paths(
     If base_rel is provided, paths returned (and matched against ignore_handler)
     are prefixed by base_rel.
     """
-    from ..utils.file_utils import translate_dot_prefixes_reverse
+    from ..utils.path_utils import decode_dot_prefix
 
     results: List[Path] = []
     prefix = base_rel if base_rel is not None else Path("")
@@ -361,7 +353,7 @@ def list_folder_paths(
     def _walk(p_src: Path, rel: Path, visited: set):
         repo_rel = rel
         if translate_mode == "reverse":
-            repo_rel = translate_dot_prefixes_reverse(rel)
+            repo_rel = decode_dot_prefix(rel)
 
         if ignore_handler and ignore_handler.match_path(repo_rel):
             return

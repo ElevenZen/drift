@@ -7,7 +7,8 @@ from pathlib import Path
 from typing import List, Optional, Sequence, Union
 from dataclasses import dataclass, field
 
-from .file_utils import run_command, is_editor_or_os_temporary_file
+from .process_utils import run_command
+from .file_inspect import is_temp_file
 from ..core.constants import DRIFT_GENERATED_FILES
 
 logger = logging.getLogger(__name__)
@@ -82,7 +83,7 @@ def _parse_rename_entry(
     old_str, new_str = path_str.split(" -> ", 1)
     old_p = Path(old_str.strip('" '))
     new_p = Path(new_str.strip('" '))
-    if new_p.name in ignored_files or is_editor_or_os_temporary_file(new_p):
+    if new_p.name in ignored_files or is_temp_file(new_p):
         return None
     return GitRename(
         old_path=_normalize_pkg_relative_path(old_p, pkg_name),
@@ -119,7 +120,7 @@ def parse_git_status_porcelain(
             continue
 
         p = Path(path_str.strip('" '))
-        if p.name in ignored_files or is_editor_or_os_temporary_file(p):
+        if p.name in ignored_files or is_temp_file(p):
             continue
 
         rel_p = _normalize_pkg_relative_path(p, pkg_name)

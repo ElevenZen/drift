@@ -106,7 +106,7 @@ from ..utils.git_utils import (
     has_uncommitted_modifications,
     get_drift_root,
 )
-from ..utils.file_utils import remove_file_or_dir, atomic_copy_file
+from ..utils.file_ops import remove, copy_file
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 from ..utils.editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
@@ -309,14 +309,14 @@ def _sync_file_mode(src_file: Path, install_file: Path) -> None:
 def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
     """Copies a wild host-side added file into the declarative source folder."""
     dest = pkg_dir / rel_path
-    atomic_copy_file(install_pkg_dir / rel_path, dest)
+    copy_file(install_pkg_dir / rel_path, dest)
 
 
 def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
     """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
     install_file = install_pkg_dir / rel_path
     if install_file.exists() or install_file.is_symlink():
-        remove_file_or_dir(install_file)
+        remove(install_file)
             
     install_base = install_pkg_dir.parent
     rel_install_base = Path(install_pkg_dir.name) / rel_path
@@ -333,7 +333,7 @@ def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path
     """Symmetrically deletes the corresponding file from declarative source folder."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
-        remove_file_or_dir(src_file)
+        remove(src_file)
 
 
 def patch_and_edit(
@@ -392,7 +392,7 @@ def adopt_rename(
         new_src_file = src_dir_to_render / new_rel_path.parent / new_src_name
 
         new_src_file.parent.mkdir(parents=True, exist_ok=True)
-        atomic_copy_file(old_src_file, new_src_file)
+        copy_file(old_src_file, new_src_file)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in source directory. Creating a new template file for '{new_rel_path}'.")
         new_src_file = src_dir_to_render / new_rel_path
@@ -419,8 +419,8 @@ def adopt_rename(
 def fallback_over_render(src_file: Path, static_file: Path) -> None:
     """Backs up the original template to .bak and overwrites it with static file content (freezing template)."""
     bak_file = src_file.with_suffix(src_file.suffix + ".bak")
-    atomic_copy_file(src_file, bak_file)
-    atomic_copy_file(static_file, src_file)
+    copy_file(src_file, bak_file)
+    copy_file(static_file, src_file)
     logger.warning(f"⚠️  [FREEZE] Overwrote template '{src_file.name}' with static content. Original template backed up to '{bak_file.name}'.")
 
 
@@ -788,7 +788,7 @@ def handle_modification_non_interactive(
                 open_editor=False,
             )
         else:
-            atomic_copy_file(install_file, src_file)
+            copy_file(install_file, src_file)
             _sync_file_mode(src_file, install_file)
             return True
     else:
@@ -855,7 +855,7 @@ def handle_modification_interactive(
             print("[5] Skip file")
             choice = input("Select option [1-5]: ").strip()
             if choice in ["1", "2"]:
-                atomic_copy_file(install_file, src_file)
+                copy_file(install_file, src_file)
                 _sync_file_mode(src_file, install_file)
                 if choice == "2":
                     try:
