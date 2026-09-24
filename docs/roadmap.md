@@ -68,9 +68,48 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 ---
 
-## Part III: Roadmap
+## Part III: Strategic Tier Ranking
 
-### Priority 1: Reliability & Error Handling
+The roadmap is prioritized into four execution tiers based on **architectural ROI**, **system safety guarantees**, and **adoption impact**:
+
+### 🌟 Tier S: Game Changers & Core Value Proposition
+* **`drift plan`**: Full dry-run visualization of render, stage, and install actions before modifying host files.
+* **`drift doctor`**: Single diagnostic command validating workspace structure, Git repositories, hook permissions, and dependencies.
+* **Asymmetric In-Repo Secret Encryption (Age / SSH-key)**: Zero-disk-leakage in-memory secret decryption into the compilation sandbox.
+* **Smarter Rollback with WAL (Write-Ahead Log)**: Guarantees 100% reversible rollbacks for physical host filesystem side effects.
+* **Unified Layered Import System (`[[imports]]`)**: Layered overlay mounting for package inheritance, file remounting, and external assets.
+
+### 🚀 Tier A: High Value & Ergonomic Wins
+* **Command Hooks & Arguments (`shlex`)**: Inline shell commands in hooks without creating wrapper files.
+* **Passive File Triggers (Pacman-style Hooks)**: Directory-watching triggers executed once in a consolidated batch after deployment.
+* **Audit `check=False` & Error Stacking**: Eliminates error masking and redundant multi-line error boxes.
+* **Globbing in `packages.enable`**: Wildcard pattern matching (`desktop_* = false`, `server_* = true`) across machine classes.
+* **`drift migrate`**: Seamless one-command migration from GNU Stow / chezmoi / yadm.
+* **Native Package Distributions (PyPI, AUR, Homebrew, Nixpkgs)**: Standard package manager availability for release v1.0.
+
+### ⚖️ Tier B: Solid Improvements & Scale Enhancements
+* **Workspace-Wide Snippets & Partials (`config/partials/`)**: Boilerplate deduplication across Mustache, Jinja2, and shell templates.
+* **Fleet & Server Orchestration Integration**: Non-interactive batch flags, JSON status objects, and Ansible roles for fleet automation.
+* **Dynamic Password Manager CLI Provider**: Declarative integration with 1Password (`op`), Bitwarden (`bw`), and `pass`.
+* **Incremental / Selective Rendering**: Manifest mtime and hash caching to make large workspace deploys sub-millisecond.
+* **Git Abstraction Layer (`GitRepo` class)**: Centralizes Git subprocess calls for clean mocking and unified error translation.
+* **Rendered Output Format Validation**: Verifies syntax of rendered JSON/YAML/TOML before staging.
+* **Progress Meters & Batch Worklist Summaries**: Step-by-step progress counters (`[3/10]`) and upfront target discovery logs across CLI subcommands.
+
+### 🔧 Tier C: Advanced & Specialized Patterns
+* **Binary Deployment Strategy (drift + mise)**: Alternative binary management scheme with mise / nix home-manager.
+* **Auto-Rollback for Critical Services**: Automatic revert on deployment failure (depends on WAL).
+* **Reorder Render Before Reverse-Sync**: Resolves clean template updates directly in git history.
+* **`drift revert`**: Fast undo of last deployment commit in the install repository.
+* **Compilation Package Pattern**: Source subfolder builds via `pre_source` hooks.
+* **Structured Hook Protocol**: Rich JSON output protocol over fd/file beyond integer exit codes.
+* **Windows File-Lock Probing**: File accessibility probing for Windows service updates.
+
+---
+
+## Part IV: Detailed Task Breakdown by Category
+
+### Category 1: Reliability & Error Handling
 
 - [ ] **Audit `check=False` subprocess calls across the codebase.** Many `subprocess.run(..., check=False)` calls ignore non-zero return codes. Each should either check and handle the return code, or document why it's intentionally ignored.
 
@@ -84,11 +123,14 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 - [ ] **Windows file-lock probing.** On Windows, probe file accessibility (can append/open) before installation because of file locks. Needs careful placement relative to `pre_update` hook — if user writes stop-service commands there, probing must happen after the hook. Design the failure semantics: does a failed probe count as deployment failure? How does the user restore service state? (from old roadmap)
 
-### Priority 2: User Experience & Onboarding
+### Category 2: User Experience & Onboarding
 
-- [ ] **`drift doctor` — unified diagnostic command.** Currently `drift status`, `drift health`, `drift repair`, and `ensure_workspace_healthy()` each probe different aspects. A unified `drift doctor` that runs everything — workspace structure, Git repo integrity, config validation, hook script permissions, target directory accessibility, and package health probes — in a single pass with a structured report. Think `brew doctor` or `rustup check`.
+- [ ] **`drift doctor` — unified diagnostic command.** Currently `drift status`, `drift health`, `drift repair`, and `assert_workspace_healthy()` each probe different aspects. A unified `drift doctor` that runs everything — workspace structure, Git repo integrity, config validation, hook script permissions, target directory accessibility, and package health probes — in a single pass with a structured report. Think `brew doctor` or `rustup check`.
 
-- [ ] **`drift render` - print target packages names before rendering.** A progress meter `[3/10]` can be prepended to logging. This experience improvement can be applied to all commands.  
+- [ ] **Granular progress tracking & step meters across CLI commands.** Add uniform step counters (e.g., `[3/10] Rendering package 'zsh'...`) and structured progress indicators to logging and CLI outputs across all multi-package subcommands (`render`, `stage`, `apply`, `deploy`, `status`, `gc`):
+  - Print the resolved target package worklist upfront before executing operations so users have immediate visibility into batch scope.
+  - Prepend step indexes `[i/N]` to starting and completion log messages for each package.
+  - In Rich console mode, provide clean animated progress meters while preserving full detailed logs in `--debug` and non-interactive pipelines.  
 
 - [ ] **Onboarding-first documentation restructuring.** Split the README into:
   - A 2-minute quickstart (`drift init`, add a file, `drift deploy`, see it work)
@@ -103,11 +145,16 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 - [ ] **`drift revert` command.** Quickly revert installed version to a previous Git commit in the install repo, without full rollback semantics. A lighter-weight "undo last deploy." (from old roadmap)
 
-### Priority 3: Config & Rendering Enhancements
+### Category 3: Config & Rendering Enhancements
 
 - [ ] **Globbing in `packages.enable` match.** Support glob patterns in workspace config package enablement (e.g., `desktop_* = false`). (from old roadmap)
 
 - [ ] **Command hooks and hooks with arguments.** Use `shlex` to parse hook values. When the first word contains `/`, treat it as a file path; otherwise treat it as a command. Support argument passing. (from old roadmap)
+
+- [ ] **Passive File Triggers & Post-Deployment Hook Aggregation (Pacman-style Triggers).** Allow packages to declare passive triggers that observe target directory paths rather than requiring explicit per-package invocation. When any deployed package writes, modifies, or deletes files within a watched directory (e.g. `~/.local/share/fonts/`, `~/.config/fish/completions/`, or a plugin directory):
+  - The trigger is automatically queued and activated for that deployment transaction.
+  - All activated passive triggers execute once in a consolidated batch at the end of the deploy pipeline (after all active package hooks have completed).
+  - Eliminates redundant, repetitive reload scripts across individual plugin packages (e.g., calling `fc-cache` once instead of 15 times when installing multiple font packages).
 
 - [ ] **Rendered output validation.** Render engines can optionally call external validators on rendered output to verify format correctness (`json`, `yaml`, `toml`, etc.) before staging. (from old roadmap)
 
@@ -160,7 +207,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 - [ ] **Compilation package pattern.** Use package `[env]` to declare build flags (instead of scattering them across CLI `./configure` or `cmake -D...` invocations), render them into a `pre_source` hook that checks for existing build artifacts and compiles on-demand. Build artifacts output to a source subfolder, which the deploy pipeline installs to the target directory (e.g., `/opt` or `~/.local`). (from old roadmap)
 
-### Priority 4: Secret Management
+### Category 4: Secret Management
 
 - [ ] **Encrypted `secrets.env` for safe repo sync.** Support simple encryption of `secrets.env` so it can be safely committed and synced with the config repository. (from old roadmap)
 
@@ -176,7 +223,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
   ```
   (from old roadmap)
 
-### Priority 5: Architecture & Performance
+### Category 5: Architecture & Performance
 
 - [ ] **Git abstraction layer.** Extract all `subprocess.run(["git", ...])` calls into a thin `GitRepo` class that encapsulates repo path, handles error translation, and supports dry-run inspection. Benefits:
   - Centralized error handling for Git failures
@@ -189,7 +236,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 - [ ] **Structured hook protocol (beyond exit codes).** Hooks writing JSON to a well-known fd or file, reporting warnings, skip-reasons, or output variables. For example, a `probe` hook could report *what* dependency is missing, not just "failed."
 
-### Priority 6: Distribution & Ecosystem
+### Category 6: Distribution & Ecosystem
 
 - [ ] **First-class `drift migrate` from chezmoi/stow/yadm.** A dedicated migration path from popular tools (chezmoi state → drift packages, stow directory → drift src/) to reduce adoption friction. The package-per-tool model maps cleanly to how people already organize stow directories.
 
