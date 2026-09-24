@@ -59,7 +59,7 @@ class TestRenderEngine(unittest.TestCase):
             [packages.enable]
             DEFAULT = false
 
-            [env]
+            [env.default]
             MY_CUSTOM_ENV_VAR = "hello_from_drift_toml"
             """, encoding="utf-8")
 
@@ -93,7 +93,7 @@ class TestRenderEngine(unittest.TestCase):
             input_file_path=dummy_input
         )
 
-        # Verify that envsubst successfully substituted the variable defined under [env] in drift_workspace.toml
+        # Verify that envsubst successfully substituted the variable defined under [env.default] in drift_workspace.toml
         self.assertEqual(output.strip(), "Greeting: hello_from_drift_toml")
 
         # Clean up os.environ to avoid leaking to other tests

@@ -5,11 +5,11 @@ In Drift, the entire workspace is orchestrated by the global `config/drift_works
 
 This document provides a comprehensive reference for all global workspace configuration tables and settings, including:
 1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "stow" | "copy"`), and custom Python workspace hooks (`hook_file`).
-2. **Topological Environment Variables (`[env]`)**: Global variables evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
+2. **Topological Environment Variables (`[env.default]`, `[env.secrets]`)**: Global variables evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
 3. **Template Rendering Engine DAGs (`[render.<name>]`)**: Multi-level template compilation engines (e.g. `envsubst`, `mustache`, `jinja2`, `var`) with dependency resolution and `.drift/render/` sandboxing.
 4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including WAN IP probing and automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs.
 5. **Active Packages Registry (`[packages.enable]`)**: Declarative enablement and disablement of package folders, supporting explicit keys and fallback `DEFAULT = true | false`.
-6. **Dynamic Python Workspace Hooks (`drift_workspace.py`)**: Programmatic preprocessor executed before variable stitching—the best place to dynamically download global configuration or secrets from remote servers and inject them into `[env]`.
+6. **Dynamic Python Workspace Hooks (`drift_workspace.py`)**: Programmatic preprocessor executed before variable stitching—the best place to dynamically download global configuration or secrets from remote servers and inject them into `[env.default]` / `[env.secrets]`.
 
 ---
 
@@ -30,7 +30,7 @@ install_directory = "install"
 backup_directory = "backup"
 
 # Global default target directory for packages if unspecified in drift_package.toml
-# Supports home expansion (~) and ${VAR} interpolation from [env].
+# Supports home expansion (~) and ${VAR} interpolation from [env.default] / [env.secrets].
 default_target_directory = "~"
 
 # Global default installation method if unspecified in drift_package.toml
@@ -50,16 +50,16 @@ default_install_method = "stow"
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
 # Variable Stitching & Referencing Rules:
-# 1. Topological Stitching in [env]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
+# 1. Topological Stitching in [env.default] & [env.secrets]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
 #    Drift automatically evaluates dependencies using Kahn's topological sort algorithm with cycle detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
-# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env] (and inherited process environment/facts)
-#    can be referenced across other drift_workspace.toml sections. Variables outside [env] cannot be referenced inside [env].
+# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env.default] / [env.secrets] (and inherited process environment/facts)
+#    can be referenced across other drift_workspace.toml sections. Variables outside environment tables cannot be referenced inside environment tables.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
-[env]
+[env.default]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
 DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"
@@ -138,7 +138,7 @@ For programmatic workspace configuration and fleet management across heterogeneo
 
 > [!TIP]
 > **Best Practice — Remote Secrets & Configs Fetching**:
-> `drift_workspace.py` is the **recommended, canonical place** to fetch global configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env]`). Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
+> `drift_workspace.py` is the **recommended, canonical place** to fetch global configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env.default]` or `[env.secrets]`). Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]["default"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
 
 ### Automatic Discovery or Custom Path
 * **Default Path**: Place a `drift_workspace.py` file directly in the `config/` directory (`config/drift_workspace.py`). Drift automatically scaffolds this when running `drift init`.
@@ -146,8 +146,8 @@ For programmatic workspace configuration and fleet management across heterogeneo
 
 ### Execution Model & Pipeline Order
 1. **Multi-File Discovery & Merging**: Discovers candidate workspace configuration files (`config/drift_workspace.toml`, `config/drift_workspace.local.toml`, or custom layers) and `.envst.toml` templates, merging them sequentially into a raw configuration dictionary.
-2. **Dynamic Python Workspace Hook (Preprocessor)**: Executes `configure_workspace(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), active environment (`context.env`), and discovered package folder names (`context.discovered_packages`). The hook can inject `[env]`, dynamically toggle `[packages.enable]`, or customize default paths.
-3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves the `[env]` table (including any injected by the hook) according to Kahn's topological sort algorithm and variable self-referencing.
+2. **Dynamic Python Workspace Hook (Preprocessor)**: Executes `configure_workspace(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), active environment (`context.env`), and discovered package folder names (`context.discovered_packages`). The hook can inject `[env.default]` / `[env.secrets]`, dynamically toggle `[packages.enable]`, or customize default paths.
+3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves the `[env.default]` and `[env.secrets]` tables (including any injected by the hook) according to Kahn's topological sort algorithm and variable self-referencing.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`default_target_directory`, render engine fields, etc.).
 5. **Schema Validation & Model Construction**: Instantiates the strongly-typed `WorkspaceConfig` object.
 
@@ -175,12 +175,12 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
     """Dynamically configure workspace packages, remote secrets, and environment on the fly."""
     cfg = context.config
 
-    # 1. Fetch remote secrets / global credentials and inject into workspace [env]
+    # 1. Fetch remote secrets / global credentials and inject into workspace [env.secrets] or [env.default]
     # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
-    env = cfg.setdefault("env", {})
-    # env["GITHUB_TOKEN"] = token
+    env_default = cfg.setdefault("env", {}).setdefault("default", {})
+    # env_default["GITHUB_TOKEN"] = token
     if context.os == "darwin":
-        env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+        env_default["HOMEBREW_PREFIX"] = "/opt/homebrew"
 
     # 2. Dynamically compute enabled package roster based on host facts
     enable = cfg.setdefault("packages", {}).setdefault("enable", {})

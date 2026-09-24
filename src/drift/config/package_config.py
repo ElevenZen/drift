@@ -825,7 +825,7 @@ def resolve_and_interpolate_package_config(
     - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
     - Tier 4: drift_* system facts (preserved via DRIFT_SYSTEM_FACT_KEYS)
     - Tier 5: Secrets (Package [env.secrets] > Workspace [env.secrets] > config/secrets.env)
-    - Tier 6: Workspace [env]
+    - Tier 6: Workspace [env.default]
     - Tier 7: Package [env.fallback] (fills unset blanks only)
 
     Args:
@@ -902,21 +902,19 @@ def resolve_and_interpolate_package_config(
         error_cls=ConfigError
     )
 
-    stitched_data = dict(interpolated_data)
-    env_dict: Dict[str, Any] = {}
-    if override_map:
-        env_dict["override"] = override_map
-    if fallback_map:
-        env_dict["fallback"] = fallback_map
-    if resolved_package_secrets:
-        env_dict["secrets"] = resolved_package_secrets
-
-    if env_dict:
-        stitched_data["env"] = env_dict
-    elif "env" in stitched_data:
-        del stitched_data["env"]
-
-    return stitched_data
+    env_dict = {
+        k: v
+        for k, v in (
+            ("override", override_map),
+            ("fallback", fallback_map),
+            ("secrets", resolved_package_secrets),
+        )
+        if v
+    }
+    return {
+        **{k: v for k, v in interpolated_data.items() if k != "env"},
+        **({"env": env_dict} if env_dict else {}),
+    }
 
 
 @dataclass
@@ -1232,7 +1230,7 @@ class PackageConfig:
         - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
         - Tier 4: drift_* system facts
         - Tier 5: Secrets (Package [env.secrets] > Workspace [env.secrets] > config/secrets.env)
-        - Tier 6: Workspace [env]
+        - Tier 6: Workspace [env.default]
         - Tier 7: Package [env.fallback] (fills unset blanks only)
         """
         from ..utils.env_utils import secrets_env_scope

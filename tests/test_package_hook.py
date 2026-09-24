@@ -51,7 +51,7 @@ default_install_method = "stow"
 pkg1 = true
 pkg2 = true
 
-[env]
+[env.default]
 WORKSPACE_BASE = "https://example.com"
 """, encoding="utf-8")
 

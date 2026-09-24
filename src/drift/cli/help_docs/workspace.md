@@ -50,7 +50,7 @@ For complete programmatic control across heterogeneous fleets, you can author a 
 
 > [!TIP]
 > **Best Practice — Remote Secrets & Configs Fetching**:
-> `drift_workspace.py` is the **recommended place** to download workspace-wide configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env]`).
+> `drift_workspace.py` is the **recommended place** to download workspace-wide configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env.secrets]` or `[env.default]`).
 
 ```python
 # config/drift_workspace.py
@@ -66,12 +66,13 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
     """Dynamically configure workspace packages, remote secrets, and environment on the fly."""
     cfg = context.config
 
-    # 1. Fetch remote secrets / global credentials and inject into workspace [env]
+    # 1. Fetch remote secrets / global credentials and inject into [env.secrets] or [env.default]
     # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
-    env = cfg.setdefault("env", {})
-    # env["GLOBAL_GITHUB_TOKEN"] = token
+    # env_secrets = cfg.setdefault("env", {}).setdefault("secrets", {})
+    # env_secrets["GLOBAL_GITHUB_TOKEN"] = token
+    env_default = cfg.setdefault("env", {}).setdefault("default", {})
     if context.os == "darwin":
-        env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+        env_default["HOMEBREW_PREFIX"] = "/opt/homebrew"
 
     # 2. Dynamically compute enabled package roster based on host facts
     enable = cfg.setdefault("packages", {}).setdefault("enable", {})
@@ -114,7 +115,7 @@ Secrets are handled with maximum security and performance during workspace and p
     *   **Tier 3**: Package Facts (`drift_package_*`)
     *   **Tier 4**: System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
     *   **Tier 5**: Secrets (Sub-Precedence: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`)
-    *   **Tier 6**: Workspace Environment (`[env]` table in `drift_workspace.toml`)
+    *   **Tier 6**: Workspace Environment (`[env.default]` table in `drift_workspace.toml`)
     *   **Tier 7**: Package `[env.fallback]`
 2.  **Topological Self-Referencing in `[env.secrets]`**:
     *   Both workspace and package configurations support a dedicated `[env.secrets]` table.
@@ -134,10 +135,10 @@ Secrets are handled with maximum security and performance during workspace and p
 
 Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all workspace configuration files without spawning external subprocesses or template binaries:
 
-### 🔄 Topological Self-Referencing in `[env]`
-Variables declared in `[env]` can reference each other, host environment variables, and auto-detected system facts (`$drift_os`, `$drift_arch`, etc.):
+### 🔄 Topological Self-Referencing in `[env.default]` and `[env.secrets]`
+Variables declared in `[env.default]` and `[env.secrets]` can reference each other, host environment variables, and auto-detected system facts (`$drift_os`, `$drift_arch`, etc.):
 ```toml
-[env]
+[env.default]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
 # Stitches variables together dynamically
@@ -147,9 +148,9 @@ DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"
 Drift automatically computes a Directed Acyclic Graph (DAG) using Kahn's topological sort algorithm, guaranteeing correct evaluation order and instantly detecting circular dependency loops (`A -> B -> A`).
 
 ### ➡️ Unidirectional Cross-Section Interpolation
-*   **Evaluation Order**: The `[env]` table is stitched and evaluated first.
-*   **Field Interpolation**: Non-env workspace fields (`default_target_directory`, `source_directory`, `input_file`, etc.) can reference any resolved `[env]` variable (e.g. `default_target_directory = "${HOME}/.config"`).
-*   **Unidirectional Boundary**: Variables defined in non-env sections cannot be referenced inside `[env]`.
+*   **Evaluation Order**: The `[env.default]` and `[env.secrets]` tables are stitched and evaluated first.
+*   **Field Interpolation**: Non-env workspace fields (`default_target_directory`, `source_directory`, `input_file`, etc.) can reference any resolved `[env.default]` or `[env.secrets]` variable (e.g. `default_target_directory = "${HOME}/.config"`).
+*   **Unidirectional Boundary**: Variables defined in non-env sections cannot be referenced inside `[env.default]` or `[env.secrets]`.
 
 ### 📌 Values-Only Scope
 Variable stitching and interpolation apply **strictly to configuration field values** (strings, arrays, and numbers). Variable syntax (`$VAR`, `${VAR}`) is **never evaluated inside TOML keys, table names, or section headers** (such as `[packages.enable]` or `[render.${NAME}]`). To dynamically generate keys or table structures, use the Python workspace hook (`config/drift_workspace.py`) or dynamic meta-templates (`.envst.toml`).
@@ -157,6 +158,6 @@ Variable stitching and interpolation apply **strictly to configuration field val
 ### 🛡️ Literal Escaping
 To prevent interpolation and preserve literal text containing `$VAR` or `${VAR}`, prefix with a backslash:
 ```toml
-[env]
+[env.default]
 SAMPLE_LITERAL = "\\${PRESERVE_ME}"
 ```

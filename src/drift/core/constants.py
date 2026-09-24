@@ -349,7 +349,7 @@ DEFAULT_SECRETS_ENV_CONTENT = (
 
 DEFAULT_ENVSUBST_BASH_CONTENT = (
     "#!/bin/bash\n"
-    "# Propagates variables defined in the workspace config [env] section\n"
+    "# Propagates variables defined in the workspace config [env.default] section\n"
     "export TEMPLATE_THEME=\"${DRIFT_SAMPLE_ENV_THEME:-UnixDefaultTheme}\"\n"
     "export TEMPLATE_EDITOR=\"${DRIFT_SAMPLE_ENV_EDITOR:-UnixDefaultEditor}\"\n"
 )

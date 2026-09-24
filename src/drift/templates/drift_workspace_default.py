@@ -7,7 +7,7 @@ Best Practice:
     drift_workspace.py is the recommended, canonical place to download workspace-wide
     configuration files or secret vaults from remote servers (such as 1Password CLI,
     HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject
-    them dynamically into the workspace environment ([env]) before package compilation.
+    them dynamically into the workspace environment ([env.default] or [env.secrets]) before package compilation.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
     Execution Pipeline Order:
         1. Multi-File Discovery & Merging (drift_workspace.toml + drift_workspace.local.toml).
         2. Dynamic Python Hook (this function): Runs BEFORE variable stitching and package loading.
-        3. 7-Tier Variable Stitching & DAG Resolution: Evaluates workspace [env] dependencies.
+        3. 7-Tier Variable Stitching & DAG Resolution: Evaluates workspace [env.default] & [env.secrets].
         4. Cross-Section Interpolation: Replaces ${VAR} across workspace configuration fields.
         5. Schema Validation: Constructs validated WorkspaceConfig instance.
 
@@ -42,14 +42,14 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
     config = context.config
 
     # -------------------------------------------------------------------------
-    # Example 1: Download Remote Secrets / Configs & Inject into [env]
+    # Example 1: Download Remote Secrets / Configs & Inject into [env.secrets] / [env.default]
     # -------------------------------------------------------------------------
     # import subprocess, json
     # try:
     #     # Example fetching global tokens or proxies from a secrets manager / API
     #     # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
-    #     # env_table = config.setdefault("env", {})
-    #     # env_table["GLOBAL_GITHUB_TOKEN"] = token
+    #     # env_secrets = config.setdefault("env", {}).setdefault("secrets", {})
+    #     # env_secrets["GLOBAL_GITHUB_TOKEN"] = token
     #     pass
     # except Exception as err:
     #     pass

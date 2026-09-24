@@ -1478,13 +1478,13 @@ class TestConfigLoaders(unittest.TestCase):
             [packages.enable]
             DEFAULT = false
 
-            [env]
+            [env.default]
             TEST_DRIFT_VAR = "hello"
             TEST_DRIFT_OVERRIDE = "from_base"
             """, encoding="utf-8")
 
         local_path.write_text("""
-            [env]
+            [env.default]
             TEST_DRIFT_OVERRIDE = "from_local"
             TEST_DRIFT_LOCAL_ONLY = "local_only"
             """, encoding="utf-8")

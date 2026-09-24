@@ -80,10 +80,10 @@ fully_controlled_dirs = [
 #    Evaluated first against base environment. CANNOT reference [env.override].
 # 2. [env.override] (Tier 2): High-priority overrides (overwrites facts/workspace env; CLI wins).
 #    Evaluated second. CAN reference [env.fallback], package facts (${drift_package_name},
-#    ${drift_package_source_dir}), system facts (${drift_os}, ${drift_arch}), and workspace [env].
-# 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved [env]
+#    ${drift_package_source_dir}), system facts (${drift_os}, ${drift_arch}), and workspace [env.default].
+# 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved environment
 #    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
-#    Variables defined outside [env] cannot be referenced inside [env].
+#    Variables defined outside environment tables cannot be referenced inside environment tables.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings without interpolation.
@@ -265,7 +265,7 @@ When rendering package templates and running hook scripts, variables resolve in 
 3. **`drift_package_*` Package Facts**: Authoritative package paths, target directory, install method.
 4. **`drift_*` System Facts**: Authoritative host OS, architecture, distro, hostname, user.
 5. **`secrets` in Workspace**: Loaded from `config/secrets.env` / Secret Provider.
-6. **`[env]` in Workspace Config**: Shared defaults from `config/drift_workspace.toml` / `drift_workspace.local.toml`.
+6. **`[env.default]` in Workspace Config**: Shared defaults from `config/drift_workspace.toml` / `drift_workspace.local.toml`.
 7. **`[env.fallback]` in Package Config**: Package defaults used only when unset by upper tiers.
  
  

@@ -517,7 +517,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertTrue(local_file.is_file())
 
         legacy_local = self.drift_root / "config" / "drift.local.toml"
-        legacy_local.write_text('[env]\nLEGACY_KEY = "legacy_value"\n', encoding="utf-8")
+        legacy_local.write_text('[env.default]\nLEGACY_KEY = "legacy_value"\n', encoding="utf-8")
 
         with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
             with self.assertRaises(ConfigError) as ctx:
@@ -537,7 +537,7 @@ class TestWorkspaceRepair(unittest.TestCase):
 
         # Create legacy drift.local.toml
         legacy_local = self.drift_root / "config" / "drift.local.toml"
-        legacy_local.write_text('[env]\nCUSTOM_OVERRIDE = "active"\n', encoding="utf-8")
+        legacy_local.write_text('[env.default]\nCUSTOM_OVERRIDE = "active"\n', encoding="utf-8")
 
         with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
             actions = repair_drift_workspace(self.drift_root)

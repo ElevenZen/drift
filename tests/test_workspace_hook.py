@@ -36,7 +36,7 @@ default_install_method = "stow"
 pkg1 = true
 pkg2 = false
 
-[env]
+[env.default]
 BASE_URL = "https://example.com"
 """, encoding="utf-8")
 
@@ -60,8 +60,9 @@ def configure_workspace(context):
     # Enable pkg2 conditionally
     cfg["packages"]["enable"]["pkg2"] = True
     # Inject dynamic env
-    cfg["env"]["DYNAMIC_PORT"] = "8080"
-    cfg["env"]["FULL_API"] = "${BASE_URL}:${DYNAMIC_PORT}/api"
+    env_default = cfg.setdefault("env", {}).setdefault("default", {})
+    env_default["DYNAMIC_PORT"] = "8080"
+    env_default["FULL_API"] = "${BASE_URL}:${DYNAMIC_PORT}/api"
     return cfg
 """, encoding="utf-8")
 
@@ -85,7 +86,7 @@ def configure_workspace(context):
 
     # Use facts to set an env var
     os_name = context.facts.get("drift_os", "unknown")
-    cfg["env"]["DETECTED_OS"] = os_name
+    cfg.setdefault("env", {}).setdefault("default", {})["DETECTED_OS"] = os_name
     return cfg
 """, encoding="utf-8")
 
@@ -98,7 +99,7 @@ def configure_workspace(context):
         custom_hook = self.drift_root / CONFIG_DIR_NAME / "custom_hook.py"
         custom_hook.write_text("""
 def configure_workspace(context):
-    context.config.setdefault("env", {})["CUSTOM_HOOK_RAN"] = "yes"
+    context.config.setdefault("env", {}).setdefault("default", {})["CUSTOM_HOOK_RAN"] = "yes"
     return context.config
 """, encoding="utf-8")
 
@@ -121,7 +122,7 @@ pkg1 = true
         nested_dir.mkdir(parents=True, exist_ok=True)
         (nested_dir / "nested_hook.py").write_text("""
 def configure_workspace(context):
-    context.config.setdefault("env", {})["NESTED_RAN"] = "yes"
+    context.config.setdefault("env", {}).setdefault("default", {})["NESTED_RAN"] = "yes"
     return context.config
 """, encoding="utf-8")
 
@@ -142,7 +143,7 @@ pkg1 = true
         abs_hook = self.drift_root / "abs_hook.py"
         abs_hook.write_text("""
 def configure_workspace(context):
-    context.config.setdefault("env", {})["ABS_RAN"] = "yes"
+    context.config.setdefault("env", {}).setdefault("default", {})["ABS_RAN"] = "yes"
     return context.config
 """, encoding="utf-8")
 
@@ -241,7 +242,7 @@ def configure_workspace(context):
     cfg = context.config
     assert "VAULT_TOKEN" in context.env
     assert context.env["VAULT_TOKEN"] == "secret_token_123"
-    cfg.setdefault("env", {})["INJECTED_TOKEN"] = context.env["VAULT_TOKEN"]
+    cfg.setdefault("env", {}).setdefault("default", {})["INJECTED_TOKEN"] = context.env["VAULT_TOKEN"]
     return cfg
 """, encoding="utf-8")
 

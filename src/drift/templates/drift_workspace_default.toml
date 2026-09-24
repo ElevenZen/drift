@@ -10,16 +10,16 @@
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
 # Variable Stitching & Referencing Rules:
-# 1. Topological Stitching in [env]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
+# 1. Topological Stitching in [env.default]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
 #    Drift builds a dependency DAG and resolves variables in topological order with cyclic detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
-# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env] (and inherited process environment/facts)
-#    can be referenced across other drift_workspace.toml sections. Variables outside [env] cannot be referenced inside [env].
+# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env.default] / [env.secrets] (and inherited process environment/facts)
+#    can be referenced across other drift_workspace.toml sections. Variables outside environment tables cannot be referenced inside environment tables.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
-[env]
+[env.default]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
 DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"

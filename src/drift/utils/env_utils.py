@@ -237,7 +237,7 @@ def python_envsubst(
         if var_name not in environ:
             raise error_cls(
                 f"Environment variable '${var_name}' referenced in template "
-                f"was not found in [env], secrets.env, or process environment."
+                f"was not found in environment tables, secrets.env, or process environment."
             )
         return str(environ[var_name])
 
@@ -277,7 +277,7 @@ def topological_sort_env(
         refs = {m[0] or m[1] for m in VAR_PATTERN.findall(v)}
         # Check for immediate self-reference
         if k in refs:
-            raise error_cls(f"Cyclic dependency detected in [env] variable: '{k}' references itself.")
+            raise error_cls(f"Cyclic dependency detected in environment variable: '{k}' references itself.")
         # Check for reference intersection with keys in raw_env
         internal_deps = refs & raw_keys
         graph[k] = internal_deps
@@ -304,7 +304,7 @@ def topological_sort_env(
     if len(eval_order) != len(raw_keys):
         cyclic_keys = sorted([k for k, deg in in_degree.items() if deg > 0])
         raise error_cls(
-            f"Cyclic dependency detected in [env] variables among: {', '.join(cyclic_keys)}"
+            f"Cyclic dependency detected in environment variables among: {', '.join(cyclic_keys)}"
         )
 
     return eval_order
@@ -315,7 +315,7 @@ def resolve_env_references(
     base_env: Mapping[str, str],
     error_cls: Type[DriftError] = ConfigError,
 ) -> Dict[str, str]:
-    """Resolves inter-variable references in an [env] dictionary using topological sorting.
+    """Resolves inter-variable references in an environment dictionary using topological sorting.
 
     Variables can reference other variables in raw_env, as well as external base_env.
     Any referenced variable missing from both raw_env and base_env will trigger error_cls.

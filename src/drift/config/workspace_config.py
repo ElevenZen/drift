@@ -194,42 +194,61 @@ class WorkspaceSectionConfig:
         )
 
 
+def parse_workspace_env_tables(env_data: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Parses workspace environment configuration tables into (default_map, secrets_map)."""
+    if not env_data:
+        return {}, {}
+    if not isinstance(env_data, dict):
+        raise ConfigError("[env] section must be a table in workspace configuration.")
+
+    default_map: Dict[str, str] = {}
+    secrets_map: Dict[str, str] = {}
+    for k, v in env_data.items():
+        if k == "default":
+            if not isinstance(v, dict):
+                raise ConfigError("[env.default] must be a table of key-value pairs.")
+            for sub_k, sub_v in v.items():
+                default_map[str(sub_k)] = str(sub_v)
+        elif k == "secrets":
+            if not isinstance(v, dict):
+                raise ConfigError("[env.secrets] must be a table of key-value pairs.")
+            for sub_k, sub_v in v.items():
+                secrets_map[str(sub_k)] = str(sub_v)
+        elif isinstance(v, dict):
+            raise ConfigError(
+                f"Unknown sub-table [env.{k}] in workspace configuration. "
+                f"Expected [env.default] or [env.secrets]."
+            )
+        else:
+            raise ConfigError(
+                f"Direct key-value pair '{k}' in [env] is not supported in workspace configuration. "
+                f"Please define variables under [env.default] or [env.secrets]."
+            )
+
+    return default_map, secrets_map
+
+
 def resolve_and_interpolate_workspace_config(
     data: Dict[str, Any],
     secrets_file: Optional[Mapping[str, str]] = None,
-) -> Tuple[Dict[str, Any], Dict[str, str]]:
+) -> Dict[str, Any]:
     """Resolves environment variables, secrets, and interpolates references across a workspace config dictionary.
 
     Follows the 7-Tier Precedence Model:
     - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
     - Tier 4: drift_* system facts (preserved via DRIFT_SYSTEM_FACT_KEYS)
     - Tier 5: Secrets (Workspace [env.secrets] > config/secrets.env)
-    - Tier 6: Workspace [env]
+    - Tier 6: Workspace [env.default]
 
     Args:
         data: Parsed TOML dictionary of the workspace configuration.
         secrets_file: Optional secrets mapping loaded from config/secrets.env.
 
     Returns:
-        A tuple of (interpolated_data, effective_secrets).
+        The fully resolved and interpolated workspace configuration dictionary.
     """
     raw_env = data.get("env", {})
-    workspace_secrets: Dict[str, str] = {}
-    regular_env: Dict[str, str] = {}
-
-    if isinstance(raw_env, dict):
-        for k, v in raw_env.items():
-            if k == "secrets":
-                if not isinstance(v, dict):
-                    raise ConfigError("[env.secrets] must be a table of key-value pairs.")
-                for sk, sv in v.items():
-                    workspace_secrets[str(sk)] = str(sv)
-            elif isinstance(v, dict):
-                raise ConfigError(f"Unknown sub-table [env.{k}] in workspace configuration. Expected [env.secrets].")
-            else:
-                regular_env[str(k)] = str(v)
-    elif raw_env:
-        raise ConfigError("[env] section must be a table in workspace configuration.")
+    default_env, workspace_secrets = parse_workspace_env_tables(raw_env)
 
     protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS)
 
@@ -251,27 +270,27 @@ def resolve_and_interpolate_workspace_config(
 
     effective_secrets: Dict[str, str] = {**(secrets_file or {}), **resolved_workspace_secrets}
 
-    # 2. Resolve workspace [env] against base (Tiers 1, 4, 5)
+    # 2. Resolve workspace [env.default] against base (Tiers 1, 4, 5)
     base_for_env_resolution, _ = update_env_dict(
         dict(base_for_workspace_secrets),
         effective_secrets,
         overwrite=True,
         env_keep=protected_facts
     )
-    if regular_env:
-        resolved_env = resolve_env_references(
-            regular_env,
+    if default_env:
+        resolved_default_env = resolve_env_references(
+            default_env,
             base_env=base_for_env_resolution,
             error_cls=ConfigError
         )
     else:
-        resolved_env = {}
+        resolved_default_env = {}
 
     # 3. Interpolate ${VAR} across all other sections of workspace configuration
-    # Tier 6: workspace [env] fills unset blanks in base_for_env_resolution (overwrite=False)
+    # Tier 6: workspace [env.default] fills unset blanks in base_for_env_resolution (overwrite=False)
     active_workspace_env, _ = update_env_dict(
         dict(base_for_env_resolution),
-        resolved_env,
+        resolved_default_env,
         overwrite=False
     )
     interpolated_data = interpolate_config_dict(
@@ -281,12 +300,18 @@ def resolve_and_interpolate_workspace_config(
         error_cls=ConfigError
     )
 
-    if resolved_env:
-        interpolated_data["env"] = resolved_env
-    elif "env" in interpolated_data:
-        del interpolated_data["env"]
-
-    return interpolated_data, effective_secrets
+    env_dict = {
+        k: v
+        for k, v in (
+            ("default", resolved_default_env),
+            ("secrets", effective_secrets),
+        )
+        if v
+    }
+    return {
+        **{k: v for k, v in interpolated_data.items() if k != "env"},
+        **({"env": env_dict} if env_dict else {}),
+    }
 
 
 @dataclass
@@ -564,7 +589,6 @@ class WorkspaceConfig:
         cls,
         data: dict,
         drift_root: Path,
-        secrets: Optional[Mapping[str, str]] = None,
     ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         root = drift_root
@@ -613,25 +637,9 @@ class WorkspaceConfig:
             base_dir=root.resolve() / CONFIG_DIR_NAME
         )
 
-        # Parse [env] and [env.secrets]
+        # Parse [env.default] and [env.secrets]
         env_data = data.get("env", {})
-        env = {}
-        workspace_secrets = {}
-        if isinstance(env_data, dict):
-            for k, v in env_data.items():
-                if k == "secrets":
-                    if isinstance(v, dict):
-                        for sk, sv in v.items():
-                            workspace_secrets[str(sk)] = str(sv)
-                    else:
-                        raise ConfigError("[env.secrets] must be a table of key-value pairs.")
-                elif isinstance(v, dict):
-                    raise ConfigError(f"Unknown sub-table [env.{k}] in workspace configuration. Expected [env.secrets].")
-                else:
-                    env[str(k)] = str(v)
-
-        # Merge secrets: workspace [env.secrets] takes precedence over passed secrets
-        merged_secrets = {**(secrets or {}), **workspace_secrets}
+        default_env, workspace_secrets = parse_workspace_env_tables(env_data)
 
         # Parse [settings]
         settings_data = data.get("settings", {})
@@ -643,8 +651,8 @@ class WorkspaceConfig:
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
-            env=env,
-            secrets=merged_secrets,
+            env=default_env,
+            secrets=workspace_secrets,
             settings=settings,
         )
         config.validate()
@@ -778,8 +786,8 @@ def load_workspace_config(
     2. Dynamic Python Workspace Hook: Executes configure_workspace(context) from config/drift_workspace.py
        (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
        resolved context facts and environment.
-    3. Variable Stitching & Topological Sort: Resolves inter-variable references in [env] using Kahn's
-       topological sort algorithm with cycle detection.
+    3. Variable Stitching & Topological Sort: Resolves inter-variable references in [env.default]
+       and [env.secrets] using Kahn's topological sort algorithm with cycle detection.
     4. Cross-Section Interpolation: Interpolates ${VAR} references across all non-env sections.
     5. Schema Validation & Model Construction: Instantiates strongly-typed WorkspaceConfig.
 
@@ -812,17 +820,17 @@ def load_workspace_config(
     combined_dict = apply_workspace_hook(root, combined_dict)
 
     # Pure in-memory topological resolution and section interpolation
-    interpolated_dict, effective_secrets = resolve_and_interpolate_workspace_config(
+    interpolated_dict = resolve_and_interpolate_workspace_config(
         combined_dict,
         secrets_file=secrets_file,
     )
 
-    # Establish baseline workspace [env] in os.environ (Tier 6)
-    if "env" in interpolated_dict and isinstance(interpolated_dict["env"], dict):
-        load_env_settings(interpolated_dict["env"], overwrite=False)
+    # Establish baseline workspace [env.default] in os.environ (Tier 6)
+    if default_env := get_nested_from(interpolated_dict, "env.default", default={}):
+        load_env_settings(default_env, overwrite=False)
 
     try:
-        return WorkspaceConfig.from_dict(interpolated_dict, drift_root=root, secrets=effective_secrets)
+        return WorkspaceConfig.from_dict(interpolated_dict, drift_root=root)
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:

@@ -234,7 +234,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
 class TestStrictVariablePrecedence(unittest.TestCase):
     """Integration tests verifying the strict precedence:
 
-    Host Environment > Secret Vault (secrets.env) > Global Workspace Config ([env] in drift_workspace.toml)
+    Host Environment > Secret Vault (secrets.env) > Global Workspace Config ([env.default] in drift_workspace.toml)
     """
 
     def setUp(self) -> None:
@@ -280,13 +280,13 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def test_host_env_overrides_secrets_and_workspace_config(self) -> None:
         """Host environment variable has the highest precedence.
 
-        It must override both secrets.env and drift_workspace.toml [env].
+        It must override both secrets.env and drift_workspace.toml [env.default].
         """
         var_name = "DRIFT_PRECEDENCE_VAR_1"
         os.environ[var_name] = "host_wins"
         set_initial_env([var_name] + list(self.original_environ.keys()))
 
-        # Write drift_workspace.toml with [env]
+        # Write drift_workspace.toml with [env.default]
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             f"""
@@ -305,7 +305,7 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 [packages.enable]
 pkg_test = true
 
-[env]
+[env.default]
 {var_name} = "workspace_toml_value"
 """,
             encoding="utf-8"
@@ -334,7 +334,7 @@ pkg_test = true
         self.assertEqual(os.environ[var_name], "host_wins")
 
     def test_secrets_env_overrides_workspace_config(self) -> None:
-        """Secret vault (secrets.env) has higher precedence than drift_workspace.toml [env]."""
+        """Secret vault (secrets.env) has higher precedence than drift_workspace.toml [env.default]."""
         var_name = "DRIFT_PRECEDENCE_VAR_2"
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
@@ -357,7 +357,7 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 [packages.enable]
 pkg_test = true
 
-[env]
+[env.default]
 {var_name} = "workspace_toml_value"
 """,
             encoding="utf-8"
@@ -384,7 +384,7 @@ pkg_test = true
         self.assertEqual(os.environ[var_name], "workspace_toml_value")
 
     def test_workspace_config_env_default(self) -> None:
-        """Workspace config [env] provides defaults when neither host env nor secrets exist."""
+        """Workspace config [env.default] provides defaults when neither host env nor secrets exist."""
         var_name = "DRIFT_PRECEDENCE_VAR_3"
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
@@ -407,7 +407,7 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 [packages.enable]
 pkg_test = true
 
-[env]
+[env.default]
 {var_name} = "default_from_toml"
 """,
             encoding="utf-8"
@@ -509,7 +509,7 @@ pkg_test = true
         self.assertEqual(os.environ[var_name], "host_api_key")
 
     def test_local_toml_merging_env(self) -> None:
-        """drift_workspace.local.toml overrides drift_workspace.toml [env] settings."""
+        """drift_workspace.local.toml overrides drift_workspace.toml [env.default] settings."""
         var_name = "DRIFT_MERGED_VAR"
         os.environ.pop(var_name, None)
         set_initial_env([k for k in os.environ.keys() if k != var_name])
@@ -527,7 +527,7 @@ default_target_directory = "~"
 [packages.enable]
 DEFAULT = true
 
-[env]
+[env.default]
 {var_name} = "base_value"
 """,
             encoding="utf-8"
@@ -536,7 +536,7 @@ DEFAULT = true
         local_toml = self.config_dir / "drift_workspace.local.toml"
         local_toml.write_text(
             f"""
-[env]
+[env.default]
 {var_name} = "local_override_value"
 """,
             encoding="utf-8"
@@ -582,7 +582,7 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 [packages.enable]
 pkg_mixed = true
 
-[env]
+[env.default]
 VAR_A = "toml_a"
 VAR_B = "toml_b"
 VAR_C = "toml_c"
@@ -662,7 +662,7 @@ render_command = "bash -c 'source %i && exit 1'"
 [packages.enable]
 pkg_test = true
 
-[env]
+[env.default]
 {var_toml} = "toml_val"
 """,
             encoding="utf-8"
@@ -707,7 +707,7 @@ render_command = "bash -c 'source %i && envsubst < %s'"
 [packages.enable]
 pkg_cli = true
 
-[env]
+[env.default]
 {var_name} = "toml_default"
 """,
             encoding="utf-8"
@@ -733,7 +733,7 @@ pkg_cli = true
 
 
 class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
-    """Tests for topological sort variable stitching in [env] and recursive config dictionary interpolation."""
+    """Tests for topological sort variable stitching in environment tables and recursive config dictionary interpolation."""
 
     def setUp(self) -> None:
         set_test_mode(True)
@@ -942,7 +942,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         self.assertEqual(result["env"]["raw_text"], "${DONT_TOUCH_ME}")
 
     def test_workspace_config_with_stitched_env_and_field_interpolation(self) -> None:
-        """Verifies that workspace drift_workspace.toml resolves [env] stitching and interpolates fields."""
+        """Verifies that workspace drift_workspace.toml resolves [env.default] stitching and interpolates fields."""
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
             """
@@ -953,7 +953,7 @@ default_target_directory = "${TARGET_ROOT}/user_home"
 [packages.enable]
 default = true
 
-[env]
+[env.default]
 ROOT_DIR = "/custom/base"
 SRC_SUBDIR = "src_custom"
 TARGET_ROOT = "${ROOT_DIR}/dest"
@@ -969,6 +969,40 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(ws.env["ALL_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.workspace.source_directory, Path("src_custom"))
         self.assertEqual(str(ws.workspace.default_target_directory), "/custom/base/dest/user_home")
+
+    def test_workspace_config_with_direct_env_raises_error(self) -> None:
+        """Verifies that direct key-value pairs in workspace [env] raise ConfigError."""
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.core.exceptions import ConfigError
+
+        ws_dict = {
+            "workspace": {},
+            "packages": {"enable": {}},
+            "env": {
+                "LEGACY_VAR": "legacy_val",
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            WorkspaceConfig.from_dict(ws_dict, drift_root=self.drift_root)
+        self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported in workspace configuration", str(ctx.exception))
+        self.assertIn("Please define variables under [env.default] or [env.secrets]", str(ctx.exception))
+
+    def test_workspace_config_with_unknown_env_subtable_raises_error(self) -> None:
+        """Verifies that unknown sub-tables under workspace [env] raise ConfigError."""
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.core.exceptions import ConfigError
+
+        ws_dict = {
+            "workspace": {},
+            "packages": {"enable": {}},
+            "env": {
+                "override": {"VAR": "val"},
+            }
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            WorkspaceConfig.from_dict(ws_dict, drift_root=self.drift_root)
+        self.assertIn("Unknown sub-table [env.override] in workspace configuration", str(ctx.exception))
+        self.assertIn("Expected [env.default] or [env.secrets]", str(ctx.exception))
 
     def test_package_config_with_env_override_and_field_interpolation(self) -> None:
         """Verifies that package drift_package.toml resolves [env.override] and interpolates package fields."""
@@ -1020,7 +1054,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertIn("Please define variables under [env.override], [env.fallback], or [env.secrets]", str(ctx.exception))
 
     def test_escaped_variable_stitching(self) -> None:
-        """Verifies that \\$VAR and \\${VAR} escape variable stitching in [env] and config fields."""
+        """Verifies that \\$VAR and \\${VAR} escape variable stitching in environment tables and config fields."""
         from drift.utils.env_utils import resolve_env_references, interpolate_config_dict
 
         raw_env = {
@@ -1349,7 +1383,9 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
                 "target_directory": "/tmp/${DERIVED_VAR}",
             },
             "env": {
-                "DERIVED_VAR": "derived_${SECRET_TOKEN}",
+                "default": {
+                    "DERIVED_VAR": "derived_${SECRET_TOKEN}",
+                },
                 "secrets": {
                     "FILE_BASE_SEC": "${SECRETS_FILE_KEY}_extended",
                     "SECRET_TOKEN": "${FILE_BASE_SEC}_token",
@@ -1362,10 +1398,11 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
             "SECRETS_FILE_KEY": "raw_secret",
         }
 
-        interpolated_dict, effective_secrets = resolve_and_interpolate_workspace_config(
+        interpolated_dict = resolve_and_interpolate_workspace_config(
             data,
             secrets_file=secrets_file,
         )
+        effective_secrets = interpolated_dict.get("env", {}).get("secrets", {})
 
         # 1. Verify os.environ was NOT mutated
         self.assertEqual(dict(os.environ), initial_environ_snapshot)
@@ -1379,8 +1416,8 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
         self.assertEqual(os.environ["drift_os"], "linux")
         self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
 
-        # 4. Verify regular [env] was resolved against secrets
-        self.assertEqual(interpolated_dict["env"]["DERIVED_VAR"], "derived_raw_secret_extended_token")
+        # 4. Verify regular [env.default] was resolved against secrets
+        self.assertEqual(interpolated_dict["env"]["default"]["DERIVED_VAR"], "derived_raw_secret_extended_token")
         self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
 
     def test_workspace_secrets_precedence_and_python_hook(self) -> None:

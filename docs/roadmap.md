@@ -18,7 +18,7 @@ The 16-primitive design with typed `*Result` returns is excellent. Each primitiv
 Pure stdlib Python with optional `[rich]` is a strong distribution story. The zipapp packaging, shell wrapper installer, and the fact that it works on Python 3.9+ without pulling in Click/Typer/Jinja2 in core mode is rare and valuable for the target audience — power users who are picky about what runs on their machines.
 
 **The config system is surprisingly powerful.**
-In-TOML variable stitching with DAG resolution, 7-tier precedence, `secrets.env` isolation with transient scope, Python hooks at both workspace and package level, `.envst.toml` meta-templates — this is a lot of expressive power without requiring users to learn a template language for configuration itself.
+In-TOML variable stitching with DAG resolution, 7-tier precedence, declarative `[env.secrets]` & `secrets.env` isolation with transient clean-room scope, Python hooks at both workspace and package level, `.envst.toml` meta-templates — this is a lot of expressive power without requiring users to learn a template language for configuration itself.
 
 **Functional style is consistent and readable.**
 The `filter`/`map`/comprehension-first style with extracted predicates (`is_zombie_package_dir`, `is_valid_file`, etc.) keeps data pipelines declarative. The separation of gathering vs. execution (e.g., `get_pending_delta_worklist` → `run_pending_delta_diff`) is consistently applied throughout.
@@ -63,8 +63,20 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **`assert_`**: **Read-only validation guards** that raise on failure without state modification (`assert_hooks_exist`, `assert_no_legacy_workspace_config`, `assert_no_cyclic_dependencies`, `assert_no_cross_package_conflicts`, `assert_source_file_clean`, `assert_workspace_healthy`, `assert_install_pkg_dir_clean`, `assert_writable`, `assert_git_repository_health`, `assert_repo_can_commit`, `assert_can_escalate`). Removed anti-pattern `force` arguments from assertions.
 - **`check_`**: **Read-only inspection** returning result data values without raising or mutating state (`check_existing_workspace_status`, `check_patch_conflicts`).
 
-### 6. Test Suite Expansion & Cleanliness
-- Total passing tests expanded to **803/803 tests OK** with zero warnings, zero aliased imports, and comprehensive coverage across all new modules.
+### 6. Hierarchical Declarative Secrets (`[env.secrets]`) & Transient Sandboxing
+- **3-Subtier Secret Precedence**: Implemented hierarchical declarative `[env.secrets]` in workspace and package configurations, integrated with the local `config/secrets.env` Dotenv vault:
+  $$\text{Package } \texttt{[env.secrets]} > \text{Workspace } \texttt{[env.secrets]} > \texttt{config/secrets.env}$$
+- **Transient Clean-Room Isolation (`secrets_env_scope`)**: Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence only during hook execution and template rendering, with automatic secret masking in verbose logs (`KEY=****`) and complete unloading upon block exit.
+- **Deterministic 1:1 Stage Artifact Metadata**: Resolved static package metadata (including fully stitched `[env.secrets]`) is written to `render/<pkg>/.drift/drift_package.toml` and mirrored 1:1 to `install/<pkg>/.drift/drift_package.toml`, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to run deterministically with complete access to all 7 environment tiers without re-parsing source configurations.
+- **Dynamic Hook Ingestion**: Both `drift_workspace.py` and `drift_package.py` hooks can programmatically inject dynamic credentials into `[env.secrets]` before DAG compilation.
+
+### 7. Symmetrical Environment Hierarchy (`[env.default]` Migration)
+- **Unified Sub-Table Syntax**: Migrated workspace configuration from flat `[env]` to structured `[env.default]` (Tier 6), establishing perfect structural symmetry with package configuration (`[env.override]`, `[env.fallback]`, `[env.secrets]`).
+- **Strict Configuration Guards**: Legacy flat key-value pairs directly under `[env]` in workspace TOML are rejected at ingestion with clear, actionable `ConfigError` diagnostics.
+- **DAG Topological Resolution**: Full Kahn's algorithm variable stitching with immediate self-reference and cyclic dependency detection across `[env.default]` and `[env.secrets]`.
+
+### 8. Test Suite Expansion & Cleanliness
+- Total passing tests expanded to **811/811 tests OK** with zero warnings, zero aliased imports, and comprehensive coverage across all new modules, secret resolution, and environment tiers.
 
 ---
 
@@ -190,7 +202,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
   executable = true
 
   # Local environment variables override base package variables
-  [env]
+  [env.override]
   service_port = "8080"
   ```
   *Key Properties*:
@@ -205,7 +217,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **`drift plan` command.** Preview the actual files to be rendered, staged, and installed before executing. A dry-run visualization for the full deploy pipeline. Foundation for package dependency planning and cross-package import auditing. (from old roadmap)
 
-- [ ] **Compilation package pattern.** Use package `[env]` to declare build flags (instead of scattering them across CLI `./configure` or `cmake -D...` invocations), render them into a `pre_source` hook that checks for existing build artifacts and compiles on-demand. Build artifacts output to a source subfolder, which the deploy pipeline installs to the target directory (e.g., `/opt` or `~/.local`). (from old roadmap)
+- [ ] **Compilation package pattern.** Use package `[env.override]` / `[env.fallback]` to declare build flags (instead of scattering them across CLI `./configure` or `cmake -D...` invocations), render them into a `pre_source` hook that checks for existing build artifacts and compiles on-demand. Build artifacts output to a source subfolder, which the deploy pipeline installs to the target directory (e.g., `/opt` or `~/.local`). (from old roadmap)
 
 ### Category 4: Secret Management
 

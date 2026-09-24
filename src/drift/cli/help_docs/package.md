@@ -52,7 +52,7 @@ Package configurations natively participate in Drift's 7-tier variable stitching
 *   **Dual-Tier Package Scopes**:
     *   `[env.fallback]`: Baseline default values used only when unset across higher tiers.
     *   `[env.override]`: Highest-priority package values (overwrites workspace defaults and system facts).
-*   **Topological Evaluation**: Package variables seamlessly reference and stitch with workspace `[env]`, secret vault keys, and host facts.
+*   **Topological Evaluation**: Package variables seamlessly reference and stitch with workspace `[env.default]`, secret vault keys, and host facts.
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration values** (e.g. `target_directory`, hook commands, environment variable strings). TOML keys, table names, and section headers are not expanded.
 
 > [!TIP]

@@ -416,18 +416,18 @@ When Drift loads the workspace configuration, `load_workspace_config_file_with_r
 Rather than requiring developers to wrap static configuration files in template extensions (e.g. `drift_workspace.envst.toml` or `drift_package.envst.toml`) and invoke `envsubst`, Drift provides **native, zero-dependency topological variable stitching** across all TOML configuration files (`drift_workspace.toml`, `drift_workspace.local.toml`, `drift_package.toml`, `drift_package.local.toml`).
 
 1. **Topological Inter-Variable Composition**:
-   - Variables defined within `[env]` (or `[env.override]` / `[env.fallback]`) can reference each other (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`, `DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"`).
+   - Variables defined within `[env.default]` (or `[env.override]` / `[env.fallback]`) can reference each other (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`, `DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"`).
    - Drift constructs an in-memory dependency graph (DAG) and resolves variable evaluations in topological order using Kahn's algorithm.
    - Immediate self-references (e.g. `LOOP = "${LOOP}"`) and cyclic dependencies (e.g. `A -> B -> A`) are detected and rejected with informative `ConfigError` diagnostics.
 
 2. **Unidirectional 2-Stage Evaluation Model**:
-   - **Stage 1 (`[env]` Resolution)**: Environment tables evaluate first against base environment and facts. Variables defined in `[env]` cannot reference fields outside `[env]` (e.g. `target_directory`), eliminating cross-section cyclic dependencies.
+   - **Stage 1 (Environment Tables Resolution)**: Environment tables (`[env.default]`, `[env.override]`, `[env.fallback]`, `[env.secrets]`) evaluate first against base environment and facts. Variables defined in environment tables cannot reference fields outside environment sections (e.g. `target_directory`), eliminating cross-section cyclic dependencies.
    - **Stage 2 (Non-Env Interpolation)**: All other configuration fields (`[workspace]`, `[package]`, `[hooks]`, etc.) are recursively interpolated using the resolved environment.
 
 3. **Referencing Rules Across Tiers**:
    - `[env.fallback]` (Tier 7) is evaluated first against base environment/facts to establish baseline values; it **cannot** reference `[env.override]`.
    - `[env.override]` (Tier 2) is evaluated second; it **can** reference `[env.fallback]`, package facts (`drift_package_*`), system facts (`drift_*`), workspace environment, and secret vault variables.
-   - Non-env fields across `[package]` and `[hooks]` can reference any variable defined in `[env.override]`, `[env.fallback]`, facts, or workspace `[env]`.
+   - Non-env fields across `[package]` and `[hooks]` can reference any variable defined in `[env.override]`, `[env.fallback]`, facts, or workspace `[env.default]`.
 
 4. **Literal Escaping**:
    - Prepending a backslash (`\$VAR` or `\${VAR}`) prevents interpolation and preserves the literal string, allowing configuration files to pass literal shell variable references to hooks and target configurations without triggering substitution errors.
@@ -443,11 +443,11 @@ To isolate secret tokens, private API keys, and work-specific emails from public
    - **Tier 4 - System Facts (`drift_*`)**: Auto-populated protected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`).
    - **Tier 5 - Secrets**: Hierarchical secrets with 3-subtier precedence:
      $$\text{Package } \texttt{[env.secrets]} > \text{Workspace } \texttt{[env.secrets]} > \texttt{config/secrets.env}$$
-   - **Tier 6 - Global Workspace Environment (`[env]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
+   - **Tier 6 - Global Workspace Environment (`[env.default]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
    - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
 
 2. **Topological DAG Resolution & Pure In-Memory Ingestion**:
-   - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across `[env.secrets]`, `[env]`, and fallback tables without mutating `os.environ` during configuration parsing.
+   - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across `[env.secrets]`, `[env.default]` / `[env.override]` / `[env.fallback]`, and fallback tables without mutating `os.environ` during configuration parsing.
    - Variables in `[env.secrets]` can reference each other, system facts, and lower-tier secrets.
    - **Rendered Metadata & Sandbox Isolation**: Fully stitched static metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/.drift/drift_package.toml`. Both `render/` and `install/` are git-ignored by default, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to execute with complete, deterministic access to all 7 environment tiers without re-parsing source configurations.
 
@@ -824,7 +824,7 @@ After parsing a package's configuration, the drift engine dynamically loads pack
 > 3. Package facts (`drift_package_*`).
 > 4. Host facts (`drift_*`).
 > 5. Secret variables loaded from `config/secrets.env`.
-> 6. Global workspace environment variables in `config/drift_workspace.toml` (`[env]` table).
+> 6. Global workspace environment variables in `config/drift_workspace.toml` (`[env.default]` table).
 > 7. Package `[env.fallback]` defaults.
 >
 > This guarantees that templates and hook scripts always receive the exact, authoritative package attributes regardless of any external or global environment definitions.

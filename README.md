@@ -208,7 +208,7 @@ Unlike monolithic dotfile managers that force you to deploy entire configuration
 A **single, unified dotfiles repository** can effortlessly power everything from minimal cloud servers to high-performance GPU workstations and personal laptops:
 
 > [!TIP]
-> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `workspace_config["env"]` or `package_config["env"]["override"]` before downstream templates compile. See `drift help workspace` for more information.  
+> **Fetching Remote Secrets & Dynamic Configs**: Python hooks are the recommended place to securely query secret managers (e.g. 1Password CLI `op`, Bitwarden CLI `bw`, HashiCorp Vault, AWS Secrets Manager, or HTTP endpoints) and inject credentials into `context.config["env"]["secrets"]`, `workspace_context.config["env"]["default"]`, or `package_context.config["env"]["override"]` before downstream templates compile. See `drift help workspace` for more information.  
 
 *   **Granular Machine Enablement (`config/drift_workspace.local.toml`)**:
     You can selectively enable or disable packages on each machine using the gitignored `config/drift_workspace.local.toml` override without modifying version-controlled source files:
@@ -248,12 +248,13 @@ A **single, unified dotfiles repository** can effortlessly power everything from
         enable["macos_settings"] = (os_name == "darwin")
 
         # 2. Dynamically inject workspace-level environment variables / remote secrets
-        env = cfg.setdefault("env", {})
+        env_default = cfg.setdefault("env", {}).setdefault("default", {})
         if os_name == "darwin":
-            env["HOMEBREW_PREFIX"] = "/opt/homebrew"
+            env_default["HOMEBREW_PREFIX"] = "/opt/homebrew"
 
         # (Optional) Download secrets or global tokens from remote vaults / APIs
-        # env["GITHUB_TOKEN"] = fetch_vault_secret("github_token")
+        # env_secrets = cfg.setdefault("env", {}).setdefault("secrets", {})
+        # env_secrets["GITHUB_TOKEN"] = fetch_vault_secret("github_token")
 
         return cfg
     ```
@@ -285,8 +286,8 @@ A **single, unified dotfiles repository** can effortlessly power everything from
             pkg["target_directory"] = "~/.config/my_app"
 
         # (Optional) Dynamically fetch package-specific secrets or configuration
-        # env = cfg.setdefault("env", {})
-        # env["APP_LICENSE_KEY"] = fetch_package_license("my_app")
+        # env_override = cfg.setdefault("env", {}).setdefault("override", {})
+        # env_override["APP_LICENSE_KEY"] = fetch_package_license("my_app")
 
         return cfg
     ```
@@ -305,8 +306,8 @@ A **single, unified dotfiles repository** can effortlessly power everything from
 ### 🧩 4. Native In-TOML Variable Stitching & Derived Values
 
 Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly within any TOML configuration file (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts). This lets you compute derived variables from one another without having to set up extra template engines or boilerplate preprocessing scripts:
-*   **Derived Variables in `[env]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic resolution and circular dependency detection.
-*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) can dynamically reference variables declared in `[env]` without circular dependencies.
+*   **Derived Variables in `[env.default]` / `[env.override]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic resolution and circular dependency detection.
+*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) can dynamically reference variables declared in `[env.default]`, `[env.override]`, or `[env.fallback]` without circular dependencies.
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
@@ -314,7 +315,7 @@ Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly wi
     > **Pipeline Execution Order**:
     > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_files_layered` / `load_package_config_dict`).
     > 2. **Dynamic Python Hook (Preprocessor)**: Executes *before* variable stitching, receiving the raw configuration dictionary with full access to resolved host facts and environment variables via `context`.
-    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` references (including any injected by the hook) and interpolates `${VAR}` across all non-env fields.
+    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all environment tables (`[env.default]`, `[env.override]`, `[env.fallback]`, `[env.secrets]`) and interpolates `${VAR}` across all non-env fields.
     > 4. **Validation & Model Instantiation**: Builds validated, strongly-typed configuration objects.
 
 ### 🔗 5. Custom Render Engines & DAG Pipeline Piping
