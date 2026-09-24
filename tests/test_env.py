@@ -163,6 +163,58 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
+    def test_load_env_settings_masked_values(self) -> None:
+        """Verifies that mask_values=True logs 'key=****' instead of plaintext values."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            os.environ["TEST_OVERWRITTEN_SECRET"] = "secret_old"
+            os.environ.pop("TEST_NEW_SECRET", None)
+
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                saved = load_env_settings(
+                    {"TEST_NEW_SECRET": "super_secret_val", "TEST_OVERWRITTEN_SECRET": "new_secret_val"},
+                    mask_values=True,
+                )
+                log_output = "\n".join(cm.output)
+                self.assertIn("Environment variable loaded: TEST_NEW_SECRET=****", log_output)
+                self.assertIn("Environment variable loaded: TEST_OVERWRITTEN_SECRET=****", log_output)
+                self.assertNotIn("super_secret_val", log_output)
+                self.assertNotIn("new_secret_val", log_output)
+
+                # Unload with mask_values=True
+                unload_env_settings(saved, mask_values=True)
+                log_output_after = "\n".join(cm.output)
+                self.assertIn("Environment variable unloaded: popped TEST_NEW_SECRET", log_output_after)
+                self.assertIn("Environment variable unloaded: restored TEST_OVERWRITTEN_SECRET=****", log_output_after)
+                self.assertNotIn("secret_old", log_output_after)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_secrets_env_scope_masks_secret_values_in_logs(self) -> None:
+        """Verifies that secrets_env_scope automatically masks secret values in debug logs."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            os.environ.pop("DRIFT_API_SECRET", None)
+            os.environ["DRIFT_EXISTING_SECRET"] = "old_secret_xyz"
+
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with secrets_env_scope({"DRIFT_API_SECRET": "top_secret_token_123", "DRIFT_EXISTING_SECRET": "updated_secret_456"}):
+                    self.assertEqual(os.environ["DRIFT_API_SECRET"], "top_secret_token_123")
+                    self.assertEqual(os.environ["DRIFT_EXISTING_SECRET"], "updated_secret_456")
+
+                log_output = "\n".join(cm.output)
+                # Ensure values are masked as ****
+                self.assertIn("Environment variable loaded: DRIFT_API_SECRET=****", log_output)
+                self.assertIn("Environment variable loaded: DRIFT_EXISTING_SECRET=****", log_output)
+                self.assertIn("Environment variable unloaded: popped DRIFT_API_SECRET", log_output)
+                self.assertIn("Environment variable unloaded: restored DRIFT_EXISTING_SECRET=****", log_output)
+                # Ensure no secrets leak into logs
+                self.assertNotIn("top_secret_token_123", log_output)
+                self.assertNotIn("updated_secret_456", log_output)
+                self.assertNotIn("old_secret_xyz", log_output)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
     def test_parse_env_text_and_file(self) -> None:
         """Verifies parsing .env format text and files."""
         text = """
