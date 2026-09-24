@@ -229,7 +229,7 @@ def configure_workspace(context):
 """, encoding="utf-8")
 
     def test_hook_accesses_context_secrets(self) -> None:
-        """Workspace hook can inspect context.secrets and use them to mutate config."""
+        """Workspace hook can inspect secrets via context.env and use them to mutate config."""
         from drift.core.constants import SECRETS_ENV_FILE_NAME
         (self.drift_root / CONFIG_DIR_NAME / SECRETS_ENV_FILE_NAME).write_text(
             'VAULT_TOKEN="secret_token_123"\n',
@@ -239,10 +239,9 @@ def configure_workspace(context):
         hook_file.write_text("""
 def configure_workspace(context):
     cfg = context.config
-    assert "VAULT_TOKEN" in context.secrets
-    assert context.secrets["VAULT_TOKEN"] == "secret_token_123"
     assert "VAULT_TOKEN" in context.env
-    cfg.setdefault("env", {})["INJECTED_TOKEN"] = context.secrets["VAULT_TOKEN"]
+    assert context.env["VAULT_TOKEN"] == "secret_token_123"
+    cfg.setdefault("env", {})["INJECTED_TOKEN"] = context.env["VAULT_TOKEN"]
     return cfg
 """, encoding="utf-8")
 

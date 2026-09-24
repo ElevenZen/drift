@@ -1017,7 +1017,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         with self.assertRaises(ConfigError) as ctx:
             PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg", base_dir=Path("/test/legacy_pkg"))
         self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported for package 'legacy_pkg'", str(ctx.exception))
-        self.assertIn("Please define variables under [env.override] or [env.fallback]", str(ctx.exception))
+        self.assertIn("Please define variables under [env.override], [env.fallback], or [env.secrets]", str(ctx.exception))
 
     def test_escaped_variable_stitching(self) -> None:
         """Verifies that \\$VAR and \\${VAR} escape variable stitching in [env] and config fields."""
@@ -1313,6 +1313,263 @@ ALL_PROXY = "${SOCKS_PROXY}"
             secrets={"CUSTOM_SEC": "custom_val"}
         )
         self.assertEqual(manual_ws.secrets, {"CUSTOM_SEC": "custom_val"})
+
+
+class TestEnvSecretsHierarchy(unittest.TestCase):
+    """Comprehensive test suite for hierarchical [env.secrets], topological resolution, and 7-tier precedence."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.drift_root = Path(self.temp_dir.name)
+        self.config_dir = self.drift_root / CONFIG_DIR_NAME
+        self.config_dir.mkdir(parents=True, exist_ok=True)
+        (self.drift_root / "src").mkdir(parents=True, exist_ok=True)
+        (self.drift_root / "render").mkdir(parents=True, exist_ok=True)
+        (self.drift_root / "install").mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+
+    def test_resolve_and_interpolate_workspace_config_pure_in_memory(self) -> None:
+        """Verifies resolve_and_interpolate_workspace_config resolves secrets topologically without modifying os.environ."""
+        from drift.config.workspace_config import resolve_and_interpolate_workspace_config
+        from drift.core.constants import DRIFT_SYSTEM_FACT_KEYS
+
+        os.environ["HOST_CLI_VAR"] = "cli_val"
+        os.environ["drift_os"] = "linux"
+        initial_environ_snapshot = dict(os.environ)
+
+        data = {
+            "workspace": {
+                "name": "sec_ws",
+                "target_directory": "/tmp/${DERIVED_VAR}",
+            },
+            "env": {
+                "DERIVED_VAR": "derived_${SECRET_TOKEN}",
+                "secrets": {
+                    "FILE_BASE_SEC": "${SECRETS_FILE_KEY}_extended",
+                    "SECRET_TOKEN": "${FILE_BASE_SEC}_token",
+                    "drift_os": "malicious_os_override",  # Tier 5 attempting to overwrite Tier 4
+                    "HOST_CLI_VAR": "secret_cli_override", # Tier 5 attempting to overwrite Tier 1
+                }
+            }
+        }
+        secrets_file = {
+            "SECRETS_FILE_KEY": "raw_secret",
+        }
+
+        interpolated_dict, effective_secrets = resolve_and_interpolate_workspace_config(
+            data,
+            secrets_file=secrets_file,
+        )
+
+        # 1. Verify os.environ was NOT mutated
+        self.assertEqual(dict(os.environ), initial_environ_snapshot)
+
+        # 2. Verify effective secrets were resolved topologically
+        self.assertEqual(effective_secrets["SECRETS_FILE_KEY"], "raw_secret")
+        self.assertEqual(effective_secrets["FILE_BASE_SEC"], "raw_secret_extended")
+        self.assertEqual(effective_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
+
+        # 3. Verify Tier 4 and Tier 1 protections: DRIFT_SYSTEM_FACT_KEYS and INITIAL_ENV are protected in base
+        self.assertEqual(os.environ["drift_os"], "linux")
+        self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
+
+        # 4. Verify regular [env] was resolved against secrets
+        self.assertEqual(interpolated_dict["env"]["DERIVED_VAR"], "derived_raw_secret_extended_token")
+        self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
+
+    def test_workspace_secrets_precedence_and_python_hook(self) -> None:
+        """Verifies workspace secret precedence: hook > local.toml > toml > secrets.env."""
+        from drift.config.workspace_config import load_workspace_config
+
+        # 1. secrets.env
+        secrets_env = self.config_dir / SECRETS_ENV_FILE_NAME
+        secrets_env.write_text("SHARED_KEY=from_env_file\nENV_ONLY=env_val\n", encoding="utf-8")
+
+        # 2. drift_workspace.toml
+        (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text(
+            """[workspace]
+[packages.enable]
+[env.secrets]
+SHARED_KEY = "from_workspace_toml"
+TOML_ONLY = "toml_val"
+""",
+            encoding="utf-8",
+        )
+
+        # 3. drift_workspace.local.toml
+        (self.config_dir / WORKSPACE_CONFIG_LOCAL_FILE_NAME).write_text(
+            """[env.secrets]
+SHARED_KEY = "from_workspace_local"
+LOCAL_ONLY = "local_val"
+""",
+            encoding="utf-8",
+        )
+
+        # 4. drift_workspace.py hook injecting a secret
+        hook_py = self.config_dir / "drift_workspace.py"
+        hook_py.write_text(
+            """def configure_workspace(context):
+    cfg = context.config
+    secrets = cfg.setdefault("env", {}).setdefault("secrets", {})
+    secrets["HOOK_KEY"] = "hook_val"
+    secrets["SHARED_KEY"] = "from_python_hook"
+    return cfg
+""",
+            encoding="utf-8",
+        )
+
+        ws = load_workspace_config(self.drift_root)
+        self.assertEqual(ws.secrets["SHARED_KEY"], "from_python_hook")
+        self.assertEqual(ws.secrets["HOOK_KEY"], "hook_val")
+        self.assertEqual(ws.secrets["LOCAL_ONLY"], "local_val")
+        self.assertEqual(ws.secrets["TOML_ONLY"], "toml_val")
+        self.assertEqual(ws.secrets["ENV_ONLY"], "env_val")
+
+    def test_package_secrets_three_tier_precedence_and_render_staging(self) -> None:
+        """Verifies Package [env.secrets] > Workspace [env.secrets] > secrets.env, render staging, and package_envs."""
+        from drift.config.workspace_config import load_workspace_config
+        from drift.config.package_config import (
+            PackageConfig,
+            load_package_config_from_source_dir,
+            load_package_config_from_render_dir,
+        )
+        from drift.utils.toml_utils import parse_toml
+
+        # Setup secrets.env
+        (self.config_dir / SECRETS_ENV_FILE_NAME).write_text(
+            "TIER5_OVERRIDE=level_1_file\nFILE_SECRET=file_val\n",
+            encoding="utf-8"
+        )
+
+        # Setup drift_workspace.toml with [env.secrets]
+        (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text(
+            """[workspace]
+[packages.enable]
+pkg_a = true
+
+[env.secrets]
+TIER5_OVERRIDE = "level_2_workspace"
+WS_SECRET = "ws_val"
+""",
+            encoding="utf-8"
+        )
+
+        # Setup src/pkg_a/drift_package.toml with [env.secrets], [env.fallback], [env.override]
+        pkg_dir = self.drift_root / "src" / "pkg_a"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            """[package]
+name = "pkg_a"
+
+[env.secrets]
+TIER5_OVERRIDE = "level_3_package"
+PKG_SECRET = "${WS_SECRET}_derived_${drift_package_name}"
+
+[env.fallback]
+MY_FALLBACK = "fallback_with_${PKG_SECRET}"
+
+[env.override]
+MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
+""",
+            encoding="utf-8"
+        )
+
+        ws = load_workspace_config(self.drift_root)
+        pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
+
+        # 1. Verify package_config.secrets contains resolved package secrets
+        self.assertEqual(pkg_cfg.secrets["TIER5_OVERRIDE"], "level_3_package")
+        self.assertEqual(pkg_cfg.secrets["PKG_SECRET"], "ws_val_derived_pkg_a")
+
+        # 2. Verify fallback and override used resolved secrets
+        self.assertEqual(pkg_cfg.env_fallback["MY_FALLBACK"], "fallback_with_ws_val_derived_pkg_a")
+        self.assertEqual(pkg_cfg.env_override["MY_OVERRIDE"], "override_with_level_3_package")
+
+        # 3. Verify render/pkg_a/.drift/drift_package.toml on disk contains fully resolved [env.secrets]
+        rendered_pkg_dir = self.drift_root / "render" / "pkg_a"
+        rendered_toml_path = rendered_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        self.assertTrue(rendered_toml_path.exists())
+        disk_data = parse_toml(rendered_toml_path.read_text(encoding="utf-8"))
+        self.assertIn("env", disk_data)
+        self.assertIn("secrets", disk_data["env"])
+        self.assertEqual(disk_data["env"]["secrets"], {
+            "TIER5_OVERRIDE": "level_3_package",
+            "PKG_SECRET": "ws_val_derived_pkg_a",
+        })
+        self.assertIn("fallback", disk_data["env"])
+        self.assertIn("override", disk_data["env"])
+
+        # 4. Verify package_envs puts merged secrets in os.environ (Tier 5 precedence) and unloads cleanly
+        self.assertNotIn("TIER5_OVERRIDE", os.environ)
+        self.assertNotIn("PKG_SECRET", os.environ)
+        self.assertNotIn("WS_SECRET", os.environ)
+
+        with pkg_cfg.package_envs(ws):
+            self.assertEqual(os.environ["TIER5_OVERRIDE"], "level_3_package")
+            self.assertEqual(os.environ["PKG_SECRET"], "ws_val_derived_pkg_a")
+            self.assertEqual(os.environ["WS_SECRET"], "ws_val")
+            self.assertEqual(os.environ["FILE_SECRET"], "file_val")
+            self.assertEqual(os.environ["MY_FALLBACK"], "fallback_with_ws_val_derived_pkg_a")
+            self.assertEqual(os.environ["MY_OVERRIDE"], "override_with_level_3_package")
+
+        self.assertNotIn("TIER5_OVERRIDE", os.environ)
+        self.assertNotIn("PKG_SECRET", os.environ)
+        self.assertNotIn("WS_SECRET", os.environ)
+        self.assertNotIn("FILE_SECRET", os.environ)
+
+        # 5. Verify that loading from render/ preserves full secret execution in downstream lifecycle hooks
+        rendered_cfg = load_package_config_from_render_dir(rendered_pkg_dir)
+        with rendered_cfg.package_envs(ws):
+            self.assertEqual(os.environ["TIER5_OVERRIDE"], "level_3_package")
+            self.assertEqual(os.environ["PKG_SECRET"], "ws_val_derived_pkg_a")
+            self.assertEqual(os.environ["WS_SECRET"], "ws_val")
+            self.assertEqual(os.environ["FILE_SECRET"], "file_val")
+
+    def test_package_python_hook_injects_secrets(self) -> None:
+        """Verifies that dynamic Python package hook (drift_package.py) can inject [env.secrets]."""
+        from drift.config.workspace_config import load_workspace_config
+        from drift.config.package_config import load_package_config_from_source_dir
+
+        (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text(
+            """[workspace]
+[packages.enable]
+hook_pkg = true
+""",
+            encoding="utf-8"
+        )
+
+        pkg_dir = self.drift_root / "src" / "hook_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            """[package]
+name = "hook_pkg"
+""",
+            encoding="utf-8"
+        )
+
+        # Create drift_package.py hook
+        (pkg_dir / "drift_package.py").write_text(
+            """def configure_package(context):
+    cfg = context.config
+    cfg.setdefault("env", {}).setdefault("secrets", {})["DYNAMIC_PKG_SECRET"] = "dyn_secret_123"
+    return cfg
+""",
+            encoding="utf-8"
+        )
+
+        ws = load_workspace_config(self.drift_root)
+        pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
+
+        self.assertEqual(pkg_cfg.secrets.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
+        with pkg_cfg.package_envs(ws):
+            self.assertEqual(os.environ.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
+        self.assertNotIn("DYNAMIC_PKG_SECRET", os.environ)
 
 
 if __name__ == "__main__":

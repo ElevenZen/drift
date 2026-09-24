@@ -17,6 +17,7 @@ from ..core.constants import (
 from ..core.exceptions import ConfigError
 from ..utils.env_utils import env_scope
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
+from ..utils.toml_utils import get_nested_from
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,6 @@ class PackageHookContext:
     drift_root: Optional[Path] = None
     workspace_config: Optional["WorkspaceConfig"] = None
     env: Dict[str, str] = field(default_factory=dict)
-    secrets: Dict[str, str] = field(default_factory=dict)
 
     @property
     def facts(self) -> Dict[str, str]:
@@ -104,8 +104,7 @@ def resolve_package_hook_path(
         explicitly configured but does not exist on disk.
     """
     pkg_name = package_name_override or package_dir.name
-    package_section = config_dict.get("package", {})
-    custom_hook = package_section.get("hook_file")
+    custom_hook = get_nested_from(config_dict, "package.hook_file")
 
     if custom_hook is None:
         # Check standard default location (src/<pkg>/drift_package.py)
@@ -147,8 +146,7 @@ def apply_package_hook(
         package_dir=package_dir,
         drift_root=drift_root,
         workspace_config=workspace_config,
-        env=dict(os.environ),
-        secrets=secrets,
+        env={**os.environ, **secrets},
     )
 
     with env_scope(context.package_facts, overwrite=True, env_keep=INITIAL_ENV):

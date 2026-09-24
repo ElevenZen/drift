@@ -432,27 +432,34 @@ Rather than requiring developers to wrap static configuration files in template 
 4. **Literal Escaping**:
    - Prepending a backslash (`\$VAR` or `\${VAR}`) prevents interpolation and preserves the literal string, allowing configuration files to pass literal shell variable references to hooks and target configurations without triggering substitution errors.
 
-#### Private Dotenv Vault: `config/secrets.env`
-To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only, git-ignored Dotenv vault located at `config/secrets.env`.
+#### Private Dotenv Vault & Declarative Secrets (`[env.secrets]`, `config/secrets.env`)
+To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only secret hierarchy combining declarative `[env.secrets]` tables in workspace and package configurations with a git-ignored Dotenv vault located at `config/secrets.env`.
 
 1. **Strict 7-Tier Variable Precedence**:
    During configuration ingestion, template parsing, and hook execution, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
    - **Tier 1 - Host Shell / CLI Environment**: Active environment variables provided at invocation context (`os.environ`).
    - **Tier 2 - Package `[env.override]`**: Package-enforced configuration overrides defined in `src/<pkg>/drift_package.toml`.
    - **Tier 3 - Package Facts (`drift_package_*`)**: Dynamic attributes (`drift_package_name`, `drift_package_target_dir`, `drift_package_install_method`, etc.).
-   - **Tier 4 - System Facts (`drift_*`)**: Auto-populated host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
-   - **Tier 5 - Secret Vault (`config/secrets.env`)**: Local, private settings and sensitive overrides loaded dynamically during configuration and rendering.
+   - **Tier 4 - System Facts (`drift_*`)**: Auto-populated protected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`).
+   - **Tier 5 - Secrets**: Hierarchical secrets with 3-subtier precedence:
+     $$\text{Package } \texttt{[env.secrets]} > \text{Workspace } \texttt{[env.secrets]} > \texttt{config/secrets.env}$$
    - **Tier 6 - Global Workspace Environment (`[env]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
    - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
 
-2. **Single Ingestion & Explicit Workspace Injection**:
-   To avoid redundant disk I/O and repeated file parsing across multi-package workflows:
-   - `config/secrets.env` is parsed **once** at the beginning of workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed dictionary on `WorkspaceConfig.secrets`.
-   - Downstream operations (`PackageConfig` ingestion, lifecycle hooks, requirement checks, template rendering) read directly from `WorkspaceConfig.secrets` in $O(1)$ memory without re-reading the filesystem.
+2. **Topological DAG Resolution & Pure In-Memory Ingestion**:
+   - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across `[env.secrets]`, `[env]`, and fallback tables without mutating `os.environ` during configuration parsing.
+   - Variables in `[env.secrets]` can reference each other, system facts, and lower-tier secrets.
+   - **Rendered Metadata & Sandbox Isolation**: Fully stitched static metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/.drift/drift_package.toml`. Both `render/` and `install/` are git-ignored by default, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to execute with complete, deterministic access to all 7 environment tiers without re-parsing source configurations.
 
-3. **Transient, Clean-Room Isolation (`secrets_env_scope`)**:
+3. **Single Ingestion & Explicit Workspace Injection**:
+   To avoid redundant disk I/O and repeated file parsing across multi-package workflows:
+   - `config/secrets.env` and workspace `[env.secrets]` are parsed during workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed dictionary on `WorkspaceConfig.secrets`.
+   - Downstream operations (`PackageConfig` ingestion, lifecycle hooks, requirement checks, template rendering) read directly from in-memory secrets in $O(1)$ time without re-reading the filesystem.
+
+4. **Transient Clean-Room Isolation (`secrets_env_scope`) & Log Masking**:
    To prevent credentials from leaking across operations or mutating ambient state:
-   - When loading workspace configurations (`load_workspace_config`), package configurations (`load_package_config_from_source_dir`), or rendering packages (`pkg_config.package_envs`), Drift enters `secrets_env_scope(workspace_config.secrets)`.
+   - When executing package hooks or rendering templates (`pkg_config.package_envs`), Drift enters `secrets_env_scope(merged_secrets)`.
+   - Secret values are automatically masked in debug logs as `KEY=****`.
    - Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence (leaving CLI environment and host shell variables intact).
    - Upon exiting the scoped block, a secure `finally` handler completely unloads the secrets and restores the original environment snapshot, guaranteeing zero credential contamination.
 
@@ -476,7 +483,6 @@ For advanced programmatic workspace configuration (such as dynamically toggling 
 2. **`WorkspaceHookContext` Properties**:
    - `context.config`: The parsed TOML configuration dictionary.
    - `context.drift_root`: Absolute path to the workspace root directory.
-   - `context.secrets`: Private secrets dictionary loaded from `config/secrets.env` (`Dict[str, str]`).
    - `context.env`: Active environment variable dictionary snapshot (including CLI envs and secrets).
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - `context.discovered_packages`: List of all package directory names found in `src/`.
@@ -600,7 +606,6 @@ For complex packages requiring programmatic adjustments (such as downloading rem
    - `context.package_dir`: Absolute path to `src/<package_name>/`.
    - `context.drift_root`: Workspace root path (if present).
    - `context.workspace_config`: Active `WorkspaceConfig` domain instance (if present).
-   - `context.secrets`: Private secrets dictionary loaded from `config/secrets.env` (`Dict[str, str]`).
    - `context.env`: Active environment snapshot (including CLI envs and secrets).
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - `context.package_facts`: Dynamic package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_src_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
@@ -783,7 +788,7 @@ All lifecycle hooks execute in user space without `sudo`, with their working dir
 
 > [!NOTE]
 > **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). All hooks have complete access to `config/secrets.env`:
-> - **Python Hooks** (`drift_workspace.py`, `drift_package.py`): Directly inspect `context.secrets` (`Dict[str, str]`) and `context.env`.
+> - **Python Hooks** (`drift_workspace.py`, `drift_package.py`): Directly inspect `context.env` (`Dict[str, str]`).
 > - **Subprocess Lifecycle Hook Scripts** (`probe`, `pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`): Automatically inherit `secrets.env` variables in `os.environ` via Tier 5 precedence.
 > The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 

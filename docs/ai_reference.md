@@ -84,6 +84,8 @@ This document provides a concise, high-density architecture reference, primitive
 
 ### [`config/workspace_config.py`](../src/drift/config/workspace_config.py) & [`config/package_config.py`](../src/drift/config/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/config/workspace_config.py): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables.
+*   [`resolve_and_interpolate_workspace_config(data, secrets_file=None) -> Tuple[dict, dict]`](../src/drift/config/workspace_config.py): Pure in-memory topological DAG resolution for workspace `[env.secrets]` and `[env]`, returning interpolated dictionary and effective secrets.
+*   [`resolve_and_interpolate_package_config(data, package_name, workspace_config=None) -> dict`](../src/drift/config/package_config.py): Pure in-memory topological DAG resolution and section interpolation for package configurations under 7-tier precedence.
 *   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads, transforms, merges, and validates package configuration from source directory.
 *   [`load_package_config_rendered(package_toml_path, package_name, package_dir) -> PackageConfig`](../src/drift/config/package_config.py): Loads and parses package configuration strictly with explicit `package_dir`.
 *   [`config.is_package_enabled(pkg) -> bool`](../src/drift/config/workspace_config.py): Checks if package is active in workspace.

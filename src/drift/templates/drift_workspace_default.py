@@ -33,7 +33,6 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
         - context.drift_root: Path to the workspace root directory (Path).
         - context.discovered_packages: List of package folder names found under src/ (List[str]).
         - context.facts: Auto-detected system facts (drift_os, drift_arch, drift_distro, etc.).
-        - context.secrets: Private secrets loaded from config/secrets.env (Dict[str, str]).
         - context.env: Current active environment variables snapshot (Dict[str, str]).
         - Helper properties: context.os, context.arch, context.distro, context.hostname, context.user.
 

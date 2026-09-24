@@ -51,7 +51,6 @@ from .constants import (
     DEFAULT_HOOK_COMMON_ENVS,
     DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
     DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
-    SYSTEM_FACT_KEYS,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     DEFAULT_DRIFT_LOCAL_TOML_CONTENT,
     DEFAULT_SECRETS_ENV_CONTENT,
@@ -86,6 +85,7 @@ from .constants import (
     set_test_mode,
     in_test_mode,
     inject_system_facts,
+    DRIFT_SYSTEM_FACT_KEYS,
 )
 from .exceptions import (
     DriftError,
@@ -205,7 +205,6 @@ __all__ = [
     "DEFAULT_HOOK_COMMON_ENVS",
     "DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS",
     "DEFAULT_HOOK_NON_INTERACTIVE_ENVS",
-    "SYSTEM_FACT_KEYS",
     "DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT",
     "DEFAULT_DRIFT_LOCAL_TOML_CONTENT",
     "DEFAULT_SECRETS_ENV_CONTENT",
@@ -240,6 +239,7 @@ __all__ = [
     "set_test_mode",
     "in_test_mode",
     "inject_system_facts",
+    "DRIFT_SYSTEM_FACT_KEYS",
     "DriftError",
     "ConfigError",
     "DriftDetectedError",

@@ -109,6 +109,15 @@ WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 DEFAULT_WORKSPACE_HOOK_FILE_NAME = "drift_workspace.py"
 WORKSPACE_HOOK_FUNCTION_NAME = "configure_workspace"
 
+DRIFT_SYSTEM_FACT_KEYS: Tuple[str, ...] = (
+    "drift_os",
+    "drift_arch",
+    "drift_distro",
+    "drift_hostname",
+    "drift_user",
+    "drift_ip_addresses",
+)
+
 
 class PackageStage(str, Enum):
     """Enumeration of package stages and workspace directory bases."""
@@ -310,15 +319,6 @@ DEFAULT_HOOK_NON_INTERACTIVE_ENVS: Dict[str, str] = {
     **DEFAULT_HOOK_COMMON_ENVS,
     **DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
 }
-
-SYSTEM_FACT_KEYS: List[str] = [
-    "drift_os",
-    "drift_arch",
-    "drift_distro",
-    "drift_hostname",
-    "drift_user",
-    "drift_ip_addresses",
-]
 
 DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT = (
 """# =====================================================================

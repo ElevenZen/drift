@@ -295,7 +295,6 @@ The `context` object passed into `configure_package(context)` is an instance of 
 * `context.package_name`: Active package name (`str`).
 * `context.package_dir`: Absolute path to the package's source directory (`Path`).
 * `context.workspace_config`: The parent `WorkspaceConfig` object (`Optional[WorkspaceConfig]`).
-* `context.secrets`: Secrets loaded from `config/secrets.env` (`Dict[str, str]`).
 * `context.env`: Full host environment snapshot (`Dict[str, str]`).
 * `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 * `context.package_facts`: Detected package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
