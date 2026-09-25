@@ -48,7 +48,7 @@ BASE_URL = "https://example.com"
         cfg = load_workspace_config(self.drift_root)
         self.assertTrue(cfg.is_package_enabled("pkg1"))
         self.assertFalse(cfg.is_package_enabled("pkg2"))
-        self.assertEqual(cfg.env.get("BASE_URL"), "https://example.com")
+        self.assertEqual(cfg.env_resolve.effective.default.get("BASE_URL"), "https://example.com")
         self.assertIsNone(cfg.workspace.hook_file)
 
     def test_default_hook_file_transforms_packages_and_env(self) -> None:
@@ -69,8 +69,8 @@ def configure_workspace(context):
         cfg = load_workspace_config(self.drift_root)
         self.assertTrue(cfg.is_package_enabled("pkg1"))
         self.assertTrue(cfg.is_package_enabled("pkg2"))
-        self.assertEqual(cfg.env.get("DYNAMIC_PORT"), "8080")
-        self.assertEqual(cfg.env.get("FULL_API"), "https://example.com:8080/api")
+        self.assertEqual(cfg.env_resolve.effective.default.get("DYNAMIC_PORT"), "8080")
+        self.assertEqual(cfg.env_resolve.effective.default.get("FULL_API"), "https://example.com:8080/api")
 
     def test_hook_accesses_context_properties(self) -> None:
         """Hook can inspect context.drift_root, context.facts, context.env, and context.discovered_packages."""
@@ -91,8 +91,8 @@ def configure_workspace(context):
 """, encoding="utf-8")
 
         cfg = load_workspace_config(self.drift_root)
-        self.assertIn("DETECTED_OS", cfg.env)
-        self.assertTrue(len(cfg.env["DETECTED_OS"]) > 0)
+        self.assertIn("DETECTED_OS", cfg.env_resolve.effective.default)
+        self.assertTrue(len(cfg.env_resolve.effective.default["DETECTED_OS"]) > 0)
 
     def test_custom_hook_file_in_workspace_config(self) -> None:
         """Custom hook_file defined in [workspace] is resolved relative to config/."""
@@ -113,7 +113,7 @@ pkg1 = true
 """, encoding="utf-8")
 
         cfg = load_workspace_config(self.drift_root)
-        self.assertEqual(cfg.env.get("CUSTOM_HOOK_RAN"), "yes")
+        self.assertEqual(cfg.env_resolve.effective.default.get("CUSTOM_HOOK_RAN"), "yes")
         self.assertEqual(str(cfg.workspace.hook_file), "custom_hook.py")
 
     def test_custom_hook_file_nested_in_config_dir(self) -> None:
@@ -136,7 +136,7 @@ pkg1 = true
 """, encoding="utf-8")
 
         cfg = load_workspace_config(self.drift_root)
-        self.assertEqual(cfg.env.get("NESTED_RAN"), "yes")
+        self.assertEqual(cfg.env_resolve.effective.default.get("NESTED_RAN"), "yes")
 
     def test_custom_hook_file_absolute_path(self) -> None:
         """Custom hook_file with an absolute path is resolved directly."""
@@ -157,7 +157,7 @@ pkg1 = true
 """, encoding="utf-8")
 
         cfg = load_workspace_config(self.drift_root)
-        self.assertEqual(cfg.env.get("ABS_RAN"), "yes")
+        self.assertEqual(cfg.env_resolve.effective.default.get("ABS_RAN"), "yes")
 
     def test_custom_hook_file_missing_raises_config_error(self) -> None:
         """Specifying a non-existent hook_file in [workspace] raises ConfigError."""
@@ -247,7 +247,7 @@ def configure_workspace(context):
 """, encoding="utf-8")
 
         cfg = load_workspace_config(self.drift_root)
-        self.assertEqual(cfg.env.get("INJECTED_TOKEN"), "secret_token_123")
+        self.assertEqual(cfg.env_resolve.effective.default.get("INJECTED_TOKEN"), "secret_token_123")
 
 
 if __name__ == "__main__":

@@ -2015,7 +2015,7 @@ class TestInstallRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
 
         pkg_metadata_map = {
-            pkg: PackageConfig.from_install_dir(self.install_dir / pkg)
+            pkg: PackageConfig.from_install_dir(self.install_dir / pkg, self.workspace_config)
             for pkg in ["pkg_a", "pkg_b", "pkg_c"]
         }
 

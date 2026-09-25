@@ -95,7 +95,7 @@ drift deploy <pkg> --no-hooks
 # 2. Iteratively edit hook scripts in src/<pkg>/ and execute directly in isolation:
 drift hook <pkg> <hook> --from src -v
 ```
-*   Running `drift hook --from src <pkg> <hook> -v` executes the debug version of the script in your `src/` directory with full 7-tier environment variables and host facts injected, showing real-time stdout, stderr, and return codes.
+*   Running `drift hook --from src <pkg> <hook> -v` executes the debug version of the script in your `src/` directory with full 6-tier environment variables and host facts injected, showing real-time stdout, stderr, and return codes.
 
 ---
 

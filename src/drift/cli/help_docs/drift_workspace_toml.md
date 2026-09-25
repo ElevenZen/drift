@@ -5,9 +5,9 @@ In Drift, the entire workspace is orchestrated by the global `config/drift_works
 
 This document provides a comprehensive reference for all global workspace configuration tables and settings, including:
 1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "stow" | "copy"`), and custom Python workspace hooks (`hook_file`).
-2. **Topological Environment Variables (`[env.default]`, `[env.secrets]`)**: Global variables evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
+2. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical workspace variables across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
 3. **Template Rendering Engine DAGs (`[render.<name>]`)**: Multi-level template compilation engines (e.g. `envsubst`, `mustache`, `jinja2`, `var`) with dependency resolution and `.drift/render/` sandboxing.
-4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including WAN IP probing and automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs.
+4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs.
 5. **Active Packages Registry (`[packages.enable]`)**: Declarative enablement and disablement of package folders, supporting explicit keys and fallback `DEFAULT = true | false`.
 6. **Dynamic Python Workspace Hooks (`drift_workspace.py`)**: Programmatic preprocessor executed before variable stitching—the best place to dynamically download global configuration or secrets from remote servers and inject them into `[env.default]` / `[env.secrets]`.
 
@@ -43,22 +43,37 @@ default_install_method = "stow"
 
 
 # ---------------------------------------------------------------------
-# Workspace Environment Variables, Native Variable Stitching & Topological Resolution
+# Workspace Environment Variables, Native Variable Stitching & 6-Tier Precedence
 # ---------------------------------------------------------------------
 # Drift configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR})
 # directly within .toml files. External render engines (e.g. drift_workspace.local.envst.toml) can also
 # be used if desired, but native self-referencing is the built-in, zero-dependency default.
 #
+# Symmetrical Sub-Tables & 6-Tier Precedence Model:
+# Both workspace and package configs share 4 symmetrical sub-tables under [env]:
+# 1. [env.override]: Tier 2 - Highest-priority configuration variables (CLI at Tier 1 wins).
+# 2. [env.secrets]:  Tier 4 - Declarative secret credentials and sensitive tokens.
+# 3. [env.default]:  Tier 5 - Standard baseline defaults (recommended default location).
+# 4. [env.fallback]: Tier 6 - Low-priority fallbacks applied only when unset across all other tiers.
+# (Package > Workspace within each macro tier; System/Package facts reside in Tier 3; CLI at Tier 1).
+#
 # Variable Stitching & Referencing Rules:
-# 1. Topological Stitching in [env.default] & [env.secrets]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
+# 1. Topological Stitching in [env.*]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
 #    Drift automatically evaluates dependencies using Kahn's topological sort algorithm with cycle detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
-# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env.default] / [env.secrets] (and inherited process environment/facts)
+# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env.*] (and inherited process environment/facts)
 #    can be referenced across other drift_workspace.toml sections. Variables outside environment tables cannot be referenced inside environment tables.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
+
+# [env.override]
+# DRIFT_SAMPLE_OVERRIDE_FLAG = "workspace_level_override"
+
+# [env.secrets]
+# WORKSPACE_SECRET_KEY = "vault-injected-or-declared-secret"
+
 [env.default]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
@@ -66,6 +81,9 @@ DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"
 DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"
 DRIFT_SAMPLE_ENV_THEME = "nord-dark"
 DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
+# [env.fallback]
+# DRIFT_SAMPLE_FALLBACK_VAR = "workspace_level_fallback"
 
 
 # ---------------------------------------------------------------------

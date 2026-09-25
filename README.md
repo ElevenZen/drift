@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-796%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-831%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -147,13 +147,13 @@ Alternatively, evaluate or source completions in your shell configuration:
 ## ✨ Why Drift? (The Killer Selling Points)
 
 ### 🛡️ 1. Absolute Sandbox Isolation (Dual-Git Architecture)
-Dotfile templating shouldn't put your live home directory at risk. Drift operates with **four decoupled tiers**:
-*   **Tier 1: Declarative Source (`src/`)**: Your raw, templated package dotfiles.
-*   **Tier 2: Compilation Sandbox (`render/`)**: An isolated Git database. Templates are compiled here on-the-fly. If a template render fails, **compilation halts instantly with zero impact on your system**.
-*   **Tier 3: Local State Database (`install/`)**: A dedicated Git repository tracking your "last known good" state, backed by an explicit metadata database (`state.toml`).
-*   **Tier 4: Active System Host (e.g. `~/`)**: The physical target paths.
+Dotfile templating shouldn't put your live home directory at risk. Drift operates with **four decoupled layers**:
+*   **Layer 1: Declarative Source (`src/`)**: Your raw, templated package dotfiles.
+*   **Layer 2: Compilation Workspace (`render/`)**: An isolated Git database. Templates are compiled here on-the-fly. If a template render fails, **compilation halts instantly with zero impact on your system**.
+*   **Layer 3: Local State Database (`install/`)**: A dedicated Git repository tracking your "last known good" state, backed by an explicit metadata database (`state.toml`).
+*   **Layer 4: Active System Host (e.g. `~/`)**: The physical target paths.
 
-Because Tier 2 and Tier 3 are isolated Git repositories, Drift can diff, stage, and transactionalize your configurations before a single symlink is modified on your host.
+Because Layer 2 and Layer 3 are isolated Git repositories, Drift can diff, stage, and transactionalize your configurations before a single symlink is modified on your host.
 
 ### 🔄 2. Capture & Adopt GUI/System Tool Settings (Intelligent Reverse-Sync)
 Modern desktop environments, IDEs, and system utilities frequently write configuration modifications directly to your active files (e.g., when you adjust settings in a GUI preferences dialog, alter theme colors in a desktop control panel, or customize keybindings through an application UI).
@@ -303,19 +303,83 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     ```
     When Drift runs, `load_workspace_config_file_with_render` automatically evaluates `${DRIFT_PACKAGES}` into valid TOML key-value pairs, giving you dynamic, zero-touch machine provisioning!
 
-### 🧩 4. Native In-TOML Variable Stitching & Derived Values
+### 🧩 4. Multi-Tier Environment Hierarchy & In-TOML Variable Stitching
 
-Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) directly within any TOML configuration file (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts). This lets you compute derived variables from one another without having to set up extra template engines or boilerplate preprocessing scripts:
-*   **Derived Variables in `[env.default]` / `[env.override]`**: Define inter-connected variables (e.g. `SOCKS_PROXY_HOST = "127.0.0.1"`, `SOCKS_PROXY_PORT = "1080"`, `DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"`) with automatic resolution and circular dependency detection.
-*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) can dynamically reference variables declared in `[env.default]`, `[env.override]`, or `[env.fallback]` without circular dependencies.
+Drift provides a strongly typed **6-tier environment variable precedence hierarchy** (Package > Workspace within each macro tier) with native topological DAG resolution (`$VAR`, `${VAR}`) directly within any TOML configuration file (`drift_workspace.toml`, `drift_package.toml`, and their `.local.toml` counterparts).
+
+#### 📊 6-Tier Environment Precedence
+
+| Tier | Name | Scope / Source | Description |
+| :--- | :--- | :--- | :--- |
+| **Tier 1** | **CLI Context** | Ambient process / `INITIAL_ENV` | Command-line environment variables (`FOO=bar drift deploy`) always win over configuration files. |
+| **Tier 2** | **Override** | `[env.override]` (Package > Workspace) | Explicit high-priority overrides (e.g. forced application paths or theme variants). |
+| **Tier 3** | **Facts** | Package Facts (`drift_package_*`) > System Facts (`drift_*`) | Auto-probed hardware/OS attributes (`$drift_os`, `$drift_arch`) and package paths. |
+| **Tier 4** | **Secrets** | `[env.secrets]` (Package > Workspace) > `config/secrets.env` | Private credentials and API tokens with log masking (`KEY=****`) and transient scope. |
+| **Tier 5** | **Default** | `[env.default]` (Package > Workspace) | Standard user configuration values and baseline service endpoints. |
+| **Tier 6** | **Fallback** | `[env.fallback]` (Package > Workspace) | Soft floor defaults populated only if unset in all higher tiers. |
+
+#### 🔄 Resolution Cascade (`secret >> fallback >> default >> override`)
+Environment tables are resolved using Kahn's topological DAG algorithm with strict unidirectional evaluation flow:
+1. **`[env.secrets]`**: Evaluated first against host environment and system facts.
+2. **`[env.fallback]`**: Evaluated with access to resolved secrets.
+3. **`[env.default]`**: Evaluated with access to resolved secrets and fallback values.
+4. **`[env.override]`**: Evaluated with full access to all resolved tables.
+
+#### 📝 Concrete TOML Example
+
+```toml
+# config/drift_workspace.toml
+[workspace]
+default_target_directory = "${DRIFT_BASE_CONFIG}/drift"
+
+[env.secrets]
+# Tier 4: Private credentials (log-masked and transient)
+VAULT_API_TOKEN = "${SECRETS_FILE_TOKEN:-token_123}"
+
+[env.default]
+# Tier 5: Standard topological variable stitching
+DRIFT_HOST = "127.0.0.1"
+DRIFT_PORT = "8080"
+DRIFT_API_URL = "http://${DRIFT_HOST}:${DRIFT_PORT}/api"
+DRIFT_BASE_CONFIG = "~/.config"
+
+[env.fallback]
+# Tier 6: Soft fallback baseline (used only if not defined in outer environment)
+EDITOR = "nano"
+```
+
+```toml
+# src/my_daemon/drift_package.toml
+[package]
+name = "my_daemon"
+target_directory = "${DAEMON_HOME}/${drift_package_name}"
+
+[env.override]
+# Tier 2: Forced package-level override
+DAEMON_DEBUG = "1"
+DAEMON_SERVICE_URL = "${DAEMON_HOST}:${DAEMON_PORT}"
+
+[env.default]
+# Tier 5: Package-scoped defaults referencing package facts
+DAEMON_HOST = "localhost"
+DAEMON_PORT = "9090"
+DAEMON_HOME = "${HOME}/services"
+
+[env.fallback]
+# Tier 6: Soft fallback
+DAEMON_LOG_LEVEL = "info"
+```
+
+*   **Derived Variables**: Define inter-connected variables (e.g. `DRIFT_API_URL = "http://${DRIFT_HOST}:${DRIFT_PORT}/api"`) with automatic cycle detection.
+*   **Cross-Section References**: Non-env sections (`target_directory`, `hooks`, etc.) dynamically reference any resolved variable without circular dependencies.
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration field values** (strings, arrays, and numbers), never in TOML keys, table names, or section headers. (For dynamic keys or sections, use Python workspace hooks or `.envst.toml` templates).
 *   **Package Fact Injections**: Automatically reference dynamic package and host facts (`${drift_package_name}`, `${drift_package_source_dir}`, `${drift_os}`, `${drift_arch}`) directly in your package configuration.
 *   **Literal Escaping**: Use `\$VAR` or `\${VAR}` to preserve literal text when needed.
 *   **Dynamic Programmatic Generation via Python Hooks (Preprocessor Stage)**: If in-TOML variable stitching doesn't cover your dynamic generation needs and you want to calculate configurations programmatically (e.g., executing Python logic, querying host hardware/APIs, or generating dynamic section tables), you can use native **Python workspace hooks** (`config/drift_workspace.py`) and **Python package hooks** (`src/<pkg>/drift_package.py`).
     > **Pipeline Execution Order**:
-    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_files_layered` / `load_package_config_dict`).
+    > 1. **Multi-File Merge**: Candidate files (`drift_workspace.toml`, `drift_workspace.local.toml`, or custom layers) and templates are sequentially loaded and merged (`load_workspace_config_files_layered` / `render_load_package_config_dict`).
     > 2. **Dynamic Python Hook (Preprocessor)**: Executes *before* variable stitching, receiving the raw configuration dictionary with full access to resolved host facts and environment variables via `context`.
-    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all environment tables (`[env.default]`, `[env.override]`, `[env.fallback]`, `[env.secrets]`) and interpolates `${VAR}` across all non-env fields.
+    > 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all environment tables (`[env.secrets]`, `[env.fallback]`, `[env.default]`, `[env.override]`) and interpolates `${VAR}` across all non-env fields.
     > 4. **Validation & Model Instantiation**: Builds validated, strongly-typed configuration objects.
 
 ### 🔗 5. Custom Render Engines & DAG Pipeline Piping
@@ -545,7 +609,7 @@ timeout = 60
 ```
 
 ### Hook Reference & Unified Working Directory (`cwd`)
-Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 7-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.
+Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 6-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.
 
 | Hook Name | Lifecycle Trigger Stage |
 | :--- | :--- |
@@ -570,7 +634,7 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
 > * **Deploying Hook Files or Sharing Dependencies**: If a hook script or a file needed by a hook also needs to be deployed to the host (e.g. a CLI tool under `bin/`), or if sharing hook scripts across packages, create a symlink inside `src/<pkg>/drift_hooks/` (e.g. `ln -s ../bin/my_cli src/<pkg>/drift_hooks/my_cli`).
 
 > [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.
+> **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.
 
 *   **Bypassing Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks on any deployment command (`deploy`, `apply`, `render`, `adopt`, `add`, `uninstall`, `rollback`, `gc`).
 *   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from source|install]` (where stage is `source` or `install`).
@@ -614,7 +678,7 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
   # 2. Iterate and debug the hook script live from source with all injected variables & verbose output:
   drift hook <pkg> <hook> --from src -v
   ```
-  This allows you to safely place your configuration files on disk while iterating on hook scripts in `src/<pkg>/` with full 7-tier environment variables and host facts injected.
+  This allows you to safely place your configuration files on disk while iterating on hook scripts in `src/<pkg>/` with full 6-tier environment variables and host facts injected.
 
 ### 7. Forcing Full Redeployment (`--redeploy`)
 * **Q**: Why was package deployment skipped, and how do I force redeployment of all packages and lifecycle hooks?

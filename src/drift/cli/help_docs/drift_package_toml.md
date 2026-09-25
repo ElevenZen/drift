@@ -6,9 +6,9 @@ In Drift, each package under `src/<package_name>/` is governed by a `drift_packa
 This document provides a comprehensive reference for all configuration options available in a Drift package, including:
 1. **Core Package Settings (`[package]`)**: Target deployment directories, installation methods (`stow` symlinking vs. `copy` physical copy), Windows overrides, subfolder `source_directory` isolation, elevated privilege (`sudo = true`), and Fully Controlled Directories (`fully_controlled_dirs`).
 2. **Host Prerequisites & Requirements (`[package.requirements]`)**: Declarative pre-flight checks (OS, architecture, Linux distro, required binaries in `$PATH`, environment variables, LAN IP/subnets) that selectively enable or skip package deployment.
-3. **7-Tier Environment Variables (`[env.override]` & `[env.fallback]`)**: Dual-tier package variable scopes with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
+3. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical package variable scopes across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
 4. **Lifecycle Command Hooks (`[hooks]`)**: Hook execution triggers across source rendering, installation, updates, uninstallation, and health checks, with `drift_hooks/` internal isolation and rollback management.
-5. **Dynamic Python Package Hooks (`drift_package.py`)**: Programmatic preprocessors executed before variable stitching—the best place to dynamically fetch remote configuration or secret vaults and inject them into `[env.override]`.
+5. **Dynamic Python Package Hooks (`drift_package.py`)**: Programmatic preprocessors executed before variable stitching—the best place to dynamically fetch remote configuration or secret vaults and inject them into `[env.default]`, `[env.secrets]`, or `[env.override]`.
 6. **Package-Level Render Engines (`[render.<name>]`)**: Per-package template engine overrides with field-level inheritance.
 
 ---
@@ -69,35 +69,45 @@ fully_controlled_dirs = [
 # ip = ["192.168.1.0/24"]             # Allowed LAN IPs (exact IP, CIDR subnet e.g. 10.0.0.0/8, or wildcard e.g. 192.168.1.*)
 
 # ---------------------------------------------------------------------
-# Package Environment Variables, Native Variable Stitching & 7-Tier Precedence
+# Package Environment Variables, Native Variable Stitching & 6-Tier Precedence
 # ---------------------------------------------------------------------
 # Drift TOML configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR}).
 # External render engines (e.g. drift_package.envst.toml) can also be used if dynamic generation
 # is needed, but native self-referencing is the built-in, zero-dependency default for .toml files.
 #
+# Symmetrical Sub-Tables & 6-Tier Precedence Model:
+# Both workspace and package configs share 4 symmetrical sub-tables under [env]:
+# 1. [env.override]: Tier 2 - Highest-priority package variables (overrides facts/workspace env; CLI at Tier 1 wins).
+# 2. [env.secrets]:  Tier 4 - Package-scoped secret credentials (overrides workspace secrets and secrets.env).
+# 3. [env.default]:  Tier 5 - Standard package baseline defaults (recommended default location).
+# 4. [env.fallback]: Tier 6 - Low-priority fallbacks applied only when unset across all upper tiers.
+# (Package > Workspace within each macro tier; System/Package facts reside in Tier 3; CLI at Tier 1).
+#
 # Variable Stitching & Referencing Rules:
-# 1. [env.fallback] (Tier 7): Baseline defaults applied ONLY when unset across upper tiers.
-#    Evaluated first against base environment. CANNOT reference [env.override].
-# 2. [env.override] (Tier 2): High-priority overrides (overwrites facts/workspace env; CLI wins).
-#    Evaluated second. CAN reference [env.fallback], package facts (${drift_package_name},
-#    ${drift_package_source_dir}), system facts (${drift_os}, ${drift_arch}), and workspace [env.default].
+# 1. Topological Stitching in [env.*]: Variables can reference each other, system/package facts,
+#    and workspace environment variables. Drift automatically evaluates dependencies using Kahn's DAG algorithm.
+# 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
+#    package facts (${drift_package_name}, ${drift_package_target_dir}), and system facts (${drift_os}, ${drift_arch}).
 # 3. Non-Env Sections: Fields across [package], [hooks], etc. can reference any resolved environment
 #    variables (e.g. target_directory = "${HOME}/.config/${drift_package_name}").
-#    Variables defined outside environment tables cannot be referenced inside environment tables.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to keep literal strings without interpolation.
 
-[env.fallback]
-# Baseline default values (applied only when unset across all other scopes)
-# APP_PORT = "8080"
-# APP_HOST = "localhost"
-# APP_DATA_DIR = "${HOME}/.local/share/${drift_package_name}"
-
-[env.override]
-# Highest-priority package variables (overrides workspace configs, secrets, and system facts)
+# [env.override]
 # APP_URL = "http://${APP_HOST}:${APP_PORT}"
 # APP_SRC = "${drift_package_source_dir}"
+
+# [env.secrets]
+# APP_API_KEY = "package-secret-token"
+
+[env.default]
+APP_PORT = "8080"
+APP_HOST = "localhost"
+APP_DATA_DIR = "${HOME}/.local/share/${drift_package_name}"
+
+# [env.fallback]
+# APP_LOG_LEVEL = "info"
 
 
 [hooks]
@@ -117,7 +127,7 @@ fully_controlled_dirs = [
 # The host target directory is always accessible via `$drift_package_target_dir`.
 #
 # Privilege Model:
-# All hooks run in user space with full environment variable inheritance (all 7 tiers).
+# All hooks run in user space with full environment variable inheritance (all 6 tiers).
 # If a hook command requires root privileges, use 'sudo' explicitly inside the hook script.
 timeout = 120
 
@@ -204,7 +214,7 @@ render_command = "bash -c 'cat %i %s'"
 
 ## 🪝 Lifecycle Hooks Execution Matrix
 
-All lifecycle hooks execute **in user space without `sudo`**, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The target directory is accessible via `$drift_package_target_dir`. If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
+All lifecycle hooks execute **in user space without `sudo`**, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). The target directory is accessible via `$drift_package_target_dir`. If elevated root privileges are required for a specific command (e.g., restarting a service), write `sudo` explicitly within the hook script.
 
 | Hook Name | Lifecycle Trigger Stage |
 | :--- | :--- |
@@ -258,15 +268,14 @@ When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_instal
 *   **`$drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
 *   **`$drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
  
-### ⚡ Seven-Tier Variable Preemption Order:
-When rendering package templates and running hook scripts, variables resolve in the following strict order (highest priority wins):
-1. **Host Shell / CLI Variables**: Explicit user environment variables from invocation.
-2. **`[env.override]` in Package Config**: Package-enforced overrides (`src/<pkg>/drift_package.toml`).
-3. **`drift_package_*` Package Facts**: Authoritative package paths, target directory, install method.
-4. **`drift_*` System Facts**: Authoritative host OS, architecture, distro, hostname, user.
-5. **`secrets` in Workspace**: Loaded from `config/secrets.env` / Secret Provider.
-6. **`[env.default]` in Workspace Config**: Shared defaults from `config/drift_workspace.toml` / `drift_workspace.local.toml`.
-7. **`[env.fallback]` in Package Config**: Package defaults used only when unset by upper tiers.
+### ⚡ Six-Tier Variable Preemption Order:
+When rendering package templates and running hook scripts, variables resolve in the following strict order (Package > Workspace within each macro tier, highest priority wins):
+1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+3. **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
+6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
  
  
 ## 🐍 Dynamic Python Package Hooks (`drift_package.py`)
@@ -275,16 +284,16 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 
 > [!TIP]
 > **Best Practice — Remote Secrets & Configs Fetching**:
-> `drift_package.py` is the **recommended, canonical place** to fetch package-specific configuration files or secrets from remote servers (such as 1Password CLI, Bitwarden, HashiCorp Vault, AWS Secrets Manager, or remote HTTP endpoints) and inject them directly into `[env.override]` or `[env.fallback]`. Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]["override"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
+> `drift_package.py` is the **recommended, canonical place** to fetch package-specific configuration files or secrets from remote servers (such as 1Password CLI, Bitwarden, HashiCorp Vault, AWS Secrets Manager, or remote HTTP endpoints) and inject them directly into `[env.default]`, `[env.secrets]`, or `[env.override]`. Because this hook runs as a preprocessor before variable stitching, any values injected into `context.config["env"]` participate seamlessly in topological DAG resolution and cross-section template interpolation!
 
 ### Automatic Discovery or Custom Path
 * **Default Path**: Place a `drift_package.py` file directly in your package's source directory (`src/<pkg>/drift_package.py`). Drift automatically scaffolds this when running `drift new <package_name>`.
 * **Custom Path**: Explicitly configure `[package] hook_file = "my_hook.py"` (resolved relative to `src/<pkg>/`).
 
 ### Execution Model & Pipeline Order
-1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via `load_package_config_dict`, merging them sequentially.
-2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment (`context.env`). The hook can inject `[env.override]`, customize `target_directory`, or set `enable_install = False`.
-3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves `[env.override]` and `[env.fallback]` tables (including any injected by the hook) according to Drift's 7-tier precedence model and Kahn's topological sort algorithm.
+1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via `render_load_package_config_dict`, merging them sequentially.
+2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment (`context.env`). The hook can inject `[env]`, customize `target_directory`, or set `enable_install = False`.
+3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` tables (including any injected by the hook) according to Drift's 6-tier precedence model and Kahn's topological sort algorithm.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`target_directory`, `requirements`, etc.).
 5. **Render Staging**: Writes the fully resolved, stitched configuration to `render/<pkg>/.drift/drift_package.toml`. Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
 6. **Schema Validation & Model Construction**: Instantiates the strongly-typed `PackageConfig` object.

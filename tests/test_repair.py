@@ -550,7 +550,7 @@ class TestWorkspaceRepair(unittest.TestCase):
 
         # Verify load_workspace_config works seamlessly without deprecation error
         ws_config = load_workspace_config(self.drift_root)
-        self.assertEqual(ws_config.env.get("CUSTOM_OVERRIDE"), "active")
+        self.assertEqual(ws_config.env_resolve.effective.default.get("CUSTOM_OVERRIDE"), "active")
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

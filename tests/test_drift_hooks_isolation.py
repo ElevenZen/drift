@@ -397,7 +397,7 @@ target_directory = "~/pkg_factories"
         render_res = render_package(ws_cfg, pkg_src)
         self.assertEqual(render_res.status, "SUCCESS")
         pkg_render = self.render_dir / "pkg_factories"
-        pkg_render_cfg = PackageConfig.from_render_dir(pkg_render)
+        pkg_render_cfg = PackageConfig.from_render_dir(pkg_render, self.workspace_config)
         self.assertEqual(pkg_render_cfg.name, "pkg_factories")
         self.assertEqual(pkg_render_cfg.install_method, "copy")
 
@@ -405,7 +405,7 @@ target_directory = "~/pkg_factories"
         stage_res = run_primitive_4_stage_render_to_install(ws_cfg)
         self.assertIn("pkg_factories", stage_res)
         pkg_install = self.install_dir / "pkg_factories"
-        pkg_install_cfg = PackageConfig.from_install_dir(pkg_install)
+        pkg_install_cfg = PackageConfig.from_install_dir(pkg_install, ws_cfg)
         self.assertEqual(pkg_install_cfg.name, "pkg_factories")
         self.assertEqual(pkg_install_cfg.install_method, "copy")
 
@@ -421,7 +421,7 @@ name = "pkg_alias"
         )
         pkg_cfg = PackageConfig.from_source_dir(pkg_src, self.workspace_config)
 
-        with pkg_cfg.package_envs(self.workspace_config):
+        with pkg_cfg.package_envs():
             self.assertIn("drift_package_src_dir", os.environ)
             self.assertIn("drift_package_source_dir", os.environ)
             self.assertEqual(os.environ["drift_package_src_dir"], os.environ["drift_package_source_dir"])
@@ -434,6 +434,7 @@ name = "pkg_alias"
             package_name="pkg_alias",
             package_dir=pkg_src,
             workspace_config=self.workspace_config,
+            env=self.workspace_config.get_drift_package_facts("pkg_alias")
         )
         self.assertIn("drift_package_src_dir", ctx.package_facts)
         self.assertEqual(ctx.package_facts["drift_package_src_dir"], str(pkg_src))

@@ -1,6 +1,6 @@
 # 💾 Local State Database & Installation: `install/`
 
-The `install/` directory represents the "Tier 3" database. It is a pure, independent Git 
+The `install/` directory represents the "Layer 3" database. It is a pure, independent Git 
 repository that tracks the "last known good" deployed state of your host system, alongside 
 an explicit registry database (`state.toml`).
 

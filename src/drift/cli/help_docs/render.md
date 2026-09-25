@@ -1,6 +1,6 @@
 # 🧪 Sandbox Compilation & Render Directory: `render/`
 
-The `render/` folder is the "Tier 2" database in Drift's architecture, serving as an 
+The `render/` folder is the "Layer 2" database in Drift's architecture, serving as an 
 isolated, sandbox-backed compilation zone.
 
 ## 🛡️ Sandbox Isolation

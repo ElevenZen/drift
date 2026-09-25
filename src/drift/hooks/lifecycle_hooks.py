@@ -416,7 +416,7 @@ def trigger_package_hook_with_render(
         return res
 
     if exec_flags.load_envs:
-        with pkg_config.package_envs(workspace_config):
+        with pkg_config.package_envs():
             return _execute()
     return _execute()
 

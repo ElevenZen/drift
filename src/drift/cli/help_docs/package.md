@@ -30,7 +30,7 @@ or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_packag
     (e.g., `~/.config/nvim`).
 3.  **`fully_controlled_dirs`**: Directories where Drift has total control, meaning Drift will 
     automatically synchronize and prune deleted files inside them (FCDs).
-4.  **`Dynamic Python Hook`**: A `drift_package.py` (or custom `hook_file`) defining `configure_package(context: PackageHookContext)` to dynamically transform package settings based on host facts, workspace context, and environment. This is the **recommended place to fetch package-specific configuration or secrets from remote servers** and inject them into `[env.override]`.
+4.  **`Dynamic Python Hook`**: A `drift_package.py` (or custom `hook_file`) defining `configure_package(context: PackageHookContext)` to dynamically transform package settings based on host facts, workspace context, and environment. This is the **recommended place to fetch package-specific configuration or secrets from remote servers** and inject them into `[env.default]`, `[env.secrets]`, or `[env.override]`.
 5.  **`Render Engines`**: Package-scoped template engine overrides and custom engines defined under `[render.<name>]` with field-level inheritance and `.drift/` internal sandboxing.
 6.  **`Lifecycle Hooks`**: Shell command hooks executed atomically during source generation, render, installation, update, uninstallation, and health probe sequences 
     (`probe`, `pre_source`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `post_render`, `health`). 
@@ -42,17 +42,19 @@ or `drift_package.local.toml`, with optional dynamic Python hooks (`drift_packag
 
 ## 🧩 3. Variable Stitching & Fact Injections
 
-Package configurations natively participate in Drift's 7-tier variable stitching system:
+Package configurations natively participate in Drift's 6-tier variable stitching system:
 *   **Package Fact Injections**: Automatically interpolate dynamic facts:
     *   `${drift_package_name}`: Active package name (e.g. `nvim`).
     *   `${drift_package_target_dir}`: Resolved destination target directory path.
     *   `${drift_package_source_dir}` / `${drift_package_src_dir}`: Path to source templates in `src/`.
     *   `${drift_package_render_dir}`: Path to rendered files in `render/`.
     *   `${drift_package_install_dir}`: Path to local state in `install/`.
-*   **Dual-Tier Package Scopes**:
-    *   `[env.fallback]`: Baseline default values used only when unset across higher tiers.
-    *   `[env.override]`: Highest-priority package values (overwrites workspace defaults and system facts).
-*   **Topological Evaluation**: Package variables seamlessly reference and stitch with workspace `[env.default]`, secret vault keys, and host facts.
+*   **Symmetrical 4-Table Package Scopes**:
+    *   `[env.override]`: Tier 2 - Highest-priority package values (overrides facts/workspace env; CLI at Tier 1 wins).
+    *   `[env.secrets]`: Tier 4 - Package-scoped secrets (overrides workspace secrets & `secrets.env`).
+    *   `[env.default]`: Tier 5 - Standard package baseline defaults.
+    *   `[env.fallback]`: Tier 6 - Low-priority fallbacks applied only when unset across higher tiers.
+*   **Topological Evaluation**: Package variables seamlessly reference and stitch with workspace `[env.*]`, secret vault keys, and host facts.
 *   **Values-Only Scope**: Variable stitching operates **strictly within configuration values** (e.g. `target_directory`, hook commands, environment variable strings). TOML keys, table names, and section headers are not expanded.
 
 > [!TIP]

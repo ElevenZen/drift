@@ -4,20 +4,210 @@ import os
 import re
 import logging
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterator, List, Mapping, MutableMapping, Optional, Set, Tuple, Union, Iterable, Any, Type
+from typing import (
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Optional,
+    Set,
+    Tuple,
+    Union,
+    Iterable,
+    Any,
+    Type,
+    TypeVar,
+)
 
 from ..core.constants import (
     CONFIG_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
     INITIAL_ENV,
+    DRIFT_SYSTEM_FACT_KEYS,
 )
 from ..core.exceptions import ConfigError, DriftError, RenderError
 
 logger = logging.getLogger(__name__)
 
+K = TypeVar("K")
+V = TypeVar("V")
+
 EnvInput = Union[Mapping[str, str], Iterable[Tuple[str, str]]]
 EnvSnapshot = Dict[str, Optional[str]]
+
+
+@dataclass(frozen=True)
+class EnvConfig:
+    """Structured container holding 4 raw/resolved environment tables."""
+    override: Dict[str, str] = field(default_factory=dict)
+    secrets: Dict[str, str] = field(default_factory=dict)
+    default: Dict[str, str] = field(default_factory=dict)
+    fallback: Dict[str, str] = field(default_factory=dict)
+
+    def to_env_dict(self) -> Dict[str, Any]:
+        """Serializes environment tables for TOML dump using pure functional mapping."""
+        tables = {
+            "override": self.override,
+            "secrets": self.secrets,
+            "default": self.default,
+            "fallback": self.fallback,
+        }
+        return {k: dict(v) for k, v in tables.items() if v}
+
+
+@dataclass(frozen=True)
+class EnvResolve:
+    """Holds layer-local environment definitions, cumulative effective tables, and flattened runtime dictionary."""
+    current: EnvConfig = field(default_factory=EnvConfig)
+    effective: EnvConfig = field(default_factory=EnvConfig)
+    effective_dict: Dict[str, str] = field(default_factory=dict)
+
+
+ENV_SUBTABLE_ALIASES: Dict[str, Tuple[str, ...]] = {
+    "override": ("override", "overwrite"),
+    "secrets": ("secrets",),
+    "default": ("default",),
+    "fallback": ("fallback",),
+}
+
+
+def _extract_env_subtable(
+    table_name: str,
+    table_data: Any,
+    context_desc: str,
+) -> Dict[str, str]:
+    """Helper to validate and extract stringified key-value pairs from an env sub-table."""
+    if not isinstance(table_data, dict):
+        raise ConfigError(f"[env.{table_name}] must be a table of key-value pairs in {context_desc}.")
+    return {str(k): str(v) for k, v in table_data.items()}
+
+
+def merge_kvpairs(mappings: Iterable[Mapping[K, V]]) -> Dict[K, V]:
+    """Pure functional helper to merge multiple key-value mappings into a single dictionary."""
+    return {k: v for m in mappings for k, v in m.items()}
+
+
+def parse_env_dict(
+    env_data: Any,
+    context_desc: str = "workspace configuration",
+) -> EnvConfig:
+    """Parses environment configuration tables into an EnvConfig instance.
+
+    Supports [env.override] (and alias [env.overwrite]), [env.secrets], [env.default], and [env.fallback].
+    Rejects flat key-value pairs or unknown sub-tables with ConfigError.
+    """
+    if not env_data:
+        return EnvConfig()
+    if not isinstance(env_data, dict):
+        raise ConfigError(f"[env] section must be a table in {context_desc}.")
+
+    valid_keys = set().union(*ENV_SUBTABLE_ALIASES.values())
+    invalid_keys = [k for k in env_data if k not in valid_keys]
+    if invalid_keys:
+        raise ConfigError(
+            f"Unsupported key '{invalid_keys[0]}' in [env] in {context_desc}. "
+            f"Expected [env.override], [env.secrets], [env.default], or [env.fallback]."
+        )
+
+    extracted = {
+        target: merge_kvpairs(
+            _extract_env_subtable(alias, env_data[alias], context_desc)
+            for alias in aliases
+            if alias in env_data
+        )
+        for target, aliases in ENV_SUBTABLE_ALIASES.items()
+    }
+
+    return EnvConfig(
+        override=extracted["override"],
+        secrets=extracted["secrets"],
+        default=extracted["default"],
+        fallback=extracted["fallback"],
+    )
+
+
+def build_effective_env_dict(
+    env_config: EnvConfig,
+    extra_facts: Optional[Mapping[str, str]] = None,
+) -> Dict[str, str]:
+    """Flattens an EnvConfig into an effective environment dictionary following 6-Tier Precedence."""
+    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
+    effective_env = dict(os.environ)
+    update_env_dict(effective_env, env_config.fallback, overwrite=False)
+    update_env_dict(effective_env, env_config.default, overwrite=True, env_keep=protected_facts)
+    update_env_dict(effective_env, env_config.secrets, overwrite=True, env_keep=protected_facts)
+    update_env_dict(effective_env, extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
+    update_env_dict(effective_env, env_config.override, overwrite=True, env_keep=set(INITIAL_ENV))
+    return effective_env
+
+
+def resolve_env_configs(
+    current_layer: EnvConfig,
+    lower_layer: Optional[EnvConfig] = None,
+    extra_facts: Optional[Mapping[str, str]] = None,
+) -> EnvResolve:
+    """Evaluates the 6-Tier Precedence Model and Kahn's DAG topological sorting.
+
+    6-Tier Precedence Hierarchy (Package > Workspace within each tier):
+    - Tier 1: CLI / Ambient Process Context (INITIAL_ENV / os.environ)
+    - Tier 2: Override (Package [env.override] > Workspace [env.override])
+    - Tier 3: Facts (Package Facts > System facts)
+    - Tier 4: Secrets (Package [env.secrets] > Workspace [env.secrets] > secrets_file)
+    - Tier 5: Default (Package [env.default] > Workspace [env.default])
+    - Tier 6: Fallback (Package [env.fallback] > Workspace [env.fallback])
+
+    Returns:
+        EnvResolve containing current layer tables, cumulative effective tables, and flattened runtime dictionary.
+    """
+    lower = lower_layer or EnvConfig()
+    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
+    base_env, _ = update_env_dict(dict(os.environ), extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
+
+    # 1. Tier 4 (Secrets): Target secrets > Lower secrets
+    secrets_base, _ = update_env_dict(dict(base_env), lower.secrets, overwrite=True, env_keep=protected_facts)
+    resolved_secrets = resolve_env_references(current_layer.secrets, base_env=secrets_base, error_cls=ConfigError) if current_layer.secrets else {}
+    effective_secrets = {**lower.secrets, **resolved_secrets}
+
+    # 2. Tier 6 (Fallback): Target fallback > Lower fallback (can reference secrets)
+    fallback_base, _ = update_env_dict(dict(secrets_base), effective_secrets, overwrite=True, env_keep=protected_facts)
+    fallback_base, _ = update_env_dict(dict(fallback_base), lower.fallback, overwrite=False)
+    resolved_fallback = resolve_env_references(current_layer.fallback, base_env=fallback_base, error_cls=ConfigError) if current_layer.fallback else {}
+    effective_fallback = {**lower.fallback, **resolved_fallback}
+
+    # 3. Tier 5 (Default): Target default > Lower default (can reference secrets + fallback)
+    default_base, _ = update_env_dict(dict(fallback_base), effective_fallback, overwrite=True, env_keep=protected_facts)
+    default_base, _ = update_env_dict(dict(default_base), lower.default, overwrite=True, env_keep=protected_facts)
+    resolved_default = resolve_env_references(current_layer.default, base_env=default_base, error_cls=ConfigError) if current_layer.default else {}
+    effective_default = {**lower.default, **resolved_default}
+
+    # 4. Tier 2 (Override): Target override > Lower override (can reference all)
+    override_base, _ = update_env_dict(dict(default_base), effective_default, overwrite=True, env_keep=protected_facts)
+    override_base, _ = update_env_dict(dict(override_base), lower.override, overwrite=True, env_keep=set(INITIAL_ENV))
+    resolved_override = resolve_env_references(current_layer.override, base_env=override_base, error_cls=ConfigError) if current_layer.override else {}
+    effective_override = {**lower.override, **resolved_override}
+
+    current = EnvConfig(
+        override=resolved_override,
+        secrets=resolved_secrets,
+        default=resolved_default,
+        fallback=resolved_fallback,
+    )
+    effective = EnvConfig(
+        override=effective_override,
+        secrets=effective_secrets,
+        default=effective_default,
+        fallback=effective_fallback,
+    )
+    effective_dict = build_effective_env_dict(effective, extra_facts=extra_facts)
+
+    return EnvResolve(
+        current=current,
+        effective=effective,
+        effective_dict=effective_dict,
+    )
 
 
 def parse_env_text(content: str) -> Dict[str, str]:
@@ -189,13 +379,6 @@ def env_scope(
         yield
     finally:
         unload_env_settings(saved_envs, mask_values=mask_values)
-
-
-@contextmanager
-def secrets_env_scope(secrets: Optional[EnvInput] = None) -> Iterator[None]:
-    """Context manager for overlaying secrets into os.environ with Tier 5 precedence."""
-    with env_scope(secrets, overwrite=True, env_keep=INITIAL_ENV, mask_values=True):
-        yield
 
 
 def python_envsubst(

@@ -51,6 +51,12 @@ from .toml_utils import (
     validate_known_keys,
 )
 from .env_utils import (
+    EnvConfig,
+    EnvResolve,
+    merge_kvpairs,
+    parse_env_dict,
+    build_effective_env_dict,
+    resolve_env_configs,
     parse_env_text,
     parse_env_file,
     parse_secrets_env,
@@ -59,7 +65,6 @@ from .env_utils import (
     load_env_settings,
     unload_env_settings,
     env_scope,
-    secrets_env_scope,
     python_envsubst,
     topological_sort_env,
     resolve_env_references,
@@ -101,6 +106,7 @@ from .host_facts import (
     get_host_hostname,
     get_host_user,
     parse_os_release,
+    inject_system_facts,
 )
 from .python_hook_utils import (
     load_python_module,
@@ -147,6 +153,12 @@ __all__ = [
     "get_first_from",
     "get_nested_from",
     "validate_known_keys",
+    "EnvConfig",
+    "EnvResolve",
+    "merge_kvpairs",
+    "parse_env_dict",
+    "build_effective_env_dict",
+    "resolve_env_configs",
     "parse_env_text",
     "parse_env_file",
     "parse_secrets_env",
@@ -155,7 +167,6 @@ __all__ = [
     "load_env_settings",
     "unload_env_settings",
     "env_scope",
-    "secrets_env_scope",
     "python_envsubst",
     "topological_sort_env",
     "resolve_env_references",
@@ -191,6 +202,7 @@ __all__ = [
     "get_host_hostname",
     "get_host_user",
     "parse_os_release",
+    "inject_system_facts",
     "load_python_module",
     "execute_python_hook",
 ]

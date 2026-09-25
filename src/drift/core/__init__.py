@@ -84,8 +84,8 @@ from .constants import (
     set_initial_env,
     set_test_mode,
     in_test_mode,
-    inject_system_facts,
     DRIFT_SYSTEM_FACT_KEYS,
+    DRIFT_PACKAGE_FACT_KEYS,
 )
 from .exceptions import (
     DriftError,
@@ -238,8 +238,8 @@ __all__ = [
     "set_initial_env",
     "set_test_mode",
     "in_test_mode",
-    "inject_system_facts",
     "DRIFT_SYSTEM_FACT_KEYS",
+    "DRIFT_PACKAGE_FACT_KEYS",
     "DriftError",
     "ConfigError",
     "DriftDetectedError",

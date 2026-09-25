@@ -3,7 +3,7 @@
 # =====================================================================
 
 # ---------------------------------------------------------------------
-# Workspace Environment Variables, Native Variable Stitching & Topological Resolution
+# Workspace Environment Variables, Native Variable Stitching & Secrets
 # ---------------------------------------------------------------------
 # Drift configurations natively support topological variable self-referencing and stitching ($VAR, ${VAR})
 # directly within .toml files. External render engines (e.g. drift_workspace.local.envst.toml) can also
@@ -11,20 +11,28 @@
 #
 # Variable Stitching & Referencing Rules:
 # 1. Topological Stitching in [env.default]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
-#    Drift builds a dependency DAG and resolves variables in topological order with cyclic detection.
+#    Drift builds a dependency DAG and resolves variables in topological order with cycle detection.
 # 2. External References: You can reference host environment variables (${HOME}, ${USER}), secret vault entries,
 #    and auto-populated system facts (${drift_os}, ${drift_arch}, ${drift_distro}, ${drift_hostname}, ${drift_user}).
-# 3. Unidirectional Evaluation Flow: ONLY variables defined in [env.default] / [env.secrets] (and inherited process environment/facts)
-#    can be referenced across other drift_workspace.toml sections. Variables outside environment tables cannot be referenced inside environment tables.
+# 3. Unidirectional Evaluation Flow: ONLY variables defined in environment tables ([env.default], [env.secrets])
+#    and inherited process environment/facts can be referenced across other drift_workspace.toml sections.
 # 4. Values-Only Scope: Variable stitching and interpolation occurs STRICTLY within configuration field values
 #    (strings, arrays). Variable references are NEVER evaluated in TOML keys, table names, or section headers.
 # 5. Escaping: Use a leading backslash (\${VAR} or \$VAR) to prevent interpolation and preserve literal text.
+# 6. Advanced Priority Tuning: Drift also supports [env.override] (highest priority) and [env.fallback] (soft baseline).
+#    See 'drift help drift_workspace.toml' for full 6-tier details.
 [env.default]
 SOCKS_PROXY_HOST = "127.0.0.1"
 SOCKS_PROXY_PORT = "1080"
 DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"
 DRIFT_SAMPLE_ENV_THEME = "nord-dark"
 DRIFT_SAMPLE_ENV_EDITOR = "vim"
+
+# [env.secrets]
+# Secret credentials with log masking and clean-room isolation across lifecycle hooks and render processes.
+# Secrets defined here take precedence over config/secrets.env and can be referenced via ${SECRET_NAME}.
+# GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxx"
+# OPENAI_API_KEY = "sk-proj-xxxxxxxxxxxxxxxxxxxx"
 
 # ---------------------------------------------------------------------
 # Enabled Packages Registry

@@ -109,23 +109,22 @@ WORK_EMAIL="jane.doe@company.com"
 
 ### Ingestion & Isolated Compilation Lifecycles
 Secrets are handled with maximum security and performance during workspace and package operations:
-1.  **Strict 7-Tier Variable Precedence**:
-    *   **Tier 1**: Host Shell / CLI Environment (`os.environ`)
-    *   **Tier 2**: Package `[env.override]`
-    *   **Tier 3**: Package Facts (`drift_package_*`)
-    *   **Tier 4**: System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
-    *   **Tier 5**: Secrets (Sub-Precedence: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`)
-    *   **Tier 6**: Workspace Environment (`[env.default]` table in `drift_workspace.toml`)
-    *   **Tier 7**: Package `[env.fallback]`
+1.  **Strict 6-Tier Variable Precedence**:
+    *   **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+    *   **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+    *   **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
+    *   **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+    *   **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
+    *   **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 2.  **Topological Self-Referencing in `[env.secrets]`**:
-    *   Both workspace and package configurations support a dedicated `[env.secrets]` table.
-    *   Variables in `[env.secrets]` can reference each other, lower-tier secrets, system facts, and host environment variables.
+    *   Both workspace and package configurations support a dedicated `[env.secrets]` table (Tier 4).
+    *   Variables in `[env.secrets]` can reference each other, lower-tier variables, system facts, and host environment variables.
     *   **Rendered Sandbox Metadata**: Fully stitched metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/`. Because both directories are git-ignored by default, downstream lifecycle hooks (`post_install`, `health`) have seamless access to all environment tiers without re-parsing source files.
 3.  **Single Ingestion & Explicit Workspace Cache**:
-    *   `config/secrets.env` and workspace `[env.secrets]` are parsed during workspace loading and stored in memory on `WorkspaceConfig.secrets`.
+    *   `config/secrets.env` and workspace `[env.secrets]` are parsed during workspace loading and stored in memory on `WorkspaceConfig.env.secrets`.
     *   Downstream Python hooks access secrets via `context.env` in $O(1)$ memory without repeated disk I/O.
-4.  **Transient Clean-Room Isolation (`secrets_env_scope`) & Log Masking**:
-    *   During package rendering and lifecycle hook execution, Drift enters `secrets_env_scope(merged_secrets)`.
+4.  **Transient Clean-Room Isolation (`package_envs`) & Log Masking**:
+    *   During package rendering and lifecycle hook execution, Drift enters `pkg_config.package_envs()`.
     *   Secret values are automatically masked in debug logs as `KEY=****`.
     *   **Strict Restoration**: Upon exiting the scope, Drift completely restores the original host environment state, ensuring zero credential leakages to parent shells or unrelated processes.
 

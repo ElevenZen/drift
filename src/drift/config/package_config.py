@@ -46,7 +46,16 @@ from ..core.constants import (
 )
 from .workspace_config import RenderEngineConfig, WorkspaceConfig
 from .render_engine_config import RenderEngineRegistry
-from ..utils.env_utils import resolve_env_references, interpolate_config_dict, update_env_dict, load_env_settings
+from ..utils.env_utils import (
+    EnvConfig,
+    EnvResolve,
+    parse_env_dict,
+    build_effective_env_dict,
+    resolve_env_configs,
+    interpolate_config_dict,
+    update_env_dict,
+    load_env_settings,
+)
 from ..core.exceptions import ConfigError
 from ..utils.path_utils import expand_path, is_relative_to
 from ..core.result_models import HookResult
@@ -774,147 +783,46 @@ class PackageHooks:
                 )
 
 
-def parse_package_env_tables(env_data: Any, package_name: str) -> Tuple[Dict[str, str], Dict[str, str], Dict[str, str]]:
-    """Parses package environment configuration tables into (override_map, fallback_map, secrets_map)."""
-    if not isinstance(env_data, dict):
-        raise ConfigError(f"[env] section must be a table for package '{package_name}'.")
-
-    override_map: Dict[str, str] = {}
-    fallback_map: Dict[str, str] = {}
-    secrets_map: Dict[str, str] = {}
-    for k, v in env_data.items():
-        if k in ("override", "overwrite"):
-            if not isinstance(v, dict):
-                raise ConfigError(f"[env.{k}] must be a table of key-value pairs for package '{package_name}'.")
-            for sub_k, sub_v in v.items():
-                override_map[str(sub_k)] = str(sub_v)
-        elif k == "fallback":
-            if not isinstance(v, dict):
-                raise ConfigError(f"[env.fallback] must be a table of key-value pairs for package '{package_name}'.")
-            for sub_k, sub_v in v.items():
-                fallback_map[str(sub_k)] = str(sub_v)
-        elif k == "secrets":
-            if not isinstance(v, dict):
-                raise ConfigError(f"[env.secrets] must be a table of key-value pairs for package '{package_name}'.")
-            for sub_k, sub_v in v.items():
-                secrets_map[str(sub_k)] = str(sub_v)
-        elif isinstance(v, dict):
-            raise ConfigError(
-                f"Unknown sub-table [env.{k}] for package '{package_name}'. "
-                f"Expected [env.override], [env.fallback], or [env.secrets]."
-            )
-        else:
-            raise ConfigError(
-                f"Direct key-value pair '{k}' in [env] is not supported for package '{package_name}'. "
-                f"Please define variables under [env.override], [env.fallback], or [env.secrets]."
-            )
-
-    return override_map, fallback_map, secrets_map
-
-
 def resolve_and_interpolate_package_config(
     data: dict,
     package_name: str,
     workspace_config: Optional[WorkspaceConfig] = None,
-) -> dict:
+) -> Tuple[Dict[str, Any], EnvResolve]:
     """Resolves environment variables and interpolates references across a package config dictionary.
-
-    Follows the 7-Tier Precedence Model:
-    - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
-    - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
-    - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
-    - Tier 4: drift_* system facts (preserved via DRIFT_SYSTEM_FACT_KEYS)
-    - Tier 5: Secrets (Package [env.secrets] > Workspace [env.secrets] > config/secrets.env)
-    - Tier 6: Workspace [env.default]
-    - Tier 7: Package [env.fallback] (fills unset blanks only)
 
     Args:
         data: Parsed TOML dictionary of the package configuration.
         package_name: Name of the package.
-        workspace_config: Optional workspace configuration for deriving directory facts and workspace secrets.
+        workspace_config: Optional workspace configuration for deriving directory facts and workspace envs.
 
     Returns:
-        Fully interpolated and stitched configuration dictionary ready for dump_toml or PackageConfig.from_dict.
+        A tuple of (stitched_config_dict, resolved_env_resolve).
     """
-    env_data = data.get("env", {})
+    pkg_facts = (workspace_config.get_drift_package_facts(package_name)
+                 if workspace_config is not None
+                 else { "drift_package_name": package_name, })
 
-    # 1. Parse package environment tables ([env.override], [env.overwrite], [env.fallback], [env.secrets])
-    override_map, fallback_map, package_secrets = parse_package_env_tables(env_data, package_name=package_name)
-
-    # 2. Derive package facts available during package config parsing
-    pkg_facts: Dict[str, str] = {
-        "drift_package_name": package_name,
-    }
-    if workspace_config is not None:
-        pkg_facts["drift_package_source_dir"] = str(workspace_config.source_path / package_name)
-        pkg_facts["drift_package_src_dir"] = str(workspace_config.source_path / package_name)
-        pkg_facts["drift_package_render_dir"] = str(workspace_config.render_path / package_name)
-        pkg_facts["drift_package_install_dir"] = str(workspace_config.install_path / package_name)
-
-    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS)
-
-    # 3. Resolve package [env.secrets] against base (Tiers 1, 4, 6 from os.environ + workspace secrets + pkg_facts)
-    ws_secrets = workspace_config.secrets if workspace_config is not None else {}
-    tier5_base, _ = update_env_dict(
-        dict(os.environ),
-        ws_secrets,
-        overwrite=True,
-        env_keep=protected_facts
+    env_config = parse_env_dict(data.get("env", {}), context_desc=f"package '{package_name}'")
+    resolved_env = resolve_env_configs(
+        env_config,
+        lower_layer=workspace_config.env_resolve.effective if workspace_config is not None else None,
+        extra_facts=pkg_facts,
     )
-    base_for_pkg_secrets, _ = update_env_dict(
-        dict(tier5_base),
-        pkg_facts,
-        overwrite=True,
-        env_keep=INITIAL_ENV
-    )
-    if package_secrets:
-        resolved_package_secrets = resolve_env_references(
-            package_secrets,
-            base_env=base_for_pkg_secrets,
-            error_cls=ConfigError
-        )
-    else:
-        resolved_package_secrets = {}
 
-    effective_secrets = {**ws_secrets, **resolved_package_secrets}
-
-    # 4. Resolve fallback_map and override_map respecting 7-tier precedence:
-    # - Fallback base: os.environ (Tiers 1, 4, 6) + effective_secrets (Tier 5) + pkg_facts (Tier 3)
-    secrets_base, _ = update_env_dict(dict(os.environ), effective_secrets, overwrite=True, env_keep=protected_facts)
-    fallback_base, _ = update_env_dict(dict(secrets_base), pkg_facts, overwrite=True, env_keep=INITIAL_ENV)
-
-    if fallback_map:
-        fallback_map = resolve_env_references(fallback_map, base_env=fallback_base, error_cls=ConfigError)
-
-    # - Override base: fallback_base + resolved fallback (where unset)
-    override_base, _ = update_env_dict(dict(fallback_base), fallback_map, overwrite=False)
-    if override_map:
-        override_map = resolve_env_references(override_map, base_env=override_base, error_cls=ConfigError)
-
-    # 5. Build active_pkg_env for interpolating the rest of drift_package.toml across 7 tiers:
-    active_pkg_env, _ = update_env_dict(dict(override_base), override_map, overwrite=True, env_keep=INITIAL_ENV)
-
-    # 6. Interpolate ${VAR} across all other sections of package config using combined env
     interpolated_data = interpolate_config_dict(
         data,
-        env=active_pkg_env,
+        env=resolved_env.effective_dict,
         exclude_keys={"env"},
         error_cls=ConfigError
     )
 
-    env_dict = {
-        k: v
-        for k, v in (
-            ("override", override_map),
-            ("fallback", fallback_map),
-            ("secrets", resolved_package_secrets),
-        )
-        if v
-    }
-    return {
+    env_dict = resolved_env.current.to_env_dict()
+    stitched_data = {
         **{k: v for k, v in interpolated_data.items() if k != "env"},
         **({"env": env_dict} if env_dict else {}),
     }
+    return stitched_data, resolved_env
+
 
 
 @dataclass
@@ -948,15 +856,12 @@ class PackageConfig:
     enable_install: bool = True
     install_method: Optional[InstallMethod] = None
     target_directory: Optional[Path] = None
-    target_directory_windows: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hooks: PackageHooks = field(default_factory=PackageHooks)
     requirements: PackageRequirements = field(default_factory=PackageRequirements)
     hook_file: Optional[Path] = None
-    env_override: Dict[str, str] = field(default_factory=dict)
-    env_fallback: Dict[str, str] = field(default_factory=dict)
-    secrets: Dict[str, str] = field(default_factory=dict)
+    env_resolve: EnvResolve = field(default_factory=EnvResolve)
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
 
     def assert_hooks_exist(
@@ -971,29 +876,24 @@ class PackageConfig:
     def __init__(
         self,
         name: str,
-        source_files: Sequence[Path] = (),
+        source_files: Iterable[Path] = (),
         source_directory: Optional[Union[str, Path]] = None,
         enable_render: bool = True,
         enable_install: bool = True,
         install_method: Optional[InstallMethod] = None,
         target_directory: Optional[Path] = None,
-        target_directory_windows: Optional[Path] = None,
         sudo: bool = False,
-        fully_controlled_dirs: Sequence[Path] = (),
+        fully_controlled_dirs: Iterable[Path] = (),
         hooks: Optional[PackageHooks] = None,
         requirements: Optional[PackageRequirements] = None,
         hook_file: Optional[Union[Path, str]] = None,
-        env_override: Mapping[str, str] = {},
-        env_fallback: Mapping[str, str] = {},
-        secrets: Mapping[str, str] = {},
+        env_resolve: Optional[EnvResolve] = None,
         render_engine_configs: Optional[RenderEngineRegistry] = None,
     ) -> None:
         if source_directory is not None and not isinstance(source_directory, (str, Path)):
             raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
         if target_directory is not None and not isinstance(target_directory, (str, Path)):
             raise ConfigError(f"target_directory must be a Path or str, got {type(target_directory).__name__}")
-        if target_directory_windows is not None and not isinstance(target_directory_windows, (str, Path)):
-            raise ConfigError(f"target_directory_windows must be a Path or str, got {type(target_directory_windows).__name__}")
         if install_method is not None and not isinstance(install_method, InstallMethod):
             raise ConfigError(f"install_method must be an InstallMethod instance, got {type(install_method).__name__}")
         if hooks is not None and not isinstance(hooks, PackageHooks):
@@ -1002,12 +902,8 @@ class PackageConfig:
             raise ConfigError(f"requirements must be a PackageRequirements instance, got {type(requirements).__name__}")
         if hook_file is not None and not isinstance(hook_file, (str, Path)):
             raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
-        if not isinstance(env_override, (dict, Mapping)):
-            raise ConfigError(f"env_override must be a dictionary or Mapping, got {type(env_override).__name__}")
-        if not isinstance(env_fallback, (dict, Mapping)):
-            raise ConfigError(f"env_fallback must be a dictionary or Mapping, got {type(env_fallback).__name__}")
-        if not isinstance(secrets, (dict, Mapping)):
-            raise ConfigError(f"secrets must be a dictionary or Mapping, got {type(secrets).__name__}")
+        if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
+            raise ConfigError(f"env_resolve must be an EnvResolve instance, got {type(env_resolve).__name__}")
         if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
             raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
 
@@ -1018,16 +914,13 @@ class PackageConfig:
         self.enable_install = enable_install
         self.install_method = install_method
         self.target_directory = expand_path(target_directory) if target_directory else None
-        self.target_directory_windows = expand_path(target_directory_windows) if target_directory_windows else None
         self.sudo = sudo
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
         self.hooks = hooks if hooks is not None else PackageHooks()
         self.hooks.package_config = self
         self.requirements = requirements if requirements is not None else PackageRequirements()
         self.hook_file = Path(hook_file) if hook_file is not None else None
-        self.env_override = {str(k): str(v) for k, v in env_override.items()}
-        self.env_fallback = {str(k): str(v) for k, v in env_fallback.items()}
-        self.secrets = {str(k): str(v) for k, v in secrets.items()}
+        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
         self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
 
     def validate(self) -> None:
@@ -1076,14 +969,20 @@ class PackageConfig:
                 raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
             if not self.hook_file.is_absolute():
                 raise ConfigError(f"hook_file must be an absolute Path for package '{self.name}'.")
-        if not isinstance(self.env_override, dict):
-            raise ConfigError(f"env_override must be a dictionary for package '{self.name}'.")
-        if not isinstance(self.env_fallback, dict):
-            raise ConfigError(f"env_fallback must be a dictionary for package '{self.name}'.")
-        if not isinstance(self.secrets, dict):
-            raise ConfigError(f"secrets must be a dictionary for package '{self.name}'.")
+        if not isinstance(self.env_resolve, EnvResolve):
+            raise ConfigError(f"env_resolve must be an EnvResolve instance for package '{self.name}'.")
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
             raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry for package '{self.name}'.")
+
+    def get_drift_package_facts(self, workspace_config: Optional[WorkspaceConfig]) -> Dict[str, str]:
+        ws_pkg_facts = (workspace_config.get_drift_package_facts(self.name)
+                        if workspace_config is not None else {})
+        pkg_facts = { k: str(v) for k, v in {
+            'drift_package_name': self.name,
+            'drift_package_install_method': self.install_method,
+            'drift_package_target_dir': self.target_directory,
+        }.items() if v is not None }
+        return { **ws_pkg_facts, **pkg_facts }
 
     def evaluate_requirements(
         self,
@@ -1123,15 +1022,16 @@ class PackageConfig:
         """
         Returns the path of the subfolder to render within package_dir.
         The result is always a subdirectory of package_dir, and cannot escape it.
+
+        Note: We avoid Path.resolve() here to prevent macOS APFS firmlink mutation
+        (e.g., /home -> /System/Volumes/Data/home).
         """
         if not self.source_directory or self.source_directory == Path(".") or str(self.source_directory) in (".", ""):
             return package_dir
         return package_dir / self.source_directory
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
-        if sys.platform == "win32"and self.target_directory_windows is not None:
-            return expand_path(self.target_directory_windows)
-        return expand_path(self.target_directory or workspace_config.default_target_path)
+        return self.target_directory or workspace_config.default_target_path
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
         if sys.platform == "win32":
@@ -1148,65 +1048,16 @@ class PackageConfig:
 
     def load_package_envs(
         self,
-        workspace_config: WorkspaceConfig,
         overwrite: bool = True
     ) -> Dict[str, Optional[str]]:
-        """Loads package-specific environment variables into os.environ across tiers.
-
-        Preemption order within package scope:
-        - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
-        - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
-        - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
-        - Tier 7: Package [env.fallback] (fills unset blanks only)
-
-        Variables loaded:
-            drift_package_name: Name of the package (directory name).
-            drift_package_target_dir: Resolved absolute target directory path on the host system.
-            drift_package_source_dir (alias: drift_package_src_dir): Absolute path to the package's source directory in workspace.
-            drift_package_render_dir: Absolute path to the package's compiled sandbox directory.
-            drift_package_install_dir: Absolute path to the package's state database directory.
-            drift_package_install_method: Resolved install method ('stow' or 'copy').
+        """Loads pre-resolved effective package environment into os.environ.
 
         Returns:
             A snapshot dictionary mapping modified keys to their original values.
         """
-        from ..core.constants import INITIAL_ENV
-        from ..utils.env_utils import load_env_settings
-
-        target_dir = self.get_target_directory(workspace_config)
-        target_dir_str = str(target_dir)
-        install_method_str = str(self.get_install_method(workspace_config))
-        source_dir_str = str(workspace_config.source_path / self.name)
-        render_dir_str = str(workspace_config.render_path / self.name)
-        install_dir_str = str(workspace_config.install_path / self.name)
-
-        pkg_facts = {
-            "drift_package_name": self.name,
-            "drift_package_target_dir": target_dir_str,
-            "drift_package_source_dir": source_dir_str,
-            "drift_package_src_dir": source_dir_str,
-            "drift_package_render_dir": render_dir_str,
-            "drift_package_install_dir": install_dir_str,
-            "drift_package_install_method": install_method_str,
-        }
-
-        saved_envs: Dict[str, Optional[str]] = {}
-
-        # 1. Tier 7: Load env_fallback without overwrite (only filling unset blanks)
-        if self.env_fallback:
-            for k, v in load_env_settings(self.env_fallback, overwrite=False).items():
-                saved_envs.setdefault(k, v)
-
-        # 2. Tier 3: Load package facts with overwrite enabled (preserving INITIAL_ENV)
-        for k, v in load_env_settings(pkg_facts, overwrite=True, env_keep=INITIAL_ENV).items():
-            saved_envs.setdefault(k, v)
-
-        # 3. Tier 2: Load env_override with overwrite enabled (preserving INITIAL_ENV)
-        if self.env_override:
-            for k, v in load_env_settings(self.env_override, overwrite=True, env_keep=INITIAL_ENV).items():
-                saved_envs.setdefault(k, v)
-
-        return saved_envs
+        from ..utils.env_utils import update_env_dict
+        _, saved_eff = update_env_dict(os.environ, self.env_resolve.effective_dict, overwrite=overwrite, env_keep=INITIAL_ENV)
+        return saved_eff
 
     def unload_package_envs(
         self,
@@ -1219,28 +1070,14 @@ class PackageConfig:
     @contextmanager
     def package_envs(
         self,
-        workspace_config: WorkspaceConfig,
         overwrite: bool = True
     ) -> Iterator[None]:
-        """Context manager to activate package-specific environment variables and secrets in os.environ.
-
-        Preemption order activated within package execution scope:
-        - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
-        - Tier 2: Package [env.override] (overwrites lower tiers unless in INITIAL_ENV)
-        - Tier 3: drift_package_* facts (overwrites lower tiers unless in INITIAL_ENV)
-        - Tier 4: drift_* system facts
-        - Tier 5: Secrets (Package [env.secrets] > Workspace [env.secrets] > config/secrets.env)
-        - Tier 6: Workspace [env.default]
-        - Tier 7: Package [env.fallback] (fills unset blanks only)
-        """
-        from ..utils.env_utils import secrets_env_scope
-        merged_secrets = {**workspace_config.secrets, **self.secrets}
-        with secrets_env_scope(merged_secrets):
-            saved_envs = self.load_package_envs(workspace_config=workspace_config, overwrite=overwrite)
-            try:
-                yield
-            finally:
-                self.unload_package_envs(saved_envs)
+        """Context manager to activate package-specific environment variables and secrets in os.environ."""
+        saved_envs = self.load_package_envs(overwrite=overwrite)
+        try:
+            yield
+        finally:
+            self.unload_package_envs(saved_envs)
 
     @classmethod
     def from_dict(
@@ -1274,8 +1111,8 @@ class PackageConfig:
             package_name: Unique name of the package.
             base_dir: Required local directory of the package for relative asset/engine resolution.
             source_files: Candidate or loaded source configuration files.
-            workspace_config: Optional WorkspaceConfig providing workspace layout, defaults, and stage paths.
-                Required for lifecycle hooks to execute and bind properly across stages.
+            workspace_config: Optional WorkspaceConfig providing workspace layout, defaults, stage paths,
+                and lower-layer workspace environment tables for computing effective package environments and facts.
 
         Returns:
             A validated and initialized PackageConfig instance.
@@ -1303,7 +1140,7 @@ class PackageConfig:
         env_data = data.get("env", {})
         render_data = data.get("render", {})
 
-        name = package_name
+        name = str(package_name)
 
         # Error for unknown package options
         validate_known_keys(
@@ -1313,43 +1150,38 @@ class PackageConfig:
             suffix=name_str,
         )
 
-        # Parse package environment tables ([env.override], [env.fallback], [env.secrets])
-        override_map: Dict[str, str] = {}
-        fallback_map: Dict[str, str] = {}
-        secrets_map: Dict[str, str] = {}
-        if env_data:
-            override_map, fallback_map, secrets_map = parse_package_env_tables(env_data, package_name=str(name))
-
         # Resolve common package base directory for hooks and render engines
         # workspace_config takes priority over base_dir, matching PackageHooks.from_dict() precedence
         if workspace_config is not None and name:
-            common_base_dir = (workspace_config.source_path / name).resolve()
+            pkg_base = (workspace_config.source_path / name).resolve()
         else:
-            common_base_dir = base_dir_path
+            pkg_base = base_dir_path
 
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
         hooks = PackageHooks.from_dict(
             hooks_data,
-            package_name=str(name),
-            base_dir=common_base_dir,
+            package_name=name,
+            base_dir=pkg_base,
             workspace_config=workspace_config,
         )
 
         # Parse declarative requirements ([package.requirements] or top-level [requirements])
         req_data = package_data.get("requirements") or data.get("requirements") or {}
-        requirements = PackageRequirements.from_dict(req_data, package_name=str(name))
+        requirements = PackageRequirements.from_dict(req_data, package_name=name)
 
         # Parse render engines configurations under [render.*]
         render_engine_configs = RenderEngineRegistry.from_dict(
             render_data,
-            base_dir=common_base_dir
+            base_dir=pkg_base
         )
 
         fcd = package_data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
-            fcd = [fcd]
-        elif not isinstance(fcd, list):
-            fcd = []
+            fcd = [Path(fcd)]
+        elif isinstance(fcd, list):
+            fcd = [Path(d) for d in fcd]
+        else:
+            raise ConfigError(f"fully_controlled_dirs must be a list of strings for package '{name}'.")
 
         # Parse source_directory if provided
         src_dir_val = package_data.get("source_directory")
@@ -1357,26 +1189,27 @@ class PackageConfig:
             if not isinstance(src_dir_val, (str, Path)):
                 raise ConfigError(f"source_directory must be a string for package '{name}'.")
             raw_str = str(src_dir_val).strip()
-            source_dir = Path(raw_str) if raw_str and raw_str != "." else Path(".")
+            source_dir = Path(raw_str) if len(raw_str) > 0 else Path(".")
         else:
             source_dir = Path(".")
 
-        # Expand home directory and env vars for target_directory on load
-        target_dir = (val := package_data.get("target_directory")) and expand_path(val)
+        target_dir_keys = (
+                *((f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES) if sys.platform == "win32" else ()),
+                "target_directory",
+        )
+        # Expand home directory and env vars for target_directory
+        target_dir: Optional[Path] = (val := get_first_from(package_data, target_dir_keys)) and expand_path(val)
 
-        target_dir_windows_raw = get_first_from(package_data,
-                (f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES))
-        target_dir_windows = target_dir_windows_raw and expand_path(target_dir_windows_raw)
-
-        # resolve relative hook_file path to absolute path if common_base_dir is provided
+        # resolve relative hook_file path to absolute path if pkg_base is provided
         raw_hook_file = package_data.get("hook_file")
         if raw_hook_file is not None:
             resolved_hook_file = Path(raw_hook_file)
-            if not resolved_hook_file.is_absolute() and common_base_dir is not None:
-                resolved_hook_file = (common_base_dir / resolved_hook_file).resolve()
+            if not resolved_hook_file.is_absolute() and pkg_base is not None:
+                resolved_hook_file = (pkg_base / resolved_hook_file).resolve()
         else:
             resolved_hook_file = None
 
+        # Parse install_method if provided
         raw_install_method = package_data.get("install_method")
         parsed_install_method: Optional[InstallMethod] = None
         if raw_install_method is not None:
@@ -1388,25 +1221,31 @@ class PackageConfig:
         config = cls(
             name=str(name),
             source_directory=source_dir,
+            source_files=[x for x in source_files if isinstance(x, Path)], # filter out None items.
             enable_render=bool(package_data.get("enable_render", True)),
             enable_install=bool(package_data.get("enable_install", True)),
             install_method=parsed_install_method,
             target_directory=target_dir,
-            target_directory_windows=target_dir_windows,
             sudo=bool(package_data.get("sudo", False)),
-            fully_controlled_dirs=[Path(d) for d in fcd],
+            fully_controlled_dirs=fcd,
             hooks=hooks,
             requirements=requirements,
             hook_file=resolved_hook_file,
-            env_override=override_map,
-            env_fallback=fallback_map,
-            secrets=secrets_map,
             render_engine_configs=render_engine_configs,
         )
-        if source_files:
-            config.source_files = [x for x in source_files if isinstance(x, Path)]
+        parsed_env = parse_env_dict(env_data, context_desc=f"package '{name}'")
+        config.env_resolve = EnvResolve(current=parsed_env)
+        config.compute_effective_envs(workspace_config)
         config.validate()
         return config
+
+    def compute_effective_envs(self, workspace_config: Optional[WorkspaceConfig] = None) -> 'PackageConfig':
+        self.env_resolve = resolve_env_configs(
+            current_layer=self.env_resolve.current,
+            lower_layer=(workspace_config and workspace_config.env_resolve.effective),
+            extra_facts=self.get_drift_package_facts(workspace_config),
+        )
+        return self
 
     @classmethod
     def from_source_dir(
@@ -1424,21 +1263,29 @@ class PackageConfig:
     def from_render_dir(
         cls,
         package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
         """Loads package configuration strictly from the render/ sandbox package directory.
         The name of package_dir is treated as the package name.
         """
-        return load_package_config_from_render_dir(package_dir=package_dir)
+        return load_package_config_from_render_dir(
+                package_dir=package_dir,
+                workspace_config=workspace_config,
+        )
 
     @classmethod
     def from_install_dir(
         cls,
         package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
         """Loads package configuration strictly from the install/ state database package directory.
         The name of package_dir is treated as the package name.
         """
-        return load_package_config_for_install(package_dir=package_dir)
+        return load_package_config_for_install(
+                package_dir=package_dir,
+                workspace_config=workspace_config,
+        )
 
     @classmethod
     def from_rendered_file(
@@ -1446,12 +1293,14 @@ class PackageConfig:
         package_toml_path: Path,
         package_name: str,
         package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
     ) -> "PackageConfig":
         """Loads package configuration directly from a rendered drift_package.toml file."""
         return load_package_config_rendered(
-            package_toml_path=package_toml_path,
-            package_name=package_name,
-            package_dir=package_dir,
+                package_toml_path=package_toml_path,
+                package_name=package_name,
+                package_dir=package_dir,
+                workspace_config=workspace_config,
         )
 
 
@@ -1459,6 +1308,7 @@ def load_package_config_rendered(
     package_toml_path: Path,
     package_name: str,
     package_dir: Path,
+    workspace_config: Optional["WorkspaceConfig"] = None,
 ) -> PackageConfig:
     """Loads and parses a package configuration from drift_package.toml.
 
@@ -1466,6 +1316,7 @@ def load_package_config_rendered(
         package_toml_path: Absolute path to the rendered drift_package.toml file.
         package_name: Required canonical name of the package.
         package_dir: Required package root directory (e.g. render/<pkg> or install/<pkg>).
+        workspace_config: Optional active WorkspaceConfig providing workspace layout and environment for effective resolution.
     """
     if not package_toml_path.exists():
         raise FileNotFoundError(f"Package configuration file not found: {package_toml_path}")
@@ -1477,6 +1328,7 @@ def load_package_config_rendered(
             package_name=package_name,
             source_files=[package_toml_path],
             base_dir=package_dir,
+            workspace_config=workspace_config,
         )
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{package_name}' in '{package_toml_path}': {e}") from e
@@ -1542,24 +1394,21 @@ def render_or_load_toml(
     if engine is None:
         raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
 
+    env_res = resolve_env_configs(
+            workspace_config.env_resolve.effective,
+            None,
+            workspace_config.get_drift_package_facts(package_name)
+    )
+
     from ..core.constants import INITIAL_ENV
     from ..utils.env_utils import env_scope
-
-    pkg_envs = {
-        "drift_package_name": package_name,
-        "drift_package_source_dir": str(workspace_config.source_path / package_name),
-        "drift_package_src_dir": str(workspace_config.source_path / package_name),
-        "drift_package_render_dir": str(workspace_config.render_path / package_name),
-        "drift_package_install_dir": str(workspace_config.install_path / package_name),
-    }
-
     with tempfile.TemporaryDirectory(prefix=f"{package_name}_pkg_") as tmpdir:
         temp_path_obj = Path(tmpdir) / "drift_package.toml"
-        with env_scope(pkg_envs, overwrite=True, env_keep=INITIAL_ENV):
+        with env_scope(env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV):
             from ..render.render_core import render_template_to_file
             render_template_to_file(
                 engine_config=engine,
-                drift_root=workspace_config.drift_root,
+                drift_root=workspace_config.drift_root if workspace_config is not None else info.path.parent,
                 template_file_path=info.path,
                 output_file_path=temp_path_obj
             )
@@ -1567,7 +1416,7 @@ def render_or_load_toml(
             return parse_toml(content)
 
 
-def load_package_config_dict(
+def render_load_package_config_dict(
     pkg_name: str,
     config_files: Sequence[Path],
     workspace_config: Optional[WorkspaceConfig] = None
@@ -1624,12 +1473,12 @@ def load_package_config_from_source_dir(
 
     Configuration Pipeline Execution Order:
     1. Multi-File Discovery & Merging: Discovers candidate files (drift_package.toml,
-       drift_package.local.toml, and templates) and deep-merges them via load_package_config_dict.
+       drift_package.local.toml, and templates) and deep-merges them via render_load_package_config_dict.
     2. Dynamic Python Package Hook: Executes configure_package(context) from src/<pkg>/drift_package.py
        (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
        resolved context facts and environment.
-    3. Variable Stitching & Topological Sort: Resolves [env.override] and [env.fallback] tables using
-       Kahn's topological sort and Drift's 7-tier precedence model.
+    3. Variable Stitching & Topological Sort: Resolves [env.override], [env.secrets], [env.default],
+       and [env.fallback] tables using Kahn's topological sort and Drift's 6-tier precedence model.
     4. Cross-Section Interpolation: Interpolates ${VAR} across all non-env sections.
     5. Render Staging: Writes stitched configuration to render/<pkg>/drift_package.toml.
     6. Schema Validation & Model Construction: Instantiates strongly-typed PackageConfig.
@@ -1648,7 +1497,7 @@ def load_package_config_from_source_dir(
     pkg_name = package_dir.name
     from ..hooks.package_hook import apply_package_hook
 
-    combined_dict, source_files = load_package_config_dict(
+    combined_dict, source_files = render_load_package_config_dict(
         pkg_name, [
             package_dir / PACKAGE_CONFIG_FILE_NAME,
             package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME,
@@ -1656,14 +1505,16 @@ def load_package_config_from_source_dir(
 
     # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
     combined_dict, hook_path = apply_package_hook(
-        package_dir, combined_dict, workspace_config, package_name_override=pkg_name)
+            package_dir,
+            combined_dict,
+            workspace_config)
 
     # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
     if hook_path:
         source_files.append(hook_path)
 
     # 1. Resolve environment variables and stitch configuration sections
-    stitched_dict = resolve_and_interpolate_package_config(
+    stitched_dict, env_res = resolve_and_interpolate_package_config(
         combined_dict,
         package_name=pkg_name,
         workspace_config=workspace_config,
@@ -1695,9 +1546,16 @@ def load_package_config_from_source_dir(
     return config
 
 
-def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:
+def load_package_config_from_render_dir(
+        package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
+    ) -> PackageConfig:
     """Loads package configuration strictly from the render/ sandbox package directory.
     The name of package_dir is treated as the package name.
+
+    Args:
+        package_dir: Path to the package directory inside render/ (e.g. render/<pkg>).
+        workspace_config: Optional active WorkspaceConfig for deriving stage paths and effective environment.
     """
     pkg_name = package_dir.name
     config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
@@ -1712,14 +1570,26 @@ def load_package_config_from_render_dir(package_dir: Path) -> PackageConfig:
         else:
             raise RuntimeError(f"Failed to find {PACKAGE_CONFIG_FILE_NAME} in .drift/ for '{pkg_name}' in render sandbox")
     try:
-        return load_package_config_rendered(package_toml_path=config_file, package_name=pkg_name, package_dir=package_dir)
+        return load_package_config_rendered(
+                package_toml_path=config_file,
+                package_name=pkg_name,
+                package_dir=package_dir,
+                workspace_config=workspace_config,
+        )
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from render sandbox: {e}")
 
 
-def load_package_config_for_install(package_dir: Path) -> PackageConfig:
+def load_package_config_for_install(
+        package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
+    ) -> PackageConfig:
     """Loads package configuration strictly from the install/ base package directory.
     The name of package_dir is treated as the package name.
+
+    Args:
+        package_dir: Path to the package directory inside install/ (e.g. install/<pkg>).
+        workspace_config: Optional active WorkspaceConfig for deriving stage paths and effective environment.
     """
     pkg_name = package_dir.name
     install_config_file = package_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
@@ -1734,7 +1604,12 @@ def load_package_config_for_install(package_dir: Path) -> PackageConfig:
         else:
             raise FileNotFoundError(f"Missing required '{PACKAGE_CONFIG_FILE_NAME}' in .drift/ of install base for '{pkg_name}'.")
     try:
-        return load_package_config_rendered(package_toml_path=install_config_file, package_name=pkg_name, package_dir=package_dir)
+        return load_package_config_rendered(
+                package_toml_path=install_config_file,
+                package_name=pkg_name,
+                package_dir=package_dir,
+                workspace_config=workspace_config,
+        )
     except Exception as e:
         raise RuntimeError(f"Failed to load package configuration for '{pkg_name}' from install base: {e}")
 

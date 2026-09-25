@@ -118,6 +118,16 @@ DRIFT_SYSTEM_FACT_KEYS: Tuple[str, ...] = (
     "drift_ip_addresses",
 )
 
+DRIFT_PACKAGE_FACT_KEYS: Tuple[str, ...] = (
+    "drift_package_name",
+    "drift_package_source_dir",
+    "drift_package_src_dir",
+    "drift_package_render_dir",
+    "drift_package_install_dir",
+    "drift_package_target_dir",
+    "drift_package_install_method",
+)
+
 
 class PackageStage(str, Enum):
     """Enumeration of package stages and workspace directory bases."""
@@ -609,15 +619,6 @@ def set_test_mode(enabled: bool, enable_logging: bool = False) -> None:
 
 def in_test_mode() -> bool:
     return IN_TEST_MODE
-
-
-def inject_system_facts() -> None:
-    """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
-    from ..utils.host_facts import get_system_facts
-    facts = get_system_facts()
-    for k, v in facts.items():
-        if k not in INITIAL_ENV:
-            os.environ[k] = v
 
 
 

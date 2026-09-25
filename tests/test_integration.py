@@ -269,7 +269,7 @@ class TestIntegration(unittest.TestCase):
         
         # Override the mustache engine's render_command to use python so it doesn't depend on an external 'mustache' binary
         py_bin = sys.executable.replace("\\", "/")
-        for eng in self.workspace_config.render_engine_config.values():
+        for eng in self.workspace_config.render_engine_configs.values():
             if eng.name == "mustache":
                 eng.render_command = f'"{py_bin}" -c "import json, sys, pathlib; data=json.loads(pathlib.Path(sys.argv[1]).read_text(encoding=\'utf-8\')); tmpl=pathlib.Path(sys.argv[2]).read_text(encoding=\'utf-8\'); print(tmpl.replace(\'{{{{user}}}}\', data.get(\'user\', \'\')), end=\'\')" %i %s'
 

@@ -1,6 +1,6 @@
 # 💻 Declarative Source Directory: `src/`
 
-The `src/` directory is the declarative "Tier 1" database of your Drift workspace. It holds 
+The `src/` directory is the declarative "Layer 1" database of your Drift workspace. It holds 
 your pristine, version-controlled source files, templates, and package metadata.
 
 ## ✍️ Writing a Basic Drift Package

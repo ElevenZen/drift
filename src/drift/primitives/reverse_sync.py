@@ -249,7 +249,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
     """Performs the reverse sync process for a single package without scanning the entire target_dir."""
     install_pkg_dir = install_base / pkg
     try:
-        metadata = PackageConfig.from_install_dir(install_pkg_dir)
+        metadata = PackageConfig.from_install_dir(install_pkg_dir, workspace_config)
     except Exception as e:
         logger.warning(f"Skipping package '{pkg}' during reverse sync: {e}")
         return PackageReverseSyncResult(

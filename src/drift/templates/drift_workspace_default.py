@@ -24,7 +24,7 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
     Execution Pipeline Order:
         1. Multi-File Discovery & Merging (drift_workspace.toml + drift_workspace.local.toml).
         2. Dynamic Python Hook (this function): Runs BEFORE variable stitching and package loading.
-        3. 7-Tier Variable Stitching & DAG Resolution: Evaluates workspace [env.default] & [env.secrets].
+        3. 6-Tier Precedence & DAG Resolution: Evaluates workspace [env.default] & [env.secrets].
         4. Cross-Section Interpolation: Replaces ${VAR} across workspace configuration fields.
         5. Schema Validation: Constructs validated WorkspaceConfig instance.
 

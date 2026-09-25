@@ -109,7 +109,8 @@ def configure_package(context):
         self.assertIsNotNone(cfg.requirements)
         self.assertEqual(cfg.requirements.os, ["linux", "darwin"])
         self.assertEqual(cfg.requirements.binaries, ["git"])
-        self.assertEqual(cfg.env_override.get("DYNAMIC_PKG_VAR"), "hello_hook")
+        self.assertEqual(cfg.env_resolve.current.override.get("DYNAMIC_PKG_VAR"), "hello_hook")
+        self.assertEqual(cfg.env_resolve.effective.override.get("DYNAMIC_PKG_VAR"), "hello_hook")
 
     def test_hook_controls_enable_install_flag(self) -> None:
         """Hook can set enable_install = False to disable package deployment on incompatible machines."""
@@ -157,8 +158,8 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertIn("HOOK_ACCESSED_OS", cfg.env_override)
-        self.assertEqual(cfg.env_override.get("HOOK_ACCESSED_PKG"), "pkg1")
+        self.assertIn("HOOK_ACCESSED_OS", cfg.env_resolve.current.override)
+        self.assertEqual(cfg.env_resolve.current.override.get("HOOK_ACCESSED_PKG"), "pkg1")
 
     def test_custom_hook_file_relative_path(self) -> None:
         """Custom hook_file defined in [package] is resolved relative to package directory."""
@@ -333,7 +334,7 @@ def configure_package(context):
         self.assertFalse((rendered_pkg_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME).is_file())
 
         # Load rendered config
-        rendered_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg1")
+        rendered_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg1", self.workspace_config)
         self.assertEqual(rendered_cfg.install_method, "copy")
         self.assertEqual(rendered_cfg.target_directory, Path("~/rendered_target").expanduser())
 
@@ -343,12 +344,12 @@ def configure_package(context):
             rendered_pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
             self.drift_root / "install" / "pkg1" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         )
-        install_cfg = PackageConfig.from_install_dir(self.drift_root / "install" / "pkg1")
+        install_cfg = PackageConfig.from_install_dir(self.drift_root / "install" / "pkg1", self.workspace_config)
         self.assertEqual(install_cfg.install_method, "copy")
         self.assertEqual(install_cfg.target_directory, Path("~/rendered_target").expanduser())
 
     def test_hook_with_variable_stitching_and_interpolation(self) -> None:
-        """Hook output properly participates in 7-tier variable stitching."""
+        """Hook output properly participates in 6-tier variable stitching."""
         hook_file = self.drift_root / "src" / "pkg1" / DEFAULT_PACKAGE_HOOK_FILE_NAME
         hook_file.write_text("""
 def configure_package(context):
@@ -365,7 +366,8 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertEqual(cfg.env_override.get("DYNAMIC_API"), "https://example.com/v1")
+        self.assertEqual(cfg.env_resolve.current.override.get("DYNAMIC_API"), "https://example.com/v1")
+        self.assertEqual(cfg.env_resolve.effective.override.get("DYNAMIC_API"), "https://example.com/v1")
         self.assertEqual(cfg.target_directory, Path("~/.config/app_pkg1").expanduser())
 
     def test_env_scope_isolation_during_hook_execution(self) -> None:
@@ -448,7 +450,8 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, ws_config)
-        self.assertEqual(cfg.env_override.get("INJECTED_API_KEY"), "my_secret_key")
+        self.assertEqual(cfg.env_resolve.current.override.get("INJECTED_API_KEY"), "my_secret_key")
+        self.assertEqual(cfg.env_resolve.effective.override.get("INJECTED_API_KEY"), "my_secret_key")
 
 
 if __name__ == "__main__":

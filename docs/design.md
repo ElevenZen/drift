@@ -425,9 +425,9 @@ Rather than requiring developers to wrap static configuration files in template 
    - **Stage 2 (Non-Env Interpolation)**: All other configuration fields (`[workspace]`, `[package]`, `[hooks]`, etc.) are recursively interpolated using the resolved environment.
 
 3. **Referencing Rules Across Tiers**:
-   - `[env.fallback]` (Tier 7) is evaluated first against base environment/facts to establish baseline values; it **cannot** reference `[env.override]`.
-   - `[env.override]` (Tier 2) is evaluated second; it **can** reference `[env.fallback]`, package facts (`drift_package_*`), system facts (`drift_*`), workspace environment, and secret vault variables.
-   - Non-env fields across `[package]` and `[hooks]` can reference any variable defined in `[env.override]`, `[env.fallback]`, facts, or workspace `[env.default]`.
+   - Both workspace and package configs define 4 symmetrical sub-tables under `[env]`: `override`, `secrets`, `default`, and `fallback`.
+   - Kahn's topological sort algorithm resolves inter-variable references dynamically across tiers, facts, secrets, and ambient host environment.
+   - Non-env fields across `[workspace]`, `[package]`, and `[hooks]` can reference any variable defined in `[env]`, facts, secrets, or workspace environment.
 
 4. **Literal Escaping**:
    - Prepending a backslash (`\$VAR` or `\${VAR}`) prevents interpolation and preserves the literal string, allowing configuration files to pass literal shell variable references to hooks and target configurations without triggering substitution errors.
@@ -435,33 +435,31 @@ Rather than requiring developers to wrap static configuration files in template 
 #### Private Dotenv Vault & Declarative Secrets (`[env.secrets]`, `config/secrets.env`)
 To isolate secret tokens, private API keys, and work-specific emails from public dotfiles repositories, Drift provides a secure, local-only secret hierarchy combining declarative `[env.secrets]` tables in workspace and package configurations with a git-ignored Dotenv vault located at `config/secrets.env`.
 
-1. **Strict 7-Tier Variable Precedence**:
-   During configuration ingestion, template parsing, and hook execution, variables are resolved in a strict order of precedence (highest precedence overrides lower layers):
-   - **Tier 1 - Host Shell / CLI Environment**: Active environment variables provided at invocation context (`os.environ`).
-   - **Tier 2 - Package `[env.override]`**: Package-enforced configuration overrides defined in `src/<pkg>/drift_package.toml`.
-   - **Tier 3 - Package Facts (`drift_package_*`)**: Dynamic attributes (`drift_package_name`, `drift_package_target_dir`, `drift_package_install_method`, etc.).
-   - **Tier 4 - System Facts (`drift_*`)**: Auto-populated protected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`).
-   - **Tier 5 - Secrets**: Hierarchical secrets with 3-subtier precedence:
-     $$\text{Package } \texttt{[env.secrets]} > \text{Workspace } \texttt{[env.secrets]} > \texttt{config/secrets.env}$$
-   - **Tier 6 - Global Workspace Environment (`[env.default]` table in `drift_workspace.toml`)**: Shared, non-sensitive environment defaults.
-   - **Tier 7 - Package `[env.fallback]`**: Default fallback values defined in `src/<pkg>/drift_package.toml` used only when unset by upper tiers.
+1. **Strict 6-Tier Variable Precedence**:
+   During configuration ingestion, template parsing, and hook execution, variables are resolved in a strict order of precedence (Package > Workspace within each macro tier, highest precedence overrides lower layers):
+   - **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+   - **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+   - **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
+   - **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+   - **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
+   - **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 
 2. **Topological DAG Resolution & Pure In-Memory Ingestion**:
-   - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across `[env.secrets]`, `[env.default]` / `[env.override]` / `[env.fallback]`, and fallback tables without mutating `os.environ` during configuration parsing.
-   - Variables in `[env.secrets]` can reference each other, system facts, and lower-tier secrets.
-   - **Rendered Metadata & Sandbox Isolation**: Fully stitched static metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/.drift/drift_package.toml`. Both `render/` and `install/` are git-ignored by default, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to execute with complete, deterministic access to all 7 environment tiers without re-parsing source configurations.
+   - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across all 4 `[env]` tables (`override`, `secrets`, `default`, `fallback`) without mutating `os.environ` during configuration parsing.
+   - Variables in `[env]` can reference each other, system facts, secrets, and lower-tier variables.
+   - **Rendered Metadata & Sandbox Isolation**: Fully stitched static metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/.drift/drift_package.toml`. Both `render/` and `install/` are git-ignored by default, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to execute with complete, deterministic access to all 6 environment tiers without re-parsing source configurations.
 
 3. **Single Ingestion & Explicit Workspace Injection**:
    To avoid redundant disk I/O and repeated file parsing across multi-package workflows:
-   - `config/secrets.env` and workspace `[env.secrets]` are parsed during workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed dictionary on `WorkspaceConfig.secrets`.
-   - Downstream operations (`PackageConfig` ingestion, lifecycle hooks, requirement checks, template rendering) read directly from in-memory secrets in $O(1)$ time without re-reading the filesystem.
+   - `config/secrets.env` and workspace `[env]` tables are parsed during workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed `EnvResolve` on `WorkspaceConfig.env_resolve`.
+   - Package configuration ingestion (`PackageConfig.from_dict`, `from_render_dir`, `from_install_dir`) receives `workspace_config` at load time, automatically running `compute_effective_envs(workspace_config)` to resolve the full 6-tier hierarchy and package facts into `PackageConfig.env_resolve`.
+   - Downstream operations (`load_package_envs`, `package_envs`, lifecycle hooks, requirement checks, template rendering) read directly from the pre-resolved in-memory configuration in $O(1)$ time without needing runtime `workspace_config` passing or re-reading the filesystem.
 
-4. **Transient Clean-Room Isolation (`secrets_env_scope`) & Log Masking**:
-   To prevent credentials from leaking across operations or mutating ambient state:
-   - When executing package hooks or rendering templates (`pkg_config.package_envs`), Drift enters `secrets_env_scope(merged_secrets)`.
+4. **Transient Clean-Room Isolation (`package_envs`) & Log Masking**:
+   To prevent credentials and environment mutations from leaking across operations:
+   - When executing package hooks or rendering templates (`with pkg_config.package_envs():`), Drift temporarily loads `pkg_config.env_resolve.effective_dict` into `os.environ` adhering to Tier 1 protection (`INITIAL_ENV`).
    - Secret values are automatically masked in debug logs as `KEY=****`.
-   - Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence (leaving CLI environment and host shell variables intact).
-   - Upon exiting the scoped block, a secure `finally` handler completely unloads the secrets and restores the original environment snapshot, guaranteeing zero credential contamination.
+   - Upon exiting the scoped block, a secure `finally` handler completely unloads the variables and restores the original environment snapshot via `PackageConfig.unload_package_envs()`, guaranteeing zero state contamination.
 
 #### Dynamic Workspace Python Hook: `config/drift_workspace.py`
 For advanced programmatic workspace configuration (such as dynamically toggling packages based on the operating system, Linux distribution, hostname, CPU architecture, or custom discovery logic), Drift provides a **Dynamic Python Workspace Hook**.
@@ -614,7 +612,7 @@ For complex packages requiring programmatic adjustments (such as downloading rem
 3. **Evaluation & Staging Model**:
    - Evaluated during Primitive 2 (Render) when loading the package source directory.
    - The transformed configuration is processed by native variable stitching and serialized directly into `render/<package_name>/.drift/drift_package.toml` (and staged to `install/<package_name>/.drift/drift_package.toml`).
-   - Downstream primitives (`stage`, `apply`, `uninstall`, `health`) read the compiled static TOML directly via `PackageConfig.from_render_dir` / `PackageConfig.from_install_dir`, ensuring zero re-execution overhead and complete determinism.
+   - Downstream primitives (`stage`, `apply`, `uninstall`, `health`) read the compiled static TOML directly via `PackageConfig.from_render_dir(package_dir, workspace_config)` / `PackageConfig.from_install_dir(package_dir, workspace_config)`, ensuring zero re-execution overhead and complete determinism while binding workspace environment context.
 
 4. **Control-Plane Exclusion**:
    - `drift_package.py` and custom `hook_file` paths are evaluated during render and excluded from host deployments (and stored under `.drift/hooks/` if hooks).
@@ -771,7 +769,7 @@ timeout = 120
 ```
 
 #### Lifecycle Hooks Execution Matrix
-All lifecycle hooks execute in user space without `sudo`, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). The host target directory is accessible via `$drift_package_target_dir`.
+All lifecycle hooks execute in user space without `sudo`, with their working directory (`cwd`) set to `hook_path.parent` (the directory containing the executed script), preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). The host target directory is accessible via `$drift_package_target_dir`.
 
 | Hook Name | Lifecycle Trigger Stage |
 | :--- | :--- |
@@ -787,9 +785,9 @@ All lifecycle hooks execute in user space without `sudo`, with their working dir
 | `health` | During `drift health` probe execution |
 
 > [!NOTE]
-> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 7 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets). All hooks have complete access to `config/secrets.env`:
+> **Privilege & Environment Model**: All lifecycle hooks execute in user space without `sudo`, preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). All hooks have complete access to `config/secrets.env`:
 > - **Python Hooks** (`drift_workspace.py`, `drift_package.py`): Directly inspect `context.env` (`Dict[str, str]`).
-> - **Subprocess Lifecycle Hook Scripts** (`probe`, `pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`): Automatically inherit `secrets.env` variables in `os.environ` via Tier 5 precedence.
+> - **Subprocess Lifecycle Hook Scripts** (`probe`, `pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`): Automatically inherit `secrets.env` variables in `os.environ` via Tier 4 precedence.
 > The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 
 #### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
@@ -808,7 +806,8 @@ Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `
     *   👉 **Recommendation**: Ideal for standard user dotfiles (e.g. `.zshrc`, `.tmux.conf`, Neovim configs) where instant reflection and symlink transparency are preferred.
 
 #### Default Package Environment Variables & Precedence
-After parsing a package's configuration, the drift engine dynamically loads package-specific environment variables into `os.environ` via `PackageConfig.load_package_envs(workspace_config)` (with `overwrite=True`):
+During package loading (`PackageConfig.from_dict()`, `load_package_config_from_render_dir()`, `load_package_config_for_install()`), `workspace_config` is supplied to compute the effective 6-tier environment (`self.env_resolve: EnvResolve`) and package facts (`drift_package_*`).
+At runtime, the drift engine dynamically loads the pre-resolved package environment into `os.environ` via `PackageConfig.load_package_envs()` (with `overwrite=True`) or `with pkg_config.package_envs():` without requiring runtime `workspace_config` arguments:
 *   **`drift_package_name`**: Name / directory name of the package.
 *   **`drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
 *   **`drift_package_source_dir`** / **`drift_package_src_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
@@ -818,14 +817,13 @@ After parsing a package's configuration, the drift engine dynamically loads pack
 
 > [!IMPORTANT]
 > **Environment Variable Precedence & Overrides**:
-> Variables within package operations follow the strict 7-tier precedence hierarchy:
-> 1. Host shell / CLI environment variables (`os.environ`).
-> 2. Package `[env.override]` overrides.
-> 3. Package facts (`drift_package_*`).
-> 4. Host facts (`drift_*`).
-> 5. Secret variables loaded from `config/secrets.env`.
-> 6. Global workspace environment variables in `config/drift_workspace.toml` (`[env.default]` table).
-> 7. Package `[env.fallback]` defaults.
+> Variables within package operations follow the strict 6-tier precedence hierarchy (Package > Workspace within each macro tier):
+> 1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+> 2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+> 3. **Tier 3 (Facts)**: Package facts (`drift_package_*`) > Host facts (`drift_*`)
+> 4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+> 5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
+> 6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 >
 > This guarantees that templates and hook scripts always receive the exact, authoritative package attributes regardless of any external or global environment definitions.
 

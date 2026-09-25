@@ -18,7 +18,7 @@ The 16-primitive design with typed `*Result` returns is excellent. Each primitiv
 Pure stdlib Python with optional `[rich]` is a strong distribution story. The zipapp packaging, shell wrapper installer, and the fact that it works on Python 3.9+ without pulling in Click/Typer/Jinja2 in core mode is rare and valuable for the target audience — power users who are picky about what runs on their machines.
 
 **The config system is surprisingly powerful.**
-In-TOML variable stitching with DAG resolution, 7-tier precedence, declarative `[env.secrets]` & `secrets.env` isolation with transient clean-room scope, Python hooks at both workspace and package level, `.envst.toml` meta-templates — this is a lot of expressive power without requiring users to learn a template language for configuration itself.
+In-TOML variable stitching with DAG resolution, 6-tier precedence (Package > Workspace across all tiers), declarative `[env.secrets]` & `secrets.env` isolation with transient clean-room scope, Python hooks at both workspace and package level, `.envst.toml` meta-templates — this is a lot of expressive power without requiring users to learn a template language for configuration itself.
 
 **Functional style is consistent and readable.**
 The `filter`/`map`/comprehension-first style with extracted predicates (`is_zombie_package_dir`, `is_valid_file`, etc.) keeps data pipelines declarative. The separation of gathering vs. execution (e.g., `get_pending_delta_worklist` → `run_pending_delta_diff`) is consistently applied throughout.
@@ -26,7 +26,7 @@ The `filter`/`map`/comprehension-first style with extracted predicates (`is_zomb
 ### Weaknesses & Risks
 
 **Complexity vs. audience mismatch.**
-The mental model required — 4 tiers, 16 primitives, 7-tier variable precedence, three diff modes, render engines with DAG piping — is steep. chezmoi succeeds partly because its model is simple: source → target, with templates. Drift asks users to understand *why* there's a `render/` and an `install/` and why they're separate Git repos. The README is thorough but overwhelming; it reads more like a specification than an onboarding guide.
+The mental model required — 4 directory tiers, 16 primitives, 6-tier variable precedence, three diff modes, render engines with DAG piping — is steep. chezmoi succeeds partly because its model is simple: source → target, with templates. Drift asks users to understand *why* there's a `render/` and an `install/` and why they're separate Git repos. The README is thorough but overwhelming; it reads more like a specification than an onboarding guide.
 
 **Git subprocess dependency is deep and implicit.**
 Despite "zero dependencies," the project fundamentally depends on Git being installed and functioning correctly. Every primitive touches `subprocess.run(["git", ...])`. There's no abstraction layer — Git commands are scattered across `git_utils.py`, `workspace_diff.py`, `render_package.py`, etc. If Git behaves unexpectedly (version differences, partial installs, Windows Git quirks), debugging is hard.
@@ -63,20 +63,22 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **`assert_`**: **Read-only validation guards** that raise on failure without state modification (`assert_hooks_exist`, `assert_no_legacy_workspace_config`, `assert_no_cyclic_dependencies`, `assert_no_cross_package_conflicts`, `assert_source_file_clean`, `assert_workspace_healthy`, `assert_install_pkg_dir_clean`, `assert_writable`, `assert_git_repository_health`, `assert_repo_can_commit`, `assert_can_escalate`). Removed anti-pattern `force` arguments from assertions.
 - **`check_`**: **Read-only inspection** returning result data values without raising or mutating state (`check_existing_workspace_status`, `check_patch_conflicts`).
 
-### 6. Hierarchical Declarative Secrets (`[env.secrets]`) & Transient Sandboxing
-- **3-Subtier Secret Precedence**: Implemented hierarchical declarative `[env.secrets]` in workspace and package configurations, integrated with the local `config/secrets.env` Dotenv vault:
-  $$\text{Package } \texttt{[env.secrets]} > \text{Workspace } \texttt{[env.secrets]} > \texttt{config/secrets.env}$$
-- **Transient Clean-Room Isolation (`secrets_env_scope`)**: Secrets are temporarily overlaid into `os.environ` adhering to Tier 5 precedence only during hook execution and template rendering, with automatic secret masking in verbose logs (`KEY=****`) and complete unloading upon block exit.
-- **Deterministic 1:1 Stage Artifact Metadata**: Resolved static package metadata (including fully stitched `[env.secrets]`) is written to `render/<pkg>/.drift/drift_package.toml` and mirrored 1:1 to `install/<pkg>/.drift/drift_package.toml`, allowing downstream lifecycle hooks (`post_install`, `health`, etc.) to run deterministically with complete access to all 7 environment tiers without re-parsing source configurations.
-- **Dynamic Hook Ingestion**: Both `drift_workspace.py` and `drift_package.py` hooks can programmatically inject dynamic credentials into `[env.secrets]` before DAG compilation.
-
-### 7. Symmetrical Environment Hierarchy (`[env.default]` Migration)
-- **Unified Sub-Table Syntax**: Migrated workspace configuration from flat `[env]` to structured `[env.default]` (Tier 6), establishing perfect structural symmetry with package configuration (`[env.override]`, `[env.fallback]`, `[env.secrets]`).
-- **Strict Configuration Guards**: Legacy flat key-value pairs directly under `[env]` in workspace TOML are rejected at ingestion with clear, actionable `ConfigError` diagnostics.
-- **DAG Topological Resolution**: Full Kahn's algorithm variable stitching with immediate self-reference and cyclic dependency detection across `[env.default]` and `[env.secrets]`.
+### 6. Symmetrical 6-Tier Environment Architecture & `EnvConfig`
+- **Symmetrical 4-Table Environment Model**: Both workspace and package configurations share 4 identical sub-tables under `[env]`: `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`.
+- **Authoritative 6-Tier Precedence**: Fully unified macro hierarchy where **Package > Workspace** is strictly enforced within each macro tier:
+  1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+  2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+  3. **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+  4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
+  5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
+  6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
+- **Strongly Typed `EnvConfig` & `EnvResolve`**: `EnvConfig` encapsulates the 4 canonical environment tables (`override`, `secrets`, `default`, `fallback`) with pure serializer `to_env_dict()`. `EnvResolve` holds `current: EnvConfig`, `effective: EnvConfig`, and `effective_dict: Dict[str, str]` with pure DAG resolver `resolve_env_configs()`.
+- **Decoupled Load vs. Runtime Execution**: Ingestion points (`from_dict`, `from_render_dir`, `from_install_dir`) accept `workspace_config` to compute effective environment tables and facts; runtime execution (`load_package_envs`, `package_envs`) is completely decoupled and operates self-contained on `self.env_resolve.effective_dict`.
+- **Pure In-Memory Loading**: `load_workspace_config` does not mutate `os.environ` or execute side-effects during config construction; CLI initialization centralized in `prepare_cli_environment`.
+- **Zero Backward Compatibility Burden**: Removed obsolete property wrappers (`packages`, `render_engine_config`, `drift_root_path`, `env_default`, `secrets`) and table parser shims across config classes.
 
 ### 8. Test Suite Expansion & Cleanliness
-- Total passing tests expanded to **811/811 tests OK** with zero warnings, zero aliased imports, and comprehensive coverage across all new modules, secret resolution, and environment tiers.
+- Total passing tests expanded to **814/814 tests OK** with zero warnings, zero aliased imports, and comprehensive coverage across all new modules, secret resolution, and environment tiers.
 
 ---
 

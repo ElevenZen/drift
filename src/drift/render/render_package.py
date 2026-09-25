@@ -411,7 +411,7 @@ def render_package(
 
     scoped_flags = replace(hook_flags, load_envs=False)
 
-    with pkg_config.package_envs(workspace_config):
+    with pkg_config.package_envs():
         # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
         is_satisfied, failure_reason = pkg_config.evaluate_requirements(
             workspace_config, flags=scoped_flags

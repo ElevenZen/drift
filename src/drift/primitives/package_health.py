@@ -154,7 +154,10 @@ def run_health_probe_from_install(
     )
 
     try:
-        pkg_config = PackageConfig.from_install_dir(workspace_config.install_path / pkg)
+        pkg_config = PackageConfig.from_install_dir(
+                workspace_config.install_path / pkg,
+                workspace_config,
+        )
         target_dir = pkg_config.get_target_directory(workspace_config)
     except FileNotFoundError:
         return PackageHealthResult(
@@ -171,7 +174,7 @@ def run_health_probe_from_install(
         )
 
     def _trigger():
-        with pkg_config.package_envs(workspace_config):
+        with pkg_config.package_envs():
             return trigger_package_hook(
                 pkg=pkg,
                 hook_name="health",

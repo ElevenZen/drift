@@ -350,7 +350,7 @@ def run_primitive_4_stage_render_to_install(
     # Filter out packages that are not enabled for installation/deployment.
     pkg_metadata = {}
     for pkg in active_packages:
-        metadata = PackageConfig.from_render_dir(render_base / pkg)
+        metadata = PackageConfig.from_render_dir(render_base / pkg, workspace_config)
         if not metadata.enable_install:
             continue
         # Verify hook files exist and are regular files in render/ sandbox

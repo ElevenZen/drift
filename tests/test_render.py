@@ -19,7 +19,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.config.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig, load_workspace_config
 from drift.config.render_engine_config import RenderEngineRegistry
 from drift.render.render_core import render_template, render_template_to_file, RenderError
 from drift.render.render_input import (
@@ -28,6 +28,8 @@ from drift.render.render_input import (
     render_input_templates,
 )
 from drift.utils.toml_utils import parse_toml
+from drift.utils.env_utils import env_scope
+from drift.utils.host_facts import get_system_facts, inject_system_facts
 
 
 class TestRenderEngine(unittest.TestCase):
@@ -63,11 +65,11 @@ class TestRenderEngine(unittest.TestCase):
             MY_CUSTOM_ENV_VAR = "hello_from_drift_toml"
             """, encoding="utf-8")
 
-        # Load workspace configuration (this also updates os.environ with env section!)
+        # Load workspace configuration
         workspace_config = load_workspace_config(self.drift_root)
 
-        # Confirm the environment variable is loaded and present in os.environ
-        self.assertEqual(os.environ.get("MY_CUSTOM_ENV_VAR"), "hello_from_drift_toml")
+        # Confirm the environment variable is loaded in workspace_config.env_resolve
+        self.assertEqual(workspace_config.env_resolve.effective.default.get("MY_CUSTOM_ENV_VAR"), "hello_from_drift_toml")
 
         # Create a template file that uses envsubst
         template_path = self.drift_root / "test_envsubst_template.envst"
@@ -85,19 +87,17 @@ class TestRenderEngine(unittest.TestCase):
             render_command="bash -c 'source %i && envsubst < %s'"
         )
 
-        # Call render_template
-        output = render_template(
-            engine_config=engine_config,
-            drift_root=self.drift_root,
-            template_file_path=template_path,
-            input_file_path=dummy_input
-        )
+        # Call render_template within effective env scope
+        with env_scope(workspace_config.env_resolve.effective_dict):
+            output = render_template(
+                engine_config=engine_config,
+                drift_root=self.drift_root,
+                template_file_path=template_path,
+                input_file_path=dummy_input
+            )
 
         # Verify that envsubst successfully substituted the variable defined under [env.default] in drift_workspace.toml
         self.assertEqual(output.strip(), "Greeting: hello_from_drift_toml")
-
-        # Clean up os.environ to avoid leaking to other tests
-        os.environ.pop("MY_CUSTOM_ENV_VAR", None)
 
     def test_render_template_success_with_input_file(self) -> None:
         # Create an input file (shell script defining a variable)
@@ -586,6 +586,7 @@ class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
+        inject_system_facts()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -1283,7 +1284,9 @@ class TestRenderPackage(unittest.TestCase):
         drift_toml.write_text(
             "[workspace]\n"
             "source_directory = \"src\"\n"
-            "render_directory = \"render\"\n",
+            "render_directory = \"render\"\n\n"
+            "[packages.enable]\n"
+            "DEFAULT = true\n",
             encoding="utf-8"
         )
 
@@ -1297,10 +1300,8 @@ class TestRenderPackage(unittest.TestCase):
         tpl_file = pkg_dir / "secret_file.envst"
         tpl_file.write_text("The secret is: ${PRIMITIVE_SECRET_VAR}\n", encoding="utf-8")
 
-        # Define workspace config
-        workspace_config = WorkspaceConfig(
-            drift_root=self.drift_root,
-        )
+        # Load workspace config
+        workspace_config = load_workspace_config(self.drift_root)
         workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
                 name="envsubst",
@@ -1939,11 +1940,11 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         pkg_config = PackageConfig.from_source_dir(pkg_src_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_templated_pkg")
         self.assertEqual(str(pkg_config.target_directory), "/custom/my_templated_pkg")
-        self.assertIn("RESOLVED_OS", pkg_config.env_override)
-        self.assertEqual(pkg_config.env_override["RESOLVED_OS"], os.environ.get("drift_os"))
-        self.assertEqual(pkg_config.env_override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))
-        self.assertEqual(pkg_config.env_override["PKG_RENDER_DIR"], str(self.drift_root / "render" / "my_templated_pkg"))
-        self.assertEqual(pkg_config.env_override["PKG_INSTALL_DIR"], str(self.drift_root / "install" / "my_templated_pkg"))
+        self.assertIn("RESOLVED_OS", pkg_config.env_resolve.effective.override)
+        self.assertEqual(pkg_config.env_resolve.effective.override["RESOLVED_OS"], get_system_facts(self.drift_root)["drift_os"])
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_RENDER_DIR"], str(self.drift_root / "render" / "my_templated_pkg"))
+        self.assertEqual(pkg_config.env_resolve.effective.override["PKG_INSTALL_DIR"], str(self.drift_root / "install" / "my_templated_pkg"))
 
         # Verify drift_package_* variables are cleanly unloaded after config loading
         self.assertNotIn("drift_package_name", os.environ)

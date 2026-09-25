@@ -67,7 +67,7 @@ def trigger_hook_from_install(
     install_pkg_dir = workspace_config.install_path / package_name
 
     try:
-        pkg_config = PackageConfig.from_install_dir(install_pkg_dir)
+        pkg_config = PackageConfig.from_install_dir(install_pkg_dir, workspace_config)
     except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Package '{package_name}' is not installed in the state database. "
@@ -76,7 +76,7 @@ def trigger_hook_from_install(
         ) from e
 
     resolved_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
-    with pkg_config.package_envs(workspace_config):
+    with pkg_config.package_envs():
         res = trigger_package_hook(
             pkg=package_name,
             hook_name=hook_name,

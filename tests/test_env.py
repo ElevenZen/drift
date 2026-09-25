@@ -23,13 +23,15 @@ from drift.core.constants import (
     set_initial_env,
 )
 from drift.utils.env_utils import (
+    EnvConfig,
+    EnvResolve,
+    resolve_env_configs,
     load_env_settings,
     unload_env_settings,
     parse_secrets_env,
     parse_env_file,
     parse_env_text,
     env_scope,
-    secrets_env_scope,
 )
 from drift.config.workspace_config import (
     load_workspace_config
@@ -190,15 +192,20 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
-    def test_secrets_env_scope_masks_secret_values_in_logs(self) -> None:
-        """Verifies that secrets_env_scope automatically masks secret values in debug logs."""
+    def test_env_scope_masks_secret_values_in_logs(self) -> None:
+        """Verifies that env_scope with mask_values=True automatically masks secret values in debug logs."""
         set_test_mode(True, enable_logging=True)
         try:
             os.environ.pop("DRIFT_API_SECRET", None)
             os.environ["DRIFT_EXISTING_SECRET"] = "old_secret_xyz"
 
             with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
-                with secrets_env_scope({"DRIFT_API_SECRET": "top_secret_token_123", "DRIFT_EXISTING_SECRET": "updated_secret_456"}):
+                with env_scope(
+                    {"DRIFT_API_SECRET": "top_secret_token_123", "DRIFT_EXISTING_SECRET": "updated_secret_456"},
+                    overwrite=True,
+                    env_keep=INITIAL_ENV,
+                    mask_values=True,
+                ):
                     self.assertEqual(os.environ["DRIFT_API_SECRET"], "top_secret_token_123")
                     self.assertEqual(os.environ["DRIFT_EXISTING_SECRET"], "updated_secret_456")
 
@@ -370,8 +377,9 @@ pkg_test = true
         self._setup_package_with_template("pkg_test", f"VALUE=${{{var_name}}}\n")
 
         ws_config = load_workspace_config(self.drift_root)
-        # Before render, workspace config value was loaded
-        self.assertEqual(os.environ[var_name], "workspace_toml_value")
+        # WorkspaceConfig load is in-memory and does not mutate os.environ
+        self.assertEqual(ws_config.env_resolve.effective.default[var_name], "workspace_toml_value")
+        self.assertNotIn(var_name, os.environ)
 
         run_primitive_2_render_packages(ws_config, ["pkg_test"])
 
@@ -380,8 +388,8 @@ pkg_test = true
         # Secret value won during render!
         self.assertEqual(rendered_file.read_text(encoding="utf-8").strip(), "VALUE=secret_vault_value")
 
-        # After render, secrets are unloaded, restoring the workspace config value
-        self.assertEqual(os.environ[var_name], "workspace_toml_value")
+        # After render, secrets are unloaded, leaving os.environ clean
+        self.assertNotIn(var_name, os.environ)
 
     def test_workspace_config_env_default(self) -> None:
         """Workspace config [env.default] provides defaults when neither host env nor secrets exist."""
@@ -417,12 +425,14 @@ pkg_test = true
         self._setup_package_with_template("pkg_test", f"VALUE=${{{var_name}}}\n")
 
         ws_config = load_workspace_config(self.drift_root)
-        self.assertEqual(os.environ[var_name], "default_from_toml")
+        self.assertEqual(ws_config.env_resolve.effective.default[var_name], "default_from_toml")
+        self.assertNotIn(var_name, os.environ)
 
         run_primitive_2_render_packages(ws_config, ["pkg_test"])
 
         rendered_file = self.render_dir / "pkg_test" / "dot-config.txt"
         self.assertEqual(rendered_file.read_text(encoding="utf-8").strip(), "VALUE=default_from_toml")
+        self.assertNotIn(var_name, os.environ)
 
     def test_secrets_transient_lifecycle(self) -> None:
         """Secrets only present in secrets.env are temporarily loaded during render and popped afterward."""
@@ -542,8 +552,9 @@ DEFAULT = true
             encoding="utf-8"
         )
 
-        load_workspace_config(self.drift_root)
-        self.assertEqual(os.environ[var_name], "local_override_value")
+        ws_cfg = load_workspace_config(self.drift_root)
+        self.assertEqual(ws_cfg.env_resolve.effective.default[var_name], "local_override_value")
+        self.assertEqual(ws_cfg.env_resolve.effective_dict[var_name], "local_override_value")
 
     def test_mixed_variable_sources_comprehensive(self) -> None:
         """Simultaneously tests all combinations of sources:
@@ -627,13 +638,13 @@ VAR_F="secret_f"
         )
         self.assertEqual(rendered_file.read_text(encoding="utf-8").strip(), expected_content)
 
-        # After render:
+        # After render, os.environ is cleanly preserved
         self.assertEqual(os.environ["VAR_A"], "host_a")
-        self.assertEqual(os.environ["VAR_B"], "toml_b")  # Restored to toml
-        self.assertEqual(os.environ["VAR_C"], "toml_c")
+        self.assertNotIn("VAR_B", os.environ)
+        self.assertNotIn("VAR_C", os.environ)
         self.assertEqual(os.environ["VAR_D"], "host_d")
         self.assertEqual(os.environ["VAR_E"], "host_e")
-        self.assertNotIn("VAR_F", os.environ)  # Popped
+        self.assertNotIn("VAR_F", os.environ)
 
     def test_render_exception_restores_environment(self) -> None:
         """Verifies that even if rendering raises an exception, unload_env_settings runs in finally."""
@@ -680,7 +691,7 @@ pkg_test = true
 
         # Unload should have executed:
         self.assertNotIn(var_secret, os.environ)
-        self.assertEqual(os.environ[var_toml], "toml_val")
+        self.assertNotIn(var_toml, os.environ)
 
     def test_cli_main_with_cmdline_env(self) -> None:
         """Verifies that running CLI main() captures host environment and respects precedence."""
@@ -965,8 +976,9 @@ ALL_PROXY = "${SOCKS_PROXY}"
             encoding="utf-8"
         )
         ws = load_workspace_config(self.drift_root)
-        self.assertEqual(ws.env["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
-        self.assertEqual(ws.env["ALL_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.env_resolve.effective.default["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.env_resolve.effective.default["ALL_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.env_resolve.effective_dict["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.workspace.source_directory, Path("src_custom"))
         self.assertEqual(str(ws.workspace.default_target_directory), "/custom/base/dest/user_home")
 
@@ -984,8 +996,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         }
         with self.assertRaises(ConfigError) as ctx:
             WorkspaceConfig.from_dict(ws_dict, drift_root=self.drift_root)
-        self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported in workspace configuration", str(ctx.exception))
-        self.assertIn("Please define variables under [env.default] or [env.secrets]", str(ctx.exception))
+        self.assertIn("Unsupported key 'LEGACY_VAR' in [env] in workspace configuration", str(ctx.exception))
+        self.assertIn("Expected [env.override], [env.secrets], [env.default], or [env.fallback]", str(ctx.exception))
 
     def test_workspace_config_with_unknown_env_subtable_raises_error(self) -> None:
         """Verifies that unknown sub-tables under workspace [env] raise ConfigError."""
@@ -996,13 +1008,13 @@ ALL_PROXY = "${SOCKS_PROXY}"
             "workspace": {},
             "packages": {"enable": {}},
             "env": {
-                "override": {"VAR": "val"},
+                "invalid_subtable": {"VAR": "val"},
             }
         }
         with self.assertRaises(ConfigError) as ctx:
             WorkspaceConfig.from_dict(ws_dict, drift_root=self.drift_root)
-        self.assertIn("Unknown sub-table [env.override] in workspace configuration", str(ctx.exception))
-        self.assertIn("Expected [env.default] or [env.secrets]", str(ctx.exception))
+        self.assertIn("Unsupported key 'invalid_subtable' in [env] in workspace configuration", str(ctx.exception))
+        self.assertIn("Expected [env.override], [env.secrets], [env.default], or [env.fallback]", str(ctx.exception))
 
     def test_package_config_with_env_override_and_field_interpolation(self) -> None:
         """Verifies that package drift_package.toml resolves [env.override] and interpolates package fields."""
@@ -1027,11 +1039,11 @@ ALL_PROXY = "${SOCKS_PROXY}"
         }
         from drift.config.package_config import resolve_and_interpolate_package_config
         base_dir = Path("/mock/src/my_daemon")
-        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
+        stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
         pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
         self.assertEqual(pkg_cfg.name, "my_daemon")
         self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
-        self.assertEqual(pkg_cfg.env_override["SERVICE_URL"], "http://127.0.0.1:8000")
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["SERVICE_URL"], "http://127.0.0.1:8000")
         self.assertEqual(pkg_cfg.hooks.post_install, base_dir / ".drift/hooks/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
 
@@ -1050,8 +1062,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         }
         with self.assertRaises(ConfigError) as ctx:
             PackageConfig.from_dict(pkg_dict, package_name="legacy_pkg", base_dir=Path("/test/legacy_pkg"))
-        self.assertIn("Direct key-value pair 'LEGACY_VAR' in [env] is not supported for package 'legacy_pkg'", str(ctx.exception))
-        self.assertIn("Please define variables under [env.override], [env.fallback], or [env.secrets]", str(ctx.exception))
+        self.assertIn("Unsupported key 'LEGACY_VAR' in [env] in package 'legacy_pkg'", str(ctx.exception))
+        self.assertIn("Expected [env.override], [env.secrets], [env.default], or [env.fallback]", str(ctx.exception))
 
     def test_escaped_variable_stitching(self) -> None:
         """Verifies that \\$VAR and \\${VAR} escape variable stitching in environment tables and config fields."""
@@ -1079,7 +1091,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(interpolated["expanded"], "actual_val/app")
 
     def test_package_config_facts_and_precedence(self) -> None:
-        """Verifies that all four package facts are available and 7-tier precedence is respected in package config."""
+        """Verifies that all four package facts are available and 6-tier precedence is respected in package config."""
         from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
@@ -1095,7 +1107,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs=RenderEngineRegistry(),
-            env={},
+            env_resolve=EnvResolve(),
         )
 
         pkg_toml_path = self.drift_root / "src" / "my_pkg" / "drift_package.toml"
@@ -1124,15 +1136,19 @@ ALL_PROXY = "${SOCKS_PROXY}"
         # Simulate workspace environment variable in os.environ (Tier 6)
         os.environ["OVERRIDDEN_BY_WORKSPACE"] = "workspace_val"
 
-        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="my_pkg", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", base_dir=self.drift_root / "src" / "my_pkg", source_files=[pkg_toml_path], workspace_config=ws)
+        stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="my_pkg", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched,
+                                          package_name="my_pkg",
+                                          base_dir=self.drift_root / "src" / "my_pkg",
+                                          source_files=[pkg_toml_path],
+                                          workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
         self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
-        self.assertEqual(pkg_cfg.env_override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
-        self.assertEqual(pkg_cfg.env_override["RENDER_DIR_REF"], str(self.drift_root / "render" / "my_pkg"))
-        self.assertEqual(pkg_cfg.env_override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER_DIR_REF"], str(self.drift_root / "render" / "my_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
         # Fallback filled unset blanks
-        self.assertEqual(pkg_cfg.env_fallback["FALLBACK_VAR"], "fallback_val")
+        self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_VAR"], "fallback_val")
         # Hook path was interpolated and normalized to stage base (install directory for post_install)
         self.assertEqual(str(pkg_cfg.hooks.post_install), str(self.drift_root / "install" / "my_pkg" / ".drift" / "hooks" / "post.sh"))
         self.assertEqual(pkg_cfg.hooks.get_relative_path("post_install"), Path("drift_hooks/post.sh"))
@@ -1155,7 +1171,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs=RenderEngineRegistry(),
-            env={},
+            env_resolve=EnvResolve(),
         )
         pkg_dict = {
             "package": {
@@ -1169,11 +1185,14 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             }
         }
-        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="custom_pkg", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="custom_pkg", base_dir=self.drift_root / "custom_src" / "custom_pkg")
-        self.assertEqual(pkg_cfg.env_override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
-        self.assertEqual(pkg_cfg.env_override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
-        self.assertEqual(pkg_cfg.env_override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
+        stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="custom_pkg", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched,
+                                          package_name="custom_pkg",
+                                          base_dir=self.drift_root / "custom_src" / "custom_pkg",
+                                          workspace_config=ws)
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC"], str(self.drift_root / "custom_src" / "custom_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER"], str(self.drift_root / "custom_render" / "custom_pkg"))
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL"], str(self.drift_root / "custom_install" / "custom_pkg"))
 
     def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
         """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
@@ -1191,9 +1210,11 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 }
             }
         }
-        stitched = resolve_and_interpolate_package_config(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_pkg", base_dir=self.drift_root / "src" / "my_pkg")
-        self.assertEqual(pkg_cfg.env_override["NAME_REF"], "my_pkg")
+        stitched, env_res = resolve_and_interpolate_package_config(pkg_dict_name_only, package_name="my_pkg", workspace_config=None)
+        pkg_cfg = PackageConfig.from_dict(stitched,
+                                          package_name="my_pkg",
+                                          base_dir=self.drift_root / "src" / "my_pkg")
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["NAME_REF"], "my_pkg")
 
         # Referencing dir facts without workspace_config raises ConfigError
         pkg_dict_dir_ref = {
@@ -1229,7 +1250,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs=RenderEngineRegistry(),
-            env={},
+            env_resolve=EnvResolve(),
         )
 
         pkg_dict = {
@@ -1246,18 +1267,22 @@ ALL_PROXY = "${SOCKS_PROXY}"
         }
 
         # 1. When EXTERNAL_VAR is unset in os.environ, fallback takes effect
-        stitched = resolve_and_interpolate_package_config(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
-        pkg_cfg = PackageConfig.from_dict(stitched, package_name="pkg_fallback_test", base_dir=self.drift_root / "src" / "pkg_fallback_test")
+        stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="pkg_fallback_test", workspace_config=ws)
+        pkg_cfg = PackageConfig.from_dict(stitched,
+                                          package_name="pkg_fallback_test",
+                                          base_dir=self.drift_root / "src" / "pkg_fallback_test",
+                                          workspace_config=ws)
         expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
-        self.assertEqual(pkg_cfg.env_fallback["FALLBACK_SRC_DIR"], expected_src)
-        self.assertEqual(pkg_cfg.env_fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
+        self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_SRC_DIR"], expected_src)
+        self.assertEqual(pkg_cfg.env_resolve.effective.fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
         self.assertEqual(str(pkg_cfg.target_directory), f"{expected_src}/subtarget")
 
         # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
         with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
-            with pkg_cfg.package_envs(ws):
-                self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
-                self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
+            with patch("drift.config.package_config.INITIAL_ENV", ["EXTERNAL_VAR"]):
+                with pkg_cfg.package_envs():
+                    self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
+                    self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
 
     def test_load_package_config_from_source_dir_writes_stitched_toml_and_renders(self) -> None:
         """Verifies that PackageConfig.from_source_dir writes out stitched TOML and PackageConfig.from_rendered_file reads it."""
@@ -1278,7 +1303,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             packages_enable={},
             packages_enable_default=True,
             render_engine_configs=RenderEngineRegistry(),
-            env={},
+            env_resolve=EnvResolve(),
         )
 
         pkg_src_dir = self.drift_root / "src" / "pkg_stitched_test"
@@ -1296,7 +1321,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         loaded_cfg = PackageConfig.from_source_dir(pkg_src_dir, ws)
         expected_src = str(self.drift_root / "src" / "pkg_stitched_test")
         self.assertEqual(str(loaded_cfg.target_directory), f"{expected_src}/my_target")
-        self.assertEqual(loaded_cfg.env_fallback["FALLBACK_SRC"], expected_src)
+        self.assertEqual(loaded_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 2. Verify rendered file on disk in render/
         rendered_toml_path = self.drift_root / "render" / "pkg_stitched_test" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
@@ -1310,19 +1335,23 @@ ALL_PROXY = "${SOCKS_PROXY}"
             rendered_toml_path,
             package_name="pkg_stitched_test",
             package_dir=self.drift_root / "render" / "pkg_stitched_test",
+            workspace_config=ws,
         )
         self.assertEqual(str(rendered_cfg.target_directory), f"{expected_src}/my_target")
-        self.assertEqual(rendered_cfg.env_fallback["FALLBACK_SRC"], expected_src)
+        self.assertEqual(rendered_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 4. Load from rendered package directory
-        rendered_dir_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg_stitched_test")
+        rendered_dir_cfg = PackageConfig.from_render_dir(
+            self.drift_root / "render" / "pkg_stitched_test",
+            workspace_config=ws,
+        )
         self.assertEqual(str(rendered_dir_cfg.target_directory), f"{expected_src}/my_target")
-        self.assertEqual(rendered_dir_cfg.env_fallback["FALLBACK_SRC"], expected_src)
+        self.assertEqual(rendered_dir_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
     def test_workspace_config_secrets_dict_and_scope(self) -> None:
-        """Verifies that secrets are loaded into WorkspaceConfig.secrets and secrets_env_scope accepts dict."""
+        """Verifies that secrets are loaded into WorkspaceConfig.env_resolve.effective.secrets."""
         from drift.config.workspace_config import load_workspace_config, WorkspaceConfig
-        from drift.utils.env_utils import secrets_env_scope
+        from drift.utils.env_utils import resolve_env_configs
 
         # Write secrets.env and workspace config
         (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text("[workspace]\n[packages.enable]\n", encoding="utf-8")
@@ -1331,26 +1360,26 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
         # 1. Test via load_workspace_config
         ws = load_workspace_config(self.drift_root)
-        self.assertEqual(ws.secrets, {"MY_SECRET_KEY": "my_secret_val"})
+        self.assertEqual(ws.env_resolve.effective.secrets, {"MY_SECRET_KEY": "my_secret_val"})
 
         # Verify secrets are NOT leaked in os.environ outside scope
         self.assertNotIn("MY_SECRET_KEY", os.environ)
 
-        # 2. Test secrets_env_scope with dict directly
-        with secrets_env_scope(ws.secrets):
+        # 2. Test env_scope with secrets dict directly
+        with env_scope(ws.env_resolve.effective.secrets, mask_values=True):
             self.assertEqual(os.environ["MY_SECRET_KEY"], "my_secret_val")
         self.assertNotIn("MY_SECRET_KEY", os.environ)
 
         # 3. Test direct WorkspaceConfig instantiation with manual secrets dict
         manual_ws = WorkspaceConfig(
             drift_root=self.drift_root,
-            secrets={"CUSTOM_SEC": "custom_val"}
+            env_resolve=resolve_env_configs(EnvConfig(secrets={"CUSTOM_SEC": "custom_val"})),
         )
-        self.assertEqual(manual_ws.secrets, {"CUSTOM_SEC": "custom_val"})
+        self.assertEqual(manual_ws.env_resolve.effective.secrets, {"CUSTOM_SEC": "custom_val"})
 
 
 class TestEnvSecretsHierarchy(unittest.TestCase):
-    """Comprehensive test suite for hierarchical [env.secrets], topological resolution, and 7-tier precedence."""
+    """Comprehensive test suite for hierarchical [env.secrets], topological resolution, and 6-tier precedence."""
 
     def setUp(self) -> None:
         set_test_mode(True)
@@ -1389,8 +1418,8 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
                 "secrets": {
                     "FILE_BASE_SEC": "${SECRETS_FILE_KEY}_extended",
                     "SECRET_TOKEN": "${FILE_BASE_SEC}_token",
-                    "drift_os": "malicious_os_override",  # Tier 5 attempting to overwrite Tier 4
-                    "HOST_CLI_VAR": "secret_cli_override", # Tier 5 attempting to overwrite Tier 1
+                    "drift_os": "malicious_os_override",  # Tier 4 attempting to overwrite Tier 3 facts
+                    "HOST_CLI_VAR": "secret_cli_override", # Tier 4 attempting to overwrite Tier 1 CLI
                 }
             }
         }
@@ -1398,11 +1427,12 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
             "SECRETS_FILE_KEY": "raw_secret",
         }
 
-        interpolated_dict = resolve_and_interpolate_workspace_config(
+        interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
             data,
             secrets_file=secrets_file,
         )
-        effective_secrets = interpolated_dict.get("env", {}).get("secrets", {})
+        effective_secrets = env_res.effective.secrets
+        current_secrets = env_res.current.secrets
 
         # 1. Verify os.environ was NOT mutated
         self.assertEqual(dict(os.environ), initial_environ_snapshot)
@@ -1411,13 +1441,15 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
         self.assertEqual(effective_secrets["SECRETS_FILE_KEY"], "raw_secret")
         self.assertEqual(effective_secrets["FILE_BASE_SEC"], "raw_secret_extended")
         self.assertEqual(effective_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
+        self.assertEqual(current_secrets["FILE_BASE_SEC"], "raw_secret_extended")
+        self.assertEqual(current_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
 
         # 3. Verify Tier 4 and Tier 1 protections: DRIFT_SYSTEM_FACT_KEYS and INITIAL_ENV are protected in base
         self.assertEqual(os.environ["drift_os"], "linux")
         self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
 
         # 4. Verify regular [env.default] was resolved against secrets
-        self.assertEqual(interpolated_dict["env"]["default"]["DERIVED_VAR"], "derived_raw_secret_extended_token")
+        self.assertEqual(env_res.effective.default["DERIVED_VAR"], "derived_raw_secret_extended_token")
         self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
 
     def test_workspace_secrets_precedence_and_python_hook(self) -> None:
@@ -1462,11 +1494,11 @@ LOCAL_ONLY = "local_val"
         )
 
         ws = load_workspace_config(self.drift_root)
-        self.assertEqual(ws.secrets["SHARED_KEY"], "from_python_hook")
-        self.assertEqual(ws.secrets["HOOK_KEY"], "hook_val")
-        self.assertEqual(ws.secrets["LOCAL_ONLY"], "local_val")
-        self.assertEqual(ws.secrets["TOML_ONLY"], "toml_val")
-        self.assertEqual(ws.secrets["ENV_ONLY"], "env_val")
+        self.assertEqual(ws.env_resolve.effective.secrets["SHARED_KEY"], "from_python_hook")
+        self.assertEqual(ws.env_resolve.effective.secrets["HOOK_KEY"], "hook_val")
+        self.assertEqual(ws.env_resolve.effective.secrets["LOCAL_ONLY"], "local_val")
+        self.assertEqual(ws.env_resolve.effective.secrets["TOML_ONLY"], "toml_val")
+        self.assertEqual(ws.env_resolve.effective.secrets["ENV_ONLY"], "env_val")
 
     def test_package_secrets_three_tier_precedence_and_render_staging(self) -> None:
         """Verifies Package [env.secrets] > Workspace [env.secrets] > secrets.env, render staging, and package_envs."""
@@ -1520,13 +1552,15 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
         ws = load_workspace_config(self.drift_root)
         pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
 
-        # 1. Verify package_config.secrets contains resolved package secrets
-        self.assertEqual(pkg_cfg.secrets["TIER5_OVERRIDE"], "level_3_package")
-        self.assertEqual(pkg_cfg.secrets["PKG_SECRET"], "ws_val_derived_pkg_a")
+        # 1. Verify package_config.env.secrets contains resolved package secrets
+        self.assertEqual(pkg_cfg.env_resolve.effective.secrets["TIER5_OVERRIDE"], "level_3_package")
+        self.assertEqual(pkg_cfg.env_resolve.effective.secrets["PKG_SECRET"], "ws_val_derived_pkg_a")
+        self.assertEqual(pkg_cfg.env_resolve.current.secrets["TIER5_OVERRIDE"], "level_3_package")
+        self.assertEqual(pkg_cfg.env_resolve.current.secrets["PKG_SECRET"], "ws_val_derived_pkg_a")
 
         # 2. Verify fallback and override used resolved secrets
-        self.assertEqual(pkg_cfg.env_fallback["MY_FALLBACK"], "fallback_with_ws_val_derived_pkg_a")
-        self.assertEqual(pkg_cfg.env_override["MY_OVERRIDE"], "override_with_level_3_package")
+        self.assertEqual(pkg_cfg.env_resolve.effective.fallback["MY_FALLBACK"], "fallback_with_ws_val_derived_pkg_a")
+        self.assertEqual(pkg_cfg.env_resolve.effective.override["MY_OVERRIDE"], "override_with_level_3_package")
 
         # 3. Verify render/pkg_a/.drift/drift_package.toml on disk contains fully resolved [env.secrets]
         rendered_pkg_dir = self.drift_root / "render" / "pkg_a"
@@ -1542,12 +1576,12 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
         self.assertIn("fallback", disk_data["env"])
         self.assertIn("override", disk_data["env"])
 
-        # 4. Verify package_envs puts merged secrets in os.environ (Tier 5 precedence) and unloads cleanly
+        # 4. Verify package_envs puts merged secrets in os.environ (Tier 4 precedence) and unloads cleanly
         self.assertNotIn("TIER5_OVERRIDE", os.environ)
         self.assertNotIn("PKG_SECRET", os.environ)
         self.assertNotIn("WS_SECRET", os.environ)
 
-        with pkg_cfg.package_envs(ws):
+        with pkg_cfg.package_envs():
             self.assertEqual(os.environ["TIER5_OVERRIDE"], "level_3_package")
             self.assertEqual(os.environ["PKG_SECRET"], "ws_val_derived_pkg_a")
             self.assertEqual(os.environ["WS_SECRET"], "ws_val")
@@ -1561,8 +1595,11 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
         self.assertNotIn("FILE_SECRET", os.environ)
 
         # 5. Verify that loading from render/ preserves full secret execution in downstream lifecycle hooks
-        rendered_cfg = load_package_config_from_render_dir(rendered_pkg_dir)
-        with rendered_cfg.package_envs(ws):
+        rendered_cfg = load_package_config_from_render_dir(
+                rendered_pkg_dir,
+                workspace_config=ws
+        )
+        with rendered_cfg.package_envs():
             self.assertEqual(os.environ["TIER5_OVERRIDE"], "level_3_package")
             self.assertEqual(os.environ["PKG_SECRET"], "ws_val_derived_pkg_a")
             self.assertEqual(os.environ["WS_SECRET"], "ws_val")
@@ -1603,13 +1640,349 @@ name = "hook_pkg"
         ws = load_workspace_config(self.drift_root)
         pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
 
-        self.assertEqual(pkg_cfg.secrets.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
-        with pkg_cfg.package_envs(ws):
+        self.assertEqual(pkg_cfg.env_resolve.effective.secrets.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
+        with pkg_cfg.package_envs():
+            self.assertEqual(os.environ.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
+        self.assertNotIn("DYNAMIC_PKG_SECRET", os.environ)
+        with pkg_cfg.package_envs():
             self.assertEqual(os.environ.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
         self.assertNotIn("DYNAMIC_PKG_SECRET", os.environ)
 
 
+class TestMergeKvPairs(unittest.TestCase):
+    """Unit tests for the generic merge_kvpairs functional utility."""
+
+    def test_merge_kvpairs_empty_inputs(self) -> None:
+        from drift.utils.env_utils import merge_kvpairs
+        self.assertEqual(merge_kvpairs([]), {})
+
+    def test_merge_kvpairs_string_mappings(self) -> None:
+        from drift.utils.env_utils import merge_kvpairs
+        m1 = {"a": "1", "b": "2"}
+        m2 = {"b": "override", "c": "3"}
+        self.assertEqual(merge_kvpairs([m1, m2]), {"a": "1", "b": "override", "c": "3"})
+
+    def test_merge_kvpairs_heterogeneous_types(self) -> None:
+        from drift.utils.env_utils import merge_kvpairs
+        m1 = {1: ["x"], 2: ["y"]}
+        m2 = {2: ["z"], 3: ["w"]}
+        self.assertEqual(merge_kvpairs([m1, m2]), {1: ["x"], 2: ["z"], 3: ["w"]})
+
+
+class TestEnvDagResolutionOrder(unittest.TestCase):
+    """Unit tests validating the unidirectional DAG resolution barrier (secret >> fallback >> default >> override)."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+
+    def test_secret_referencing_default_raises_config_error(self) -> None:
+        """Secrets (Tier 4) resolves first and must NOT be able to reference [env.default] (Tier 5)."""
+        from drift.utils.env_utils import resolve_env_configs
+        from drift.core.exceptions import ConfigError
+
+        current = EnvConfig(
+            secrets={"MY_SECRET": "secret_${DEFAULT_VAR}"},
+            default={"DEFAULT_VAR": "default_val"},
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_configs(current)
+        self.assertIn("DEFAULT_VAR", str(ctx.exception))
+
+    def test_secret_referencing_override_raises_config_error(self) -> None:
+        """Secrets (Tier 4) resolves first and must NOT be able to reference [env.override] (Tier 2)."""
+        from drift.utils.env_utils import resolve_env_configs
+        from drift.core.exceptions import ConfigError
+
+        current = EnvConfig(
+            secrets={"MY_SECRET": "secret_${OVERRIDE_VAR}"},
+            override={"OVERRIDE_VAR": "override_val"},
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_configs(current)
+        self.assertIn("OVERRIDE_VAR", str(ctx.exception))
+
+    def test_fallback_referencing_default_raises_config_error(self) -> None:
+        """Fallback (Tier 6) resolves second and must NOT be able to reference [env.default] (Tier 5)."""
+        from drift.utils.env_utils import resolve_env_configs
+        from drift.core.exceptions import ConfigError
+
+        current = EnvConfig(
+            fallback={"MY_FALLBACK": "fb_${DEFAULT_VAR}"},
+            default={"DEFAULT_VAR": "default_val"},
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_configs(current)
+        self.assertIn("DEFAULT_VAR", str(ctx.exception))
+
+    def test_fallback_referencing_override_raises_config_error(self) -> None:
+        """Fallback (Tier 6) resolves second and must NOT be able to reference [env.override] (Tier 2)."""
+        from drift.utils.env_utils import resolve_env_configs
+        from drift.core.exceptions import ConfigError
+
+        current = EnvConfig(
+            fallback={"MY_FALLBACK": "fb_${OVERRIDE_VAR}"},
+            override={"OVERRIDE_VAR": "override_val"},
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_configs(current)
+        self.assertIn("OVERRIDE_VAR", str(ctx.exception))
+
+    def test_default_referencing_override_raises_config_error(self) -> None:
+        """Default (Tier 5) resolves third and must NOT be able to reference [env.override] (Tier 2)."""
+        from drift.utils.env_utils import resolve_env_configs
+        from drift.core.exceptions import ConfigError
+
+        current = EnvConfig(
+            default={"MY_DEFAULT": "def_${OVERRIDE_VAR}"},
+            override={"OVERRIDE_VAR": "override_val"},
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_env_configs(current)
+        self.assertIn("OVERRIDE_VAR", str(ctx.exception))
+
+    def test_dag_valid_forward_cascade(self) -> None:
+        """Valid forward references along the DAG (secret -> fallback -> default -> override) resolve seamlessly."""
+        from drift.utils.env_utils import resolve_env_configs
+
+        current = EnvConfig(
+            secrets={"SEC": "sec_val"},
+            fallback={"FB": "fb_${SEC}"},
+            default={"DEF": "def_${SEC}_${FB}"},
+            override={"OVR": "ovr_${SEC}_${FB}_${DEF}"},
+        )
+        res = resolve_env_configs(current)
+        self.assertEqual(res.effective.secrets["SEC"], "sec_val")
+        self.assertEqual(res.effective.fallback["FB"], "fb_sec_val")
+        self.assertEqual(res.effective.default["DEF"], "def_sec_val_fb_sec_val")
+        self.assertEqual(res.effective.override["OVR"], "ovr_sec_val_fb_sec_val_def_sec_val_fb_sec_val")
+
+
+class TestEnvPrecedenceLadder(unittest.TestCase):
+    """Unit tests asserting the exact 6-tier precedence ladder on individual variables."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+
+    def test_complete_6_tier_precedence_cascade_on_single_key(self) -> None:
+        """Tests that resolution strictly follows Tier 1 (CLI) > Tier 2 (Override) > Tier 3 (Facts) > Tier 4 (Secrets) > Tier 5 (Default) > Tier 6 (Fallback)."""
+        from drift.utils.env_utils import resolve_env_configs, build_effective_env_dict
+
+        # 1. All 6 tiers defined -> Tier 1 (CLI) wins
+        os.environ["LADDER_KEY"] = "tier1_cli"
+        with patch("drift.utils.env_utils.INITIAL_ENV", ["LADDER_KEY"]):
+            config_all = EnvConfig(
+                override={"LADDER_KEY": "tier2_override"},
+                secrets={"LADDER_KEY": "tier4_secrets"},
+                default={"LADDER_KEY": "tier5_default"},
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_all = resolve_env_configs(config_all, extra_facts={"LADDER_KEY": "tier3_facts"})
+            self.assertEqual(res_all.effective_dict["LADDER_KEY"], "tier1_cli")
+
+        # 2. Tier 1 absent -> Tier 2 (Override) wins over Facts, Secrets, Default, Fallback
+        os.environ.pop("LADDER_KEY", None)
+        with patch("drift.utils.env_utils.INITIAL_ENV", []):
+            config_no_cli = EnvConfig(
+                override={"LADDER_KEY": "tier2_override"},
+                secrets={"LADDER_KEY": "tier4_secrets"},
+                default={"LADDER_KEY": "tier5_default"},
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_t2 = resolve_env_configs(config_no_cli, extra_facts={"LADDER_KEY": "tier3_facts"})
+            self.assertEqual(res_t2.effective_dict["LADDER_KEY"], "tier2_override")
+
+        # 3. Tier 1 & 2 absent -> Tier 3 (Facts) wins over Secrets, Default, Fallback
+        with patch("drift.utils.env_utils.INITIAL_ENV", []):
+            config_no_t2 = EnvConfig(
+                secrets={"LADDER_KEY": "tier4_secrets"},
+                default={"LADDER_KEY": "tier5_default"},
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_t3 = resolve_env_configs(config_no_t2, extra_facts={"LADDER_KEY": "tier3_facts"})
+            self.assertEqual(res_t3.effective_dict["LADDER_KEY"], "tier3_facts")
+
+        # 4. Tier 1, 2, 3 absent -> Tier 4 (Secrets) wins over Default, Fallback
+        with patch("drift.utils.env_utils.INITIAL_ENV", []):
+            config_no_t3 = EnvConfig(
+                secrets={"LADDER_KEY": "tier4_secrets"},
+                default={"LADDER_KEY": "tier5_default"},
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_t4 = resolve_env_configs(config_no_t3, extra_facts={})
+            self.assertEqual(res_t4.effective_dict["LADDER_KEY"], "tier4_secrets")
+
+        # 5. Tier 1, 2, 3, 4 absent -> Tier 5 (Default) wins over Fallback
+        with patch("drift.utils.env_utils.INITIAL_ENV", []):
+            config_no_t4 = EnvConfig(
+                default={"LADDER_KEY": "tier5_default"},
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_t5 = resolve_env_configs(config_no_t4, extra_facts={})
+            self.assertEqual(res_t5.effective_dict["LADDER_KEY"], "tier5_default")
+
+        # 6. Only Tier 6 (Fallback) defined -> Fallback provides the value
+        with patch("drift.utils.env_utils.INITIAL_ENV", []):
+            config_only_t6 = EnvConfig(
+                fallback={"LADDER_KEY": "tier6_fallback"},
+            )
+            res_t6 = resolve_env_configs(config_only_t6, extra_facts={})
+            self.assertEqual(res_t6.effective_dict["LADDER_KEY"], "tier6_fallback")
+
+
+class TestEnvParsingAndAliasing(unittest.TestCase):
+    """Unit tests for parse_env_dict, subtable aliasing, and EnvConfig serialization."""
+
+    def test_parse_env_dict_supports_subtable_aliases(self) -> None:
+        """[env.override] and alias [env.overwrite] in the same dict are merged seamlessly."""
+        from drift.utils.env_utils import parse_env_dict
+
+        data = {
+            "override": {"KEY_A": "from_override", "SHARED": "override_val"},
+            "overwrite": {"KEY_B": "from_overwrite", "SHARED": "overwrite_val"},
+            "secrets": {"SEC": "secret_val"},
+            "default": {"DEF": "default_val"},
+            "fallback": {"FB": "fallback_val"},
+        }
+        cfg = parse_env_dict(data)
+        self.assertEqual(cfg.override["KEY_A"], "from_override")
+        self.assertEqual(cfg.override["KEY_B"], "from_overwrite")
+        self.assertEqual(cfg.override["SHARED"], "overwrite_val")
+        self.assertEqual(cfg.secrets["SEC"], "secret_val")
+        self.assertEqual(cfg.default["DEF"], "default_val")
+        self.assertEqual(cfg.fallback["FB"], "fallback_val")
+
+    def test_parse_env_dict_rejects_non_dict_subtable(self) -> None:
+        """Passing a non-dict to a subtable (e.g. override = 'string') raises ConfigError."""
+        from drift.utils.env_utils import parse_env_dict
+        from drift.core.exceptions import ConfigError
+
+        with self.assertRaises(ConfigError) as ctx:
+            parse_env_dict({"override": "not_a_dict"})
+        self.assertIn("[env.override] must be a table of key-value pairs", str(ctx.exception))
+
+    def test_parse_env_dict_rejects_unknown_subtables(self) -> None:
+        """Unknown keys under [env] raise ConfigError."""
+        from drift.utils.env_utils import parse_env_dict
+        from drift.core.exceptions import ConfigError
+
+        with self.assertRaises(ConfigError) as ctx:
+            parse_env_dict({"unknown_tier": {"A": "1"}})
+        self.assertIn("Unsupported key 'unknown_tier' in [env]", str(ctx.exception))
+
+    def test_parse_env_dict_empty_or_none(self) -> None:
+        """Empty or None input returns default empty EnvConfig."""
+        from drift.utils.env_utils import parse_env_dict
+
+        self.assertEqual(parse_env_dict({}), EnvConfig())
+        self.assertEqual(parse_env_dict(None), EnvConfig())
+
+    def test_env_config_to_env_dict_serialization(self) -> None:
+        """EnvConfig.to_env_dict drops empty tables and round-trips with parse_env_dict."""
+        from drift.utils.env_utils import parse_env_dict
+
+        empty_cfg = EnvConfig()
+        self.assertEqual(empty_cfg.to_env_dict(), {})
+        self.assertEqual(parse_env_dict(empty_cfg.to_env_dict()), empty_cfg)
+
+        partial_cfg = EnvConfig(override={"O": "1"}, default={"D": "2"})
+        serialized = partial_cfg.to_env_dict()
+        self.assertEqual(serialized, {"override": {"O": "1"}, "default": {"D": "2"}})
+        self.assertNotIn("secrets", serialized)
+        self.assertNotIn("fallback", serialized)
+        self.assertEqual(parse_env_dict(serialized), partial_cfg)
+
+
+class TestSecretsMaskingInLogs(unittest.TestCase):
+    """Unit tests verifying secret value masking in debug logs."""
+
+    def test_env_scope_masks_secret_values_in_logger(self) -> None:
+        """env_scope with mask_values=True masks secret values with **** in logger output."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with env_scope({"TOP_SECRET_PASSWORD": "super_secret_value_12345"}, mask_values=True):
+                    pass
+
+            log_output = "\n".join(cm.output)
+            self.assertIn("TOP_SECRET_PASSWORD=****", log_output)
+            self.assertNotIn("super_secret_value_12345", log_output)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+
+class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
+    """Unit tests for PackageConfig environment resolution edge cases."""
+
+    def test_package_facts_reflection_overrides_workspace_target_and_install_method(self) -> None:
+        """PackageConfig.get_drift_package_facts reflects package-level custom target and install_method."""
+        from drift.config.package_config import PackageConfig
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+
+        ws = WorkspaceConfig(
+            drift_root=Path("/mock/drift"),
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=Path("/default/target"),
+                default_install_method=InstallMethod.STOW,
+            ),
+        )
+
+        pkg = PackageConfig(
+            name="custom_pkg",
+            target_directory=Path("/custom/pkg/target"),
+            install_method=InstallMethod.COPY,
+        )
+
+        facts = pkg.get_drift_package_facts(ws)
+        self.assertEqual(facts["drift_package_name"], "custom_pkg")
+        self.assertEqual(facts["drift_package_target_dir"], "/custom/pkg/target")
+        self.assertEqual(facts["drift_package_install_method"], "copy")
+        self.assertEqual(facts["drift_package_source_dir"], "/mock/drift/src/custom_pkg")
+
+    def test_package_compute_effective_envs_standalone_vs_workspace(self) -> None:
+        """compute_effective_envs resolves against workspace effective envs when provided and standalone when None."""
+        from drift.config.package_config import PackageConfig
+        from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+
+        ws = WorkspaceConfig(
+            drift_root=Path("/mock/drift"),
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=Path("/default/target"),
+            ),
+            env_resolve=resolve_env_configs(EnvConfig(default={"WS_GLOBAL_VAR": "ws_val"})),
+        )
+
+        pkg = PackageConfig(
+            name="demo_pkg",
+            env_resolve=EnvResolve(current=EnvConfig(override={"PKG_VAR": "${WS_GLOBAL_VAR}_extended"})),
+        )
+
+        # 1. With workspace_config -> WS_GLOBAL_VAR is resolved
+        pkg.compute_effective_envs(ws)
+        self.assertEqual(pkg.env_resolve.effective.override["PKG_VAR"], "ws_val_extended")
+        self.assertEqual(pkg.env_resolve.effective.default["WS_GLOBAL_VAR"], "ws_val")
+
+        # 2. Standalone without workspace_config -> referencing WS_GLOBAL_VAR raises ConfigError
+        from drift.core.exceptions import ConfigError
+        standalone_pkg = PackageConfig(
+            name="demo_pkg",
+            env_resolve=EnvResolve(current=EnvConfig(override={"PKG_VAR": "${WS_GLOBAL_VAR}_extended"})),
+        )
+        with self.assertRaises(ConfigError):
+            standalone_pkg.compute_effective_envs(None)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

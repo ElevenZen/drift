@@ -125,7 +125,7 @@ def load_package_config_for_uninstall(
 ) -> PackageConfig:
     """Loads package configuration from install base, or constructs a default configuration if missing or invalid."""
     try:
-        return PackageConfig.from_install_dir(workspace_config.install_path / pkg)
+        return PackageConfig.from_install_dir(workspace_config.install_path / pkg, workspace_config)
     except Exception as e:
         logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
         return PackageConfig(name=pkg)
@@ -313,7 +313,7 @@ def uninstall_one_package(
     if not dry_run and not hook_flags.no_hooks:
         pkg_config.hooks.assert_hooks_exist(install_pkg_dir, is_source=False, hook_names=UNINSTALL_HOOK_NAMES)
 
-    with pkg_config.package_envs(workspace_config):
+    with pkg_config.package_envs():
         # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
         if not dry_run and pkg_config.hooks.pre_uninstall:
             pkg_config.hooks.trigger_pre_uninstall(

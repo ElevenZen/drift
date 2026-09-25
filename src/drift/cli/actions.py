@@ -61,6 +61,7 @@ from typing import Optional, List, Union, Any, Sequence
 
 from ..core.constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
 from ..core.exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, InstallCollisionError
+from ..utils.host_facts import inject_system_facts
 from ..config.workspace_config import WorkspaceConfig, load_workspace_config
 from ..primitives.workspace_init import init_drift_workspace
 from ..core.result_models import (
@@ -171,6 +172,12 @@ def check_sudo_and_root(drift_root: Path) -> None:
     sys.exit(1)
 
 
+def prepare_cli_environment(drift_root: Path) -> None:
+    """Prepares CLI execution context: verifies sudo/root safety and injects system facts."""
+    check_sudo_and_root(drift_root)
+    inject_system_facts()
+
+
 def load_workspace_config_default(drift_root: Path) -> WorkspaceConfig:
     return WorkspaceConfig.from_workspace_dir(drift_root)
 
@@ -185,7 +192,6 @@ def assert_workspace_healthy(
     - The workspace is uninitialized (no drift artifacts detected at drift_root).
     - The workspace is BROKEN (outdated or missing components).
     """
-    check_sudo_and_root(drift_root)
     from ..primitives.workspace_check import check_existing_workspace_status, ComponentStatus
 
     report = check_existing_workspace_status(drift_root)
@@ -207,7 +213,7 @@ def assert_workspace_healthy(
 
 def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = False, json_mode: bool = False) -> None:
     """Core function to initialize a drift workspace, shared by both CLI backends."""
-    check_sudo_and_root(drift_root)
+    prepare_cli_environment(drift_root)
     init_drift_workspace(drift_root, force=force, no_git_root=no_git_root)
     if json_mode:
         print(SerializableModel().to_json())
@@ -218,6 +224,7 @@ def execute_render(drift_root: Path, package_names: Sequence[str] = (), json_mod
     from ..render.render_package import run_primitive_2_render_packages
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="render")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -235,6 +242,7 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
     from ..core.result_models import StageResult
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="stage")
     workspace_config = load_workspace_config_default(drift_root)
     changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=package_names, force=force)
@@ -267,6 +275,7 @@ def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bo
     from ..primitives.install_repo import run_primitive_5_install_deployment, DeployOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="apply")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -289,6 +298,7 @@ def execute_render_commit(drift_root: Path, message: str, package_names: Sequenc
     """Core function to execute committing render repository changes, shared by both CLI backends."""
     from ..render.render_package import run_primitive_3_commit_render_repo
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="render-commit")
     workspace_config = load_workspace_config_default(drift_root)
     run_primitive_3_commit_render_repo(workspace_config, commit_message=message, target_pkgs=package_names)
@@ -298,6 +308,7 @@ def execute_install_commit(drift_root: Path, message: str, package_names: Sequen
     """Core function to execute committing install repository changes, shared by both CLI backends."""
     from ..primitives.install_repo import run_primitive_6_commit_install_repo
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="install-commit")
     workspace_config = load_workspace_config_default(drift_root)
     run_primitive_6_commit_install_repo(workspace_config, commit_message=message, target_pkgs=package_names)
@@ -307,6 +318,7 @@ def execute_reverse_sync(drift_root: Path, package_names: Sequence[str] = (), js
     """Core function to execute reverse sync (System -> install/), shared by both CLI backends."""
     from ..primitives.reverse_sync import run_primitive_1_reverse_sync
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="reverse-sync")
     workspace_config = load_workspace_config_default(drift_root)
     res = run_primitive_1_reverse_sync(workspace_config, package_names=package_names)
@@ -327,6 +339,7 @@ def execute_new_package(
     """Core function to create a new package, shared by both CLI backends."""
     from ..primitives.new_package import run_primitive_10_create_new_package
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="new")
     workspace_config = load_workspace_config_default(drift_root)
     res = run_primitive_10_create_new_package(
@@ -353,6 +366,7 @@ def execute_uninstall(
     from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="uninstall")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -379,6 +393,7 @@ def execute_status(
     """Core function to audit workspace status, shared by both CLI backends."""
     from ..primitives.workspace_status import run_primitive_status
     
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="status")
     workspace_config = load_workspace_config_default(drift_root)
     status_result = run_primitive_status(
@@ -401,6 +416,7 @@ def execute_gc(drift_root: Path, dry_run: bool = False, json_mode: bool = False,
     from ..primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="gc")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -427,6 +443,7 @@ def execute_adopt(
     from ..primitives.adopt_repo import run_primitive_adopt_drifts
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="adopt")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -452,6 +469,7 @@ def execute_diff(
     json_mode: bool = False
 ) -> None:
     """Core function to visualize changes, shared by both CLI backends."""
+    prepare_cli_environment(drift_root)
     diff_type_enum = diff_type if isinstance(diff_type, DiffType) else DiffType(diff_type)
     assert_workspace_healthy(drift_root, command_name="diff")
     workspace_config = load_workspace_config_default(drift_root)
@@ -480,6 +498,7 @@ def execute_add(
     from ..primitives.add_resource import run_primitive_11_add_resources
     from ..hooks.lifecycle_hooks import HookExecFlags
     
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="add")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -502,6 +521,7 @@ def execute_rollback(
     from ..primitives.rollback_repo import run_primitive_8_rollback_recovery
     from ..hooks.lifecycle_hooks import HookExecFlags
     
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="rollback")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -527,6 +547,7 @@ def execute_deploy(
     from ..primitives.deploy_repo import run_primitive_deploy_pipeline_with_error_handling
     from ..hooks.lifecycle_hooks import HookExecFlags
 
+    prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="deploy")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
@@ -550,7 +571,7 @@ def execute_deploy(
 
 def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = False) -> None:
     """Core function to repair a damaged or partially-initialized drift workspace."""
-    check_sudo_and_root(drift_root)
+    prepare_cli_environment(drift_root)
     from ..primitives.workspace_repair import repair_drift_workspace, build_repair_result
     from ..primitives.workspace_check import check_existing_workspace_status
 
@@ -589,7 +610,7 @@ def execute_health(
     from_stage: Union[str, Any] = "install"
 ) -> None:
     """Core function to run package health check probes, shared by both CLI backends."""
-    check_sudo_and_root(drift_root)
+    prepare_cli_environment(drift_root)
     from ..primitives.package_health import run_primitive_health_checks
 
     workspace_config = load_workspace_config_default(drift_root)
@@ -622,7 +643,7 @@ def execute_clone(
     """Core function to clone a git repository and bootstrap/repair the drift workspace."""
     from ..primitives.workspace_clone import run_primitive_clone
 
-    check_sudo_and_root(target_dir if target_dir is not None else Path.cwd().resolve())
+    prepare_cli_environment(target_dir if target_dir is not None else Path.cwd().resolve())
 
     res = run_primitive_clone(
         git_url=git_url,
@@ -658,7 +679,7 @@ def execute_hook(
     from_stage: Optional[Union[str, Any]] = None
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
-    check_sudo_and_root(drift_root)
+    prepare_cli_environment(drift_root)
     from ..hooks.trigger_hook import run_primitive_trigger_hook
     from ..hooks.lifecycle_hooks import HookExecFlags
 

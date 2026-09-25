@@ -7,7 +7,7 @@ Best Practice:
     drift_package.py is the recommended, canonical place to download configuration files
     or secrets from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden,
     AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the
-    package environment ([env.override] or [env.fallback]) before template compilation.
+    package environment ([env.default] or [env.secrets]) before template compilation.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ def configure_package(context: PackageHookContext) -> Dict[str, Any]:
     Execution Pipeline Order:
         1. Multi-File Discovery & Merging (drift_package.toml + drift_package.local.toml).
         2. Dynamic Python Hook (this function): Runs BEFORE variable stitching and template rendering.
-        3. 7-Tier Variable Stitching & DAG Resolution: Evaluates [env.override] & [env.fallback].
+        3. 6-Tier Precedence & DAG Resolution: Evaluates package [env.default], [env.secrets], etc.
         4. Cross-Section Interpolation: Replaces ${VAR} across package configuration fields.
         5. Render Staging: Emits static compiled metadata to render/<pkg>/.drift/drift_package.toml.
 
@@ -45,14 +45,14 @@ def configure_package(context: PackageHookContext) -> Dict[str, Any]:
     config = context.config
 
     # -------------------------------------------------------------------------
-    # Example 1: Download Remote Secrets / Configs & Inject into [env.override]
+    # Example 1: Download Remote Secrets / Configs & Inject into [env.secrets] / [env.default]
     # -------------------------------------------------------------------------
     # import subprocess, json
     # try:
     #     # Example fetching a secret from 1Password CLI or remote API
     #     # token = subprocess.check_output(["op", "read", "op://vault/item/token"], text=True).strip()
-    #     # env_override = config.setdefault("env", {}).setdefault("override", {})
-    #     # env_override["MY_APP_API_TOKEN"] = token
+    #     # env_secrets = config.setdefault("env", {}).setdefault("secrets", {})
+    #     # env_secrets["MY_APP_API_TOKEN"] = token
     #     pass
     # except Exception as err:
     #     pass

@@ -314,3 +314,12 @@ def get_system_facts(
 ) -> Dict[str, str]:
     """Returns the dictionary of auto-populated lowercase drift host facts."""
     return SystemFacts.probe(os_release_path_override=os_release_path_override).to_envs()
+
+
+def inject_system_facts() -> None:
+    """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
+    from ..core.constants import INITIAL_ENV
+    facts = get_system_facts()
+    for k, v in facts.items():
+        if k not in INITIAL_ENV:
+            os.environ[k] = v

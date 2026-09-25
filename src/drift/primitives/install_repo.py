@@ -1051,7 +1051,7 @@ def deploy_one_package(
     """Core function to deploy a single package configuration."""
     opts = options if options is not None else DeployOptions()
     install_base = workspace_config.install_path
-    metadata = PackageConfig.from_install_dir(install_base / pkg)
+    metadata = PackageConfig.from_install_dir(install_base / pkg, workspace_config)
 
     skip_res = precheck_single_package(
         workspace_config=workspace_config,
@@ -1067,7 +1067,7 @@ def deploy_one_package(
     state_registry.set_package_state(pkg, "installing")
     state_registry.save()
     
-    with metadata.package_envs(workspace_config):
+    with metadata.package_envs():
         return deploy_one_package_impl(
             workspace_config=workspace_config,
             state_registry=state_registry,
@@ -1170,7 +1170,7 @@ def run_primitive_5_install_deployment(
     )
 
     pkg_metadata_map = {
-        pkg: PackageConfig.from_install_dir(install_base / pkg)
+        pkg: PackageConfig.from_install_dir(install_base / pkg, workspace_config)
         for pkg in discovered_packages
     }
 

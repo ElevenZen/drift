@@ -847,7 +847,7 @@ class TestStageRepo(unittest.TestCase):
         from drift.config.package_config import PackageConfig
         non_existent_pkg = "pkg_does_not_exist"
         with self.assertRaises(RuntimeError) as ctx:
-            PackageConfig.from_render_dir(self.render_dir / non_existent_pkg)
+            PackageConfig.from_render_dir(self.render_dir / non_existent_pkg, self.workspace_config)
         self.assertIn("Failed to find drift_package.toml", str(ctx.exception))
 
     def test_compute_package_stage_diff_returns_stage_changes(self) -> None:

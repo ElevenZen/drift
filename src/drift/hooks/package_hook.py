@@ -11,11 +11,13 @@ if TYPE_CHECKING:
 
 from ..core.constants import (
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
-    PACKAGE_HOOK_FUNCTION_NAME,
+    DRIFT_SYSTEM_FACT_KEYS,
+    DRIFT_PACKAGE_FACT_KEYS,
     INITIAL_ENV,
+    PACKAGE_HOOK_FUNCTION_NAME,
 )
 from ..core.exceptions import ConfigError
-from ..utils.env_utils import env_scope
+from ..utils.env_utils import env_scope, update_env_dict
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
 from ..utils.toml_utils import get_nested_from
 
@@ -35,20 +37,12 @@ class PackageHookContext:
     @property
     def facts(self) -> Dict[str, str]:
         """Convenience accessor for auto-detected drift_* system facts."""
-        return {k: v for k, v in self.env.items() if k.startswith("drift_")}
+        return {k: v for k, v in self.env.items() if k in DRIFT_SYSTEM_FACT_KEYS}
 
     @property
     def package_facts(self) -> Dict[str, str]:
         """Convenience accessor for package-specific facts (e.g. drift_package_*)."""
-        facts = {
-            "drift_package_name": self.package_name,
-        }
-        if self.workspace_config is not None:
-            facts["drift_package_source_dir"] = str(self.workspace_config.source_path / self.package_name)
-            facts["drift_package_src_dir"] = str(self.workspace_config.source_path / self.package_name)
-            facts["drift_package_render_dir"] = str(self.workspace_config.render_path / self.package_name)
-            facts["drift_package_install_dir"] = str(self.workspace_config.install_path / self.package_name)
-        return facts
+        return {k: v for k, v in self.env.items() if k in DRIFT_PACKAGE_FACT_KEYS}
 
     @property
     def os(self) -> str:
@@ -125,30 +119,37 @@ def resolve_package_hook_path(
 def apply_package_hook(
     package_dir: Path,
     config_dict: Dict[str, Any],
-    workspace_config: Optional["WorkspaceConfig"] = None,
-    package_name_override: Optional[str] = None
+    workspace_config: Optional["WorkspaceConfig"],
 ) -> Tuple[Dict[str, Any], Optional[Path]]:
     """Resolves and applies the package Python hook if configured or present.
 
     Returns:
         A tuple of (transformed_config_dict, resolved_hook_path_or_None).
     """
-    pkg_name = package_name_override or package_dir.name
+    pkg_name = package_dir.name
     hook_path = resolve_package_hook_path(package_dir, config_dict, package_name_override=pkg_name)
     if hook_path is None:
         return config_dict, None
 
     drift_root = workspace_config.drift_root if workspace_config is not None else None
-    secrets = dict(workspace_config.secrets) if workspace_config is not None else {}
-    context = PackageHookContext(
-        config=config_dict,
-        package_name=pkg_name,
-        package_dir=package_dir,
-        drift_root=drift_root,
-        workspace_config=workspace_config,
-        env={**os.environ, **secrets},
+
+    from ..utils.env_utils import resolve_env_configs, EnvConfig
+    env_res = resolve_env_configs(
+            workspace_config.env_resolve.effective
+                if workspace_config is not None else EnvConfig(),
+            None,
+            workspace_config.get_drift_package_facts(pkg_name)
+                if workspace_config is not None else { 'drift_package_name': pkg_name },
     )
 
-    with env_scope(context.package_facts, overwrite=True, env_keep=INITIAL_ENV):
+    with env_scope(env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV):
+        context = PackageHookContext(
+            config=config_dict,
+            package_name=pkg_name,
+            package_dir=package_dir,
+            drift_root=drift_root,
+            workspace_config=workspace_config,
+            env=dict(os.environ),
+        )
         transformed = execute_package_hook(hook_path, context)
         return transformed, hook_path

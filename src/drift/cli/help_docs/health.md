@@ -51,7 +51,7 @@ timeout = 15
 
 1. **Script Source Base**: The probe script is read from either `install/<pkg>/` (`--from install`, default) or `src/<pkg>/` (`--from source`). Templates are rendered dynamically into `render/<pkg>/`.
 2. **Working Directory (CWD)**: Executed with the **probe script directory** as the working directory (`cwd = hook_path.parent`), allowing sibling helper scripts to be sourced naturally relative to the script. The package's host target directory is accessible via `$drift_package_target_dir`.
-3. **Environment Injection**: Complete 7-tier package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_package_source_dir`, `$drift_package_src_dir`, `$drift_package_install_method`, `$drift_*`, `[env.override]`, `[env.fallback]`, secrets) are automatically injected.
+3. **Environment Injection**: Complete 6-tier package variables (`$drift_package_name`, `$drift_package_target_dir`, `$drift_package_source_dir`, `$drift_package_src_dir`, `$drift_package_install_method`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) are automatically injected.
 4. **Sudo Privileges**: Health probes always execute in user space without `sudo` elevation for safety and predictability.
 5. **Exit Code Evaluation**:
    - `Exit 0`: Evaluated as **`HEALTHY`**.

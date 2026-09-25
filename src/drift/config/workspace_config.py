@@ -22,13 +22,17 @@ from ..core.constants import (
         INITIAL_ENV,
         DRIFT_SYSTEM_FACT_KEYS,
         InstallMethod,
-        inject_system_facts,
         INTERNAL_RENDER_COMMAND,
 )
 from ..utils.toml_utils import parse_toml, merge_toml, get_first_from, validate_known_keys, get_nested_from
 from ..core.exceptions import ConfigError
 from ..utils.path_utils import expand_path
 from ..utils.env_utils import (
+    EnvConfig,
+    EnvResolve,
+    parse_env_dict,
+    build_effective_env_dict,
+    resolve_env_configs,
     parse_env_text,
     parse_env_file,
     parse_secrets_env,
@@ -36,8 +40,6 @@ from ..utils.env_utils import (
     load_env_settings,
     unload_env_settings,
     env_scope,
-    secrets_env_scope,
-    resolve_env_references,
     interpolate_config_dict,
 )
 
@@ -113,7 +115,7 @@ class WorkspaceSectionConfig:
     render_directory: Path = Path("render")
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
-    default_target_directory: Path = Path("~")
+    default_target_directory: Path = expand_path(Path("~"))
     default_install_method: InstallMethod = InstallMethod.STOW
     hook_file: Optional[Path] = None
 
@@ -194,124 +196,47 @@ class WorkspaceSectionConfig:
         )
 
 
-def parse_workspace_env_tables(env_data: Any) -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Parses workspace environment configuration tables into (default_map, secrets_map)."""
-    if not env_data:
-        return {}, {}
-    if not isinstance(env_data, dict):
-        raise ConfigError("[env] section must be a table in workspace configuration.")
-
-    default_map: Dict[str, str] = {}
-    secrets_map: Dict[str, str] = {}
-    for k, v in env_data.items():
-        if k == "default":
-            if not isinstance(v, dict):
-                raise ConfigError("[env.default] must be a table of key-value pairs.")
-            for sub_k, sub_v in v.items():
-                default_map[str(sub_k)] = str(sub_v)
-        elif k == "secrets":
-            if not isinstance(v, dict):
-                raise ConfigError("[env.secrets] must be a table of key-value pairs.")
-            for sub_k, sub_v in v.items():
-                secrets_map[str(sub_k)] = str(sub_v)
-        elif isinstance(v, dict):
-            raise ConfigError(
-                f"Unknown sub-table [env.{k}] in workspace configuration. "
-                f"Expected [env.default] or [env.secrets]."
-            )
-        else:
-            raise ConfigError(
-                f"Direct key-value pair '{k}' in [env] is not supported in workspace configuration. "
-                f"Please define variables under [env.default] or [env.secrets]."
-            )
-
-    return default_map, secrets_map
-
-
 def resolve_and_interpolate_workspace_config(
     data: Dict[str, Any],
     secrets_file: Optional[Mapping[str, str]] = None,
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], EnvResolve]:
     """Resolves environment variables, secrets, and interpolates references across a workspace config dictionary.
 
-    Follows the 7-Tier Precedence Model:
-    - Tier 1: CLI / Host Shell (preserved via INITIAL_ENV)
-    - Tier 4: drift_* system facts (preserved via DRIFT_SYSTEM_FACT_KEYS)
-    - Tier 5: Secrets (Workspace [env.secrets] > config/secrets.env)
-    - Tier 6: Workspace [env.default]
+    Follows the 6-Tier Precedence Model:
+    - Tier 1 (CLI): Ambient Process Environment & CLI Variables (INITIAL_ENV / os.environ)
+    - Tier 2 (Override): Workspace [env.override]
+    - Tier 3 (Facts): Protected drift_* system facts
+    - Tier 4 (Secrets): Workspace [env.secrets] > config/secrets.env
+    - Tier 5 (Default): Workspace [env.default]
+    - Tier 6 (Fallback): Workspace [env.fallback]
 
     Args:
         data: Parsed TOML dictionary of the workspace configuration.
         secrets_file: Optional secrets mapping loaded from config/secrets.env.
 
     Returns:
-        The fully resolved and interpolated workspace configuration dictionary.
+        A tuple of (interpolated_dict, resolved_env_resolve).
     """
     raw_env = data.get("env", {})
-    default_env, workspace_secrets = parse_workspace_env_tables(raw_env)
-
-    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS)
-
-    # 1. Resolve workspace [env.secrets] against base (Tiers 1 & 4 from os.environ + secrets_file)
-    base_for_workspace_secrets, _ = update_env_dict(
-        dict(os.environ),
-        secrets_file or {},
-        overwrite=True,
-        env_keep=protected_facts
+    env_config = parse_env_dict(raw_env, context_desc="workspace configuration")
+    resolved_env = resolve_env_configs(
+        env_config,
+        lower_layer=EnvConfig(secrets=dict(secrets_file)) if secrets_file else None,
     )
-    if workspace_secrets:
-        resolved_workspace_secrets = resolve_env_references(
-            workspace_secrets,
-            base_env=base_for_workspace_secrets,
-            error_cls=ConfigError
-        )
-    else:
-        resolved_workspace_secrets = {}
 
-    effective_secrets: Dict[str, str] = {**(secrets_file or {}), **resolved_workspace_secrets}
-
-    # 2. Resolve workspace [env.default] against base (Tiers 1, 4, 5)
-    base_for_env_resolution, _ = update_env_dict(
-        dict(base_for_workspace_secrets),
-        effective_secrets,
-        overwrite=True,
-        env_keep=protected_facts
-    )
-    if default_env:
-        resolved_default_env = resolve_env_references(
-            default_env,
-            base_env=base_for_env_resolution,
-            error_cls=ConfigError
-        )
-    else:
-        resolved_default_env = {}
-
-    # 3. Interpolate ${VAR} across all other sections of workspace configuration
-    # Tier 6: workspace [env.default] fills unset blanks in base_for_env_resolution (overwrite=False)
-    active_workspace_env, _ = update_env_dict(
-        dict(base_for_env_resolution),
-        resolved_default_env,
-        overwrite=False
-    )
     interpolated_data = interpolate_config_dict(
         data,
-        env=active_workspace_env,
+        env=resolved_env.effective_dict,
         exclude_keys={"env"},
         error_cls=ConfigError
     )
 
-    env_dict = {
-        k: v
-        for k, v in (
-            ("default", resolved_default_env),
-            ("secrets", effective_secrets),
-        )
-        if v
-    }
-    return {
+    env_dict = resolved_env.current.to_env_dict()
+    final_dict = {
         **{k: v for k, v in interpolated_data.items() if k != "env"},
         **({"env": env_dict} if env_dict else {}),
     }
+    return final_dict, resolved_env
 
 
 @dataclass
@@ -332,8 +257,7 @@ class WorkspaceConfig:
     packages_enable: Dict[str, bool] = field(default_factory=dict)
     packages_enable_default: bool = False
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
-    env: Dict[str, str] = field(default_factory=dict)
-    secrets: Dict[str, str] = field(default_factory=dict)
+    env_resolve: EnvResolve = field(default_factory=EnvResolve)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
 
     def __init__(
@@ -343,8 +267,7 @@ class WorkspaceConfig:
         packages_enable: Mapping[str, bool] = {},
         packages_enable_default: bool = False,
         render_engine_configs: Optional[RenderEngineRegistry] = None,
-        env: Mapping[str, str] = {},
-        secrets: Optional[Mapping[str, str]] = None,
+        env_resolve: Optional[EnvResolve] = None,
         settings: Optional[SettingsConfig] = None,
     ) -> None:
         if not isinstance(drift_root, (str, Path)):
@@ -357,18 +280,15 @@ class WorkspaceConfig:
             raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
         if not isinstance(packages_enable, (dict, Mapping)):
             raise ConfigError("packages_enable must be a dictionary.")
-        if not isinstance(env, (dict, Mapping)):
-            raise ConfigError("env must be a dictionary.")
-        if secrets is not None and not isinstance(secrets, (dict, Mapping)):
-            raise ConfigError("secrets must be a dictionary.")
+        if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
+            raise ConfigError(f"env_resolve must be an EnvResolve instance, got {type(env_resolve).__name__}")
 
         self.drift_root = Path(drift_root)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
         self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
         self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
-        self.env = dict(env)
-        self.secrets = dict(secrets) if secrets is not None else parse_secrets_env(self.drift_root)
+        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
         self.settings = settings if settings is not None else SettingsConfig()
 
     def validate(self) -> None:
@@ -385,18 +305,11 @@ class WorkspaceConfig:
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
             raise ConfigError("render_engine_configs must be a RenderEngineRegistry instance.")
         self.render_engine_configs.validate()
-        if not isinstance(self.env, dict):
-            raise ConfigError("env must be a dictionary.")
-        if not isinstance(self.secrets, dict):
-            raise ConfigError("secrets must be a dictionary.")
+        if not isinstance(self.env_resolve, EnvResolve):
+            raise ConfigError("env_resolve must be an EnvResolve instance.")
         if not isinstance(self.settings, SettingsConfig):
             raise ConfigError("settings must be a SettingsConfig instance.")
         self.settings.validate()
-
-    @property
-    def drift_root_path(self) -> Path:
-        """Alias property for drift_root to support backward compatibility."""
-        return self.drift_root
 
     @property
     def source_path(self) -> Path:
@@ -422,20 +335,6 @@ class WorkspaceConfig:
     def default_target_path(self) -> Path:
         """Returns the resolved path to default target directory."""
         return self.workspace.default_target_directory
-
-    @property
-    def packages(self) -> Dict[str, bool]:
-        """Alias property for packages_enable to support backward compatibility."""
-        return self.packages_enable
-
-    @property
-    def render_engine_config(self) -> RenderEngineRegistry:
-        """Alias property for render_engine_configs to support backward compatibility."""
-        return self.render_engine_configs
-
-    @render_engine_config.setter
-    def render_engine_config(self, value: RenderEngineRegistry) -> None:
-        self.render_engine_configs = value
 
     @classmethod
     def get_package_names_from_dir(cls, custom_dir: Path) -> List[str]:
@@ -465,6 +364,17 @@ class WorkspaceConfig:
             or (custom_dir / pkg / PACKAGE_CONFIG_FILE_NAME).exists()
         ]
         return sorted(packages)
+
+    def get_drift_package_facts(self, pkg_name: str) -> Dict[str, str]:
+        return {
+                'drift_package_name': pkg_name,
+                'drift_package_source_dir': str(self.source_path / pkg_name),
+                'drift_package_src_dir': str(self.source_path / pkg_name),
+                'drift_package_render_dir': str(self.render_path / pkg_name),
+                'drift_package_install_dir': str(self.install_path / pkg_name),
+                'drift_package_install_method': str(self.workspace.default_install_method),
+                'drift_package_target_dir': str(self.workspace.default_target_directory),
+        }
 
     def get_package_names_from_source_dir(self) -> List[str]:
         """Finds all potential package subdirectory names within the source directory."""
@@ -589,6 +499,7 @@ class WorkspaceConfig:
         cls,
         data: dict,
         drift_root: Path,
+        env_resolve: Optional[EnvResolve] = None,
     ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         root = drift_root
@@ -637,9 +548,16 @@ class WorkspaceConfig:
             base_dir=root.resolve() / CONFIG_DIR_NAME
         )
 
-        # Parse [env.default] and [env.secrets]
-        env_data = data.get("env", {})
-        default_env, workspace_secrets = parse_workspace_env_tables(env_data)
+        # Parse [env]
+        if env_resolve is not None:
+            env_res = env_resolve
+        else:
+            parsed_env = parse_env_dict(data.get("env", {}), context_desc="workspace configuration")
+            secrets_file = parse_secrets_env(root)
+            env_res = resolve_env_configs(
+                parsed_env,
+                lower_layer=EnvConfig(secrets=dict(secrets_file)) if secrets_file else None,
+            )
 
         # Parse [settings]
         settings_data = data.get("settings", {})
@@ -651,8 +569,7 @@ class WorkspaceConfig:
             packages_enable=packages,
             packages_enable_default=packages_enable_default,
             render_engine_configs=render_engine_configs,
-            env=default_env,
-            secrets=workspace_secrets,
+            env_resolve=env_res,
             settings=settings,
         )
         config.validate()
@@ -808,9 +725,6 @@ def load_workspace_config(
             root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     ]
 
-    # Ensure system facts are present before resolving workspace config
-    inject_system_facts()
-
     secrets_file = parse_secrets_env(root)
 
     combined_dict = load_workspace_config_files_layered(load_configs_from)
@@ -820,17 +734,13 @@ def load_workspace_config(
     combined_dict = apply_workspace_hook(root, combined_dict)
 
     # Pure in-memory topological resolution and section interpolation
-    interpolated_dict = resolve_and_interpolate_workspace_config(
+    interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
         combined_dict,
         secrets_file=secrets_file,
     )
 
-    # Establish baseline workspace [env.default] in os.environ (Tier 6)
-    if default_env := get_nested_from(interpolated_dict, "env.default", default={}):
-        load_env_settings(default_env, overwrite=False)
-
     try:
-        return WorkspaceConfig.from_dict(interpolated_dict, drift_root=root)
+        return WorkspaceConfig.from_dict(interpolated_dict, drift_root=root, env_resolve=env_res)
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:
