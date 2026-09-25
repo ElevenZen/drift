@@ -49,6 +49,7 @@ from .toml_utils import (
     get_first_from,
     get_nested_from,
     validate_known_keys,
+    parse_bool_value,
 )
 from .env_utils import (
     EnvConfig,
@@ -153,6 +154,7 @@ __all__ = [
     "get_first_from",
     "get_nested_from",
     "validate_known_keys",
+    "parse_bool_value",
     "EnvConfig",
     "EnvResolve",
     "merge_kvpairs",

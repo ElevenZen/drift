@@ -25,6 +25,7 @@ from drift.utils.toml_utils import (
     get_first_from,
     get_nested_from,
     validate_known_keys,
+    parse_bool_value,
 )
 from drift.core.exceptions import ConfigError
 from drift.config.workspace_config import (
@@ -203,6 +204,45 @@ class TestConfigParser(unittest.TestCase):
         self.assertIn("'bad1'", str(ctx.exception))
         self.assertIn("'bad2'", str(ctx.exception))
         self.assertTrue(str(ctx.exception).endswith(" for package 'my_pkg'"))
+
+    def test_parse_bool_value(self) -> None:
+        """Verifies parse_bool_value coercion for bools, strings, numbers, and fallbacks."""
+        # 1. Native booleans
+        self.assertIs(parse_bool_value(True), True)
+        self.assertIs(parse_bool_value(False), False)
+
+        # 2. Truthy strings (case-insensitive, whitespace-trimmed)
+        for s in ("true", "True", "TRUE", " 1 ", "yes", "YES", "on", "enable", "enabled"):
+            self.assertIs(parse_bool_value(s), True)
+
+        # 3. Falsy strings (case-insensitive, whitespace-trimmed)
+        for s in ("false", "False", "FALSE", " 0 ", "no", "NO", "off", "disable", "disabled"):
+            self.assertIs(parse_bool_value(s), False)
+
+        # 4. Numbers
+        self.assertIs(parse_bool_value(1), True)
+        self.assertIs(parse_bool_value(0), False)
+        self.assertIs(parse_bool_value(123), True)
+
+        # 5. None and fallback
+        self.assertIs(parse_bool_value(None, default=True), True)
+        self.assertIs(parse_bool_value(None, default=False), False)
+        self.assertIs(parse_bool_value(None), False)
+
+        # 6. Strict mode validations
+        self.assertIs(parse_bool_value("true", strict=True), True)
+        self.assertIs(parse_bool_value("false", strict=True), False)
+        with self.assertRaises(ConfigError) as ctx:
+            parse_bool_value("invalid_str", strict=True, context="[test]")
+        self.assertIn("Invalid boolean value 'invalid_str' under [test]", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            parse_bool_value(["a", "b"], strict=True, context="[test]")
+        self.assertIn("Expected boolean value, got list under [test]", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            parse_bool_value(99, strict=True, context="[test]")
+        self.assertIn("Invalid boolean value '99' under [test] (expected 0 or 1)", str(ctx.exception))
 
     def test_parse_toml_simple(self) -> None:
         toml_str = """
@@ -2210,8 +2250,14 @@ class TestSettingsConfig(unittest.TestCase):
         s3 = SettingsConfig.from_dict({"inject_hook_non_interactive_envs": False})
         self.assertFalse(s3.hook_inject_non_interactive_envs)
 
-        s4 = SettingsConfig.from_dict({})
-        self.assertTrue(s4.hook_inject_non_interactive_envs)
+        s4 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "false"})
+        self.assertFalse(s4.hook_inject_non_interactive_envs)
+
+        s5 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "true"})
+        self.assertTrue(s5.hook_inject_non_interactive_envs)
+
+        s6 = SettingsConfig.from_dict({})
+        self.assertTrue(s6.hook_inject_non_interactive_envs)
 
     def test_settings_config_validation(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2249,6 +2295,46 @@ class TestSettingsConfig(unittest.TestCase):
         data = parse_toml(toml_content)
         ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
         self.assertFalse(ws_cfg.settings.hook_inject_non_interactive_envs)
+
+    def test_workspace_config_packages_enable_boolean_coercion(self) -> None:
+        """Verifies that [packages.enable] values and DEFAULT handle string booleans properly (e.g. 'false' is False)."""
+        toml_content = """
+        [workspace]
+        [packages.enable]
+        DEFAULT = "false"
+        pkg_true_str = "true"
+        pkg_yes_str = "yes"
+        pkg_1_str = "1"
+        pkg_false_str = "false"
+        pkg_no_str = "no"
+        pkg_0_str = "0"
+        pkg_bool_true = true
+        pkg_bool_false = false
+        """
+        data = parse_toml(toml_content)
+        ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
+        self.assertFalse(ws_cfg.packages_enable_default)
+        self.assertTrue(ws_cfg.is_package_enabled("pkg_true_str"))
+        self.assertTrue(ws_cfg.is_package_enabled("pkg_yes_str"))
+        self.assertTrue(ws_cfg.is_package_enabled("pkg_1_str"))
+        self.assertTrue(ws_cfg.is_package_enabled("pkg_bool_true"))
+        self.assertFalse(ws_cfg.is_package_enabled("pkg_false_str"))
+        self.assertFalse(ws_cfg.is_package_enabled("pkg_no_str"))
+        self.assertFalse(ws_cfg.is_package_enabled("pkg_0_str"))
+        self.assertFalse(ws_cfg.is_package_enabled("pkg_bool_false"))
+        # Non-explicit package falls back to DEFAULT (which is "false" -> False)
+        self.assertFalse(ws_cfg.is_package_enabled("unmentioned_pkg"))
+
+        # Test with DEFAULT = "true"
+        toml_content_default_true = """
+        [workspace]
+        [packages.enable]
+        DEFAULT = "true"
+        """
+        data_default_true = parse_toml(toml_content_default_true)
+        ws_cfg_default_true = WorkspaceConfig.from_dict(data_default_true, drift_root=Path("/tmp/workspace"))
+        self.assertTrue(ws_cfg_default_true.packages_enable_default)
+        self.assertTrue(ws_cfg_default_true.is_package_enabled("any_package"))
 
     def test_class_constants(self) -> None:
         """Verifies schema and key ClassVars on configuration classes."""
@@ -2409,6 +2495,30 @@ class TestPackageSectionConfig(unittest.TestCase):
         self.assertTrue(sec.sudo)
         self.assertEqual(sec.fully_controlled_dirs, [Path("dir1"), Path("dir2")])
         self.assertEqual(sec.hook_file, (base_dir / "custom_hook.py").resolve())
+
+    def test_package_section_from_dict_boolean_coercion(self) -> None:
+        """Verifies that PackageSectionConfig.from_dict properly coerces string and numeric boolean fields."""
+        data = {
+            "name": "pkg_coerced",
+            "enable_render": "false",
+            "enable_install": "0",
+            "sudo": "yes",
+        }
+        sec = PackageSectionConfig.from_dict(data, package_name="pkg_coerced")
+        self.assertFalse(sec.enable_render)
+        self.assertFalse(sec.enable_install)
+        self.assertTrue(sec.sudo)
+
+        data_truthy = {
+            "name": "pkg_truthy",
+            "enable_render": "true",
+            "enable_install": "1",
+            "sudo": "no",
+        }
+        sec_truthy = PackageSectionConfig.from_dict(data_truthy, package_name="pkg_truthy")
+        self.assertTrue(sec_truthy.enable_render)
+        self.assertTrue(sec_truthy.enable_install)
+        self.assertFalse(sec_truthy.sudo)
 
     def test_package_section_validation(self) -> None:
         with self.assertRaises(ConfigError):

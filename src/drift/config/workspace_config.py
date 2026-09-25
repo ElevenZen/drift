@@ -56,6 +56,7 @@ from ..utils.path_utils import expand_path
 from ..utils.toml_utils import (
     get_first_from,
     get_nested_from,
+    parse_bool_value,
     validate_known_keys,
 )
 from .render_engine_config import (
@@ -101,11 +102,13 @@ class SettingsConfig:
             cls.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
             default=True,
         )
-        if not isinstance(raw_hook_env, bool):
-            raise ConfigError("hook_inject_non_interactive_envs under [settings] must be a boolean.")
-
         settings = cls(
-            hook_inject_non_interactive_envs=bool(raw_hook_env),
+            hook_inject_non_interactive_envs=parse_bool_value(
+                raw_hook_env,
+                default=True,
+                strict=True,
+                context="[settings] hook_inject_non_interactive_envs",
+            ),
         )
         settings.validate()
         return settings
@@ -495,18 +498,15 @@ class WorkspaceConfig:
             context="workspace configuration",
         )
 
-        packages = {}
-        for pkg, val in packages_enable_data.items():
-            if pkg == cls.PACKAGES_ENABLE_DEFAULT_KEY:
-                continue
-            if isinstance(val, bool):
-                packages[pkg] = val
-            elif str(val).lower() in ("true", "1", "yes"):
-                packages[pkg] = True
-            else:
-                packages[pkg] = False
+        packages = {
+            pkg: parse_bool_value(val)
+            for pkg, val in packages_enable_data.items()
+            if pkg != cls.PACKAGES_ENABLE_DEFAULT_KEY
+        }
 
-        packages_enable_default = bool(packages_enable_data.get(cls.PACKAGES_ENABLE_DEFAULT_KEY, False))
+        packages_enable_default = parse_bool_value(
+            packages_enable_data.get(cls.PACKAGES_ENABLE_DEFAULT_KEY, False)
+        )
         if not packages_enable_default and len(packages) == 0:
             logger.warning("No packages are enabled in the workspace configuration. "
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")

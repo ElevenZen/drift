@@ -84,6 +84,54 @@ def get_nested_from(
     return val
 
 
+def parse_bool_value(
+    val: Any,
+    default: bool = False,
+    strict: bool = False,
+    context: str = "",
+) -> bool:
+    """Coerces a boolean, string, or numeric value into a boolean.
+
+    Recognizes standard boolean truthy strings: 'true', '1', 'yes', 'on', 'enable', 'enabled' (case-insensitive).
+    Recognizes standard boolean falsy strings: 'false', '0', 'no', 'off', 'disable', 'disabled' (case-insensitive).
+
+    Args:
+        val: Value to parse or coerce.
+        default: Fallback boolean value if val is None.
+        strict: If True, raises ConfigError for unparseable strings or non-boolean types.
+        context: Optional description of the field or section for error messages when strict=True.
+
+    Returns:
+        The coerced boolean value.
+
+    Raises:
+        ConfigError: If strict is True and val cannot be parsed as a valid boolean.
+    """
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        if strict and val not in (0, 1):
+            ctx_str = f" under {context}" if context else ""
+            raise ConfigError(f"Invalid boolean value '{val}'{ctx_str} (expected 0 or 1).")
+        return bool(val)
+    if isinstance(val, str):
+        cleaned = val.strip().lower()
+        if cleaned in ("true", "1", "yes", "on", "enable", "enabled"):
+            return True
+        if cleaned in ("false", "0", "no", "off", "disable", "disabled"):
+            return False
+        if strict:
+            ctx_str = f" under {context}" if context else ""
+            raise ConfigError(f"Invalid boolean value '{val}'{ctx_str}.")
+        return default
+    if strict:
+        ctx_str = f" under {context}" if context else ""
+        raise ConfigError(f"Expected boolean value, got {type(val).__name__}{ctx_str}.")
+    return bool(val)
+
+
 def validate_known_keys(
     data: Optional[Mapping[str, Any]],
     known_keys: Iterable[str],

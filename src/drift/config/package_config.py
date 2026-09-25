@@ -53,7 +53,11 @@ from ..utils.env_utils import (
     resolve_env_configs,
 )
 from ..utils.path_utils import expand_path
-from ..utils.toml_utils import get_first_from, validate_known_keys
+from ..utils.toml_utils import (
+    get_first_from,
+    parse_bool_value,
+    validate_known_keys,
+)
 from .package_hooks import PackageHooks
 from .package_requirements import PackageRequirements
 from .render_engine_config import RenderEngineRegistry
@@ -227,11 +231,11 @@ class PackageSectionConfig:
         sec = cls(
             name=name,
             source_directory=source_dir,
-            enable_render=bool(data.get("enable_render", True)),
-            enable_install=bool(data.get("enable_install", True)),
+            enable_render=parse_bool_value(data.get("enable_render", True), default=True),
+            enable_install=parse_bool_value(data.get("enable_install", True), default=True),
             install_method=parsed_install_method,
             target_directory=target_dir,
-            sudo=bool(data.get("sudo", False)),
+            sudo=parse_bool_value(data.get("sudo", False), default=False),
             fully_controlled_dirs=fcd_list,
             hook_file=resolved_hook_file,
         )
