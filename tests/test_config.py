@@ -16,6 +16,8 @@ from drift.core.constants import (
     DEFAULT_HOOK_TIMEOUT,
     InstallMethod,
     set_test_mode,
+    set_initial_env,
+    update_initial_env,
 )
 from drift.utils.toml_utils import (
     parse_toml,
@@ -1564,10 +1566,16 @@ class TestConfigLoaders(unittest.TestCase):
 
 class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_render_engine_config_validation(self) -> None:
         from drift.config.render_engine_config import RenderEngineConfig
@@ -1737,30 +1745,28 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def test_meta_rendering_drift_envst_toml(self) -> None:
         from drift.config.workspace_config import WorkspaceConfig
         # We set an env variable
-        os.environ["MY_TEST_RENDER_DIR"] = "templated_render"
-        os.environ["MY_TEST_INSTALL_DIR"] = "templated_install"
+        with patch.dict(os.environ, {"MY_TEST_RENDER_DIR": "templated_render", "MY_TEST_INSTALL_DIR": "templated_install"}):
+            os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
 
-        os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
+            base, ext = os.path.splitext(WORKSPACE_CONFIG_FILE_NAME)
+            config_envst_name = base + ".envst" + ext
+            envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
+            with open(envst_toml_path, "w", encoding="utf-8") as f:
+                f.write("""
+                [workspace]
+                render_directory = "$MY_TEST_RENDER_DIR"
+                install_directory = "${MY_TEST_INSTALL_DIR}"
 
-        base, ext = os.path.splitext(WORKSPACE_CONFIG_FILE_NAME)
-        config_envst_name = base + ".envst" + ext
-        envst_toml_path = os.path.join(self.temp_dir.name, os.path.join(CONFIG_DIR_NAME, config_envst_name))
-        with open(envst_toml_path, "w", encoding="utf-8") as f:
-            f.write("""
-            [workspace]
-            render_directory = "$MY_TEST_RENDER_DIR"
-            install_directory = "${MY_TEST_INSTALL_DIR}"
+                [packages.enable]
+                DEFAULT = false
+                """)
 
-            [packages.enable]
-            DEFAULT = false
-            """)
+            # Call WorkspaceConfig.from_workspace_dir on the non-existent .toml, which should trigger rendering of .envst.toml
+            config = WorkspaceConfig.from_workspace_dir(Path(self.temp_dir.name))
 
-        # Call WorkspaceConfig.from_workspace_dir on the non-existent .toml, which should trigger rendering of .envst.toml
-        config = WorkspaceConfig.from_workspace_dir(Path(self.temp_dir.name))
-
-        self.assertEqual(config.drift_root, Path(self.temp_dir.name).resolve())
-        self.assertEqual(config.workspace.render_directory, Path("templated_render"))
-        self.assertEqual(config.workspace.install_directory, Path("templated_install"))
+            self.assertEqual(config.drift_root, Path(self.temp_dir.name).resolve())
+            self.assertEqual(config.workspace.render_directory, Path("templated_render"))
+            self.assertEqual(config.workspace.install_directory, Path("templated_install"))
 
     def test_meta_rendering_drift_envst_toml_missing_var_raises_config_error(self) -> None:
         from drift.config.workspace_config import WorkspaceConfig
@@ -2163,7 +2169,6 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_six_tier_variable_preemption_order(self) -> None:
         """Verifies the complete 6-tier environment variable preemption hierarchy."""
-        from drift.core.constants import set_initial_env, update_initial_env
         from drift.config.workspace_config import WorkspaceConfig
 
         # Setup workspace config
@@ -2171,62 +2176,62 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             drift_root=Path("/test/workspace"),
         )
 
-        # Base system fact is present
-        os.environ["drift_os"] = "linux"
-        os.environ["GLOBAL_VAR"] = "from_workspace"
-        os.environ["CLI_VAR"] = "from_cli"
-        os.environ["OVERRIDDEN_BY_PACKAGE"] = "from_workspace"
-        os.environ["FALLBACK_TEST"] = "from_workspace"
+        with patch.dict(
+            os.environ,
+            {
+                "drift_os": "linux",
+                "GLOBAL_VAR": "from_workspace",
+                "CLI_VAR": "from_cli",
+                "OVERRIDDEN_BY_PACKAGE": "from_workspace",
+                "FALLBACK_TEST": "from_workspace",
+            },
+            clear=False,
+        ):
+            # Mark CLI_VAR as coming from CLI invocation
+            set_initial_env(["CLI_VAR"])
 
-        # Mark CLI_VAR as coming from CLI invocation
-        set_initial_env(["CLI_VAR"])
+            pkg = PackageConfig(
+                PackageSectionConfig(name="demo_pkg"),
+                env_resolve=EnvResolve(current=EnvConfig(
+                    override={
+                        "OVERRIDDEN_BY_PACKAGE": "package_override_value",
+                        "CLI_VAR": "attempted_pkg_override",
+                    },
+                    fallback={
+                        "FALLBACK_TEST": "fallback_should_not_overwrite",
+                        "NEW_FALLBACK_VAR": "fallback_activated",
+                    },
+                )),
+            ).compute_effective_envs(workspace_config)
 
-        pkg = PackageConfig(
-            PackageSectionConfig(name="demo_pkg"),
-            env_resolve=EnvResolve(current=EnvConfig(
-                override={
-                    "OVERRIDDEN_BY_PACKAGE": "package_override_value",
-                    "CLI_VAR": "attempted_pkg_override",
-                },
-                fallback={
-                    "FALLBACK_TEST": "fallback_should_not_overwrite",
-                    "NEW_FALLBACK_VAR": "fallback_activated",
-                },
-            )),
-        ).compute_effective_envs(workspace_config)
+            with pkg.package_envs():
+                # Tier 1: CLI variable wins over package [env.override]
+                self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
 
-        with pkg.package_envs():
-            # Tier 1: CLI variable wins over package [env.override]
-            self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
+                # Tier 2: Package [env.override] wins over workspace
+                self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "package_override_value")
 
-            # Tier 2: Package [env.override] wins over workspace
-            self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "package_override_value")
+                # Tier 3: Package facts are loaded
+                self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
+                self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "stow")
 
-            # Tier 3: Package facts are loaded
-            self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
-            self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "stow")
+                # Tier 3: System facts are preserved
+                self.assertEqual(os.environ.get("drift_os"), "linux")
 
-            # Tier 3: System facts are preserved
-            self.assertEqual(os.environ.get("drift_os"), "linux")
+                # Tier 5: Workspace env remains if not overridden
+                self.assertEqual(os.environ.get("GLOBAL_VAR"), "from_workspace")
 
-            # Tier 5: Workspace env remains if not overridden
-            self.assertEqual(os.environ.get("GLOBAL_VAR"), "from_workspace")
+                # Tier 6: Package fallback does NOT overwrite existing workspace env, but fills new var
+                self.assertEqual(os.environ.get("FALLBACK_TEST"), "from_workspace")
+                self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
 
-            # Tier 6: Package fallback does NOT overwrite existing workspace env, but fills new var
-            self.assertEqual(os.environ.get("FALLBACK_TEST"), "from_workspace")
-            self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
+            # After context exit: package variables are cleanly restored
+            self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace")
+            self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
+            self.assertNotIn("drift_package_name", os.environ)
 
-        # After context exit: package variables are cleanly restored
-        self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace")
-        self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
-        self.assertNotIn("drift_package_name", os.environ)
-
-        # Cleanup
-        os.environ.pop("GLOBAL_VAR", None)
-        os.environ.pop("CLI_VAR", None)
-        os.environ.pop("OVERRIDDEN_BY_PACKAGE", None)
-        os.environ.pop("FALLBACK_TEST", None)
-        update_initial_env()
+        # Restore INITIAL_ENV
+        set_initial_env(self.original_initial_env)
 
 
 class TestSettingsConfig(unittest.TestCase):

@@ -11,6 +11,7 @@ from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NA
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
+        self.original_environ = dict(os.environ)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base_path = Path(self.temp_dir.name).resolve()
         
@@ -18,7 +19,6 @@ class TestUninstall(unittest.TestCase):
         self.system_target_dir = self.base_path / "system_home"
         
         # Override HOME environment variable for the duration of the test
-        self._old_home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.system_target_dir)
 
         self.source_dir = self.drift_root / "src"
@@ -44,11 +44,9 @@ class TestUninstall(unittest.TestCase):
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), capture_output=True, check=True)
 
     def tearDown(self):
-        if self._old_home:
-            os.environ["HOME"] = self._old_home
-        else:
-            os.environ.pop("HOME", None)
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
 
     def test_uninstall_basic_stow(self):
         """Verifies basic uninstallation of a stowed package."""

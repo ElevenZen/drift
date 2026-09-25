@@ -3,13 +3,16 @@ import os
 import shutil
 import tempfile
 import subprocess
+from unittest.mock import patch
 from pathlib import Path
 from drift.config.workspace_config import WorkspaceConfig
 from drift.core.state_registry import load_state_registry
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, INITIAL_ENV, set_initial_env
 
 class TestIntegration(unittest.TestCase):
     def setUp(self):
+        self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base_path = Path(self.temp_dir.name).resolve()
         
@@ -18,8 +21,6 @@ class TestIntegration(unittest.TestCase):
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
         
         # Override HOME and USERPROFILE environment variables for the duration of the test
-        self._old_home = os.environ.get("HOME")
-        self._old_userprofile = os.environ.get("USERPROFILE")
         os.environ["HOME"] = str(self.system_target_dir)
         os.environ["USERPROFILE"] = str(self.system_target_dir)
         
@@ -42,15 +43,10 @@ class TestIntegration(unittest.TestCase):
         self.render_dir = self.workspace_config.render_path
 
     def tearDown(self):
-        if self._old_home:
-            os.environ["HOME"] = self._old_home
-        else:
-            os.environ.pop("HOME", None)
-        if self._old_userprofile:
-            os.environ["USERPROFILE"] = self._old_userprofile
-        else:
-            os.environ.pop("USERPROFILE", None)
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_lifecycle_stow_basic(self):
         """Scenario: Basic stow deployment, drift detection, and uninstallation."""
@@ -285,15 +281,13 @@ class TestIntegration(unittest.TestCase):
         (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"\n', encoding="utf-8")
         (pkg_src / "greet.mustache.txt").write_text("Hello {{user}}!", encoding="utf-8")
         
-        # 3. Set environment variable
-        os.environ["USER"] = "drift_tester"
+        # 3. Set environment variable and deploy
+        with patch.dict(os.environ, {"USER": "drift_tester"}):
+            run_primitive_2_render_packages(self.workspace_config)
+            run_primitive_4_stage_render_to_install(self.workspace_config)
+            run_primitive_5_install_deployment(self.workspace_config)
         
-        # 4. Deploy
-        run_primitive_2_render_packages(self.workspace_config)
-        run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
-        
-        # 5. Verify result
+        # 4. Verify result
         target_file = self.system_target_dir / "greet.txt"
         self.assertTrue(target_file.exists())
         self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello drift_tester!")

@@ -28,6 +28,7 @@ from drift.cli.argparse_backend import run_argparse_cli
 
 class TestPackageHealth(unittest.TestCase):
     def setUp(self):
+        self.original_environ = dict(os.environ)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base_path = Path(self.temp_dir.name).resolve()
 
@@ -35,7 +36,6 @@ class TestPackageHealth(unittest.TestCase):
         self.system_target_dir = self.base_path / "system_home"
 
         # Override HOME environment variable for the duration of the test
-        self._old_home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.system_target_dir)
 
         self.config_dir = self.drift_root / "config"
@@ -72,9 +72,9 @@ DEFAULT = true
         )
 
     def tearDown(self):
-        if self._old_home is not None:
-            os.environ["HOME"] = self._old_home
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
 
     def test_health_single_package_pass(self):
         """Verifies that a passing health probe hook returns HEALTHY status with output and correct CWD."""

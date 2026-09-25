@@ -46,10 +46,12 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_load_env_settings_empty(self) -> None:
         """Verifies that loading empty envs returns empty dict and modifies nothing."""
@@ -247,6 +249,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
 
@@ -270,7 +273,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        update_initial_env()
+        set_initial_env(self.original_initial_env)
         self.temp_dir.cleanup()
 
     def _setup_package_with_template(self, pkg_name: str, template_body: str) -> Path:
@@ -749,6 +752,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.mkdtemp()
         self.drift_root = Path(self.temp_dir).resolve()
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -757,6 +761,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_update_env_dict(self) -> None:
@@ -1388,6 +1393,7 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name)
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1400,61 +1406,61 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_resolve_and_interpolate_workspace_config_pure_in_memory(self) -> None:
         """Verifies resolve_and_interpolate_workspace_config resolves secrets topologically without modifying os.environ."""
         from drift.config.workspace_loader import resolve_and_interpolate_workspace_config
         from drift.core.constants import DRIFT_SYSTEM_FACT_KEYS
 
-        os.environ["HOST_CLI_VAR"] = "cli_val"
-        os.environ["drift_os"] = "linux"
-        initial_environ_snapshot = dict(os.environ)
+        with patch.dict(os.environ, {"HOST_CLI_VAR": "cli_val", "drift_os": "linux"}, clear=False):
+            initial_environ_snapshot = dict(os.environ)
 
-        data = {
-            "workspace": {
-                "name": "sec_ws",
-                "target_directory": "/tmp/${DERIVED_VAR}",
-            },
-            "env": {
-                "default": {
-                    "DERIVED_VAR": "derived_${SECRET_TOKEN}",
+            data = {
+                "workspace": {
+                    "name": "sec_ws",
+                    "target_directory": "/tmp/${DERIVED_VAR}",
                 },
-                "secrets": {
-                    "FILE_BASE_SEC": "${SECRETS_FILE_KEY}_extended",
-                    "SECRET_TOKEN": "${FILE_BASE_SEC}_token",
-                    "drift_os": "malicious_os_override",  # Tier 4 attempting to overwrite Tier 3 facts
-                    "HOST_CLI_VAR": "secret_cli_override", # Tier 4 attempting to overwrite Tier 1 CLI
+                "env": {
+                    "default": {
+                        "DERIVED_VAR": "derived_${SECRET_TOKEN}",
+                    },
+                    "secrets": {
+                        "FILE_BASE_SEC": "${SECRETS_FILE_KEY}_extended",
+                        "SECRET_TOKEN": "${FILE_BASE_SEC}_token",
+                        "drift_os": "malicious_os_override",  # Tier 4 attempting to overwrite Tier 3 facts
+                        "HOST_CLI_VAR": "secret_cli_override", # Tier 4 attempting to overwrite Tier 1 CLI
+                    }
                 }
             }
-        }
-        secrets_file = {
-            "SECRETS_FILE_KEY": "raw_secret",
-        }
+            secrets_file = {
+                "SECRETS_FILE_KEY": "raw_secret",
+            }
 
-        interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
-            data,
-            secrets_file=secrets_file,
-        )
-        effective_secrets = env_res.effective.secrets
-        current_secrets = env_res.current.secrets
+            interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
+                data,
+                secrets_file=secrets_file,
+            )
+            effective_secrets = env_res.effective.secrets
+            current_secrets = env_res.current.secrets
 
-        # 1. Verify os.environ was NOT mutated
-        self.assertEqual(dict(os.environ), initial_environ_snapshot)
+            # 1. Verify os.environ was NOT mutated
+            self.assertEqual(dict(os.environ), initial_environ_snapshot)
 
-        # 2. Verify effective secrets were resolved topologically
-        self.assertEqual(effective_secrets["SECRETS_FILE_KEY"], "raw_secret")
-        self.assertEqual(effective_secrets["FILE_BASE_SEC"], "raw_secret_extended")
-        self.assertEqual(effective_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
-        self.assertEqual(current_secrets["FILE_BASE_SEC"], "raw_secret_extended")
-        self.assertEqual(current_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
+            # 2. Verify effective secrets were resolved topologically
+            self.assertEqual(effective_secrets["SECRETS_FILE_KEY"], "raw_secret")
+            self.assertEqual(effective_secrets["FILE_BASE_SEC"], "raw_secret_extended")
+            self.assertEqual(effective_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
+            self.assertEqual(current_secrets["FILE_BASE_SEC"], "raw_secret_extended")
+            self.assertEqual(current_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
 
-        # 3. Verify Tier 4 and Tier 1 protections: DRIFT_SYSTEM_FACT_KEYS and INITIAL_ENV are protected in base
-        self.assertEqual(os.environ["drift_os"], "linux")
-        self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
+            # 3. Verify Tier 4 and Tier 1 protections: DRIFT_SYSTEM_FACT_KEYS and INITIAL_ENV are protected in base
+            self.assertEqual(os.environ["drift_os"], "linux")
+            self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
 
-        # 4. Verify regular [env.default] was resolved against secrets
-        self.assertEqual(env_res.effective.default["DERIVED_VAR"], "derived_raw_secret_extended_token")
-        self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
+            # 4. Verify regular [env.default] was resolved against secrets
+            self.assertEqual(env_res.effective.default["DERIVED_VAR"], "derived_raw_secret_extended_token")
+            self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
 
     def test_workspace_secrets_precedence_and_python_hook(self) -> None:
         """Verifies workspace secret precedence: hook > local.toml > toml > secrets.env."""
@@ -1675,10 +1681,12 @@ class TestEnvDagResolutionOrder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_secret_referencing_default_raises_config_error(self) -> None:
         """Secrets (Tier 4) resolves first and must NOT be able to reference [env.default] (Tier 5)."""
@@ -1768,10 +1776,12 @@ class TestEnvPrecedenceLadder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_complete_6_tier_precedence_cascade_on_single_key(self) -> None:
         """Tests that resolution strictly follows Tier 1 (CLI) > Tier 2 (Override) > Tier 3 (Facts) > Tier 4 (Secrets) > Tier 5 (Default) > Tier 6 (Fallback)."""

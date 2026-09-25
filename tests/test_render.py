@@ -18,6 +18,9 @@ from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    INITIAL_ENV,
+    set_initial_env,
+    set_test_mode,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
@@ -583,12 +586,18 @@ class TestDependencyResolver(unittest.TestCase):
 
 class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
         inject_system_facts()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_render_package_success_static_config(self) -> None:
         from drift.render.render_package import render_package
