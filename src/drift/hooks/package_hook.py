@@ -17,7 +17,7 @@ from ..core.constants import (
     PACKAGE_HOOK_FUNCTION_NAME,
 )
 from ..core.exceptions import ConfigError
-from ..utils.env_utils import env_scope, update_env_dict
+from ..utils.env_utils import update_env_dict
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
 from ..utils.toml_utils import get_nested_from
 
@@ -142,14 +142,15 @@ def apply_package_hook(
                 if workspace_config is not None else { 'drift_package_name': pkg_name },
     )
 
-    with env_scope(env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV):
-        context = PackageHookContext(
-            config=config_dict,
-            package_name=pkg_name,
-            package_dir=package_dir,
-            drift_root=drift_root,
-            workspace_config=workspace_config,
-            env=dict(os.environ),
-        )
-        transformed = execute_package_hook(hook_path, context)
-        return transformed, hook_path
+    real_env = dict(os.environ)
+    update_env_dict(real_env, env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV)
+    context = PackageHookContext(
+        config=config_dict,
+        package_name=pkg_name,
+        package_dir=package_dir,
+        drift_root=drift_root,
+        workspace_config=workspace_config,
+        env=real_env,
+    )
+    transformed = execute_package_hook(hook_path, context)
+    return transformed, hook_path

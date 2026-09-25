@@ -164,7 +164,7 @@ For programmatic workspace configuration and fleet management across heterogeneo
 
 ### Execution Model & Pipeline Order
 1. **Multi-File Discovery & Merging**: Discovers candidate workspace configuration files (`config/drift_workspace.toml`, `config/drift_workspace.local.toml`, or custom layers) and `.envst.toml` templates, merging them sequentially into a raw configuration dictionary.
-2. **Dynamic Python Workspace Hook (Preprocessor)**: Executes `configure_workspace(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), active environment (`context.env`), and discovered package folder names (`context.discovered_packages`). The hook can inject `[env.default]` / `[env.secrets]`, dynamically toggle `[packages.enable]`, or customize default paths.
+2. **Dynamic Python Workspace Hook (Preprocessor)**: Executes `configure_workspace(context)` BEFORE variable stitching with **zero footprint on `os.environ`**. The hook receives the raw merged dictionary and has full in-memory access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), active environment snapshot (`context.env`), and discovered package folder names (`context.discovered_packages`). The hook can inject `[env.default]` / `[env.secrets]`, dynamically toggle `[packages.enable]`, or customize default paths.
 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves the `[env.default]` and `[env.secrets]` tables (including any injected by the hook) according to Kahn's topological sort algorithm and variable self-referencing.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`default_target_directory`, render engine fields, etc.).
 5. **Schema Validation & Model Construction**: Instantiates the strongly-typed `WorkspaceConfig` object.
@@ -174,7 +174,7 @@ The `context` object passed into `configure_workspace(context)` is an instance o
 * `context.config`: The workspace's raw configuration dictionary (from `drift_workspace.toml` and `.local.toml`).
 * `context.drift_root`: Absolute `Path` to the active Drift workspace root directory.
 * `context.discovered_packages`: List of all package directory names found under `src/` (`List[str]`).
-* `context.env`: Full host environment snapshot (`Dict[str, str]`).
+* `context.env`: Full in-memory environment snapshot including workspace secrets and host facts (`Dict[str, str]`). The hook executes without mutating ambient `os.environ`.
 * `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 * Helper properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
 

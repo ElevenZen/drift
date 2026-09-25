@@ -138,7 +138,7 @@ def build_effective_env_dict(
     effective_env = dict(os.environ)
     update_env_dict(effective_env, env_config.fallback, overwrite=False)
     update_env_dict(effective_env, env_config.default, overwrite=True, env_keep=protected_facts)
-    update_env_dict(effective_env, env_config.secrets, overwrite=True, env_keep=protected_facts)
+    update_env_dict(effective_env, env_config.secrets, overwrite=True, env_keep=protected_facts, mask_values=True)
     update_env_dict(effective_env, extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
     update_env_dict(effective_env, env_config.override, overwrite=True, env_keep=set(INITIAL_ENV))
     return effective_env
@@ -167,7 +167,8 @@ def resolve_env_configs(
     base_env, _ = update_env_dict(dict(os.environ), extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
 
     # 1. Tier 4 (Secrets): Target secrets > Lower secrets
-    secrets_base, _ = update_env_dict(dict(base_env), lower.secrets, overwrite=True, env_keep=protected_facts)
+    secrets_base, _ = update_env_dict(dict(base_env), lower.secrets,
+                                      overwrite=True, env_keep=protected_facts, mask_values=True)
     resolved_secrets = resolve_env_references(current_layer.secrets, base_env=secrets_base, error_cls=ConfigError) if current_layer.secrets else {}
     effective_secrets = {**lower.secrets, **resolved_secrets}
 
@@ -281,15 +282,18 @@ def update_env_dict(
         keep_set = set(env_keep)
 
     saved: EnvSnapshot = {}
+    is_os_environ = target is os.environ
 
     for k, v in items:
         k_str = str(k)
         v_str = str(v)
         if k_str in keep_set and k_str in target:
-            logger.debug(f"Environment variable skipped (in env_keep): {k_str}")
+            if is_os_environ:
+                logger.debug(f"Environment variable skipped (in env_keep): {k_str}")
             continue
         if not overwrite and k_str in target:
-            logger.debug(f"Environment variable skipped (already set and overwrite=False): {k_str}")
+            if is_os_environ:
+                logger.debug(f"Environment variable skipped (already set and overwrite=False): {k_str}")
             continue
 
         existing_val = target.get(k_str)
@@ -300,7 +304,7 @@ def update_env_dict(
             saved[k_str] = existing_val
         target[k_str] = v_str
 
-        if is_new or is_overwritten:
+        if (is_new or is_overwritten) and is_os_environ:
             display_val = "****" if mask_values else v_str
             logger.debug(f"Environment variable loaded: {k_str}={display_val}")
 
@@ -322,17 +326,20 @@ def restore_env_dict(
     if not original_envs:
         return
 
+    is_os_environ = target is os.environ
     for k, original_val in original_envs.items():
         if original_val is None:
             if k in target:
                 target.pop(k, None)
-                logger.debug(f"Environment variable unloaded: popped {k}")
+                if is_os_environ:
+                    logger.debug(f"Environment variable unloaded: popped {k}")
         else:
             current_val = target.get(k)
             target[k] = original_val
             if current_val != original_val:
                 display_val = "****" if mask_values else original_val
-                logger.debug(f"Environment variable unloaded: restored {k}={display_val}")
+                if is_os_environ:
+                    logger.debug(f"Environment variable unloaded: restored {k}={display_val}")
 
 
 def load_env_settings(

@@ -13,16 +13,24 @@ from drift.utils.host_facts import (
     get_host_hostname,
     get_host_user,
     get_system_facts,
+    inject_system_facts,
 )
+from drift.core.constants import INITIAL_ENV, set_initial_env, set_test_mode
 
 
 class TestHostFacts(unittest.TestCase):
     def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        self.original_initial_env = list(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name).resolve()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+        set_initial_env(self.original_initial_env)
 
     def test_get_host_os(self) -> None:
         with patch("sys.platform", "linux"):
@@ -126,6 +134,23 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
             self.assertEqual(len(parts), 4)
             for part in parts:
                 self.assertTrue(0 <= int(part) <= 255)
+
+    def test_inject_system_facts_logs_debug(self) -> None:
+        """Verifies inject_system_facts logs debug output when injecting host facts into os.environ."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            # Clear any existing drift_* in os.environ and INITIAL_ENV
+            for k in ["drift_os", "drift_arch", "drift_distro", "drift_hostname", "drift_user", "drift_ip_addresses"]:
+                os.environ.pop(k, None)
+            set_initial_env([])
+
+            with self.assertLogs("drift.utils.host_facts", level="DEBUG") as cm:
+                inject_system_facts()
+                log_output = "\n".join(cm.output)
+                self.assertIn("Host fact injected into os.environ: drift_os=", log_output)
+                self.assertIn("Host fact injected into os.environ: drift_arch=", log_output)
+        finally:
+            set_test_mode(True, enable_logging=False)
 
 
 if __name__ == "__main__":

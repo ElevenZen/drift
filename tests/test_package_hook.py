@@ -371,17 +371,21 @@ def configure_package(context):
         self.assertEqual(cfg.package.target_directory, Path("~/.config/app_pkg1").expanduser())
 
     def test_env_scope_isolation_during_hook_execution(self) -> None:
-        """Package facts (drift_package_*) are injected into os.environ during hook execution and cleaned up."""
+        """Package facts (drift_package_*) are not injected into os.environ during hook execution."""
         hook_file = self.drift_root / "src" / "pkg1" / DEFAULT_PACKAGE_HOOK_FILE_NAME
         hook_file.write_text("""
 import os
 
 def configure_package(context):
     cfg = context.config
-    assert os.environ.get("drift_package_name") == "pkg1"
-    assert "drift_package_source_dir" in os.environ
-    assert "drift_package_render_dir" in os.environ
-    assert "drift_package_install_dir" in os.environ
+    assert "drift_package_name" not in os.environ
+    assert "drift_package_source_dir" not in os.environ
+    assert "drift_package_render_dir" not in os.environ
+    assert "drift_package_install_dir" not in os.environ
+    assert context.env.get("drift_package_name") == "pkg1"
+    assert "drift_package_source_dir" in context.env
+    assert "drift_package_render_dir" in context.env
+    assert "drift_package_install_dir" in context.env
     return cfg
 """, encoding="utf-8")
 

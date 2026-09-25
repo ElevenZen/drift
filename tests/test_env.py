@@ -139,6 +139,20 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
         unload_env_settings()
         unload_env_settings({})
 
+    def test_update_env_dict_pure_dictionary_emits_no_logs(self) -> None:
+        """Verifies that update_env_dict and restore_env_dict on pure dictionaries emit no environment logs."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            from drift.utils.env_utils import update_env_dict, restore_env_dict
+            dummy_target = {"A": "old_a", "KEEP_VAR": "kept"}
+            # Load into dummy target while listening on logger
+            with patch("drift.utils.env_utils.logger.debug") as mock_debug:
+                _, saved = update_env_dict(dummy_target, {"A": "new_a", "B": "new_b", "KEEP_VAR": "try_overwrite"}, overwrite=True, env_keep={"KEEP_VAR"})
+                restore_env_dict(dummy_target, saved)
+                mock_debug.assert_not_called()
+        finally:
+            set_test_mode(True, enable_logging=False)
+
     def test_load_env_settings_logs_only_new_or_overwritten(self) -> None:
         """Verifies that 'Environment variable loaded' is only logged for new or overwritten variables."""
         set_test_mode(True, enable_logging=True)

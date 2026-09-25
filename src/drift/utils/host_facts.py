@@ -42,9 +42,12 @@ import sys
 import platform
 import socket
 import getpass
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, List
+
+logger = logging.getLogger(__name__)
 
 
 def get_host_os() -> str:
@@ -322,4 +325,5 @@ def inject_system_facts() -> None:
     facts = get_system_facts()
     for k, v in facts.items():
         if k not in INITIAL_ENV:
+            logger.debug(f"Host fact injected into os.environ: {k}={v}")
             os.environ[k] = v

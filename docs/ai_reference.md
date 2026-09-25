@@ -87,7 +87,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`resolve_and_interpolate_workspace_config(data, secrets_file=None) -> Tuple[Dict[str, Any], EnvResolve]`](../src/drift/config/workspace_config.py): Pure in-memory topological DAG resolution for workspace `[env]` tables (`override`, `secrets`, `default`, `fallback`), returning interpolated dictionary and `EnvResolve`.
 *   [`resolve_and_interpolate_package_config(data, package_name, workspace_config=None) -> Tuple[Dict[str, Any], EnvResolve]`](../src/drift/config/package_config.py): Pure in-memory topological DAG resolution and section interpolation for package configurations under 6-tier precedence (Package > Workspace within each macro tier; CLI context at Tier 1).
 *   [`PackageConfig.from_dict(data, package_name, base_dir, source_files=(), workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Instantiates strongly-typed package config and computes effective environment tables (`compute_effective_envs(workspace_config)`).
-*   [`PackageConfig.load_package_envs(overwrite=True)`](../src/drift/config/package_config.py) & [`PackageConfig.package_envs(overwrite=True)`](../src/drift/config/package_config.py): Loads / scopes pre-resolved `self.env_resolve.effective_dict` into `os.environ` directly without requiring runtime `workspace_config`.
+*   [`PackageConfig.package_envs(overwrite=True)`](../src/drift/config/package_config.py): Scopes pre-resolved `self.env_resolve.effective_dict` into `os.environ` via `env_scope` without requiring runtime `workspace_config`.
 *   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads, transforms, merges, and validates package configuration from source directory.
 *   [`load_package_config_from_render_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads package configuration strictly from `render/<pkg>/` sandbox.
 *   [`load_package_config_for_install(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads package configuration strictly from `install/<pkg>/` state database.
@@ -105,7 +105,9 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, ...) -> Path`](../src/drift/primitives/adopt_repo.py): Symmetrically renames template file in `src/` matching engine suffix, applies patch, and syncs permissions.
 *   [`fallback_side_by_side(src_file, install_file) -> bool`](../src/drift/primitives/adopt_repo.py): Visual split-screen diff in `$EDITOR` (`nvim`, `vim`, `code`, `emacs`).
 
-### [`hooks/lifecycle_hooks.py`](../src/drift/hooks/lifecycle_hooks.py) (Lifecycle Scripts & Python Hooks)
+### [`hooks/lifecycle_hooks.py`](../src/drift/hooks/lifecycle_hooks.py), [`hooks/workspace_hook.py`](../src/drift/hooks/workspace_hook.py) & [`hooks/package_hook.py`](../src/drift/hooks/package_hook.py)
+*   [`run_workspace_hook(workspace_dir, config, drift_root=None, discovered_packages=None) -> Dict[str, Any]`](../src/drift/hooks/workspace_hook.py): Executes dynamic Python workspace preprocessor hook (`drift_workspace.py`) in-memory with zero `os.environ` mutation.
+*   [`run_package_hook(package_dir, config, package_name, workspace_config=None) -> Dict[str, Any]`](../src/drift/hooks/package_hook.py): Executes dynamic Python package preprocessor hook (`drift_package.py`) in-memory with zero `os.environ` mutation.
 *   [`HookExecFlags`](../src/drift/hooks/lifecycle_hooks.py): Execution flags (`dry_run`, `no_hooks`, `force`).
 *   [`PackageHooks`](../src/drift/hooks/lifecycle_hooks.py): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
 
@@ -155,6 +157,9 @@ This document provides a concise, high-density architecture reference, primitive
     *   **Target Directory Migration**: Changing `target_directory` in package configuration triggers an atomic re-targeting during deployment: previous deployed files are undeployed/deleted from the old target, `redeploy = True` is enforced to populate the new target, while uninstallation hooks and backup restoration are NOT executed.
     *   **Cross-Package Destination Conflict Audit**: Before executing physical deployment, Drift audits all destination path claims across the batch and external installed packages in `state.toml`, reporting all intra-batch and inter-package path collisions together (`InstallCollisionError`).
     *   **Midway Transaction States**: `MIDWAY_TRANSACTION_STATES = ("staging", "installing")`. Packages in midway states require `--force` or `drift rollback` to proceed.
+11. **Python Preprocessor Hook Clean-Room Invariant**:
+    *   Dynamic Python preprocessor hooks (`drift_workspace.py` / `drift_package.py`) execute purely in-memory with **zero footprint on `os.environ`**.
+    *   Ambient `os.environ` is never mutated during Python hook execution; all secrets, system facts, package facts, and CLI variables are passed strictly via `context.env`, `context.facts`, and `context.package_facts`.
 
 ---
 

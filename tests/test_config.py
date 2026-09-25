@@ -1965,8 +1965,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         # Non-matching remains unchanged
         self.assertEqual(engine.strip_suffix("normal_file.conf"), "normal_file.conf")
 
-    def test_package_config_load_unload_package_envs(self) -> None:
-        """Verifies PackageConfig.load_package_envs and unload_package_envs."""
+    def test_package_config_package_envs(self) -> None:
+        """Verifies PackageConfig.package_envs context manager using env_scope."""
         from drift.config.package_config import PackageConfig
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
@@ -1983,25 +1983,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         )
         pkg.compute_effective_envs(config)
 
-        # 1. Load with workspace config
-        saved = pkg.load_package_envs()
-        self.assertEqual(os.environ.get("drift_package_name"), "my_pkg")
-        self.assertEqual(os.environ.get("drift_package_target_dir"), "/custom/target")
-        self.assertEqual(os.environ.get("drift_package_source_dir"), str(config.source_path / "my_pkg"))
-        self.assertEqual(os.environ.get("drift_package_render_dir"), str(config.render_path / "my_pkg"))
-        self.assertEqual(os.environ.get("drift_package_install_dir"), str(config.install_path / "my_pkg"))
-        self.assertEqual(os.environ.get("drift_package_install_method"), "copy")
-
-        # 2. Unload
-        pkg.unload_package_envs(saved)
-        self.assertNotIn("drift_package_name", os.environ)
-        self.assertNotIn("drift_package_target_dir", os.environ)
-        self.assertNotIn("drift_package_source_dir", os.environ)
-        self.assertNotIn("drift_package_render_dir", os.environ)
-        self.assertNotIn("drift_package_install_dir", os.environ)
-        self.assertNotIn("drift_package_install_method", os.environ)
-
-        # 4. Context manager usage with 'with'
+        # Context manager usage with 'with'
         with pkg.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "my_pkg")
             self.assertEqual(os.environ.get("drift_package_target_dir"), "/custom/target")

@@ -91,14 +91,20 @@ def apply_workspace_hook(
 
     # hook_path is a valid file; execute the hook with context
     from ..config.workspace_config import WorkspaceConfig
+    from ..utils.env_utils import update_env_dict
+    from ..core.constants import INITIAL_ENV
+
     secrets_file = parse_secrets_env(drift_root)
     raw_secrets = get_nested_from(config_dict, "env.secrets", default={})
-    initial_secrets = {str(k): str(v) for k, v in raw_secrets.items()}
-    effective_env = {**os.environ, **secrets_file, **initial_secrets}
+    ws_secrets = {str(k): str(v) for k, v in raw_secrets.items()}
+    real_env = dict(os.environ)
+    update_env_dict(real_env, secrets_file, overwrite=True, env_keep=INITIAL_ENV)
+    update_env_dict(real_env, ws_secrets, overwrite=True, env_keep=INITIAL_ENV)
+
     context = WorkspaceHookContext(
         config=config_dict,
         drift_root=drift_root,
-        env=effective_env,
+        env=real_env,
         discovered_packages=WorkspaceConfig.get_package_names_from_dir(drift_root / "src"),
     )
     return execute_workspace_hook(hook_path, context)

@@ -73,7 +73,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
   5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
   6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 - **Strongly Typed `EnvConfig` & `EnvResolve`**: `EnvConfig` encapsulates the 4 canonical environment tables (`override`, `secrets`, `default`, `fallback`) with pure serializer `to_env_dict()`. `EnvResolve` holds `current: EnvConfig`, `effective: EnvConfig`, and `effective_dict: Dict[str, str]` with pure DAG resolver `resolve_env_configs()`.
-- **Decoupled Load vs. Runtime Execution**: Ingestion points (`from_dict`, `from_render_dir`, `from_install_dir`) accept `workspace_config` to compute effective environment tables and facts; runtime execution (`load_package_envs`, `package_envs`) is completely decoupled and operates self-contained on `self.env_resolve.effective_dict`.
+- **Decoupled Load vs. Runtime Execution**: Ingestion points (`from_dict`, `from_render_dir`, `from_install_dir`) accept `workspace_config` to compute effective environment tables and facts; runtime execution (`package_envs`) is completely decoupled and operates self-contained on `self.env_resolve.effective_dict` via `env_scope`.
 - **Pure In-Memory Loading**: `load_workspace_config` does not mutate `os.environ` or execute side-effects during config construction; CLI initialization centralized in `prepare_cli_environment`.
 - **Zero Backward Compatibility Burden**: Removed obsolete property wrappers (`packages`, `render_engine_config`, `drift_root_path`, `env_default`, `secrets`) and table parser shims across config classes.
 

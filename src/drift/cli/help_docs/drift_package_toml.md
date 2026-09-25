@@ -292,7 +292,7 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 
 ### Execution Model & Pipeline Order
 1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via `render_load_package_config_dict`, merging them sequentially.
-2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching. The hook receives the raw merged dictionary and has full access to resolved host facts (`context.facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment (`context.env`). The hook can inject `[env]`, customize `target_directory`, or set `enable_install = False`.
+2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching with **zero footprint on `os.environ`**. The hook receives the raw merged dictionary and has full in-memory access to resolved host facts (`context.facts`), package facts (`context.package_facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment snapshot (`context.env`). The hook can inject `[env]`, customize `target_directory`, or set `enable_install = False`.
 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` tables (including any injected by the hook) according to Drift's 6-tier precedence model and Kahn's topological sort algorithm.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`target_directory`, `requirements`, etc.).
 5. **Render Staging**: Writes the fully resolved, stitched configuration to `render/<pkg>/.drift/drift_package.toml`. Downstream install stages (`apply`, `deploy`) consume the rendered static TOML, ensuring single compilation and high performance.
@@ -304,7 +304,7 @@ The `context` object passed into `configure_package(context)` is an instance of 
 * `context.package_name`: Active package name (`str`).
 * `context.package_dir`: Absolute path to the package's source directory (`Path`).
 * `context.workspace_config`: The parent `WorkspaceConfig` object (`Optional[WorkspaceConfig]`).
-* `context.env`: Full host environment snapshot (`Dict[str, str]`).
+* `context.env`: Full in-memory environment snapshot including workspace secrets, host facts, and package facts (`Dict[str, str]`). The hook executes without mutating ambient `os.environ`.
 * `context.facts`: Detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 * `context.package_facts`: Detected package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
 * Helper properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.

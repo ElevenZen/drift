@@ -453,13 +453,14 @@ To isolate secret tokens, private API keys, and work-specific emails from public
    To avoid redundant disk I/O and repeated file parsing across multi-package workflows:
    - `config/secrets.env` and workspace `[env]` tables are parsed during workspace loading (`load_workspace_config`) and stored as an explicit, strongly-typed `EnvResolve` on `WorkspaceConfig.env_resolve`.
    - Package configuration ingestion (`PackageConfig.from_dict`, `from_render_dir`, `from_install_dir`) receives `workspace_config` at load time, automatically running `compute_effective_envs(workspace_config)` to resolve the full 6-tier hierarchy and package facts into `PackageConfig.env_resolve`.
-   - Downstream operations (`load_package_envs`, `package_envs`, lifecycle hooks, requirement checks, template rendering) read directly from the pre-resolved in-memory configuration in $O(1)$ time without needing runtime `workspace_config` passing or re-reading the filesystem.
+   - Downstream operations (`package_envs`, lifecycle hooks, requirement checks, template rendering) read directly from the pre-resolved in-memory configuration in $O(1)$ time without needing runtime `workspace_config` passing or re-reading the filesystem.
 
 4. **Transient Clean-Room Isolation (`package_envs`) & Log Masking**:
    To prevent credentials and environment mutations from leaking across operations:
-   - When executing package hooks or rendering templates (`with pkg_config.package_envs():`), Drift temporarily loads `pkg_config.env_resolve.effective_dict` into `os.environ` adhering to Tier 1 protection (`INITIAL_ENV`).
+   - When executing package lifecycle shell hooks (`drift_hooks/`) or rendering templates (`with pkg_config.package_envs():`), Drift temporarily loads `pkg_config.env_resolve.effective_dict` into `os.environ` adhering to Tier 1 protection (`INITIAL_ENV`) via the `env_scope` context manager.
    - Secret values are automatically masked in debug logs as `KEY=****`.
-   - Upon exiting the scoped block, a secure `finally` handler completely unloads the variables and restores the original environment snapshot via `PackageConfig.unload_package_envs()`, guaranteeing zero state contamination.
+   - Upon exiting the scoped block, `env_scope` automatically unloads the variables and restores the original environment snapshot, guaranteeing zero state contamination.
+   - **Zero `os.environ` Footprint for Python Preprocessors**: By contrast, dynamic Python preprocessor hooks (`configure_workspace` and `configure_package`) operate with **zero footprint on `os.environ`**—they receive resolved facts, secrets, and environment snapshots purely in-memory through `context.env`.
 
 #### Dynamic Workspace Python Hook: `config/drift_workspace.py`
 For advanced programmatic workspace configuration (such as dynamically toggling packages based on the operating system, Linux distribution, hostname, CPU architecture, or custom discovery logic), Drift provides a **Dynamic Python Workspace Hook**.
@@ -481,7 +482,7 @@ For advanced programmatic workspace configuration (such as dynamically toggling 
 2. **`WorkspaceHookContext` Properties**:
    - `context.config`: The parsed TOML configuration dictionary.
    - `context.drift_root`: Absolute path to the workspace root directory.
-   - `context.env`: Active environment variable dictionary snapshot (including CLI envs and secrets).
+   - `context.env`: Active in-memory environment dictionary snapshot (including CLI envs, workspace secrets, and host facts). The hook executes without modifying or polluting ambient `os.environ`.
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - `context.discovered_packages`: List of all package directory names found in `src/`.
    - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
@@ -604,13 +605,14 @@ For complex packages requiring programmatic adjustments (such as downloading rem
    - `context.package_dir`: Absolute path to `src/<package_name>/`.
    - `context.drift_root`: Workspace root path (if present).
    - `context.workspace_config`: Active `WorkspaceConfig` domain instance (if present).
-   - `context.env`: Active environment snapshot (including CLI envs and secrets).
+   - `context.env`: Active in-memory environment snapshot (including CLI envs, workspace secrets, host facts, and package facts). The hook executes without modifying or polluting ambient `os.environ`.
    - `context.facts`: Auto-detected system facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
    - `context.package_facts`: Dynamic package facts (`drift_package_name`, `drift_package_source_dir`, `drift_package_src_dir`, `drift_package_render_dir`, `drift_package_install_dir`).
    - Convenience properties: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
 
 3. **Evaluation & Staging Model**:
    - Evaluated during Primitive 2 (Render) when loading the package source directory.
+   - **Zero `os.environ` Footprint**: Dynamic Python preprocessor hooks execute purely in-memory with zero mutation of ambient `os.environ`. All secrets, facts, and environment variables are passed explicitly via `context.env`, `context.facts`, and `context.package_facts`.
    - The transformed configuration is processed by native variable stitching and serialized directly into `render/<package_name>/.drift/drift_package.toml` (and staged to `install/<package_name>/.drift/drift_package.toml`).
    - Downstream primitives (`stage`, `apply`, `uninstall`, `health`) read the compiled static TOML directly via `PackageConfig.from_render_dir(package_dir, workspace_config)` / `PackageConfig.from_install_dir(package_dir, workspace_config)`, ensuring zero re-execution overhead and complete determinism while binding workspace environment context.
 
@@ -807,7 +809,7 @@ Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `
 
 #### Default Package Environment Variables & Precedence
 During package loading (`PackageConfig.from_dict()`, `load_package_config_from_render_dir()`, `load_package_config_for_install()`), `workspace_config` is supplied to compute the effective 6-tier environment (`self.env_resolve: EnvResolve`) and package facts (`drift_package_*`).
-At runtime, the drift engine dynamically loads the pre-resolved package environment into `os.environ` via `PackageConfig.load_package_envs()` (with `overwrite=True`) or `with pkg_config.package_envs():` without requiring runtime `workspace_config` arguments:
+At runtime, the drift engine dynamically scopes the pre-resolved package environment into `os.environ` via `with pkg_config.package_envs():` (powered by `env_scope` with `overwrite=True`) without requiring runtime `workspace_config` arguments:
 *   **`drift_package_name`**: Name / directory name of the package.
 *   **`drift_package_target_dir`**: Resolved absolute destination target directory path on the host system.
 *   **`drift_package_source_dir`** / **`drift_package_src_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
@@ -832,7 +834,7 @@ These variables are active during:
 2.  **Template Compilations** (accessible as `${drift_package_name}`, `${drift_package_target_dir}`, `${drift_package_source_dir}`, etc. in `.envst` / `envsubst` templates).
 3.  **Physical Deployment Operations**.
 
-Upon completion of the package's render or deployment phase, these variables are restored and unloaded via `PackageConfig.unload_package_envs()`, guaranteeing clean-room environment isolation between packages.
+Upon completion of the scoped block, `env_scope` automatically unloads the variables and restores the original environment snapshot, guaranteeing clean-room environment isolation between packages.
 
 ---
 

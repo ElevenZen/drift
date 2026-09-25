@@ -88,7 +88,7 @@ def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
 #### Hook Context Attributes (`WorkspaceHookContext`):
 *   **`context.config`**: The mutable configuration dictionary merged from `drift_workspace.toml` and `drift_workspace.local.toml`.
 *   **`context.drift_root`**: Resolved `Path` to the active Drift workspace root.
-*   **`context.env`**: Dictionary of all environment variables, host facts, and secrets.
+*   **`context.env`**: In-memory dictionary snapshot of all environment variables, host facts, and secrets. The hook executes with zero mutation of ambient `os.environ`.
 *   **`context.facts`**: Accessor dictionary for auto-detected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
 *   **`context.discovered_packages`**: List of all package directory names found in `src/`.
 *   **Helper properties**: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.

@@ -10,7 +10,7 @@ Layer 2: Top-Level Package Model Container
         - from_dict(): Factory constructor from parsed TOML table
         - from_source_dir(), from_render_dir(), ...: Stage-aware factory methods
         - evaluate_requirements(): Declarative & probe validation evaluator
-        - load_package_envs(), package_envs(): Environment activation context managers
+        - package_envs(): Environment activation context manager (powered by env_scope)
         - get_drift_package_facts(): Injected package context variables
 
 Layer 1: Package Metadata & Section Specifications
@@ -396,38 +396,15 @@ class PackageConfig:
         """Alias for get_render_engines."""
         return self.get_render_engines(workspace_config)
 
-    def load_package_envs(
-        self,
-        overwrite: bool = True
-    ) -> Dict[str, Optional[str]]:
-        """Loads pre-resolved effective package environment into os.environ.
-
-        Returns:
-            A snapshot dictionary mapping modified keys to their original values.
-        """
-        from ..utils.env_utils import update_env_dict
-        _, saved_eff = update_env_dict(os.environ, self.env_resolve.effective_dict, overwrite=overwrite, env_keep=INITIAL_ENV)
-        return saved_eff
-
-    def unload_package_envs(
-        self,
-        original_envs: Mapping[str, Optional[str]] = {}
-    ) -> None:
-        """Restores original environment variables using the snapshot returned by load_package_envs."""
-        from ..utils.env_utils import unload_env_settings
-        unload_env_settings(original_envs)
-
     @contextmanager
     def package_envs(
         self,
         overwrite: bool = True
     ) -> Iterator[None]:
         """Context manager to activate package-specific environment variables and secrets in os.environ."""
-        saved_envs = self.load_package_envs(overwrite=overwrite)
-        try:
+        from ..utils.env_utils import env_scope
+        with env_scope(self.env_resolve.effective_dict, overwrite=overwrite, env_keep=INITIAL_ENV):
             yield
-        finally:
-            self.unload_package_envs(saved_envs)
 
     @classmethod
     def from_dict(
