@@ -4,7 +4,7 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
-from drift.config.workspace_config import WorkspaceConfig, load_workspace_config
+from drift.config.workspace_config import WorkspaceConfig
 from drift.core.state_registry import load_state_registry
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 
@@ -34,7 +34,7 @@ class TestIntegration(unittest.TestCase):
             subprocess.run(["git", "-C", str(repo_path), "config", "user.name", "Test User"], check=True, capture_output=True)
         
         # 2. Load workspace config
-        self.workspace_config = load_workspace_config(self.drift_root)
+        self.workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.workspace_config.workspace.default_target_directory = self.system_target_dir
         
         self.source_dir = self.workspace_config.source_path

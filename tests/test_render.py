@@ -19,8 +19,8 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.config.workspace_config import RenderEngineConfig, WorkspaceConfig, WorkspaceSectionConfig, load_workspace_config
-from drift.config.render_engine_config import RenderEngineRegistry
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from drift.render.render_core import render_template, render_template_to_file, RenderError
 from drift.render.render_input import (
     resolve_dependencies,
@@ -46,7 +46,6 @@ class TestRenderEngine(unittest.TestCase):
         if not shutil.which("envsubst"):
             self.skipTest("envsubst command is not available on this system")
 
-        from drift.config.workspace_config import load_workspace_config
         from drift.render.render_core import render_template
 
         # Create config directory and files
@@ -66,7 +65,7 @@ class TestRenderEngine(unittest.TestCase):
             """, encoding="utf-8")
 
         # Load workspace configuration
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         # Confirm the environment variable is loaded in workspace_config.env_resolve
         self.assertEqual(workspace_config.env_resolve.effective.default.get("MY_CUSTOM_ENV_VAR"), "hello_from_drift_toml")
@@ -593,7 +592,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_success_static_config(self) -> None:
         from drift.render.render_package import render_package
-        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -655,7 +655,8 @@ class TestRenderPackage(unittest.TestCase):
     def test_render_package_disabled(self) -> None:
         """Verifies that enable_render=False copies all files as static assets without template engine compilation."""
         from drift.render.render_package import render_package
-        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig
 
         drift_root = self.drift_root
         workspace_config = WorkspaceConfig(
@@ -752,7 +753,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_templated_config_package_toml(self) -> None:
         from drift.render.render_package import render_package
-        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -790,7 +792,8 @@ class TestRenderPackage(unittest.TestCase):
 
     def test_render_package_templated_config_drift_package_toml(self) -> None:
         from drift.render.render_package import render_package
-        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -1001,7 +1004,8 @@ class TestRenderPackage(unittest.TestCase):
     def test_render_engine_input_dependency(self) -> None:
         """Verifies that engine input templates are rendered before package rendering."""
         from drift.render.render_package import run_primitive_2_render_packages
-        from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig
 
         drift_root = self.drift_root
 
@@ -1221,7 +1225,7 @@ class TestRenderPackage(unittest.TestCase):
         self.assertTrue(any("Skipping hidden file" in log_msg for log_msg in log_capture.output))
 
     def test_secrets_env_load_and_unload_helpers(self) -> None:
-        from drift.config.workspace_config import parse_secrets_env, load_env_settings, unload_env_settings
+        from drift.utils.env_utils import parse_secrets_env, load_env_settings, unload_env_settings
 
         # Setup temporary secrets.env file
         config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1301,7 +1305,7 @@ class TestRenderPackage(unittest.TestCase):
         tpl_file.write_text("The secret is: ${PRIMITIVE_SECRET_VAR}\n", encoding="utf-8")
 
         # Load workspace config
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         workspace_config.render_engine_configs = RenderEngineRegistry({
             "envsubst": RenderEngineConfig(
                 name="envsubst",

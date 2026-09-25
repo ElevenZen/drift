@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import List, Tuple, Optional, Sequence, Dict, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ..config.workspace_config import WorkspaceConfig, RenderEngineConfig
+    from ..config.workspace_config import WorkspaceConfig
     from ..config.package_config import PackageConfig
-    from ..config.render_engine_config import RenderEngineRegistry
+    from ..config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 
 from ..core.constants import (
     DRIFT_IGNORE_FILE_NAME,

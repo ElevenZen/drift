@@ -63,8 +63,7 @@ pkg_a = true
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Build workspace config
-        from drift.config.workspace_config import load_workspace_config
-        self.workspace_config = load_workspace_config(self.drift_root)
+        self.workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.workspace_config.workspace.default_target_directory = self.system_target_dir
 
         # Set up a clean source package

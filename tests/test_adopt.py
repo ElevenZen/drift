@@ -88,7 +88,8 @@ class TestAdopt(unittest.TestCase):
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "envsubst.bash").write_text("#!/bin/bash\n", encoding="utf-8")
 
-        from drift.config.workspace_config import RenderEngineConfig, WorkspaceSectionConfig
+        from drift.config.render_engine_config import RenderEngineConfig
+        from drift.config.workspace_config import WorkspaceSectionConfig
         env_engine = RenderEngineConfig(
             name="envsubst",
             input_file=config_dir / "envsubst.bash",

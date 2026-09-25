@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Any
 
-from ..config.workspace_config import WorkspaceConfig, RenderEngineConfig
+from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..config.render_engine_config import RenderEngineRegistry
+from ..config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from ..core.result_models import AddResourceResult
 from ..utils.path_utils import (
     decode_dot_prefix,

@@ -13,9 +13,10 @@ from drift.core.constants import (
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     FORBIDDEN_RENDER_ENGINE_SUFFIXES,
 )
-from drift.config.workspace_config import WorkspaceConfig, RenderEngineConfig
-from drift.config.render_engine_config import RenderEngineRegistry
-from drift.config.package_config import PackageConfig, PackageHooks
+from drift.config.workspace_config import WorkspaceConfig
+from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+from drift.config.package_config import PackageConfig
+from drift.config.package_hooks import PackageHooks
 from drift.core.ignore import DriftIgnore
 from drift.render.render_package import render_package
 from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install

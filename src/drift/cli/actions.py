@@ -62,7 +62,7 @@ from typing import Optional, List, Union, Any, Sequence
 from ..core.constants import CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, ExitCode, PackageStage
 from ..core.exceptions import DriftError, ConfigError, DriftDetectedError, RenderError, InstallCollisionError
 from ..utils.host_facts import inject_system_facts
-from ..config.workspace_config import WorkspaceConfig, load_workspace_config
+from ..config.workspace_config import WorkspaceConfig
 from ..primitives.workspace_init import init_drift_workspace
 from ..core.result_models import (
     SerializableModel,

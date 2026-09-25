@@ -34,7 +34,7 @@ from drift.utils.env_utils import (
     env_scope,
 )
 from drift.config.workspace_config import (
-    load_workspace_config
+    WorkspaceConfig,
 )
 from drift.config.render_engine_config import RenderEngineRegistry
 from drift.render.render_package import run_primitive_2_render_packages
@@ -327,7 +327,7 @@ pkg_test = true
         self._setup_package_with_template("pkg_test", f"VALUE=${{{var_name}}}\n")
 
         # Load workspace config and render
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         # Verify host value wasn't overwritten on load
         self.assertEqual(os.environ[var_name], "host_wins")
 
@@ -376,7 +376,7 @@ pkg_test = true
 
         self._setup_package_with_template("pkg_test", f"VALUE=${{{var_name}}}\n")
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         # WorkspaceConfig load is in-memory and does not mutate os.environ
         self.assertEqual(ws_config.env_resolve.effective.default[var_name], "workspace_toml_value")
         self.assertNotIn(var_name, os.environ)
@@ -424,7 +424,7 @@ pkg_test = true
 
         self._setup_package_with_template("pkg_test", f"VALUE=${{{var_name}}}\n")
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws_config.env_resolve.effective.default[var_name], "default_from_toml")
         self.assertNotIn(var_name, os.environ)
 
@@ -467,7 +467,7 @@ pkg_test = true
 
         self._setup_package_with_template("pkg_test", f"TOKEN=${{{var_name}}}\n")
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertNotIn(var_name, os.environ)
 
         run_primitive_2_render_packages(ws_config, ["pkg_test"])
@@ -511,7 +511,7 @@ pkg_test = true
 
         self._setup_package_with_template("pkg_test", f"KEY=${{{var_name}}}\n")
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         run_primitive_2_render_packages(ws_config, ["pkg_test"])
 
         rendered_file = self.render_dir / "pkg_test" / "dot-config.txt"
@@ -552,7 +552,7 @@ DEFAULT = true
             encoding="utf-8"
         )
 
-        ws_cfg = load_workspace_config(self.drift_root)
+        ws_cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws_cfg.env_resolve.effective.default[var_name], "local_override_value")
         self.assertEqual(ws_cfg.env_resolve.effective_dict[var_name], "local_override_value")
 
@@ -624,7 +624,7 @@ VAR_F="secret_f"
         )
         self._setup_package_with_template("pkg_mixed", template_text)
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         run_primitive_2_render_packages(ws_config, ["pkg_mixed"])
 
         rendered_file = self.render_dir / "pkg_mixed" / "dot-config.txt"
@@ -685,7 +685,7 @@ pkg_test = true
 
         self._setup_package_with_template("pkg_test", f"FAIL=${{{var_secret}}}\n")
 
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = run_primitive_2_render_packages(ws_config, ["pkg_test"])
         self.assertEqual(res.status, "FAILED")
 
@@ -975,7 +975,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 """,
             encoding="utf-8"
         )
-        ws = load_workspace_config(self.drift_root)
+        ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws.env_resolve.effective.default["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.env_resolve.effective.default["ALL_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.env_resolve.effective_dict["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
@@ -1037,7 +1037,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 "timeout": 45,
             }
         }
-        from drift.config.package_config import resolve_and_interpolate_package_config
+        from drift.config.package_loader import resolve_and_interpolate_package_config
         base_dir = Path("/mock/src/my_daemon")
         stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
         pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
@@ -1092,7 +1092,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_facts_and_precedence(self) -> None:
         """Verifies that all four package facts are available and 6-tier precedence is respected in package config."""
-        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_loader import resolve_and_interpolate_package_config
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Test CLI environment precedence (Tier 1 INITIAL_ENV)
@@ -1156,7 +1157,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
     def test_package_config_facts_with_custom_workspace_config(self) -> None:
         """Verifies that custom workspace paths (e.g. custom_src, custom_render, custom_install) populate package facts."""
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_loader import resolve_and_interpolate_package_config
 
         ws = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1196,7 +1198,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_package_config_without_workspace_config_leaves_dir_facts_unset(self) -> None:
         """Verifies that when workspace_config is not provided, 'dir' facts are unset."""
-        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_loader import resolve_and_interpolate_package_config
         from drift.core.exceptions import ConfigError
 
         # drift_package_name is always set
@@ -1234,7 +1237,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
     def test_package_config_fallback_references_drift_package_source_dir(self) -> None:
         """Verifies that [env.fallback] can reference ${drift_package_source_dir} and respect precedence."""
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-        from drift.config.package_config import PackageConfig, resolve_and_interpolate_package_config
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_loader import resolve_and_interpolate_package_config
         from drift.config.render_engine_config import RenderEngineRegistry
 
         ws = WorkspaceConfig(
@@ -1350,7 +1354,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
     def test_workspace_config_secrets_dict_and_scope(self) -> None:
         """Verifies that secrets are loaded into WorkspaceConfig.env_resolve.effective.secrets."""
-        from drift.config.workspace_config import load_workspace_config, WorkspaceConfig
+        from drift.config.workspace_config import WorkspaceConfig
         from drift.utils.env_utils import resolve_env_configs
 
         # Write secrets.env and workspace config
@@ -1358,8 +1362,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         secrets_file = self.config_dir / SECRETS_ENV_FILE_NAME
         secrets_file.write_text("MY_SECRET_KEY=\"my_secret_val\"\n", encoding="utf-8")
 
-        # 1. Test via load_workspace_config
-        ws = load_workspace_config(self.drift_root)
+        # 1. Test via WorkspaceConfig.from_workspace_dir
+        ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws.env_resolve.effective.secrets, {"MY_SECRET_KEY": "my_secret_val"})
 
         # Verify secrets are NOT leaked in os.environ outside scope
@@ -1399,7 +1403,7 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
 
     def test_resolve_and_interpolate_workspace_config_pure_in_memory(self) -> None:
         """Verifies resolve_and_interpolate_workspace_config resolves secrets topologically without modifying os.environ."""
-        from drift.config.workspace_config import resolve_and_interpolate_workspace_config
+        from drift.config.workspace_loader import resolve_and_interpolate_workspace_config
         from drift.core.constants import DRIFT_SYSTEM_FACT_KEYS
 
         os.environ["HOST_CLI_VAR"] = "cli_val"
@@ -1454,7 +1458,7 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
 
     def test_workspace_secrets_precedence_and_python_hook(self) -> None:
         """Verifies workspace secret precedence: hook > local.toml > toml > secrets.env."""
-        from drift.config.workspace_config import load_workspace_config
+        from drift.config.workspace_config import WorkspaceConfig
 
         # 1. secrets.env
         secrets_env = self.config_dir / SECRETS_ENV_FILE_NAME
@@ -1493,7 +1497,7 @@ LOCAL_ONLY = "local_val"
             encoding="utf-8",
         )
 
-        ws = load_workspace_config(self.drift_root)
+        ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws.env_resolve.effective.secrets["SHARED_KEY"], "from_python_hook")
         self.assertEqual(ws.env_resolve.effective.secrets["HOOK_KEY"], "hook_val")
         self.assertEqual(ws.env_resolve.effective.secrets["LOCAL_ONLY"], "local_val")
@@ -1502,12 +1506,8 @@ LOCAL_ONLY = "local_val"
 
     def test_package_secrets_three_tier_precedence_and_render_staging(self) -> None:
         """Verifies Package [env.secrets] > Workspace [env.secrets] > secrets.env, render staging, and package_envs."""
-        from drift.config.workspace_config import load_workspace_config
-        from drift.config.package_config import (
-            PackageConfig,
-            load_package_config_from_source_dir,
-            load_package_config_from_render_dir,
-        )
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.package_config import PackageConfig
         from drift.utils.toml_utils import parse_toml
 
         # Setup secrets.env
@@ -1549,8 +1549,8 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
             encoding="utf-8"
         )
 
-        ws = load_workspace_config(self.drift_root)
-        pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
+        ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        pkg_cfg = PackageConfig.from_source_dir(pkg_dir, ws)
 
         # 1. Verify package_config.env.secrets contains resolved package secrets
         self.assertEqual(pkg_cfg.env_resolve.effective.secrets["TIER5_OVERRIDE"], "level_3_package")
@@ -1595,9 +1595,9 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
         self.assertNotIn("FILE_SECRET", os.environ)
 
         # 5. Verify that loading from render/ preserves full secret execution in downstream lifecycle hooks
-        rendered_cfg = load_package_config_from_render_dir(
+        rendered_cfg = PackageConfig.from_render_dir(
                 rendered_pkg_dir,
-                workspace_config=ws
+                ws
         )
         with rendered_cfg.package_envs():
             self.assertEqual(os.environ["TIER5_OVERRIDE"], "level_3_package")
@@ -1607,8 +1607,8 @@ MY_OVERRIDE = "override_with_${TIER5_OVERRIDE}"
 
     def test_package_python_hook_injects_secrets(self) -> None:
         """Verifies that dynamic Python package hook (drift_package.py) can inject [env.secrets]."""
-        from drift.config.workspace_config import load_workspace_config
-        from drift.config.package_config import load_package_config_from_source_dir
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.package_config import PackageConfig
 
         (self.config_dir / WORKSPACE_CONFIG_FILE_NAME).write_text(
             """[workspace]
@@ -1637,8 +1637,8 @@ name = "hook_pkg"
             encoding="utf-8"
         )
 
-        ws = load_workspace_config(self.drift_root)
-        pkg_cfg = load_package_config_from_source_dir(pkg_dir, workspace_config=ws)
+        ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        pkg_cfg = PackageConfig.from_source_dir(pkg_dir, ws)
 
         self.assertEqual(pkg_cfg.env_resolve.effective.secrets.get("DYNAMIC_PKG_SECRET"), "dyn_secret_123")
         with pkg_cfg.package_envs():

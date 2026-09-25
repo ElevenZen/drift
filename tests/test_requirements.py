@@ -7,7 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.config.package_config import PackageConfig, PackageRequirements, PackageHooks
+from drift.config.package_config import PackageConfig
+from drift.config.package_requirements import PackageRequirements
+from drift.config.package_hooks import PackageHooks
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.config.workspace_config import WorkspaceConfig
 from drift.render.render_package import render_package
@@ -100,7 +102,7 @@ class TestPackageRequirements(unittest.TestCase):
             self.assertIn("Required environment variable 'WAYLAND_DISPLAY' is unset or empty", reason)
 
     def test_match_ip_address_function(self) -> None:
-        from drift.config.package_config import match_ip_address, match_ip_addresses
+        from drift.config.package_requirements import match_ip_address, match_ip_addresses
 
         # Exact match
         self.assertTrue(match_ip_address("192.168.1.1", "192.168.1.1"))

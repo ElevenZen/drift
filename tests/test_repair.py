@@ -50,7 +50,6 @@ from drift.primitives.workspace_repair import (
 )
 from drift.config.workspace_config import (
     WorkspaceConfig,
-    load_workspace_config,
 )
 from drift.cli import main
 
@@ -115,7 +114,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """If render/ exists but is missing its .git repository, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         shutil.rmtree(self.drift_root / "render" / ".git")
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_render_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -128,7 +127,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """If install/ exists but is missing its .git repository, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         shutil.rmtree(self.drift_root / "install" / ".git")
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_install_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -140,7 +139,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """If install/state.toml is deleted after init, status is BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "install" / "state.toml").unlink()
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_state_registry(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.NOT_FOUND)
@@ -166,7 +165,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """If .gitignore is missing mandatory ignore lines, it reports BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / ".gitignore").write_text("# empty\n", encoding="utf-8")
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_root_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -179,7 +178,7 @@ class TestCheckRepoModular(unittest.TestCase):
         init_drift_workspace(self.drift_root)
         shutil.rmtree(self.drift_root / "render")
         (self.drift_root / "render").write_text("i am a file", encoding="utf-8")
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_render_repo(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -188,7 +187,7 @@ class TestCheckRepoModular(unittest.TestCase):
         """If drift_workspace.toml declares an engine input file that is missing on disk, reports BROKEN."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "config" / "envsubst.bash").unlink()
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_engine_inputs(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
@@ -202,7 +201,7 @@ class TestCheckRepoModular(unittest.TestCase):
         (self.drift_root / "config" / "envsubst.bash").unlink()
         (self.drift_root / "config" / "mustache.envst.json").unlink()
         (self.drift_root / "config" / "jinja2.mustache.json").unlink()
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res = check_engine_inputs(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.NOT_FOUND)
@@ -303,7 +302,7 @@ class TestWorkspaceRepair(unittest.TestCase):
             "render/\ninstall/\n*.local.toml\nconfig/secrets.env\n",
             encoding="utf-8"
         )
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = check_root_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res.status, ComponentStatus.BROKEN)
 
@@ -325,7 +324,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         init_drift_workspace(self.drift_root)
         (self.drift_root / "render" / ".gitignore").unlink()
         (self.drift_root / "install" / ".gitignore").unlink()
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res_render = check_render_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res_render.status, ComponentStatus.NOT_FOUND)
@@ -347,7 +346,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         init_drift_workspace(self.drift_root)
         (self.drift_root / "render" / ".gitignore").write_text("*.swp\n.DS_Store\n", encoding="utf-8")
         (self.drift_root / "install" / ".gitignore").write_text("*.swp\n.DS_Store\n", encoding="utf-8")
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         res_render = check_render_gitignore(self.drift_root, workspace_config=ws_config)
         self.assertEqual(res_render.status, ComponentStatus.BROKEN)
@@ -461,12 +460,12 @@ class TestWorkspaceRepair(unittest.TestCase):
         legacy_file.write_text("[workspace]\n", encoding="utf-8")
 
         from drift.core.exceptions import ConfigError
-        from drift.config.workspace_config import load_workspace_config
+        from drift.config.workspace_config import WorkspaceConfig
 
         # 1. load_workspace_config must fail fast on legacy file
         with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
             with self.assertRaises(ConfigError) as ctx:
-                load_workspace_config(self.drift_root)
+                WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("Legacy workspace configuration file [drift.toml] is no longer supported", str(ctx.exception))
         self.assertIn("drift repair", str(ctx.exception))
 
@@ -549,7 +548,7 @@ class TestWorkspaceRepair(unittest.TestCase):
         self.assertIn("CUSTOM_OVERRIDE", new_local.read_text(encoding="utf-8"))
 
         # Verify load_workspace_config works seamlessly without deprecation error
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws_config.env_resolve.effective.default.get("CUSTOM_OVERRIDE"), "active")
 
         report = check_existing_workspace_status(self.drift_root)
@@ -625,7 +624,7 @@ class TestPackageMetadataStructureCheckAndRepair(unittest.TestCase):
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
         init_drift_workspace(self.drift_root)
-        self.ws_config = load_workspace_config(self.drift_root)
+        self.ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()

@@ -199,7 +199,7 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
     If any legacy configuration file (e.g. config/drift.toml or config/drift.local.toml)
     is detected, immediately returns BROKEN so that 'drift repair' can migrate it.
     """
-    from ..config.workspace_config import load_workspace_config
+    from ..config.workspace_config import WorkspaceConfig
 
     config_dir = drift_root / CONFIG_DIR_NAME
 
@@ -228,7 +228,7 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
 
     try:
         # Validate full workspace config loading (without legacy check since already checked)
-        load_workspace_config(drift_root, check_legacy=False)
+        WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
     except Exception as e:
         return CheckResult(
             name="Workspace Configuration",
@@ -733,9 +733,9 @@ def check_existing_workspace_status(
             return WorkspaceHealthReport(overall_status=ComponentStatus.NOT_FOUND, checks=[config_check])
         return WorkspaceHealthReport(overall_status=ComponentStatus.BROKEN, checks=[config_check])
 
-    from ..config.workspace_config import load_workspace_config
+    from ..config.workspace_config import WorkspaceConfig
     try:
-        ws_config = load_workspace_config(drift_root, check_legacy=False)
+        ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
     except Exception as e:
         broken_check = CheckResult(
             name="Workspace Configuration",

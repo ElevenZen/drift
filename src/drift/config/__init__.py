@@ -11,21 +11,34 @@ from .workspace_config import (
     WorkspaceConfig,
     WorkspaceSectionConfig,
     SettingsConfig,
-    resolve_and_interpolate_workspace_config,
+)
+from .workspace_loader import (
     load_workspace_config,
     render_workspace_config,
     load_workspace_config_file_with_render,
+    load_workspace_config_files_layered,
+    resolve_and_interpolate_workspace_config,
+    assert_no_legacy_workspace_config,
 )
 from .package_config import (
     PackageConfig,
     PackageSectionConfig,
-    PackageHooks,
+)
+from .package_requirements import (
     PackageRequirements,
-    resolve_and_interpolate_package_config,
+    match_ip_address,
+    match_ip_addresses,
+)
+from .package_hooks import (
+    PackageHooks,
+    normalize_hook_value,
+)
+from .package_loader import (
     load_package_config_rendered,
     load_package_config_from_source_dir,
     load_package_config_from_render_dir,
     load_package_config_for_install,
+    resolve_and_interpolate_package_config,
 )
 from .render_engine_config import (
     RenderEngineConfig,
@@ -42,14 +55,19 @@ __all__ = [
     "WorkspaceConfig",
     "WorkspaceSectionConfig",
     "SettingsConfig",
+    "assert_no_legacy_workspace_config",
     "resolve_and_interpolate_workspace_config",
     "load_workspace_config",
     "render_workspace_config",
     "load_workspace_config_file_with_render",
+    "load_workspace_config_files_layered",
     "PackageConfig",
     "PackageSectionConfig",
     "PackageHooks",
+    "normalize_hook_value",
     "PackageRequirements",
+    "match_ip_address",
+    "match_ip_addresses",
     "resolve_and_interpolate_package_config",
     "load_package_config_rendered",
     "load_package_config_from_source_dir",

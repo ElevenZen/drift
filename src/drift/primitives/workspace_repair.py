@@ -53,6 +53,7 @@ import logging
 from pathlib import Path
 from typing import List, Iterable, Tuple
 
+from ..core.exceptions import ConfigError
 from ..core.constants import (
     add_envst_path,
     add_envst_str,
@@ -96,8 +97,7 @@ from ..utils.git_utils import (
     commit_repo_changes,
     is_git_tracked,
 )
-from ..core.exceptions import ConfigError
-from ..config.workspace_config import WorkspaceConfig, load_workspace_config
+from ..config.workspace_config import WorkspaceConfig
 from ..utils.toml_utils import parse_toml
 
 logger = logging.getLogger(__name__)
@@ -195,7 +195,7 @@ def repair_workspace_config(
                 drift_root=drift_root
             )
         else:
-            ws_config = load_workspace_config(drift_root, check_legacy=False, config_files_override=load_config_from)
+            ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, config_files_override=load_config_from)
     except Exception as e:
         raise ConfigError(f"Failed to load workspace configuration during repair: {e}") from e
 

@@ -17,7 +17,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
 )
-from drift.config.workspace_config import WorkspaceConfig, load_workspace_config
+from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from drift.render.render_package import render_package, run_primitive_2_render_packages
@@ -89,7 +89,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         (pkg2_dir / "default.mustache.txt").write_text("Hello from default", encoding="utf-8")
 
         # 4. Load workspace config and run Primitive 2
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = run_primitive_2_render_packages(workspace_config)
         self.assertEqual(res.status, "SUCCESS")
 
@@ -136,7 +136,7 @@ class TestPackageRenderEngine(unittest.TestCase):
 
         (pkg_dir / "output.custom.txt").write_text("BODY_CONTENT", encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = run_primitive_2_render_packages(workspace_config, ["custom_pkg"])
         self.assertEqual(res.status, "SUCCESS")
 
@@ -193,7 +193,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         (pkg_dir / "page.mustache.html").write_text("<h1>Rendered Page</h1>", encoding="utf-8")
 
         # 3. Render package
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = run_primitive_2_render_packages(workspace_config, ["pkg_chain"])
         self.assertEqual(res.status, "SUCCESS")
 
@@ -247,7 +247,7 @@ class TestPackageRenderEngine(unittest.TestCase):
             render_command = "cat %s # %i"
         """, encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         with self.assertRaises(ValueError) as ctx:
             render_package(workspace_config, pkg_dir)
         self.assertIn("Cyclic dependency detected", str(ctx.exception))
@@ -295,7 +295,7 @@ class TestPackageRenderEngine(unittest.TestCase):
 
         (pkg_dir / "file.custom.txt").write_text("CONTENT_HERE", encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         res = run_primitive_2_render_packages(workspace_config, ["tmpl_pkg"])
         self.assertEqual(res.status, "SUCCESS")
 
@@ -370,7 +370,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         host_file = pkg_target / "config.ini"
         host_file.write_text("[section]\nkey=modified_on_host\n", encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         # Run reverse-sync primitive 1
         res = run_primitive_1_reverse_sync(workspace_config, ["pkg_rev"])
         self.assertEqual(res.status, "SUCCESS")
@@ -451,7 +451,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
             render_command = "bash -c 'cat %i %s'"
         """, encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         output_log = self.drift_root / "hook_output.log"
@@ -481,7 +481,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
             pkg_engine_res = true
         """, encoding="utf-8")
 
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         pkg_name = "pkg_engine_res"
         pkg_dir = self.src_dir / pkg_name
         pkg_dir.mkdir(parents=True, exist_ok=True)

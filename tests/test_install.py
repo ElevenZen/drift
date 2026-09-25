@@ -16,7 +16,8 @@ from drift.core.constants import (
     InstallMethod,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.config.package_config import PackageConfig, PackageSectionConfig, PackageHooks
+from drift.config.package_config import PackageConfig, PackageSectionConfig
+from drift.config.package_hooks import PackageHooks
 from drift.core.folder_diff import FolderDiff
 from drift.core.state_registry import (
         load_state_registry,

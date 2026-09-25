@@ -17,7 +17,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
 )
 from drift.core.exceptions import ConfigError
-from drift.config.workspace_config import load_workspace_config
+from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.hooks.package_hook import (
     PackageHookContext,
@@ -65,7 +65,7 @@ target_directory = "~/.config/pkg1"
 PKG_PORT = "3000"
 """, encoding="utf-8")
 
-        self.workspace_config = load_workspace_config(self.drift_root)
+        self.workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -436,7 +436,7 @@ def configure_package(context):
             'API_KEY="my_secret_key"\n',
             encoding="utf-8"
         )
-        ws_config = load_workspace_config(self.drift_root)
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         hook_file = self.drift_root / "src" / "pkg1" / DEFAULT_PACKAGE_HOOK_FILE_NAME
         hook_file.write_text("""

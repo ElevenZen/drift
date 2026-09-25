@@ -7,9 +7,10 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
-from drift.core.constants import DRIFT_INTERNAL_DIR_NAME
+from drift.core.constants import DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.config.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageSectionConfig, PackageHooks
+from drift.config.package_config import PackageConfig, PackageSectionConfig
+from drift.config.package_hooks import PackageHooks
 from drift.hooks.trigger_hook import run_primitive_trigger_hook
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.exceptions import ConfigError
@@ -237,7 +238,6 @@ class TestPackageHook(unittest.TestCase):
             execute_hook_script,
             HookExecFlags,
         )
-        from drift.config.package_config import load_package_config_from_source_dir
 
         # 1. Successful execution -> status == "SUCCESS", duration_ms >= 0
         res = trigger_pre_source_hook(self.workspace_config, "pkg_hook")
@@ -374,7 +374,7 @@ class TestPackageHook(unittest.TestCase):
 
     def test_render_package_ensures_templated_hooks_and_executable_templates_are_executable(self) -> None:
         from drift.render.render_package import render_package
-        from drift.config.workspace_config import RenderEngineConfig
+        from drift.config.render_engine_config import RenderEngineConfig
         if sys.platform == "win32":
             return
 
@@ -538,7 +538,8 @@ echo "VALUE=$DYNAMIC_VAL"
 
     def test_package_hooks_streaming_forwarding(self) -> None:
         """Verifies that PackageHooks trigger methods accept and forward the streaming parameter and flags."""
-        from drift.config.package_config import PackageConfig, PackageHooks
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_hooks import PackageHooks
         from drift.hooks.lifecycle_hooks import HookExecFlags
         hooks = PackageHooks(
             probe=self.drift_root / ".drift/hooks/probe.sh",
@@ -924,7 +925,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_rollback_on_failure_parsing_and_validation(self) -> None:
         """Verifies parsing and validation for rollback_on_failure in PackageHooks."""
-        from drift.config.package_config import PackageHooks
+        from drift.config.package_hooks import PackageHooks
         from drift.core.exceptions import ConfigError
 
         # 1. Default is True
@@ -964,7 +965,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
     def test_execute_hook_script_raises_hook_execution_error_with_rollback_flag(self) -> None:
         """Verifies execute_hook_script raises HookExecutionError with requires_rollback matching config."""
         from drift.hooks.lifecycle_hooks import HookExecFlags, execute_hook_script
-        from drift.config.package_config import PackageConfig, PackageHooks
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_hooks import PackageHooks
         from drift.core.exceptions import HookExecutionError
 
         failing_script = self.drift_hooks_dir / "fail.sh"
@@ -1007,7 +1009,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_package_hooks_from_dict_without_base_dir_when_no_relative_hooks(self) -> None:
         """Verifies that base_dir or workspace_config is not required when no relative hooks are configured."""
-        from drift.config.package_config import PackageConfig, PackageHooks, DEFAULT_HOOK_TIMEOUT
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_hooks import PackageHooks
+        from drift.core.constants import DEFAULT_HOOK_TIMEOUT
         from drift.core.exceptions import ConfigError
 
         # 1. Empty hooks dict requires no base_dir

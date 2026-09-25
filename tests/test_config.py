@@ -31,17 +31,27 @@ from drift.config.workspace_config import (
     WorkspaceConfig,
     WorkspaceSectionConfig,
     SettingsConfig,
+)
+from drift.config.workspace_loader import (
+    load_workspace_config,
+)
+from drift.config.render_engine_config import (
     RenderEngineConfig,
     RenderEngineRegistry,
     RenderSourceMatch,
-    load_workspace_config,
 )
 from drift.utils.env_utils import EnvConfig, EnvResolve
 from drift.config.package_config import (
     PackageConfig,
     PackageSectionConfig,
-    PackageHooks,
+)
+from drift.config.package_requirements import (
     PackageRequirements,
+)
+from drift.config.package_hooks import (
+    PackageHooks,
+)
+from drift.config.package_loader import (
     load_package_config_rendered,
     load_package_config_from_source_dir,
     load_package_config_from_render_dir,
@@ -1269,7 +1279,7 @@ class TestConfigLoaders(unittest.TestCase):
             PackageConfig.from_source_dir(pkg_dir)
 
     def test_get_package_config_file_info(self) -> None:
-        from drift.config.workspace_config import RenderEngineConfig
+        from drift.config.render_engine_config import RenderEngineConfig
         pkg_dir = self.drift_root / "test_find_info"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1343,7 +1353,7 @@ class TestConfigLoaders(unittest.TestCase):
         env_sh_path.write_text("export MY_PKG_METHOD='copy'\nexport MY_PKG_SUDO='true'", encoding="utf-8")
 
         # Load WorkspaceConfig
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(workspace_config.drift_root, self.drift_root)
 
         # 3. Create package template: src/my_pkg/package.envst.toml
@@ -1398,7 +1408,7 @@ class TestConfigLoaders(unittest.TestCase):
             install_directory = "overridden_install"
             """, encoding="utf-8")
 
-        config = load_workspace_config(self.drift_root)
+        config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(config.workspace.render_directory, Path("my_render"))
         self.assertEqual(config.workspace.install_directory, Path("overridden_install"))
 
@@ -1439,7 +1449,7 @@ class TestConfigLoaders(unittest.TestCase):
             [packages.enable]
             DEFAULT = true
             """, encoding="utf-8")
-        workspace_config = load_workspace_config(self.drift_root)
+        workspace_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
 
         pkg_dir = self.drift_root / "src" / "my_pkg_merge_ws"
         pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -1496,7 +1506,7 @@ class TestConfigLoaders(unittest.TestCase):
         for var in ["TEST_DRIFT_VAR", "TEST_DRIFT_OVERRIDE", "TEST_DRIFT_LOCAL_ONLY"]:
             os.environ.pop(var, None)
 
-        config = load_workspace_config(self.drift_root)
+        config = WorkspaceConfig.from_workspace_dir(self.drift_root)
         
         # Verify stored in WorkspaceConfig object
         self.assertEqual(config.env_resolve.current.default.get("TEST_DRIFT_VAR"), "hello")
@@ -1520,7 +1530,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_render_engine_config_validation(self) -> None:
-        from drift.config.workspace_config import RenderEngineConfig
+        from drift.config.render_engine_config import RenderEngineConfig
         config = RenderEngineConfig(
             name="envsubst",
             input_file=Path("envsubst.bash"),
@@ -1685,7 +1695,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
 
     def test_meta_rendering_drift_envst_toml(self) -> None:
-        from drift.config.workspace_config import load_workspace_config
+        from drift.config.workspace_config import WorkspaceConfig
         # We set an env variable
         os.environ["MY_TEST_RENDER_DIR"] = "templated_render"
         os.environ["MY_TEST_INSTALL_DIR"] = "templated_install"
@@ -1705,15 +1715,15 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             DEFAULT = false
             """)
 
-        # Call load_workspace_config on the non-existent .toml, which should trigger rendering of .envst.toml
-        config = load_workspace_config(Path(self.temp_dir.name))
+        # Call WorkspaceConfig.from_workspace_dir on the non-existent .toml, which should trigger rendering of .envst.toml
+        config = WorkspaceConfig.from_workspace_dir(Path(self.temp_dir.name))
 
         self.assertEqual(config.drift_root, Path(self.temp_dir.name).resolve())
         self.assertEqual(config.workspace.render_directory, Path("templated_render"))
         self.assertEqual(config.workspace.install_directory, Path("templated_install"))
 
     def test_meta_rendering_drift_envst_toml_missing_var_raises_config_error(self) -> None:
-        from drift.config.workspace_config import load_workspace_config
+        from drift.config.workspace_config import WorkspaceConfig
         from drift.core.exceptions import ConfigError
 
         os.makedirs(os.path.join(self.temp_dir.name, "config"), exist_ok=True)
@@ -1728,7 +1738,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ConfigError) as ctx:
-                load_workspace_config(Path(self.temp_dir.name))
+                WorkspaceConfig.from_workspace_dir(Path(self.temp_dir.name))
             self.assertIn("Environment variable '$UNSET_TEST_RENDER_DIR_XYZ' referenced in template was not found", str(ctx.exception))
 
     def test_package_discovery_methods(self) -> None:
@@ -1837,7 +1847,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_load_workspace_config_layered_functions(self) -> None:
         """Verifies load_workspace_config_file_with_render and load_workspace_config_files_layered functions."""
-        from drift.config.workspace_config import (
+        from drift.config.workspace_loader import (
             render_workspace_config,
             load_workspace_config_file_with_render,
             load_workspace_config_files_layered,
@@ -1894,7 +1904,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_render_engine_strip_suffix(self) -> None:
         """Verifies RenderEngineConfig.strip_suffix strips engine suffix segment correctly from the filename."""
-        from drift.config.workspace_config import RenderEngineConfig
+        from drift.config.render_engine_config import RenderEngineConfig
         engine = RenderEngineConfig(
             name="envsubst",
             input_file=Path("env.sh"),
@@ -2458,7 +2468,7 @@ class TestPathSuffixHelpers(unittest.TestCase):
 
 class TestPackageHooksConfiguredPaths(unittest.TestCase):
     def test_package_hooks_get_configured_hook_paths(self) -> None:
-        from drift.config.package_config import PackageHooks
+        from drift.config.package_hooks import PackageHooks
 
         base1 = Path("/workspace/src/pkg1")
         base2 = Path("/workspace/render/pkg1")
@@ -2514,7 +2524,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.config.package_config", level="WARNING") as cm:
+            with self.assertLogs("drift.config.package_loader", level="WARNING") as cm:
                 cfg = load_package_config_from_render_dir(self.pkg_dir)
                 self.assertEqual(cfg.name, "my_pkg")
                 self.assertTrue(any("DEPRECATION" in msg and "render" in msg for msg in cm.output))
@@ -2542,7 +2552,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.config.package_config", level="WARNING") as cm:
+            with self.assertLogs("drift.config.package_loader", level="WARNING") as cm:
                 cfg = load_package_config_for_install(self.pkg_dir)
                 self.assertEqual(cfg.name, "my_pkg")
                 self.assertTrue(any("DEPRECATION" in msg and "install" in msg for msg in cm.output))

@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from drift.core.constants import set_test_mode, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 from drift.core.exceptions import ConfigError
-from drift.config.workspace_config import load_workspace_config
+from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.workspace_hook import WorkspaceHookContext, apply_workspace_hook
 
 
@@ -45,7 +45,7 @@ BASE_URL = "https://example.com"
 
     def test_no_hook_file_loads_normally(self) -> None:
         """Workspaces without drift_workspace.py load static TOML normally."""
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertTrue(cfg.is_package_enabled("pkg1"))
         self.assertFalse(cfg.is_package_enabled("pkg2"))
         self.assertEqual(cfg.env_resolve.effective.default.get("BASE_URL"), "https://example.com")
@@ -66,7 +66,7 @@ def configure_workspace(context):
     return cfg
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertTrue(cfg.is_package_enabled("pkg1"))
         self.assertTrue(cfg.is_package_enabled("pkg2"))
         self.assertEqual(cfg.env_resolve.effective.default.get("DYNAMIC_PORT"), "8080")
@@ -90,7 +90,7 @@ def configure_workspace(context):
     return cfg
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("DETECTED_OS", cfg.env_resolve.effective.default)
         self.assertTrue(len(cfg.env_resolve.effective.default["DETECTED_OS"]) > 0)
 
@@ -112,7 +112,7 @@ hook_file = "custom_hook.py"
 pkg1 = true
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(cfg.env_resolve.effective.default.get("CUSTOM_HOOK_RAN"), "yes")
         self.assertEqual(str(cfg.workspace.hook_file), "custom_hook.py")
 
@@ -135,7 +135,7 @@ hook_file = "hooks/nested_hook.py"
 pkg1 = true
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(cfg.env_resolve.effective.default.get("NESTED_RAN"), "yes")
 
     def test_custom_hook_file_absolute_path(self) -> None:
@@ -156,7 +156,7 @@ hook_file = "{abs_hook.as_posix()}"
 pkg1 = true
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(cfg.env_resolve.effective.default.get("ABS_RAN"), "yes")
 
     def test_custom_hook_file_missing_raises_config_error(self) -> None:
@@ -171,7 +171,7 @@ pkg1 = true
 """, encoding="utf-8")
 
         with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
+            WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("nonexistent_hook.py", str(cm.exception))
 
     def test_hook_missing_configure_workspace_func_raises_config_error(self) -> None:
@@ -184,7 +184,7 @@ def some_other_function():
 """, encoding="utf-8")
 
         with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
+            WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("must define a callable 'configure_workspace(context)'", str(cm.exception))
 
     def test_hook_returning_none_raises_config_error(self) -> None:
@@ -197,7 +197,7 @@ def configure_workspace(context):
 """, encoding="utf-8")
 
         with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
+            WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("returned None", str(cm.exception))
 
     def test_hook_returning_non_dict_raises_config_error(self) -> None:
@@ -209,7 +209,7 @@ def configure_workspace(context):
 """, encoding="utf-8")
 
         with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
+            WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("must return a dictionary", str(cm.exception))
 
     def test_hook_syntax_error_raises_config_error(self) -> None:
@@ -218,7 +218,7 @@ def configure_workspace(context):
         hook_file.write_text("def invalid_syntax(:", encoding="utf-8")
 
         with self.assertRaises(ConfigError) as cm:
-            load_workspace_config(self.drift_root)
+            WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertIn("Failed to load workspace hook", str(cm.exception))
 
     def test_hook_runtime_exception_raises_config_error(self) -> None:
@@ -246,7 +246,7 @@ def configure_workspace(context):
     return cfg
 """, encoding="utf-8")
 
-        cfg = load_workspace_config(self.drift_root)
+        cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(cfg.env_resolve.effective.default.get("INJECTED_TOKEN"), "secret_token_123")
 
 
