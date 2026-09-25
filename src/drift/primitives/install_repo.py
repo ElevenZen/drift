@@ -180,7 +180,7 @@ class PackageInstallContext:
             target_dir=target_dir,
             install_method=install_method,
             ignore_handler=ignore_handler,
-            sudo=metadata.sudo,
+            sudo=metadata.package.sudo,
             is_first_time=is_first_time,
             drift_root=workspace_config.drift_root,
         )
@@ -729,7 +729,7 @@ def _gather_package_destination_targets(
     metadata: PackageConfig,
 ) -> List[Tuple[Path, Path]]:
     """Gathers (relative_source_file, absolute_host_target) for all deployable files in a package."""
-    if not metadata.enable_install:
+    if not metadata.package.enable_install:
         return []
     install_pkg_dir = workspace_config.install_path / pkg
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
@@ -766,7 +766,7 @@ def assert_no_cross_package_conflicts(
     batch_claims: List[Tuple[Path, Tuple[str, str]]] = [
         (dst_path, (pkg, "batch"))
         for pkg in discovered_set
-        if (metadata := pkg_metadata_map.get(pkg)) and metadata.enable_install
+        if (metadata := pkg_metadata_map.get(pkg)) and metadata.package.enable_install
         for _, dst_path in _gather_package_destination_targets(workspace_config, pkg, metadata)
     ]
 
@@ -830,7 +830,7 @@ def precheck_single_package(
         RuntimeError: If the package is in a midway failed state and force is False.
     """
     pkg = metadata.name
-    if not metadata.enable_install:
+    if not metadata.package.enable_install:
         logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
         return PackageInstallResult(
             package=pkg,
@@ -850,7 +850,7 @@ def precheck_single_package(
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'."
         )
     
-    assert_writable(target_dir, metadata.sudo)
+    assert_writable(target_dir, metadata.package.sudo)
     
     if not options.force and state_registry.is_package_in_midway_state(pkg):
         current_state = state_registry.get_package_state(pkg)
@@ -1117,10 +1117,10 @@ def precheck_deployment_packages(
     active_packages = [
         (pkg, metadata)
         for pkg, metadata in pkg_metadata_map.items()
-        if metadata.enable_install
+        if metadata.package.enable_install
     ]
 
-    if any(metadata.sudo for _, metadata in active_packages):
+    if any(metadata.package.sudo for _, metadata in active_packages):
         from ..utils.process_utils import assert_can_escalate
         assert_can_escalate()
 

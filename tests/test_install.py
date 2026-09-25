@@ -16,7 +16,7 @@ from drift.core.constants import (
     InstallMethod,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.config.package_config import PackageConfig, PackageHooks
+from drift.config.package_config import PackageConfig, PackageSectionConfig, PackageHooks
 from drift.core.folder_diff import FolderDiff
 from drift.core.state_registry import (
         load_state_registry,
@@ -403,8 +403,10 @@ class TestInstallRepo(unittest.TestCase):
         os.makedirs(pkg_install_dir, exist_ok=True)
 
         config = PackageConfig(
-            name=pkg,
-            target_directory=Path(self.system_target_dir),
+            PackageSectionConfig(
+                name=pkg,
+                target_directory=Path(self.system_target_dir),
+            ),
             hooks=PackageHooks(post_install=Path(pkg_install_dir) / "on-install.sh")
         )
         
@@ -453,8 +455,10 @@ class TestInstallRepo(unittest.TestCase):
 
         # 3. Test missing hook script raises FileNotFoundError
         config_missing = PackageConfig(
-            name=pkg,
-            target_directory=Path(self.system_target_dir),
+            PackageSectionConfig(
+                name=pkg,
+                target_directory=Path(self.system_target_dir),
+            ),
             hooks=PackageHooks(post_install=Path(pkg_install_dir) / "non_existent_script.sh")
         )
         with self.assertRaises(FileNotFoundError) as ctx:
@@ -489,9 +493,11 @@ class TestInstallRepo(unittest.TestCase):
             health=hook_abs
         )
         config_sudo = PackageConfig(
-            name=pkg,
-            target_directory=Path(self.system_target_dir),
-            sudo=True,
+            PackageSectionConfig(
+                name=pkg,
+                target_directory=Path(self.system_target_dir),
+                sudo=True,
+            ),
             hooks=all_hooks
         )
 
@@ -531,7 +537,7 @@ class TestInstallRepo(unittest.TestCase):
         hook_script.write_text("#!/bin/bash\necho ok\n", encoding="utf-8")
         hook_script.chmod(0o644)
 
-        config = PackageConfig(name=pkg)
+        config = PackageConfig(PackageSectionConfig(name=pkg))
 
         with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
             mock_run.return_value.returncode = 0
@@ -1285,9 +1291,13 @@ class TestInstallRepo(unittest.TestCase):
         shutil.rmtree(pkg_missing_dir)
 
         # Mock config loading to return metadata for missing dir
-        from drift.config.package_config import PackageConfig
-        from drift.core.constants import InstallMethod
-        metadata = PackageConfig(name=pkg_missing, install_method=InstallMethod.COPY, target_directory=self.system_target_dir)
+        metadata = PackageConfig(
+            PackageSectionConfig(
+                name=pkg_missing,
+                install_method=InstallMethod.COPY,
+                target_directory=self.system_target_dir,
+            )
+        )
         with patch("drift.primitives.install_repo.PackageConfig.from_install_dir", return_value=metadata):
             res_missing = deploy_one_package(
                 workspace_config=self.workspace_config,

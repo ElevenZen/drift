@@ -1042,7 +1042,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         stitched, env_res = resolve_and_interpolate_package_config(pkg_dict, package_name="my_daemon")
         pkg_cfg = PackageConfig.from_dict(stitched, package_name="my_daemon", base_dir=base_dir)
         self.assertEqual(pkg_cfg.name, "my_daemon")
-        self.assertEqual(str(pkg_cfg.target_directory), "/var/lib/my_daemon")
+        self.assertEqual(str(pkg_cfg.package.target_directory), "/var/lib/my_daemon")
         self.assertEqual(pkg_cfg.env_resolve.effective.override["SERVICE_URL"], "http://127.0.0.1:8000")
         self.assertEqual(pkg_cfg.hooks.post_install, base_dir / ".drift/hooks/start_my_daemon.sh")
         self.assertEqual(pkg_cfg.hooks.timeout, 45)
@@ -1143,7 +1143,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                                           source_files=[pkg_toml_path],
                                           workspace_config=ws)
         self.assertEqual(pkg_cfg.name, "my_pkg")
-        self.assertEqual(str(pkg_cfg.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
+        self.assertEqual(str(pkg_cfg.package.target_directory), str(self.drift_root / "install" / "my_pkg" / "target"))
         self.assertEqual(pkg_cfg.env_resolve.effective.override["SRC_DIR_REF"], str(self.drift_root / "src" / "my_pkg"))
         self.assertEqual(pkg_cfg.env_resolve.effective.override["RENDER_DIR_REF"], str(self.drift_root / "render" / "my_pkg"))
         self.assertEqual(pkg_cfg.env_resolve.effective.override["INSTALL_DIR_REF"], str(self.drift_root / "install" / "my_pkg"))
@@ -1275,7 +1275,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         expected_src = str(self.drift_root / "src" / "pkg_fallback_test")
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["FALLBACK_SRC_DIR"], expected_src)
         self.assertEqual(pkg_cfg.env_resolve.effective.fallback["EXTERNAL_VAR"], f"{expected_src}/fallback_ext")
-        self.assertEqual(str(pkg_cfg.target_directory), f"{expected_src}/subtarget")
+        self.assertEqual(str(pkg_cfg.package.target_directory), f"{expected_src}/subtarget")
 
         # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
         with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
@@ -1320,7 +1320,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         # 1. Load from source dir with workspace config
         loaded_cfg = PackageConfig.from_source_dir(pkg_src_dir, ws)
         expected_src = str(self.drift_root / "src" / "pkg_stitched_test")
-        self.assertEqual(str(loaded_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(str(loaded_cfg.package.target_directory), f"{expected_src}/my_target")
         self.assertEqual(loaded_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 2. Verify rendered file on disk in render/
@@ -1337,7 +1337,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             package_dir=self.drift_root / "render" / "pkg_stitched_test",
             workspace_config=ws,
         )
-        self.assertEqual(str(rendered_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(str(rendered_cfg.package.target_directory), f"{expected_src}/my_target")
         self.assertEqual(rendered_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
         # 4. Load from rendered package directory
@@ -1345,7 +1345,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
             self.drift_root / "render" / "pkg_stitched_test",
             workspace_config=ws,
         )
-        self.assertEqual(str(rendered_dir_cfg.target_directory), f"{expected_src}/my_target")
+        self.assertEqual(str(rendered_dir_cfg.package.target_directory), f"{expected_src}/my_target")
         self.assertEqual(rendered_dir_cfg.env_resolve.effective.fallback["FALLBACK_SRC"], expected_src)
 
     def test_workspace_config_secrets_dict_and_scope(self) -> None:
@@ -1936,10 +1936,13 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
             ),
         )
 
+        from drift.config.package_config import PackageConfig, PackageSectionConfig
         pkg = PackageConfig(
-            name="custom_pkg",
-            target_directory=Path("/custom/pkg/target"),
-            install_method=InstallMethod.COPY,
+            PackageSectionConfig(
+                name="custom_pkg",
+                target_directory=Path("/custom/pkg/target"),
+                install_method=InstallMethod.COPY,
+            )
         )
 
         facts = pkg.get_drift_package_facts(ws)
@@ -1950,7 +1953,7 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
 
     def test_package_compute_effective_envs_standalone_vs_workspace(self) -> None:
         """compute_effective_envs resolves against workspace effective envs when provided and standalone when None."""
-        from drift.config.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig, PackageSectionConfig
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         ws = WorkspaceConfig(
@@ -1962,7 +1965,7 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
         )
 
         pkg = PackageConfig(
-            name="demo_pkg",
+            PackageSectionConfig(name="demo_pkg"),
             env_resolve=EnvResolve(current=EnvConfig(override={"PKG_VAR": "${WS_GLOBAL_VAR}_extended"})),
         )
 
@@ -1974,7 +1977,7 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
         # 2. Standalone without workspace_config -> referencing WS_GLOBAL_VAR raises ConfigError
         from drift.core.exceptions import ConfigError
         standalone_pkg = PackageConfig(
-            name="demo_pkg",
+            PackageSectionConfig(name="demo_pkg"),
             env_resolve=EnvResolve(current=EnvConfig(override={"PKG_VAR": "${WS_GLOBAL_VAR}_extended"})),
         )
         with self.assertRaises(ConfigError):

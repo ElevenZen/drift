@@ -1939,7 +1939,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
 
         pkg_config = PackageConfig.from_source_dir(pkg_src_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_templated_pkg")
-        self.assertEqual(str(pkg_config.target_directory), "/custom/my_templated_pkg")
+        self.assertEqual(str(pkg_config.package.target_directory), "/custom/my_templated_pkg")
         self.assertIn("RESOLVED_OS", pkg_config.env_resolve.effective.override)
         self.assertEqual(pkg_config.env_resolve.effective.override["RESOLVED_OS"], get_system_facts(self.drift_root)["drift_os"])
         self.assertEqual(pkg_config.env_resolve.effective.override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))

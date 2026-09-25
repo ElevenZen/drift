@@ -259,7 +259,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
             error=str(e)
         )
 
-    if not metadata.enable_install:
+    if not metadata.package.enable_install:
         logger.info(f"Reverse sync is disabled for package '{pkg}' (enable_install = false). Skipping.")
         return PackageReverseSyncResult(
             package=pkg,
@@ -294,7 +294,7 @@ def reverse_sync_package(pkg: str, install_base: Path, workspace_config: Workspa
 
     # 2. Sync Fully-Controlled Directories
     sync_fully_controlled_dirs(
-        fully_controlled_dirs=metadata.fully_controlled_dirs,
+        fully_controlled_dirs=metadata.package.fully_controlled_dirs,
         install_pkg_dir=install_pkg_dir,
         target_dir_path=target_dir_path,
         ignore_handler=ignore_handler,

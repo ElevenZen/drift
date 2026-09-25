@@ -39,6 +39,7 @@ from drift.config.workspace_config import (
 from drift.utils.env_utils import EnvConfig, EnvResolve
 from drift.config.package_config import (
     PackageConfig,
+    PackageSectionConfig,
     PackageHooks,
     PackageRequirements,
     load_package_config_rendered,
@@ -458,21 +459,23 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ConfigError):
-            PackageConfig(name="").validate()
+            PackageConfig("not_a_pkg_section") # type: ignore
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", install_method="invalid").validate()
+            PackageSectionConfig(name="").validate()
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", enable_render="yes").validate() # type: ignore
+            PackageSectionConfig(name="foo", install_method="invalid").validate() # type: ignore
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", hooks=PackageHooks(timeout="not_an_int")).validate() # type: ignore
+            PackageSectionConfig(name="foo", enable_render="yes").validate() # type: ignore
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", hooks=PackageHooks(timeout=0)).validate()
+            PackageConfig(PackageSectionConfig(name="foo"), hooks=PackageHooks(timeout="not_an_int")).validate() # type: ignore
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", hooks=PackageHooks(timeout=-10)).validate()
+            PackageConfig(PackageSectionConfig(name="foo"), hooks=PackageHooks(timeout=0)).validate()
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", hooks=PackageHooks(pre_source=123)).validate() # type: ignore
+            PackageConfig(PackageSectionConfig(name="foo"), hooks=PackageHooks(timeout=-10)).validate()
         with self.assertRaises(ConfigError):
-            PackageConfig(name="foo", hook_file=123).validate() # type: ignore
+            PackageConfig(PackageSectionConfig(name="foo"), hooks=PackageHooks(pre_source=123)).validate() # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="foo", hook_file=123).validate() # type: ignore
 
     def test_package_hooks_dataclass(self) -> None:
         base = Path("/workspace/test_pkg")
@@ -482,7 +485,7 @@ class TestConfigClasses(unittest.TestCase):
             post_install=base / ".drift/hooks/post.sh",
             timeout=30
         )
-        config = PackageConfig(name="test_pkg", hooks=hooks)
+        config = PackageConfig(PackageSectionConfig(name="test_pkg"), hooks=hooks)
         self.assertEqual(config.hooks.pre_source, base / ".drift/hooks/gen.sh")
         self.assertEqual(config.hooks.timeout, 30)
         self.assertIs(config.hooks.package_config, config)
@@ -542,7 +545,7 @@ class TestConfigClasses(unittest.TestCase):
         base = Path("/workspace/pkg_with_hooks")
         config = PackageConfig.from_dict(toml_dict, package_name="pkg_with_hooks", base_dir=base)
         self.assertEqual(config.name, "pkg_with_hooks")
-        self.assertEqual(config.install_method, "copy")
+        self.assertEqual(config.package.install_method, "copy")
         self.assertEqual(config.hooks.pre_source, base / ".drift/hooks/gen.sh")
         self.assertEqual(config.hooks.pre_install, base / ".drift/hooks/pre_install.sh")
         self.assertEqual(config.hooks.post_install, base / ".drift/hooks/post_install.sh")
@@ -651,22 +654,22 @@ class TestConfigClasses(unittest.TestCase):
 
         # 1. Default (omitted) defaults to Path(".")
         cfg_default = PackageConfig.from_dict({"package": {"install_method": "stow"}}, base_dir=base, package_name="my_pkg")
-        self.assertEqual(cfg_default.source_directory, Path("."))
+        self.assertEqual(cfg_default.package.source_directory, Path("."))
         self.assertEqual(cfg_default.get_source_directory_to_render(base), base)
 
         # 2. Valid relative subfolder
         cfg_sub = PackageConfig.from_dict({"package": {"source_directory": "dotfiles"}}, base_dir=base, package_name="my_pkg")
-        self.assertEqual(cfg_sub.source_directory, Path("dotfiles"))
+        self.assertEqual(cfg_sub.package.source_directory, Path("dotfiles"))
         self.assertEqual(cfg_sub.get_source_directory_to_render(base), base / "dotfiles")
 
         # 3. Nested subfolder with trailing slash normalization
         cfg_nested = PackageConfig.from_dict({"package": {"source_directory": "src/nested/"}}, base_dir=base, package_name="my_pkg")
-        self.assertEqual(cfg_nested.source_directory, Path("src/nested"))
+        self.assertEqual(cfg_nested.package.source_directory, Path("src/nested"))
         self.assertEqual(cfg_nested.get_source_directory_to_render(base), base / "src/nested")
 
         # 4. Dot or empty string resolves to Path(".")
         cfg_dot = PackageConfig.from_dict({"package": {"source_directory": "."}}, base_dir=base, package_name="my_pkg")
-        self.assertEqual(cfg_dot.source_directory, Path("."))
+        self.assertEqual(cfg_dot.package.source_directory, Path("."))
 
         # 5. Escaping package root raises ConfigError
         with self.assertRaises(ConfigError):
@@ -879,7 +882,7 @@ class TestConfigClasses(unittest.TestCase):
 
     def test_is_package_config_file(self) -> None:
         """Verifies PackageConfig.is_package_config_file checks template or rendered path correctly."""
-        config = PackageConfig(name="my_pkg",
+        config = PackageConfig(PackageSectionConfig(name="my_pkg"),
                                source_files=[
                                    Path("/src/my_pkg/drift_package.toml"),
                                    Path("/src/my_pkg/drift_package.local.toml"),
@@ -1079,7 +1082,7 @@ class TestConfigClasses(unittest.TestCase):
             drift_root=Path("/test"),
             workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.STOW),
         )
-        pkg_config = PackageConfig(name="test_pkg", install_method=InstallMethod.STOW)
+        pkg_config = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=InstallMethod.STOW))
 
         # On non-Windows, returns stow
         with patch("sys.platform", "linux"):
@@ -1224,7 +1227,7 @@ class TestConfigLoaders(unittest.TestCase):
             """, encoding="utf-8")
         config = PackageConfig.from_rendered_file(pkg_config_path, package_name="my_actual_package", package_dir=self.drift_root)
         self.assertEqual(config.name, "my_actual_package")
-        self.assertEqual(config.install_method, "copy")
+        self.assertEqual(config.package.install_method, "copy")
 
         # Invalid hook type raises ConfigError
         pkg_config_path.write_text("""
@@ -1253,7 +1256,7 @@ class TestConfigLoaders(unittest.TestCase):
         
         config = PackageConfig.from_source_dir(pkg_dir)
         self.assertEqual(config.name, "my_pkg_folder")
-        self.assertEqual(config.install_method, "copy")
+        self.assertEqual(config.package.install_method, "copy")
 
         # Invalid config raises ConfigError
         alt_config_path.write_text("""
@@ -1368,8 +1371,8 @@ class TestConfigLoaders(unittest.TestCase):
 
         # Verify fields and values
         self.assertEqual(pkg_config.name, "my_pkg")
-        self.assertEqual(pkg_config.install_method, "copy")
-        self.assertEqual(pkg_config.sudo, True)
+        self.assertEqual(pkg_config.package.install_method, "copy")
+        self.assertEqual(pkg_config.package.sudo, True)
 
         # Verify that the expected rendered config file exists inside the render/ sandbox
         expected_rendered_path = self.drift_root / "my_render" / "my_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
@@ -1421,8 +1424,8 @@ class TestConfigLoaders(unittest.TestCase):
         # Passing workspace_config=None triggers static loading path
         pkg_config = PackageConfig.from_source_dir(pkg_dir)
         self.assertEqual(pkg_config.name, "my_pkg_merge")
-        self.assertEqual(pkg_config.install_method, "stow")
-        self.assertEqual(pkg_config.sudo, True)
+        self.assertEqual(pkg_config.package.install_method, "stow")
+        self.assertEqual(pkg_config.package.sudo, True)
 
     def test_package_local_config_merge_with_workspace(self) -> None:
         # Create workspace config structure
@@ -1458,8 +1461,8 @@ class TestConfigLoaders(unittest.TestCase):
 
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_pkg_merge_ws")
-        self.assertEqual(pkg_config.install_method, "stow")
-        self.assertEqual(pkg_config.sudo, True)
+        self.assertEqual(pkg_config.package.install_method, "stow")
+        self.assertEqual(pkg_config.package.sudo, True)
 
         # Ensure the combined file gets rendered correctly in render/ sandbox
         expected_rendered_path = self.drift_root / "my_render" / "my_pkg_merge_ws" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
@@ -1916,9 +1919,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             workspace=WorkspaceSectionConfig(default_target_directory=Path("/global/target")),
         )
         pkg = PackageConfig(
-            name="my_pkg",
-            target_directory=Path("/custom/target"),
-            install_method=InstallMethod.COPY
+            PackageSectionConfig(
+                name="my_pkg",
+                target_directory=Path("/custom/target"),
+                install_method=InstallMethod.COPY,
+            )
         )
         pkg.compute_effective_envs(config)
 
@@ -1958,7 +1963,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
     def test_package_envs_resolution_with_custom_workspace_target_and_install_method(self) -> None:
         """Verifies environment variable resolution when workspace target != '~' and package has/has not explicit target."""
-        from drift.config.package_config import PackageConfig
+        from drift.config.package_config import PackageConfig, PackageSectionConfig
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
         # Workspace with non-default target directory != '~' and non-default install method
@@ -1972,7 +1977,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         )
 
         # 1. Package WITHOUT explicit target_directory and WITHOUT explicit install_method
-        pkg_inherited = PackageConfig(name="pkg_inherited").compute_effective_envs(workspace_config)
+        pkg_inherited = PackageConfig(PackageSectionConfig(name="pkg_inherited")).compute_effective_envs(workspace_config)
         with pkg_inherited.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_inherited")
             self.assertEqual(os.environ.get("drift_package_target_dir"), str(custom_global_target.expanduser()))
@@ -1987,9 +1992,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # 2. Package WITH explicit target_directory and explicit install_method
         pkg_overridden = PackageConfig(
-            name="pkg_overridden",
-            target_directory=Path("/etc/custom_pkg_target"),
-            install_method=InstallMethod.STOW,
+            PackageSectionConfig(
+                name="pkg_overridden",
+                target_directory=Path("/etc/custom_pkg_target"),
+                install_method=InstallMethod.STOW,
+            )
         ).compute_effective_envs(workspace_config)
         with pkg_overridden.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_overridden")
@@ -2005,8 +2012,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # 3. Package WITH explicit target_directory using home expansion (~)
         pkg_home = PackageConfig(
-            name="pkg_home",
-            target_directory=Path("~/.config/my_app")
+            PackageSectionConfig(
+                name="pkg_home",
+                target_directory=Path("~/.config/my_app"),
+            )
         ).compute_effective_envs(workspace_config)
         with pkg_home.package_envs():
             self.assertEqual(os.environ.get("drift_package_name"), "pkg_home")
@@ -2023,14 +2032,14 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def test_package_source_directory_config(self) -> None:
         """Verifies parsing, defaults, validation, and resolution of source_directory."""
         # 1. Default source_directory is Path(".")
-        pkg_default = PackageConfig(name="default_pkg")
-        self.assertEqual(pkg_default.source_directory, Path("."))
+        pkg_default = PackageConfig(PackageSectionConfig(name="default_pkg"))
+        self.assertEqual(pkg_default.package.source_directory, Path("."))
         base_dir = Path("/home/user/workspace/src/default_pkg")
         self.assertEqual(pkg_default.get_source_directory_to_render(base_dir), base_dir)
 
         # 2. Custom relative source_directory
-        pkg_custom = PackageConfig(name="custom_pkg", source_directory=Path("dotfiles/config"))
-        self.assertEqual(pkg_custom.source_directory, Path("dotfiles/config"))
+        pkg_custom = PackageConfig(PackageSectionConfig(name="custom_pkg", source_directory=Path("dotfiles/config")))
+        self.assertEqual(pkg_custom.package.source_directory, Path("dotfiles/config"))
         self.assertEqual(pkg_custom.get_source_directory_to_render(base_dir), base_dir / "dotfiles/config")
 
         # 3. from_dict parsing
@@ -2040,7 +2049,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             }
         }
         pkg_from_dict = PackageConfig.from_dict(data, package_name="parsed_pkg", base_dir=base_dir)
-        self.assertEqual(pkg_from_dict.source_directory, Path("src_subfolder"))
+        self.assertEqual(pkg_from_dict.package.source_directory, Path("src_subfolder"))
         self.assertEqual(pkg_from_dict.get_source_directory_to_render(base_dir), base_dir / "src_subfolder")
 
         # 4. Type validation error on from_dict
@@ -2049,12 +2058,12 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
         # 5. Absolute path rejected
         with self.assertRaises(ConfigError):
-            pkg_abs = PackageConfig(name="abs_pkg", source_directory=Path("/absolute/path"))
+            pkg_abs = PackageConfig(PackageSectionConfig(name="abs_pkg", source_directory=Path("/absolute/path")))
             pkg_abs.validate()
 
         # 6. Path traversal escaping package dir rejected
         with self.assertRaises(ConfigError):
-            pkg_escape = PackageConfig(name="escape_pkg", source_directory=Path("../other_pkg"))
+            pkg_escape = PackageConfig(PackageSectionConfig(name="escape_pkg", source_directory=Path("../other_pkg")))
             pkg_escape.validate()
 
     def test_package_env_override_and_fallback_parsing(self) -> None:
@@ -2123,7 +2132,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         set_initial_env(["CLI_VAR"])
 
         pkg = PackageConfig(
-            name="demo_pkg",
+            PackageSectionConfig(name="demo_pkg"),
             env_resolve=EnvResolve(current=EnvConfig(
                 override={
                     "OVERRIDDEN_BY_PACKAGE": "package_override_value",
@@ -2247,6 +2256,8 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertIn("ip", PackageRequirements.IP_KEYS)
         self.assertIn("package", PackageConfig.KNOWN_TOP_SECTIONS)
         self.assertIn("source_directory", PackageConfig.KNOWN_PACKAGE_KEYS)
+        self.assertIn("source_directory", PackageSectionConfig.KNOWN_KEYS)
+        self.assertIn("install_method", PackageSectionConfig.KNOWN_KEYS)
 
 
 class TestWorkspaceSectionConfig(unittest.TestCase):
@@ -2348,6 +2359,75 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
 
                 # No warnings should be emitted for any dot-named folders
                 self.assertEqual(mock_warn.call_count, 0)
+
+
+class TestPackageSectionConfig(unittest.TestCase):
+    """Tests for PackageSectionConfig and [package] section parsing, defaults, and validation."""
+
+    def test_package_section_defaults(self) -> None:
+        sec = PackageSectionConfig(name="pkg_a")
+        self.assertEqual(sec.name, "pkg_a")
+        self.assertEqual(sec.source_directory, Path("."))
+        self.assertTrue(sec.enable_render)
+        self.assertTrue(sec.enable_install)
+        self.assertIsNone(sec.install_method)
+        self.assertIsNone(sec.target_directory)
+        self.assertFalse(sec.sudo)
+        self.assertEqual(sec.fully_controlled_dirs, [])
+        self.assertIsNone(sec.hook_file)
+
+    def test_package_section_from_dict(self) -> None:
+        base_dir = Path("/tmp/pkg_a")
+        data = {
+            "name": "pkg_custom",
+            "source_directory": "custom_src",
+            "enable_render": False,
+            "enable_install": True,
+            "install_method": "copy",
+            "target_directory": "/tmp/custom_target",
+            "sudo": True,
+            "fully_controlled_dirs": ["dir1", "dir2"],
+            "hook_file": "custom_hook.py",
+        }
+        sec = PackageSectionConfig.from_dict(data, package_name="pkg_a", base_dir=base_dir)
+        self.assertEqual(sec.name, "pkg_custom")
+        self.assertEqual(sec.source_directory, Path("custom_src"))
+        self.assertFalse(sec.enable_render)
+        self.assertTrue(sec.enable_install)
+        self.assertEqual(sec.install_method, InstallMethod.COPY)
+        self.assertEqual(sec.target_directory, Path("/tmp/custom_target"))
+        self.assertTrue(sec.sudo)
+        self.assertEqual(sec.fully_controlled_dirs, [Path("dir1"), Path("dir2")])
+        self.assertEqual(sec.hook_file, (base_dir / "custom_hook.py").resolve())
+
+    def test_package_section_validation(self) -> None:
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="").validate()
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name=123).validate()  # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", source_directory=Path("/abs/path")).validate()
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", source_directory=Path("../escape")).validate()
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", install_method="invalid").validate()  # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", enable_render="yes").validate()  # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", enable_install="yes").validate()  # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", sudo="yes").validate()  # type: ignore
+        with self.assertRaises(ConfigError):
+            PackageSectionConfig(name="pkg", hook_file=Path("rel/hook.py")).validate()
+
+    def test_package_section_known_keys(self) -> None:
+        data = {
+            "name": "pkg_a",
+            "unknown_field": "some_value",
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            PackageSectionConfig.from_dict(data, package_name="pkg_a")
+        self.assertIn("Unknown package option", str(ctx.exception))
 
 
 class TestPathSuffixHelpers(unittest.TestCase):

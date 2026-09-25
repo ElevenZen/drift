@@ -826,16 +826,9 @@ def resolve_and_interpolate_package_config(
 
 
 @dataclass
-class PackageConfig:
-    """Represents the package-specific configuration inside src/<pkg>/drift_package.toml."""
-    KNOWN_TOP_SECTIONS: ClassVar[Tuple[str, ...]] = (
-        "package",
-        "hooks",
-        "env",
-        "requirements",
-        "render",
-    )
-    KNOWN_PACKAGE_KEYS: ClassVar[Tuple[str, ...]] = (
+class PackageSectionConfig:
+    """Represents package-level metadata and behaviors configured inside the [package] section of drift_package.toml."""
+    KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         "name",
         "source_directory",
         "enable_render",
@@ -850,65 +843,45 @@ class PackageConfig:
     )
 
     name: str
-    source_files: List[Path] = field(default_factory=list)
-    source_directory: Path = field(default_factory=lambda: Path("."))
+    source_directory: Path = Path(".")
     enable_render: bool = True
     enable_install: bool = True
     install_method: Optional[InstallMethod] = None
     target_directory: Optional[Path] = None
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
-    hooks: PackageHooks = field(default_factory=PackageHooks)
-    requirements: PackageRequirements = field(default_factory=PackageRequirements)
     hook_file: Optional[Path] = None
-    env_resolve: EnvResolve = field(default_factory=EnvResolve)
-    render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
-
-    def assert_hooks_exist(
-        self,
-        base_dir: Path,
-        is_source: bool,
-        hook_names: Sequence[str] = ()
-    ) -> None:
-        """Validates that configured lifecycle hook files exist in base_dir and are regular files."""
-        self.hooks.assert_hooks_exist(base_dir, is_source=is_source, hook_names=hook_names)
 
     def __init__(
         self,
         name: str,
-        source_files: Iterable[Path] = (),
         source_directory: Optional[Union[str, Path]] = None,
         enable_render: bool = True,
         enable_install: bool = True,
         install_method: Optional[InstallMethod] = None,
-        target_directory: Optional[Path] = None,
+        target_directory: Optional[Union[str, Path]] = None,
         sudo: bool = False,
         fully_controlled_dirs: Iterable[Path] = (),
-        hooks: Optional[PackageHooks] = None,
-        requirements: Optional[PackageRequirements] = None,
         hook_file: Optional[Union[Path, str]] = None,
-        env_resolve: Optional[EnvResolve] = None,
-        render_engine_configs: Optional[RenderEngineRegistry] = None,
     ) -> None:
+        if not isinstance(name, str):
+            raise ConfigError(f"Package name must be a string, got {type(name).__name__}")
         if source_directory is not None and not isinstance(source_directory, (str, Path)):
             raise ConfigError(f"source_directory must be a Path or str, got {type(source_directory).__name__}")
         if target_directory is not None and not isinstance(target_directory, (str, Path)):
             raise ConfigError(f"target_directory must be a Path or str, got {type(target_directory).__name__}")
         if install_method is not None and not isinstance(install_method, InstallMethod):
             raise ConfigError(f"install_method must be an InstallMethod instance, got {type(install_method).__name__}")
-        if hooks is not None and not isinstance(hooks, PackageHooks):
-            raise ConfigError(f"hooks must be a PackageHooks instance, got {type(hooks).__name__}")
-        if requirements is not None and not isinstance(requirements, PackageRequirements):
-            raise ConfigError(f"requirements must be a PackageRequirements instance, got {type(requirements).__name__}")
+        if not isinstance(enable_render, bool):
+            raise ConfigError(f"enable_render must be a boolean, got {type(enable_render).__name__}")
+        if not isinstance(enable_install, bool):
+            raise ConfigError(f"enable_install must be a boolean, got {type(enable_install).__name__}")
+        if not isinstance(sudo, bool):
+            raise ConfigError(f"sudo must be a boolean, got {type(sudo).__name__}")
         if hook_file is not None and not isinstance(hook_file, (str, Path)):
             raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
-        if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
-            raise ConfigError(f"env_resolve must be an EnvResolve instance, got {type(env_resolve).__name__}")
-        if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
-            raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
 
         self.name = name
-        self.source_files = list(source_files) if source_files else []
         self.source_directory = Path(source_directory) if source_directory else Path(".")
         self.enable_render = enable_render
         self.enable_install = enable_install
@@ -916,22 +889,19 @@ class PackageConfig:
         self.target_directory = expand_path(target_directory) if target_directory else None
         self.sudo = sudo
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
-        self.hooks = hooks if hooks is not None else PackageHooks()
-        self.hooks.package_config = self
-        self.requirements = requirements if requirements is not None else PackageRequirements()
         self.hook_file = Path(hook_file) if hook_file is not None else None
-        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
-        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
 
     def validate(self) -> None:
-        """Validates configuration values."""
+        """Validates [package] section configuration values."""
         if not self.name or not isinstance(self.name, str):
             raise ConfigError("Package config must have a non-empty 'name'.")
-        if not isinstance(self.source_files, list):
-            raise ConfigError(f"source_files must be a list for package '{self.name}'.")
-        for file in self.source_files:
-            if not isinstance(file, Path):
-                raise ConfigError(f"source_files entries must be Path objects for package '{self.name}'.")
+        if not isinstance(self.source_directory, Path):
+            raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
+        if self.source_directory.is_absolute():
+            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
+        norm_src = os.path.normpath(str(self.source_directory))
+        if norm_src == ".." or norm_src.startswith(".." + os.sep) or norm_src.startswith("../"):
+            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root.")
         if self.install_method is not None and not isinstance(self.install_method, InstallMethod):
             raise ConfigError(
                 f"Invalid install_method '{self.install_method}' for package '{self.name}'. "
@@ -948,27 +918,163 @@ class PackageConfig:
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise ConfigError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
-        if not isinstance(self.source_directory, Path):
-            raise ConfigError(f"source_directory must be a Path for package '{self.name}'.")
-        if self.source_directory.is_absolute():
-            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' must be a relative path.")
-        # Note: We validate using os.path.normpath rather than Path.resolve().
-        # On macOS (APFS firmlink architecture), calling .resolve() dereferences standard
-        # root paths like /home or /tmp into /System/Volumes/Data/home or /private/tmp,
-        # which mutates path prefixes unexpectedly and breaks prefix consistency.
-        norm_src = os.path.normpath(str(self.source_directory))
-        if norm_src == ".." or norm_src.startswith(".." + os.sep) or norm_src.startswith("../"):
-            raise ConfigError(f"Package '{self.name}' source_directory '{self.source_directory}' escapes package root.")
-        if not isinstance(self.hooks, PackageHooks):
-            raise ConfigError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
-        self.hooks.validate(self.name)
-        if not isinstance(self.requirements, PackageRequirements):
-            raise ConfigError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
         if self.hook_file is not None:
             if not isinstance(self.hook_file, Path):
                 raise ConfigError(f"hook_file must be a Path for package '{self.name}'.")
             if not self.hook_file.is_absolute():
                 raise ConfigError(f"hook_file must be an absolute Path for package '{self.name}'.")
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Any,
+        package_name: str,
+        base_dir: Optional[Path] = None,
+    ) -> "PackageSectionConfig":
+        """Builds a PackageSectionConfig instance from a parsed TOML [package] dictionary."""
+        if not isinstance(data, dict):
+            raise ConfigError(f"[package] must be a TOML table for package '{package_name}'.")
+
+        name_str = f" for package '{package_name}'" if package_name else ""
+        validate_known_keys(
+            data,
+            cls.KNOWN_KEYS,
+            message_prefix="Unknown package option",
+            suffix=name_str,
+        )
+
+        name = str(data.get("name") or package_name)
+
+        fcd = data.get("fully_controlled_dirs", [])
+        if isinstance(fcd, str):
+            fcd_list = [Path(fcd)]
+        elif isinstance(fcd, list):
+            fcd_list = [Path(d) for d in fcd]
+        else:
+            raise ConfigError(f"fully_controlled_dirs must be a list of strings for package '{name}'.")
+
+        src_dir_val = data.get("source_directory")
+        if src_dir_val is not None:
+            if not isinstance(src_dir_val, (str, Path)):
+                raise ConfigError(f"source_directory must be a string for package '{name}'.")
+            raw_str = str(src_dir_val).strip()
+            source_dir = Path(raw_str) if len(raw_str) > 0 else Path(".")
+        else:
+            source_dir = Path(".")
+
+        target_dir_keys = (
+            *((f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES) if sys.platform == "win32" else ()),
+            "target_directory",
+        )
+        target_dir: Optional[Path] = (val := get_first_from(data, target_dir_keys)) and expand_path(val)
+
+        raw_hook_file = data.get("hook_file")
+        if raw_hook_file is not None:
+            resolved_hook_file = Path(raw_hook_file)
+            if not resolved_hook_file.is_absolute() and base_dir is not None:
+                resolved_hook_file = (base_dir / resolved_hook_file).resolve()
+        else:
+            resolved_hook_file = None
+
+        raw_install_method = data.get("install_method")
+        parsed_install_method: Optional[InstallMethod] = None
+        if raw_install_method is not None:
+            try:
+                parsed_install_method = InstallMethod.from_str(raw_install_method)
+            except ValueError as e:
+                raise ConfigError(f"Invalid install_method '{raw_install_method}' for package '{name}'. Must be 'stow' or 'copy'.") from e
+
+        sec = cls(
+            name=name,
+            source_directory=source_dir,
+            enable_render=bool(data.get("enable_render", True)),
+            enable_install=bool(data.get("enable_install", True)),
+            install_method=parsed_install_method,
+            target_directory=target_dir,
+            sudo=bool(data.get("sudo", False)),
+            fully_controlled_dirs=fcd_list,
+            hook_file=resolved_hook_file,
+        )
+        sec.validate()
+        return sec
+
+
+@dataclass
+class PackageConfig:
+    """Represents the complete package configuration container inside src/<pkg>/drift_package.toml."""
+    KNOWN_TOP_SECTIONS: ClassVar[Tuple[str, ...]] = (
+        "package",
+        "hooks",
+        "env",
+        "requirements",
+        "render",
+    )
+    KNOWN_PACKAGE_KEYS: ClassVar[Tuple[str, ...]] = PackageSectionConfig.KNOWN_KEYS
+
+    package: PackageSectionConfig
+    source_files: List[Path] = field(default_factory=list)
+    hooks: PackageHooks = field(default_factory=PackageHooks)
+    requirements: PackageRequirements = field(default_factory=PackageRequirements)
+    env_resolve: EnvResolve = field(default_factory=EnvResolve)
+    render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
+
+    @property
+    def name(self) -> str:
+        """Canonical name of the package."""
+        return self.package.name
+
+    def assert_hooks_exist(
+        self,
+        base_dir: Path,
+        is_source: bool,
+        hook_names: Sequence[str] = ()
+    ) -> None:
+        """Validates that configured lifecycle hook files exist in base_dir and are regular files."""
+        self.hooks.assert_hooks_exist(base_dir, is_source=is_source, hook_names=hook_names)
+
+    def __init__(
+        self,
+        package: PackageSectionConfig,
+        source_files: Iterable[Path] = (),
+        hooks: Optional[PackageHooks] = None,
+        requirements: Optional[PackageRequirements] = None,
+        env_resolve: Optional[EnvResolve] = None,
+        render_engine_configs: Optional[RenderEngineRegistry] = None,
+    ) -> None:
+        if not isinstance(package, PackageSectionConfig):
+            raise ConfigError(f"package must be a PackageSectionConfig instance, got {type(package).__name__}")
+        if hooks is not None and not isinstance(hooks, PackageHooks):
+            raise ConfigError(f"hooks must be a PackageHooks instance, got {type(hooks).__name__}")
+        if requirements is not None and not isinstance(requirements, PackageRequirements):
+            raise ConfigError(f"requirements must be a PackageRequirements instance, got {type(requirements).__name__}")
+        if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
+            raise ConfigError(f"env_resolve must be an EnvResolve instance, got {type(env_resolve).__name__}")
+        if render_engine_configs is not None and not isinstance(render_engine_configs, RenderEngineRegistry):
+            raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry instance, got {type(render_engine_configs).__name__}")
+
+        self.package = package
+        self.source_files = list(source_files) if source_files else []
+        self.hooks = hooks if hooks is not None else PackageHooks()
+        self.hooks.package_config = self
+        self.requirements = requirements if requirements is not None else PackageRequirements()
+        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
+        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
+
+    def validate(self) -> None:
+        """Validates configuration values."""
+        if not isinstance(self.package, PackageSectionConfig):
+            raise ConfigError("package must be a PackageSectionConfig instance.")
+        self.package.validate()
+        if not isinstance(self.source_files, list):
+            raise ConfigError(f"source_files must be a list for package '{self.name}'.")
+        for file in self.source_files:
+            if not isinstance(file, Path):
+                raise ConfigError(f"source_files entries must be Path objects for package '{self.name}'.")
+        if not isinstance(self.hooks, PackageHooks):
+            raise ConfigError(f"hooks must be a PackageHooks instance for package '{self.name}'.")
+        self.hooks.validate(self.name)
+        if not isinstance(self.requirements, PackageRequirements):
+            raise ConfigError(f"requirements must be a PackageRequirements instance for package '{self.name}'.")
         if not isinstance(self.env_resolve, EnvResolve):
             raise ConfigError(f"env_resolve must be an EnvResolve instance for package '{self.name}'.")
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
@@ -979,8 +1085,8 @@ class PackageConfig:
                         if workspace_config is not None else {})
         pkg_facts = { k: str(v) for k, v in {
             'drift_package_name': self.name,
-            'drift_package_install_method': self.install_method,
-            'drift_package_target_dir': self.target_directory,
+            'drift_package_install_method': self.package.install_method,
+            'drift_package_target_dir': self.package.target_directory,
         }.items() if v is not None }
         return { **ws_pkg_facts, **pkg_facts }
 
@@ -1026,17 +1132,17 @@ class PackageConfig:
         Note: We avoid Path.resolve() here to prevent macOS APFS firmlink mutation
         (e.g., /home -> /System/Volumes/Data/home).
         """
-        if not self.source_directory or self.source_directory == Path(".") or str(self.source_directory) in (".", ""):
+        if not self.package.source_directory or self.package.source_directory == Path(".") or str(self.package.source_directory) in (".", ""):
             return package_dir
-        return package_dir / self.source_directory
+        return package_dir / self.package.source_directory
 
     def get_target_directory(self, workspace_config: WorkspaceConfig) -> Path:
-        return self.target_directory or workspace_config.default_target_path
+        return self.package.target_directory or workspace_config.default_target_path
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
         if sys.platform == "win32":
             return InstallMethod.COPY
-        return self.install_method or workspace_config.workspace.default_install_method
+        return self.package.install_method or workspace_config.workspace.default_install_method
 
     def get_render_engines(self, workspace_config: WorkspaceConfig) -> RenderEngineRegistry:
         """Computes effective render engines by overlaying package engines onto workspace engines."""
@@ -1142,20 +1248,19 @@ class PackageConfig:
 
         name = str(package_name)
 
-        # Error for unknown package options
-        validate_known_keys(
-            package_data,
-            cls.KNOWN_PACKAGE_KEYS,
-            message_prefix="Unknown package option",
-            suffix=name_str,
-        )
-
         # Resolve common package base directory for hooks and render engines
         # workspace_config takes priority over base_dir, matching PackageHooks.from_dict() precedence
         if workspace_config is not None and name:
             pkg_base = (workspace_config.source_path / name).resolve()
         else:
             pkg_base = base_dir_path
+
+        # Parse [package] section
+        package_section = PackageSectionConfig.from_dict(
+            package_data,
+            package_name=name,
+            base_dir=pkg_base,
+        )
 
         # Parse, validate, and resolve lifecycle hooks via PackageHooks.from_dict
         hooks = PackageHooks.from_dict(
@@ -1175,62 +1280,11 @@ class PackageConfig:
             base_dir=pkg_base
         )
 
-        fcd = package_data.get("fully_controlled_dirs", [])
-        if isinstance(fcd, str):
-            fcd = [Path(fcd)]
-        elif isinstance(fcd, list):
-            fcd = [Path(d) for d in fcd]
-        else:
-            raise ConfigError(f"fully_controlled_dirs must be a list of strings for package '{name}'.")
-
-        # Parse source_directory if provided
-        src_dir_val = package_data.get("source_directory")
-        if src_dir_val is not None:
-            if not isinstance(src_dir_val, (str, Path)):
-                raise ConfigError(f"source_directory must be a string for package '{name}'.")
-            raw_str = str(src_dir_val).strip()
-            source_dir = Path(raw_str) if len(raw_str) > 0 else Path(".")
-        else:
-            source_dir = Path(".")
-
-        target_dir_keys = (
-                *((f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES) if sys.platform == "win32" else ()),
-                "target_directory",
-        )
-        # Expand home directory and env vars for target_directory
-        target_dir: Optional[Path] = (val := get_first_from(package_data, target_dir_keys)) and expand_path(val)
-
-        # resolve relative hook_file path to absolute path if pkg_base is provided
-        raw_hook_file = package_data.get("hook_file")
-        if raw_hook_file is not None:
-            resolved_hook_file = Path(raw_hook_file)
-            if not resolved_hook_file.is_absolute() and pkg_base is not None:
-                resolved_hook_file = (pkg_base / resolved_hook_file).resolve()
-        else:
-            resolved_hook_file = None
-
-        # Parse install_method if provided
-        raw_install_method = package_data.get("install_method")
-        parsed_install_method: Optional[InstallMethod] = None
-        if raw_install_method is not None:
-            try:
-                parsed_install_method = InstallMethod.from_str(raw_install_method)
-            except ValueError as e:
-                raise ConfigError(f"Invalid install_method '{raw_install_method}' for package '{name}'. Must be 'stow' or 'copy'.") from e
-
         config = cls(
-            name=str(name),
-            source_directory=source_dir,
+            package=package_section,
             source_files=[x for x in source_files if isinstance(x, Path)], # filter out None items.
-            enable_render=bool(package_data.get("enable_render", True)),
-            enable_install=bool(package_data.get("enable_install", True)),
-            install_method=parsed_install_method,
-            target_directory=target_dir,
-            sudo=bool(package_data.get("sudo", False)),
-            fully_controlled_dirs=fcd,
             hooks=hooks,
             requirements=requirements,
-            hook_file=resolved_hook_file,
             render_engine_configs=render_engine_configs,
         )
         parsed_env = parse_env_dict(env_data, context_desc=f"package '{name}'")

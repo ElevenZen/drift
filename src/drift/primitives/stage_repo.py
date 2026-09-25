@@ -284,7 +284,7 @@ def stage_modified_packages(
         return
 
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
-    needs_sudo = any(pkg_metadata[pkg].sudo for pkg in packages_to_stage)
+    needs_sudo = any(pkg_metadata[pkg].package.sudo for pkg in packages_to_stage)
     if needs_sudo:
         assert_can_escalate()
 
@@ -351,7 +351,7 @@ def run_primitive_4_stage_render_to_install(
     pkg_metadata = {}
     for pkg in active_packages:
         metadata = PackageConfig.from_render_dir(render_base / pkg, workspace_config)
-        if not metadata.enable_install:
+        if not metadata.package.enable_install:
             continue
         # Verify hook files exist and are regular files in render/ sandbox
         metadata.hooks.assert_hooks_exist(render_base / pkg, is_source=False)

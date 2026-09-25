@@ -391,7 +391,7 @@ target_directory = "~/pkg_factories"
         # 1. PackageConfig.from_source_dir
         pkg_src_cfg = PackageConfig.from_source_dir(pkg_src, ws_cfg)
         self.assertEqual(pkg_src_cfg.name, "pkg_factories")
-        self.assertEqual(pkg_src_cfg.install_method, "copy")
+        self.assertEqual(pkg_src_cfg.package.install_method, "copy")
 
         # 2. PackageConfig.from_render_dir
         render_res = render_package(ws_cfg, pkg_src)
@@ -399,7 +399,7 @@ target_directory = "~/pkg_factories"
         pkg_render = self.render_dir / "pkg_factories"
         pkg_render_cfg = PackageConfig.from_render_dir(pkg_render, self.workspace_config)
         self.assertEqual(pkg_render_cfg.name, "pkg_factories")
-        self.assertEqual(pkg_render_cfg.install_method, "copy")
+        self.assertEqual(pkg_render_cfg.package.install_method, "copy")
 
         # 3. PackageConfig.from_install_dir
         stage_res = run_primitive_4_stage_render_to_install(ws_cfg)
@@ -407,7 +407,7 @@ target_directory = "~/pkg_factories"
         pkg_install = self.install_dir / "pkg_factories"
         pkg_install_cfg = PackageConfig.from_install_dir(pkg_install, ws_cfg)
         self.assertEqual(pkg_install_cfg.name, "pkg_factories")
-        self.assertEqual(pkg_install_cfg.install_method, "copy")
+        self.assertEqual(pkg_install_cfg.package.install_method, "copy")
 
     def test_drift_package_src_dir_alias(self) -> None:
         """Verifies drift_package_src_dir alias is present in envs and facts alongside drift_package_source_dir."""

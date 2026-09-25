@@ -59,7 +59,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple, Dict, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
-from ..config.package_config import PackageConfig
+from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.state_registry import load_state_registry, PackageState, StateRegistry
 from ..utils.process_utils import assert_can_escalate
 from ..utils.file_ops import (
@@ -128,7 +128,7 @@ def load_package_config_for_uninstall(
         return PackageConfig.from_install_dir(workspace_config.install_path / pkg, workspace_config)
     except Exception as e:
         logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
-        return PackageConfig(name=pkg)
+        return PackageConfig(PackageSectionConfig(name=pkg))
 
 
 def clean_up_package_directories(workspace_config: WorkspaceConfig, pkg: str) -> None:
@@ -242,7 +242,7 @@ def detach_one_package(
         if pkg_state.target_directory is not None
         else pkg_config.get_target_directory(workspace_config)
     )
-    sudo = pkg_config.sudo
+    sudo = pkg_config.package.sudo
     converted_symlinks = []
 
     for rel_file in pkg_state.deployed_files:
@@ -306,7 +306,7 @@ def uninstall_one_package(
         if pkg_state.target_directory is not None
         else pkg_config.get_target_directory(workspace_config)
     )
-    sudo = pkg_config.sudo
+    sudo = pkg_config.package.sudo
     hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
 
     # Check uninstall hook files exist before attempting uninstallation
@@ -406,7 +406,7 @@ def run_primitive_7_uninstall_packages(
 
     # Pre-check sudo privileges and uninstall hook files
     if not dry_run:
-        needs_sudo = any(pkg_cfg.sudo for pkg_cfg in pkg_config_map.values())
+        needs_sudo = any(pkg_cfg.package.sudo for pkg_cfg in pkg_config_map.values())
         if needs_sudo:
             assert_can_escalate()
 

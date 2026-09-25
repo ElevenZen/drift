@@ -9,7 +9,7 @@ from unittest.mock import patch, MagicMock
 
 from drift.core.constants import DRIFT_INTERNAL_DIR_NAME
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
-from drift.config.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageHooks
+from drift.config.package_config import PACKAGE_CONFIG_FILE_NAME, PackageConfig, PackageSectionConfig, PackageHooks
 from drift.hooks.trigger_hook import run_primitive_trigger_hook
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.exceptions import ConfigError
@@ -552,7 +552,7 @@ echo "VALUE=$DYNAMIC_VAL"
             post_uninstall=self.drift_root / ".drift/hooks/post_uninstall.sh",
             health=self.drift_root / ".drift/hooks/health.sh",
         )
-        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
+        pkg_config = PackageConfig(PackageSectionConfig(name="pkg_hook"), hooks=hooks)
 
         with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
@@ -786,7 +786,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             post_uninstall=hooks_dir / "post_uninstall.sh",
             health=hooks_dir / "health.sh",
         )
-        pkg_config = PackageConfig(name="pkg_hook", hooks=hooks)
+        pkg_config = PackageConfig(PackageSectionConfig(name="pkg_hook"), hooks=hooks)
 
         with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
@@ -973,7 +973,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 1. Package with rollback_on_failure = False
         pkg_no_rb = PackageConfig(
-            name="pkg_hook",
+            PackageSectionConfig(name="pkg_hook"),
             hooks=PackageHooks(rollback_on_failure=False)
         )
         with self.assertRaises(HookExecutionError) as ctx:
@@ -991,7 +991,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
         # 2. Package with rollback_on_failure = True (default)
         pkg_rb = PackageConfig(
-            name="pkg_hook",
+            PackageSectionConfig(name="pkg_hook"),
             hooks=PackageHooks(rollback_on_failure=True)
         )
         with self.assertRaises(HookExecutionError) as ctx:

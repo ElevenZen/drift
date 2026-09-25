@@ -123,7 +123,7 @@ def render_or_copy_file(
         return (rel_path.as_posix(), False)
 
     engine: Optional[RenderEngineConfig] = None
-    if pkg_config.enable_render:
+    if pkg_config.package.enable_render:
         engine = render_engines.find_engine_for_file(rel_path.as_posix())
 
     if engine:

@@ -244,6 +244,7 @@ from .config import (
     render_workspace_config,
     load_workspace_config_file_with_render,
     PackageConfig,
+    PackageSectionConfig,
     PackageHooks,
     PackageRequirements,
     resolve_and_interpolate_package_config,

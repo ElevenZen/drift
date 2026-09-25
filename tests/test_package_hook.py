@@ -75,9 +75,9 @@ PKG_PORT = "3000"
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.name, "pkg1")
-        self.assertEqual(cfg.install_method, "stow")
-        self.assertEqual(cfg.target_directory, Path("~/.config/pkg1").expanduser())
-        self.assertIsNone(cfg.hook_file)
+        self.assertEqual(cfg.package.install_method, "stow")
+        self.assertEqual(cfg.package.target_directory, Path("~/.config/pkg1").expanduser())
+        self.assertIsNone(cfg.package.hook_file)
 
     def test_default_hook_file_transforms_package_config(self) -> None:
         """Default src/<pkg>/drift_package.py can dynamically modify package settings."""
@@ -104,8 +104,8 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertEqual(cfg.install_method, "copy")
-        self.assertEqual(cfg.target_directory, Path("~/custom/pkg1").expanduser())
+        self.assertEqual(cfg.package.install_method, "copy")
+        self.assertEqual(cfg.package.target_directory, Path("~/custom/pkg1").expanduser())
         self.assertIsNotNone(cfg.requirements)
         self.assertEqual(cfg.requirements.os, ["linux", "darwin"])
         self.assertEqual(cfg.requirements.binaries, ["git"])
@@ -127,7 +127,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertFalse(cfg.enable_install)
+        self.assertFalse(cfg.package.enable_install)
 
     def test_hook_accesses_context_properties_and_facts(self) -> None:
         """Hook can inspect package_name, package_dir, drift_root, workspace_config, and system/package facts."""
@@ -183,8 +183,8 @@ hook_file = "hooks/custom_setup.py"
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertEqual(cfg.install_method, "copy")
-        self.assertEqual(cfg.hook_file, (pkg_dir / "hooks/custom_setup.py").resolve())
+        self.assertEqual(cfg.package.install_method, "copy")
+        self.assertEqual(cfg.package.hook_file, (pkg_dir / "hooks/custom_setup.py").resolve())
 
     def test_custom_hook_file_absolute_path(self) -> None:
         """Custom hook_file specified as an absolute path is resolved properly."""
@@ -206,7 +206,7 @@ hook_file = "{custom_hook_file.as_posix()}"
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
-        self.assertEqual(cfg.install_method, "copy")
+        self.assertEqual(cfg.package.install_method, "copy")
 
     def test_custom_hook_file_not_found_raises_config_error(self) -> None:
         """Missing custom hook_file raises ConfigError."""
@@ -287,7 +287,7 @@ def configure_package(context):
 
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, None)
-        self.assertEqual(cfg.install_method, "copy")
+        self.assertEqual(cfg.package.install_method, "copy")
         self.assertEqual(cfg.name, "pkg1")
 
     def test_hook_file_registered_in_source_files_and_filtered(self) -> None:
@@ -335,8 +335,8 @@ def configure_package(context):
 
         # Load rendered config
         rendered_cfg = PackageConfig.from_render_dir(self.drift_root / "render" / "pkg1", self.workspace_config)
-        self.assertEqual(rendered_cfg.install_method, "copy")
-        self.assertEqual(rendered_cfg.target_directory, Path("~/rendered_target").expanduser())
+        self.assertEqual(rendered_cfg.package.install_method, "copy")
+        self.assertEqual(rendered_cfg.package.target_directory, Path("~/rendered_target").expanduser())
 
         # PackageConfig.from_install_dir from install/ state dir should also work once staged
         (self.drift_root / "install" / "pkg1" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
@@ -345,8 +345,8 @@ def configure_package(context):
             self.drift_root / "install" / "pkg1" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
         )
         install_cfg = PackageConfig.from_install_dir(self.drift_root / "install" / "pkg1", self.workspace_config)
-        self.assertEqual(install_cfg.install_method, "copy")
-        self.assertEqual(install_cfg.target_directory, Path("~/rendered_target").expanduser())
+        self.assertEqual(install_cfg.package.install_method, "copy")
+        self.assertEqual(install_cfg.package.target_directory, Path("~/rendered_target").expanduser())
 
     def test_hook_with_variable_stitching_and_interpolation(self) -> None:
         """Hook output properly participates in 6-tier variable stitching."""
@@ -368,7 +368,7 @@ def configure_package(context):
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.env_resolve.current.override.get("DYNAMIC_API"), "https://example.com/v1")
         self.assertEqual(cfg.env_resolve.effective.override.get("DYNAMIC_API"), "https://example.com/v1")
-        self.assertEqual(cfg.target_directory, Path("~/.config/app_pkg1").expanduser())
+        self.assertEqual(cfg.package.target_directory, Path("~/.config/app_pkg1").expanduser())
 
     def test_env_scope_isolation_during_hook_execution(self) -> None:
         """Package facts (drift_package_*) are injected into os.environ during hook execution and cleaned up."""
