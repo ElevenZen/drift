@@ -155,10 +155,10 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_package_state_dataclass(self) -> None:
         """Verifies the PackageState dataclass attributes and defaults."""
-        p_state = PackageState(state="installed", last_deployed="2026-08-17", install_method="copy", deployed_files=[Path("file1"), Path("file2")])
+        p_state = PackageState(state="installed", last_deployed="2026-08-17", install_method=InstallMethod.COPY, deployed_files=[Path("file1"), Path("file2")])
         self.assertEqual(p_state.state, "installed")
         self.assertEqual(p_state.last_deployed, "2026-08-17")
-        self.assertEqual(p_state.install_method, "copy")
+        self.assertEqual(p_state.install_method, InstallMethod.COPY)
         self.assertEqual(p_state.deployed_files, [Path("file1"), Path("file2")])
 
         # Test defaults
@@ -1562,7 +1562,7 @@ class TestInstallRepo(unittest.TestCase):
                 packages={
                     pkg: PackageState(
                         state="installed",
-                        install_method="copy",
+                        install_method=InstallMethod.COPY,
                         last_deployed="2026-08-20T00:00:00Z",
                         deployed_files=[Path("app.conf")]
                     )
@@ -1783,7 +1783,7 @@ class TestInstallRepo(unittest.TestCase):
             install_pkg_dir=pkg_install_dir,
             backup_pkg_dir=self.backup_dir / pkg,
             target_dir=self.system_target_dir,
-            install_method="copy",
+            install_method=InstallMethod.COPY,
             ignore_handler=DriftIgnore(),
             sudo=False,
             is_first_time=True,
@@ -1810,7 +1810,7 @@ class TestInstallRepo(unittest.TestCase):
             install_pkg_dir=pkg_install_dir,
             backup_pkg_dir=self.backup_dir / pkg,
             target_dir=self.system_target_dir,
-            install_method="copy",
+            install_method=InstallMethod.COPY,
             ignore_handler=DriftIgnore(),
             sudo=False,
             is_first_time=True,
@@ -1858,7 +1858,7 @@ class TestInstallRepo(unittest.TestCase):
             install_pkg_dir=pkg_install_dir,
             backup_pkg_dir=self.backup_dir / pkg,
             target_dir=self.system_target_dir,
-            install_method="stow",
+            install_method=InstallMethod.STOW,
             ignore_handler=DriftIgnore(),
             sudo=False,
             is_first_time=True,
@@ -1982,7 +1982,7 @@ class TestInstallRepo(unittest.TestCase):
             install_pkg_dir=self.install_dir / "pkg_test",
             backup_pkg_dir=self.backup_dir / "pkg_test",
             target_dir=self.system_target_dir,
-            install_method="copy",
+            install_method=InstallMethod.COPY,
             ignore_handler=DriftIgnore(),
             sudo=False,
             is_first_time=True,

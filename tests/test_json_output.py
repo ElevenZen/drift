@@ -27,6 +27,7 @@ from drift.core.result_models import (
     RollbackResult,
     RepairResult,
 )
+from drift.core.constants import InstallMethod
 from tests.test_utils import TestCaseUtilityMixin
 
 
@@ -41,7 +42,7 @@ class TestResultModels(unittest.TestCase):
         )
         pkg_res = PackageInstallResult(
             package="zsh",
-            install_method="stow",
+            install_method=InstallMethod.STOW,
             target_directory="/home/user",
             operations=ops,
             is_first_time=True
@@ -81,8 +82,8 @@ class TestResultModels(unittest.TestCase):
     def test_uninstall_result_iteration(self) -> None:
         un = UninstallResult(
             packages=[
-                PackageUninstallResult(package="pkg_a", install_method="stow", target_directory="/home/test"),
-                PackageUninstallResult(package="pkg_b", install_method="copy", target_directory="/home/test", status="FAILED"),
+                PackageUninstallResult(package="pkg_a", install_method=InstallMethod.STOW, target_directory="/home/test"),
+                PackageUninstallResult(package="pkg_b", install_method=InstallMethod.COPY, target_directory="/home/test", status="FAILED"),
             ]
         )
         # Verify backward compatibility iteration

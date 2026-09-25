@@ -147,7 +147,7 @@ class TestConfigParser(unittest.TestCase):
         self.assertIsNone(get_nested_from(data, "packages.missing"))
         self.assertEqual(get_nested_from(data, "packages.missing", default="custom"), "custom")
         self.assertEqual(get_nested_from(None, "packages.enable", default="fallback"), "fallback")
-        self.assertEqual(get_nested_from("not_a_dict", "packages.enable", default="fallback"), "fallback")
+        self.assertEqual(get_nested_from(cast(Any, "not_a_dict"), "packages.enable", default="fallback"), "fallback")
 
         # Missing required path raises ConfigError with default or custom context
         with self.assertRaises(ConfigError) as ctx:
@@ -2401,7 +2401,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
         with self.assertRaises(ConfigError):
             WorkspaceSectionConfig(default_target_directory=Path("relative/path")).validate()
         with self.assertRaises(ConfigError):
-            WorkspaceSectionConfig(default_install_method="invalid_method").validate()
+            WorkspaceSectionConfig(default_install_method=cast(Any, "invalid_method")).validate()
 
     def test_get_package_names_from_dir_filtering_and_warnings(self) -> None:
         with tempfile.TemporaryDirectory() as td:
