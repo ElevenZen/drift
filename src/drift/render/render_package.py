@@ -27,7 +27,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
-from ..core.exceptions import ConfigError, RenderCollisionError, is_logged, mark_logged, is_drift_error
+from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged, is_drift_error
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.result_models import PackageRenderResult, RenderResult
 from ..utils.file_ops import remove, copy_file
@@ -467,7 +467,9 @@ def run_primitive_2_render_packages(
             results.append(pkg_res)
         except Exception as e:
             logger.debug(f"Render exception for package '{package_name}':", exc_info=True)
-            if isinstance(e, FileNotFoundError):
+            if isinstance(e, HookMissingError):
+                err_msg = f"Hook missing: {e}"
+            elif isinstance(e, FileNotFoundError):
                 err_msg = f"File not found: {e}"
             elif isinstance(e, RenderCollisionError):
                 err_msg = f"Render collision: {e}"

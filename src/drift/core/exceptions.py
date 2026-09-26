@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Optional, Sequence, List, Any, Mapping
 
 from .constants import ExitCode
 
@@ -38,6 +38,45 @@ class DriftDetectedError(DriftError, RuntimeError):
     """Raised in stage_repo / deploy operations when unadopted live host drift or uncommitted install modifications block staging."""
     exit_code: int = ExitCode.DRIFT_DETECTED
 
+    def __init__(
+        self,
+        message: str,
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.packages: List[str] = list(packages) if packages is not None else []
+
+
+class HookMissingError(DriftError, FileNotFoundError):
+    """Raised when one or more configured lifecycle hook files are missing or invalid."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str,
+        packages: Optional[Sequence[str]] = None,
+        hook_name: Optional[str] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.packages: List[str] = list(packages) if packages is not None else []
+        self.hook_name = hook_name
+
+
+class MidwayTransactionError(DriftError, RuntimeError):
+    """Raised when package(s) are in an uncommitted midway transaction state ('staging' or 'installing')."""
+    exit_code: int = ExitCode.GENERAL_ERROR
+
+    def __init__(
+        self,
+        message: str,
+        packages: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        self.packages: List[str] = list(packages) if packages is not None else []
+
 
 class RenderError(DriftError, RuntimeError):
     """Raised when template compilation or render engine pipelines fail."""
@@ -52,6 +91,33 @@ class RenderCollisionError(RenderError):
 class InstallCollisionError(DriftError, RuntimeError):
     """Raised during install_repo collision guard safety aborts (e.g. target directory or parent symlink resolving inside drift_root)."""
     exit_code: int = ExitCode.COLLISION_ERROR
+
+
+class CrossPackageCollisionError(InstallCollisionError):
+    """Raised when two or more packages have colliding destination target paths during deployment."""
+    exit_code: int = ExitCode.COLLISION_ERROR
+
+    def __init__(
+        self,
+        message: str,
+        packages: Optional[Sequence[str]] = None,
+        conflicting_packages: Optional[Sequence[str]] = None,
+        conflicts: Optional[Mapping[Any, Any]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, **kwargs)
+        pkgs = conflicting_packages if conflicting_packages is not None else packages
+        self.packages: List[str] = list(pkgs) if pkgs is not None else []
+        self.conflicts: Optional[Mapping[Any, Any]] = conflicts
+
+    @property
+    def conflicting_packages(self) -> List[str]:
+        """The list of conflicting packages involved in the collision."""
+        return self.packages
+
+    @conflicting_packages.setter
+    def conflicting_packages(self, value: Sequence[str]) -> None:
+        self.packages = list(value)
 
 
 class HookExecutionError(DriftError, RuntimeError):

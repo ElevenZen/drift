@@ -29,7 +29,7 @@ from drift.utils.toml_utils import (
     validate_known_keys,
     parse_bool_value,
 )
-from drift.core.exceptions import ConfigError
+from drift.core.exceptions import ConfigError, HookMissingError
 from drift.config.workspace_config import (
     WorkspaceConfig,
     WorkspaceSectionConfig,
@@ -907,10 +907,10 @@ class TestConfigClasses(unittest.TestCase):
                 hooks.assert_hooks_exist(base, is_source=False)
             self.assertIn("missing.sh", str(cm.exception))
 
-            # 3. Hook path pointing to directory raises ValueError
+            # 3. Hook path pointing to directory raises HookMissingError
             (scripts_dir / "dir_hook").mkdir()
             hooks.post_update = base / "scripts/dir_hook"
-            with self.assertRaises(ValueError) as cm:
+            with self.assertRaises(HookMissingError) as cm:
                 hooks.assert_hooks_exist(base, is_source=False)
             self.assertIn("not a regular file", str(cm.exception))
 

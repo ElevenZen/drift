@@ -157,14 +157,18 @@ class TestErrorStacking(unittest.TestCase):
         from drift.core.exceptions import DriftDetectedError
 
         mock_p2.return_value = MagicMock(status="SUCCESS")
-        mock_prepare.side_effect = DriftDetectedError("Uncommitted modifications detected in install/pkg_a")
+        mock_prepare.side_effect = DriftDetectedError(
+            "Uncommitted modifications detected in install/pkg_a",
+            packages=["pkg_a"],
+        )
 
-        with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
+        with self.assertLogs("drift.primitives.deploy_repo", level="INFO") as cm:
             with self.assertRaises(RuntimeError) as ctx:
                 run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         logs = "\n".join(cm.output)
         self.assertIn("❌ [CRITICAL] Step 3 (Sandbox Staging Pre-flight) failed.", logs)
+        self.assertIn("👉 Problematic package(s): 'pkg_a'. Please resolve pre-flight issues and try 'drift deploy' again.", logs)
         self.assertIn("Step 3 (Sandbox Staging Pre-flight) failed.", str(ctx.exception))
         mock_recovery_card.assert_not_called()
 

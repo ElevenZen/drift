@@ -10,6 +10,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..core.state_registry import load_state_registry
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME, PackageStage
+from ..core.exceptions import HookMissingError
 from ..core.result_models import (
     PackageHealthStatus,
     PackageHealthResult,
@@ -72,6 +73,14 @@ def _execute_health_hook_no_throw(
     """Safely executes a health hook trigger function, handling errors and mapping to PackageHealthResult."""
     try:
         hook_res = trigger_fn()
+    except HookMissingError as e:
+        return PackageHealthResult(
+            package=pkg,
+            status=PackageHealthStatus.MISSING_HOOK,
+            hook_path=e.hook_name or str(e),
+            target_directory=str(target_dir),
+            error_message=str(e),
+        )
     except FileNotFoundError as e:
         return PackageHealthResult(
             package=pkg,

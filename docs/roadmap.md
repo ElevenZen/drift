@@ -60,7 +60,7 @@ Monolithic `file_utils.py` was decomposed into single-responsibility, functional
 ### 5. Domain Naming Standard (`ensure_` vs `assert_` vs `check_`)
 Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md):
 - **`ensure_`**: Functions that **create or modify state** to guarantee a postcondition (`ensure_dir`, `ensure_rendered_file_hook_permissions`).
-- **`assert_`**: **Read-only validation guards** that raise on failure without state modification (`assert_hooks_exist`, `assert_no_legacy_workspace_config`, `assert_no_cyclic_dependencies`, `assert_no_cross_package_conflicts`, `assert_source_file_clean`, `assert_workspace_healthy`, `assert_install_pkg_dir_clean`, `assert_writable`, `assert_git_repository_health`, `assert_repo_can_commit`, `assert_can_escalate`). Removed anti-pattern `force` arguments from assertions.
+- **`assert_`**: **Read-only validation guards** that raise on failure without state modification (`assert_packages_hooks_exist`, `assert_hooks_exist`, `assert_no_legacy_workspace_config`, `assert_no_cyclic_dependencies`, `assert_no_cross_package_conflicts`, `assert_source_file_clean`, `assert_workspace_healthy`, `assert_install_pkg_dirs_clean`, `assert_writable`, `assert_git_repository_health`, `assert_repo_can_commit`, `assert_can_escalate`). Removed anti-pattern `force` arguments from assertions.
 - **`check_`**: **Read-only inspection** returning result data values without raising or mutating state (`check_existing_workspace_status`, `check_patch_conflicts`).
 
 ### 6. Symmetrical 6-Tier Environment Architecture & `EnvConfig`

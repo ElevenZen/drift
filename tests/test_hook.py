@@ -1317,6 +1317,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         from drift.hooks.lifecycle_hooks import resolve_hook_source_path
         from drift.config.package_config import PackageConfig
         from drift.config.package_hooks import PackageHooks
+        from drift.core.exceptions import HookMissingError
 
         # 1. Static script inside package drift_hooks
         static_script = self.drift_hooks_dir / "static_hook.sh"
@@ -1348,40 +1349,46 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         self.assertEqual(resolved_ext, ext_script)
 
-        # 3. Not configured hook raises FileNotFoundError
-        with self.assertRaises(FileNotFoundError) as ctx:
+        # 3. Not configured hook raises HookMissingError (subclass of FileNotFoundError)
+        with self.assertRaises(HookMissingError) as ctx:
             resolve_hook_source_path(
                 workspace_config=self.workspace_config,
                 pkg_config=pkg_config,
                 hook_name="post_install",
             )
         self.assertIn("not configured", str(ctx.exception))
+        self.assertEqual(ctx.exception.packages, ["pkg_hook"])
+        self.assertEqual(ctx.exception.hook_name, "post_install")
 
-        # 4. Missing hook file raises FileNotFoundError
+        # 4. Missing hook file raises HookMissingError
         pkg_missing_config = PackageConfig(
             PackageSectionConfig(name="pkg_hook"),
             hooks=PackageHooks.from_dict({"pre_source": "drift_hooks/non_existent.sh"}, base_dir=self.src_pkg_dir),
         )
-        with self.assertRaises(FileNotFoundError) as ctx:
+        with self.assertRaises(HookMissingError) as ctx:
             resolve_hook_source_path(
                 workspace_config=self.workspace_config,
                 pkg_config=pkg_missing_config,
                 hook_name="pre_source",
             )
         self.assertIn("not found", str(ctx.exception))
+        self.assertEqual(ctx.exception.packages, ["pkg_hook"])
+        self.assertEqual(ctx.exception.hook_name, "pre_source")
 
-        # 5. Directory path instead of file raises FileNotFoundError
+        # 5. Directory path instead of file raises HookMissingError
         pkg_dir_config = PackageConfig(
             PackageSectionConfig(name="pkg_hook"),
             hooks=PackageHooks.from_dict({"pre_source": "drift_hooks"}, base_dir=self.src_pkg_dir),
         )
-        with self.assertRaises(FileNotFoundError) as ctx:
+        with self.assertRaises(HookMissingError) as ctx:
             resolve_hook_source_path(
                 workspace_config=self.workspace_config,
                 pkg_config=pkg_dir_config,
                 hook_name="pre_source",
             )
         self.assertIn("not a regular file", str(ctx.exception))
+        self.assertEqual(ctx.exception.packages, ["pkg_hook"])
+        self.assertEqual(ctx.exception.hook_name, "pre_source")
 
     def test_resolve_hook_exec_path_external_and_rendered(self) -> None:
         """Verifies resolve_hook_exec_path returns external path directly or renders package-internal hooks into sandbox."""
@@ -1441,8 +1448,9 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(res_nested, expected_nested)
 
     def test_assert_valid_hook_file(self) -> None:
-        """Verifies assert_valid_hook_file raises FileNotFoundError for missing or non-file paths."""
+        """Verifies assert_valid_hook_file raises HookMissingError (subclass of FileNotFoundError) for missing or non-file paths."""
         from drift.hooks.lifecycle_hooks import assert_valid_hook_file
+        from drift.core.exceptions import HookMissingError
 
         valid_file = self.drift_hooks_dir / "valid.sh"
         valid_file.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
@@ -1452,16 +1460,25 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(res, valid_file)
 
         # None path
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(HookMissingError) as ctx_none:
             assert_valid_hook_file(None, "pkg_test", "probe")
+        self.assertEqual(ctx_none.exception.packages, ["pkg_test"])
+        self.assertEqual(ctx_none.exception.hook_name, "probe")
+        self.assertIsInstance(ctx_none.exception, FileNotFoundError)
 
         # Non-existent
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(HookMissingError) as ctx_missing:
             assert_valid_hook_file(self.drift_hooks_dir / "missing.sh", "pkg_test", "probe")
+        self.assertEqual(ctx_missing.exception.packages, ["pkg_test"])
+        self.assertEqual(ctx_missing.exception.hook_name, "probe")
+        self.assertIsInstance(ctx_missing.exception, FileNotFoundError)
 
         # Directory
-        with self.assertRaises(FileNotFoundError):
+        with self.assertRaises(HookMissingError) as ctx_dir:
             assert_valid_hook_file(self.drift_hooks_dir, "pkg_test", "probe")
+        self.assertEqual(ctx_dir.exception.packages, ["pkg_test"])
+        self.assertEqual(ctx_dir.exception.hook_name, "probe")
+        self.assertIsInstance(ctx_dir.exception, FileNotFoundError)
 
     def test_parse_shebang_args(self) -> None:
         """Verifies _parse_shebang_args parses shebang arguments correctly."""

@@ -97,12 +97,18 @@ from ..core.constants import (
     InstallMethod,
     BackupSubfolder,
 )
-from ..core.exceptions import InstallCollisionError, HookExecutionError, mark_logged
+from ..core.exceptions import (
+    InstallCollisionError,
+    CrossPackageCollisionError,
+    HookExecutionError,
+    mark_logged,
+)
 from ..core.ignore import DriftIgnore
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
 from ..core.folder_diff import compare_folders, list_folder_paths
 from .stage_repo import PackageStageChanges
+from .package_assertions import assert_packages_hooks_exist
 from ..utils.path_utils import (
     resolve_target_path,
     encode_dot_prefix,
@@ -758,7 +764,7 @@ def assert_no_cross_package_conflicts(
     Collects all conflicting destination targets across the workspace and reports them together.
 
     Raises:
-        InstallCollisionError: When one or more cross-package collisions are detected.
+        CrossPackageCollisionError: When one or more cross-package collisions are detected.
     """
     discovered_set = set(discovered_packages)
 
@@ -812,7 +818,15 @@ def assert_no_cross_package_conflicts(
                 f"  • '{dst}': Package '{batch_claimants[0]}' (current batch) collides with '{installed_owners[0]}' (already installed)"
             )
 
-    raise InstallCollisionError("\n".join(conflict_lines))
+    conflicting_packages = sorted(set(
+        pkg for claims in conflicts.values() for pkg, _ in claims
+    ))
+
+    raise CrossPackageCollisionError(
+        "\n".join(conflict_lines),
+        packages=conflicting_packages,
+        conflicts=conflicts,
+    )
 
 
 def assert_one_package_deployment_ready(
@@ -1125,11 +1139,11 @@ def assert_packages_deployment_ready(
         assert_can_escalate()
 
     if not hook_flags.no_hooks:
-        for pkg, metadata in active_packages:
-            metadata.hooks.assert_hooks_exist(
-                workspace_config.install_path / pkg,
-                is_source=False,
-            )
+        assert_packages_hooks_exist(
+            dict(active_packages),
+            workspace_config.install_path,
+            is_source=False,
+        )
 
     assert_no_cross_package_conflicts(
         workspace_config=workspace_config,

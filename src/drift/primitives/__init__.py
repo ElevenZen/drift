@@ -3,6 +3,10 @@
 from .reverse_sync import (
     run_primitive_1_reverse_sync,
 )
+from .package_assertions import (
+    assert_packages_hooks_exist,
+    assert_install_pkg_dirs_clean,
+)
 from .stage_repo import (
     run_primitive_4_stage_render_to_install,
     PackageStageChanges,
@@ -80,6 +84,8 @@ __all__ = [
     "StagePlan",
     "PackageStageChanges",
     "apply_package_stage_changes",
+    "assert_packages_hooks_exist",
+    "assert_install_pkg_dirs_clean",
     "assert_packages_stage_ready",
     "assert_packages_deployment_ready",
     "run_primitive_5_install_deployment",

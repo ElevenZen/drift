@@ -57,7 +57,7 @@ from ..core.constants import (
 )
 from ..utils.env_utils import env_scope
 from ..utils.path_utils import is_relative_to
-from ..core.exceptions import HookExecutionError, mark_logged
+from ..core.exceptions import HookExecutionError, HookMissingError, mark_logged
 
 logger = logging.getLogger(__name__)
 
@@ -309,16 +309,16 @@ def assert_valid_hook_file(hook_path: Optional[Path], package_name: str, hook_na
     """Validates that a resolved hook path exists and is a regular file.
 
     Raises:
-        FileNotFoundError: If the hook file does not exist or is not a regular file.
+        HookMissingError: If the hook file does not exist or is not a regular file.
     """
     if not hook_path or not hook_path.exists():
         err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {hook_path}"
         logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
+        raise HookMissingError(err_msg, packages=[package_name], hook_name=hook_name)
     if not hook_path.is_file():
         err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {hook_path}"
         logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
+        raise HookMissingError(err_msg, packages=[package_name], hook_name=hook_name)
     return hook_path
 
 
@@ -338,7 +338,7 @@ def execute_hook_script(
             hook path, CWD, stdout, stderr, and sudo elevation flag (always False).
 
     Raises:
-        FileNotFoundError: If the hook script file does not exist on disk.
+        HookMissingError: If the hook script file does not exist on disk or is not a regular file.
         RuntimeError: If flags.raise_on_error is True and the hook script command times out or exits with a non-zero return code.
     """
     assert_valid_hook_file(hook_path=hook_path, package_name=pkg, hook_name=hook_name)
@@ -426,14 +426,14 @@ def resolve_hook_source_path(
     """Resolves and validates the source file path (static script or template) for a package lifecycle hook.
 
     Raises:
-        FileNotFoundError: If the hook file is not configured, not found on disk, or is not a regular file.
+        HookMissingError: If the hook file is not configured, not found on disk, or is not a regular file.
     """
     package_name = pkg_config.name
     hook_file_val = getattr(pkg_config.hooks, hook_name, None)
     if not hook_file_val:
         err_msg = f"Lifecycle hook '{hook_name}' is not configured for package '{package_name}'."
         logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
+        raise HookMissingError(err_msg, packages=[package_name], hook_name=hook_name)
 
     rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
     src_pkg_dir = workspace_config.source_path / package_name
@@ -515,8 +515,10 @@ def resolve_hook_exec_path(
     )
     hook_exec_path = hook_dest_dir / sub_rel
     if not hook_exec_path.exists():
-        raise RuntimeError(
-            f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering."
+        raise HookMissingError(
+            f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering.",
+            packages=[pkg_config.name],
+            hook_name=hook_name,
         )
     return hook_exec_path
 
@@ -649,7 +651,7 @@ def trigger_hook(
         HookResult detailing execution status ("SUCCESS", "FAILED", or "SKIPPED"), duration, CWD, and script path.
 
     Raises:
-        FileNotFoundError: If the configured hook script file does not exist on disk.
+        HookMissingError: If the configured hook script file does not exist on disk or is not a regular file.
         RuntimeError: If flags.raise_on_error is True and the hook script execution fails or times out.
     """
     exec_flags = HookExecFlags.resolve(flags)

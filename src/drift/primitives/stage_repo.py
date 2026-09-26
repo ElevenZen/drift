@@ -11,9 +11,9 @@ Pipeline Architecture:
             - Metadata Resolution (PackageConfig.from_render_dir)
             - Filtering (enable_install predicate)
             - Pre-flight Readiness (assert_packages_stage_ready [Layer 1])
-                * metadata.hooks.assert_hooks_exist
+                * assert_packages_hooks_exist [from package_assertions]
                 * state_registry.get_midway_packages
-                * assert_install_pkg_dir_clean [Layer 1]
+                * assert_install_pkg_dirs_clean [from package_assertions]
             -> Returns StagePlan(pkg_metadata, state_registry)
 
     2. Diff Computation & Staging Execution (State-Mutating):
@@ -38,7 +38,6 @@ Pipeline Architecture:
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
-        assert_install_pkg_dir_clean
         assert_packages_stage_ready
         generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
@@ -57,7 +56,7 @@ Layers (ordered bottom-up by dependency):
 import logging
 import shlex
 from pathlib import Path
-from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping
+from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping, Iterable
 from dataclasses import dataclass, field
 
 from ..core.constants import DRIFT_GENERATED_FILES
@@ -72,9 +71,12 @@ from ..utils.file_ops import (
 from ..utils.process_utils import assert_can_escalate
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.ignore import DriftIgnore
-from ..utils.git_utils import has_uncommitted_modifications
 from ..core.state_registry import load_state_registry, StateRegistry
-from ..core.exceptions import DriftDetectedError
+from ..core.exceptions import MidwayTransactionError
+from .package_assertions import (
+    assert_packages_hooks_exist,
+    assert_install_pkg_dirs_clean,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -145,18 +147,6 @@ class PackageStageChanges:
 # Layer 1: Pre-flight Verification & File Operations
 # =====================================================================
 
-def assert_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
-    """Verifies that the package directory in install/ has no uncommitted local git changes."""
-    install_pkg_dir = install_base / pkg
-    if not install_pkg_dir.is_dir():
-        return
-    if has_uncommitted_modifications(install_base, install_pkg_dir):
-        raise DriftDetectedError(
-            f"Package '{pkg}' in install directory has uncommitted local modifications. "
-            "Please commit or stash your changes before staging, or use --force flag to bypass this check."
-        )
-
-
 def assert_packages_stage_ready(
     pkg_metadata: Mapping[str, PackageConfig],
     render_base: Path,
@@ -174,29 +164,31 @@ def assert_packages_stage_ready(
        local git modifications.
 
     Raises:
-        FileNotFoundError: If a configured hook file does not exist in render/.
-        RuntimeError: If any package is in a midway transaction state.
-        DriftDetectedError: If an install package directory has uncommitted modifications.
+        HookMissingError: If configured hook files do not exist or are invalid.
+        MidwayTransactionError: If any package is in a midway transaction state.
+        DriftDetectedError: If install package directories have uncommitted modifications.
     """
-    for pkg, metadata in pkg_metadata.items():
-        metadata.hooks.assert_hooks_exist(render_base / pkg, is_source=False)
+    # 1. Collect all package hook assertion errors before raising
+    assert_packages_hooks_exist(pkg_metadata, render_base, is_source=False)
 
     if force:
         return
 
+    # 2. Collect all midway transaction state packages before raising
     midway_pkgs = state_registry.get_midway_packages(target_packages=pkg_metadata.keys())
     if midway_pkgs:
         pkg_names = [pkg for pkg, _ in midway_pkgs]
         pkg_cmd_str = shlex.join(pkg_names)
         details = ", ".join(f"'{pkg}' ({state})" for pkg, state in midway_pkgs)
-        raise RuntimeError(
+        raise MidwayTransactionError(
             f"Safety Abort: Package(s) in midway transaction state: {details}, "
             f"indicating a previous operation failed midway. "
-            f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying."
+            f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying.",
+            packages=pkg_names,
         )
 
-    for pkg in pkg_metadata.keys():
-        assert_install_pkg_dir_clean(install_base, pkg)
+    # 3. Collect all unclean package directories before raising
+    assert_install_pkg_dirs_clean(install_base, pkg_metadata.keys())
 
 
 def generate_stage_stow_ignore(

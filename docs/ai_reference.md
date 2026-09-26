@@ -114,7 +114,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`PackageHooks`](../src/drift/hooks/lifecycle_hooks.py): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
 
 ### [`core/exceptions.py`](../src/drift/core/exceptions.py) & Standard Exit Codes
-*   [`InstallCollisionError`](../src/drift/core/exceptions.py) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, cross-package file conflict, or symlinked parent directory.
+*   [`InstallCollisionError`](../src/drift/core/exceptions.py) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, or symlinked parent directory. Specialized subclass [`CrossPackageCollisionError`](../src/drift/core/exceptions.py) (`packages`, `conflicting_packages`, `conflicts`) is raised on cross-package destination path conflicts.
 *   [`ConfigError`](../src/drift/core/exceptions.py) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or DAG cyclic dependency.
 *   [`RenderError`](../src/drift/core/exceptions.py) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure.
 *   [`HookExecutionError`](../src/drift/core/exceptions.py): Script execution timeout or non-zero returncode.
@@ -157,7 +157,7 @@ This document provides a concise, high-density architecture reference, primitive
     *   **Subfolder `source_directory` Payload Isolation**: If `source_directory` is configured (e.g. `source_directory = "dotfiles"`), source templates render from `src/<pkg>/<source_directory>/` directly to the package root in `render/<pkg>/`, while `src/<pkg>/drift_hooks/` is rendered into `render/<pkg>/.drift/hooks/` and completely excluded from host deployment.
 10. **Target Directory Migration & Cross-Package Conflict Audit**:
     *   **Target Directory Migration**: Changing `target_directory` in package configuration triggers an atomic re-targeting during deployment: previous deployed files are undeployed/deleted from the old target, `redeploy = True` is enforced to populate the new target, while uninstallation hooks and backup restoration are NOT executed.
-    *   **Cross-Package Destination Conflict Audit**: Before executing physical deployment, Drift audits all destination path claims across the batch and external installed packages in `state.toml`, reporting all intra-batch and inter-package path collisions together (`InstallCollisionError`).
+    *   **Cross-Package Destination Conflict Audit**: Before executing physical deployment, Drift audits all destination path claims across the batch and external installed packages in `state.toml`, reporting all intra-batch and inter-package path collisions together ([`CrossPackageCollisionError`](../src/drift/core/exceptions.py)).
     *   **Midway Transaction States**: `MIDWAY_TRANSACTION_STATES = ("staging", "installing")`. Packages in midway states require `--force` or `drift rollback` to proceed.
 11. **Python Preprocessor Hook Clean-Room Invariant**:
     *   Dynamic Python preprocessor hooks (`drift_workspace.py` / `drift_package.py`) execute purely in-memory with **zero footprint on `os.environ`**.

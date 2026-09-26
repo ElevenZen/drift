@@ -10,7 +10,9 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
+from drift.core.exceptions import HookMissingError
 from drift.config.workspace_config import WorkspaceConfig
+from drift.primitives.package_assertions import assert_install_pkg_dirs_clean
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
     assert_packages_stage_ready,
@@ -663,7 +665,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("missing_hook.sh", str(cm.exception))
 
     def test_stage_fails_if_hook_file_is_directory_in_render(self) -> None:
-        """Verifies that staging raises ValueError if a configured hook file is a directory in render/."""
+        """Verifies that staging raises HookMissingError if a configured hook file is a directory in render/."""
         pkg_name = "pkg_hook_is_dir"
         self.workspace_config.packages_enable[pkg_name] = True
 
@@ -680,7 +682,7 @@ class TestStageRepo(unittest.TestCase):
             post_install = "drift_hooks/hook_dir"
             """)
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(HookMissingError) as cm:
             run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_name])
         self.assertIn("not a regular file", str(cm.exception))
 
@@ -1115,6 +1117,7 @@ class TestStageRepo(unittest.TestCase):
                 force=False,
             )
         self.assertIn("Safety Abort: Package(s) in midway transaction state:", str(ctx.exception))
+        self.assertEqual(getattr(ctx.exception, "packages", []), ["pkg_a"])
 
         # 3. Midway state with force=True bypasses the check
         assert_packages_stage_ready(
@@ -1134,7 +1137,7 @@ class TestStageRepo(unittest.TestCase):
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "untracked.txt").write_text("dirty", encoding="utf-8")
 
-        with self.assertRaises(DriftDetectedError):
+        with self.assertRaises(DriftDetectedError) as ctx_drift:
             assert_packages_stage_ready(
                 pkg_metadata=pkg_metadata,
                 render_base=self.render_dir,
@@ -1142,6 +1145,7 @@ class TestStageRepo(unittest.TestCase):
                 state_registry=registry,
                 force=False,
             )
+        self.assertEqual(ctx_drift.exception.packages, ["pkg_a"])
 
         # 5. Dirty install repo with force=True bypasses the check
         assert_packages_stage_ready(
@@ -1151,6 +1155,81 @@ class TestStageRepo(unittest.TestCase):
             state_registry=registry,
             force=True,
         )
+
+    def test_assert_packages_stage_ready_multi_package_aggregation(self) -> None:
+        """Verifies that missing hooks, midway transactions, and dirty directories aggregate all causing packages."""
+        from drift.config.package_config import PackageConfig
+        from drift.core.state_registry import StateRegistry
+        from drift.core.exceptions import HookMissingError, MidwayTransactionError, DriftDetectedError
+        import subprocess
+
+        render_package(self.workspace_config, self.pkg_a_src)
+        render_package(self.workspace_config, self.pkg_b_src)
+        meta_a = PackageConfig.from_render_dir(self.render_dir / "pkg_a", self.workspace_config)
+        meta_b = PackageConfig.from_render_dir(self.render_dir / "pkg_b", self.workspace_config)
+        pkg_metadata = {"pkg_a": meta_a, "pkg_b": meta_b}
+        registry = StateRegistry()
+
+        # 1. Missing hook files aggregated across all failing packages
+        meta_a.hooks.post_install = Path("/nonexistent/missing_a.sh")
+        meta_b.hooks.post_install = Path("/nonexistent/missing_b.sh")
+        with self.assertRaises(HookMissingError) as ctx:
+            assert_packages_stage_ready(
+                pkg_metadata=pkg_metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=registry,
+                force=False,
+            )
+        self.assertEqual(ctx.exception.packages, ["pkg_a", "pkg_b"])
+        self.assertIn("pkg_a", str(ctx.exception))
+        self.assertIn("pkg_b", str(ctx.exception))
+
+        # Reset hooks
+        meta_a.hooks.post_install = None
+        meta_b.hooks.post_install = None
+
+        # 2. Midway transaction states aggregated across all packages
+        registry.set_package_state("pkg_a", "installing")
+        registry.set_package_state("pkg_b", "staging")
+        with self.assertRaises(MidwayTransactionError) as ctx_midway:
+            assert_packages_stage_ready(
+                pkg_metadata=pkg_metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=registry,
+                force=False,
+            )
+        self.assertEqual(sorted(ctx_midway.exception.packages), ["pkg_a", "pkg_b"])
+        self.assertIn("pkg_a", str(ctx_midway.exception))
+        self.assertIn("pkg_b", str(ctx_midway.exception))
+
+        # Reset states
+        registry.set_package_state("pkg_a", "staged")
+        registry.set_package_state("pkg_b", "staged")
+
+        # 3. Dirty install directories aggregated across all packages
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        pkg_a_install = self.install_dir / "pkg_a"
+        pkg_b_install = self.install_dir / "pkg_b"
+        pkg_a_install.mkdir(parents=True, exist_ok=True)
+        pkg_b_install.mkdir(parents=True, exist_ok=True)
+        (pkg_a_install / "dirty_a.txt").write_text("dirty a", encoding="utf-8")
+        (pkg_b_install / "dirty_b.txt").write_text("dirty b", encoding="utf-8")
+
+        with self.assertRaises(DriftDetectedError) as ctx_dirty:
+            assert_packages_stage_ready(
+                pkg_metadata=pkg_metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=registry,
+                force=False,
+            )
+        self.assertEqual(sorted(ctx_dirty.exception.packages), ["pkg_a", "pkg_b"])
+        self.assertIn("pkg_a", str(ctx_dirty.exception))
+        self.assertIn("pkg_b", str(ctx_dirty.exception))
 
     def test_prepare_and_execute_stage_packages_sub_stages(self) -> None:
         """Verifies that prepare_stage_packages and execute_stage_packages can be executed in sequence."""
@@ -1194,6 +1273,42 @@ class TestStageRepo(unittest.TestCase):
             state_registry=plan.state_registry,
         )
         self.assertEqual(empty_changes, {})
+
+    def test_assert_install_pkg_dirs_clean(self) -> None:
+        """Verifies that assert_install_pkg_dirs_clean collects all unclean package directories before raising."""
+        import subprocess
+        from drift.core.exceptions import DriftDetectedError
+
+        # Initialize install as git repository
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+
+        pkg_a_install = self.install_dir / "pkg_a"
+        pkg_b_install = self.install_dir / "pkg_b"
+        pkg_a_install.mkdir(parents=True, exist_ok=True)
+        pkg_b_install.mkdir(parents=True, exist_ok=True)
+
+        # 1. Nonexistent and clean package directories pass without raising
+        assert_install_pkg_dirs_clean(self.install_dir, "nonexistent_pkg")
+        assert_install_pkg_dirs_clean(self.install_dir, ["pkg_a", "pkg_b"])
+
+        # 2. Single dirty package directory raises DriftDetectedError with single package in packages
+        dirty_file_a = pkg_a_install / "mod_a.txt"
+        dirty_file_a.write_text("uncommitted a", encoding="utf-8")
+        with self.assertRaises(DriftDetectedError) as ctx_single:
+            assert_install_pkg_dirs_clean(self.install_dir, "pkg_a")
+        self.assertEqual(ctx_single.exception.packages, ["pkg_a"])
+        self.assertIn("'pkg_a'", str(ctx_single.exception))
+
+        # 3. Multiple packages with both dirty collects all dirty packages before raising
+        dirty_file_b = pkg_b_install / "mod_b.txt"
+        dirty_file_b.write_text("uncommitted b", encoding="utf-8")
+        with self.assertRaises(DriftDetectedError) as ctx_multi:
+            assert_install_pkg_dirs_clean(self.install_dir, ["pkg_a", "pkg_b"])
+        self.assertEqual(sorted(ctx_multi.exception.packages), ["pkg_a", "pkg_b"])
+        self.assertIn("'pkg_a'", str(ctx_multi.exception))
+        self.assertIn("'pkg_b'", str(ctx_multi.exception))
 
 
 if __name__ == "__main__":

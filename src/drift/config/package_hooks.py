@@ -44,7 +44,7 @@ from ..core.constants import (
     LIFECYCLE_HOOK_NAMES,
     WINDOWS_PLATFORM_ALIASES,
 )
-from ..core.exceptions import ConfigError
+from ..core.exceptions import ConfigError, HookMissingError
 from ..core.result_models import HookResult
 from ..utils.path_utils import is_relative_to
 from ..utils.toml_utils import get_first_from, validate_known_keys
@@ -583,13 +583,13 @@ class PackageHooks:
             flags=flags,
         )
 
-    def assert_hooks_exist(
+    def check_missing_hooks(
         self,
         base_dir: Path,
         is_source: bool,
-        hook_names: Sequence[str] = ()
-    ) -> None:
-        """Validates that configured lifecycle hook files exist in base_dir and are regular files.
+        hook_names: Sequence[str] = (),
+    ) -> List[Tuple[str, Path, str]]:
+        """Inspects configured lifecycle hook files and returns a list of (hook_name, hook_path, reason).
 
         Args:
             base_dir: Directory containing package files (e.g. src/<pkg>, render/<pkg>, or install/<pkg>).
@@ -597,12 +597,13 @@ class PackageHooks:
                 False if base_dir is a compiled/staged directory (render/<pkg> or install/<pkg>).
             hook_names: Sequence of hook names to check. If empty/omitted, all LIFECYCLE_HOOK_NAMES are checked.
 
-        Raises:
-            FileNotFoundError: If a configured hook file does not exist.
-            ValueError: If a configured hook path is not a regular file.
+        Returns:
+            A list of tuples (hook_name, hook_path, failure_reason) for any missing or invalid hook files.
         """
         pkg_name = self._package_config.name if self._package_config else "unknown"
         target_hooks = hook_names if hook_names else LIFECYCLE_HOOK_NAMES
+        failures: List[Tuple[str, Path, str]] = []
+
         for hook_name in target_hooks:
             hook_val = getattr(self, hook_name, None)
             if hook_val is None:
@@ -621,10 +622,48 @@ class PackageHooks:
                 hook_path = hook_val
 
             if not hook_path.exists():
-                raise FileNotFoundError(
-                    f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'"
+                failures.append(
+                    (
+                        hook_name,
+                        hook_path,
+                        f"Lifecycle hook file specified for '{hook_name}' in package '{pkg_name}' does not exist: '{hook_path}'",
+                    )
                 )
-            if not hook_path.is_file():
-                raise ValueError(
-                    f"Lifecycle hook path specified for '{hook_name}' in package '{pkg_name}' is not a regular file: '{hook_path}'"
+            elif not hook_path.is_file():
+                failures.append(
+                    (
+                        hook_name,
+                        hook_path,
+                        f"Lifecycle hook path specified for '{hook_name}' in package '{pkg_name}' is not a regular file: '{hook_path}'",
+                    )
                 )
+
+        return failures
+
+    def assert_hooks_exist(
+        self,
+        base_dir: Path,
+        is_source: bool,
+        hook_names: Sequence[str] = ()
+    ) -> None:
+        """Validates that configured lifecycle hook files exist in base_dir and are regular files.
+
+        Args:
+            base_dir: Directory containing package files (e.g. src/<pkg>, render/<pkg>, or install/<pkg>).
+            is_source: True if base_dir is the package source directory (src/<pkg>),
+                False if base_dir is a compiled/staged directory (render/<pkg> or install/<pkg>).
+            hook_names: Sequence of hook names to check. If empty/omitted, all LIFECYCLE_HOOK_NAMES are checked.
+
+        Raises:
+            HookMissingError: If a configured hook file does not exist or is not a regular file.
+        """
+        failures = self.check_missing_hooks(base_dir, is_source=is_source, hook_names=hook_names)
+        if failures:
+            pkg_name = self._package_config.name if self._package_config else "unknown"
+            reasons = "; ".join(reason for _, _, reason in failures)
+            raise HookMissingError(
+                reasons,
+                packages=[pkg_name],
+                hook_name=failures[0][0],
+            )
+

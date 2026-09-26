@@ -61,6 +61,7 @@ from typing import List, Optional, Tuple, Dict, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.state_registry import load_state_registry, PackageState, StateRegistry
+from .package_assertions import assert_packages_hooks_exist
 from ..utils.process_utils import assert_can_escalate
 from ..utils.file_ops import (
     remove,
@@ -411,10 +412,12 @@ def run_primitive_7_uninstall_packages(
             assert_can_escalate()
 
         if not detach and not hook_flags.no_hooks:
-            for pkg, pkg_config in pkg_config_map.items():
-                pkg_config.hooks.assert_hooks_exist(
-                    workspace_config.install_path / pkg, is_source=False, hook_names=UNINSTALL_HOOK_NAMES
-                )
+            assert_packages_hooks_exist(
+                pkg_config_map,
+                workspace_config.install_path,
+                is_source=False,
+                hook_names=UNINSTALL_HOOK_NAMES,
+            )
 
     package_results: List[PackageUninstallResult] = []
     successfully_uninstalled: List[str] = []

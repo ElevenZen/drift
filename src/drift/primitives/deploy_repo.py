@@ -225,7 +225,12 @@ def execute_sequential_compile_and_apply(
         else:
             logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
             mark_logged(e)
-        logger.info("👉 Please resolve any staging pre-flight issues and try 'drift deploy' again.")
+        causing_pkgs = getattr(e, "packages", None)
+        if causing_pkgs:
+            pkgs_str = ", ".join(f"'{p}'" for p in causing_pkgs)
+            logger.info(f"👉 Problematic package(s): {pkgs_str}. Please resolve pre-flight issues and try 'drift deploy' again.")
+        else:
+            logger.info("👉 Please resolve any staging pre-flight issues and try 'drift deploy' again.")
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
     if not stage_plan.pkg_metadata:
@@ -276,6 +281,7 @@ def execute_sequential_compile_and_apply(
         if e.requires_rollback:
             print_emergency_recovery_card(failed_step, str(e), target_pkgs)
             raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        # No rollback needed, so commit the changes here.
         try:
             run_primitive_6_commit_install_repo(
                 workspace_config,

@@ -25,7 +25,7 @@ from drift.core.state_registry import (
         StateRegistry,
         PackageState
 )
-from drift.core.exceptions import InstallCollisionError
+from drift.core.exceptions import InstallCollisionError, CrossPackageCollisionError, HookMissingError
 from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
         resolve_target_path,
@@ -1730,7 +1730,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("missing.sh", str(cm.exception))
 
     def test_install_fails_if_hook_file_is_directory_in_install(self) -> None:
-        """Verifies that installation raises ValueError if a configured hook file is a directory in install/."""
+        """Verifies that installation raises HookMissingError if a configured hook file is a directory in install/."""
         pkg = "pkg_hook_is_dir"
         self.workspace_config.packages_enable[pkg] = True
 
@@ -1747,7 +1747,7 @@ class TestInstallRepo(unittest.TestCase):
         [hooks]
         post_install = "drift_hooks/hook_dir"
         """, encoding="utf-8")
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(HookMissingError) as cm:
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("not a regular file", str(cm.exception))
 
@@ -2030,7 +2030,7 @@ class TestInstallRepo(unittest.TestCase):
             for pkg in ["pkg_a", "pkg_b", "pkg_c"]
         }
 
-        with self.assertRaises(InstallCollisionError) as ctx:
+        with self.assertRaises(CrossPackageCollisionError) as ctx:
             assert_no_cross_package_conflicts(
                 workspace_config=self.workspace_config,
                 discovered_packages=["pkg_a", "pkg_b", "pkg_c"],
@@ -2045,6 +2045,9 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("pkg_a", err_msg)
         self.assertIn("pkg_b", err_msg)
         self.assertIn("pkg_c", err_msg)
+        self.assertEqual(ctx.exception.packages, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertEqual(ctx.exception.conflicting_packages, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertEqual(len(ctx.exception.conflicts), 2)
 
     def test_cross_package_inter_package_conflict_excludes_redeploying_package(self) -> None:
         """Verifies that inter-package conflicts exclude packages in the current deployment batch and report external collisions."""
@@ -2086,12 +2089,15 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_new_dir / "dot-app" / "app.conf").write_text("conflicting app conf", encoding="utf-8")
         self.workspace_config.packages_enable[pkg_new] = True
 
-        with self.assertRaises(InstallCollisionError) as ctx:
+        with self.assertRaises(CrossPackageCollisionError) as ctx:
             run_primitive_5_install_deployment(self.workspace_config, [pkg_new])
 
         err_msg = str(ctx.exception)
         self.assertIn("Cross-package destination conflicts detected (1 collision(s)):", err_msg)
         self.assertIn("Package 'pkg_new' (current batch) collides with 'pkg_installed' (already installed)", err_msg)
+        self.assertEqual(ctx.exception.packages, ["pkg_installed", "pkg_new"])
+        self.assertEqual(ctx.exception.conflicting_packages, ["pkg_installed", "pkg_new"])
+        self.assertEqual(len(ctx.exception.conflicts), 1)
 
     def test_target_directory_migration_clean_migration(self) -> None:
         """Verifies that changing target_directory cleans up old deployed files, deploys to new target, and updates state."""
