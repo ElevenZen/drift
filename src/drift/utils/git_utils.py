@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from .process_utils import run_command
 from .file_inspect import is_temp_file
 from ..core.constants import DRIFT_GENERATED_FILES
+from ..core.exceptions import mark_logged
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ def commit_repo_changes(
         run_command(add_cmd, text=True)
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to stage changes in {repo_name}. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to stage changes in {repo_name}: {e.stderr}") from e
+        raise mark_logged(RuntimeError(f"Failed to stage changes in {repo_name}: {e.stderr}")) from e
 
     # 2. Check if there are uncommitted modifications to commit
     if target_pkgs:
@@ -205,7 +206,7 @@ def commit_repo_changes(
         return True
     except subprocess.CalledProcessError as e:
         logger.error(f"Failed to commit changes in {repo_name}. Stderr: {e.stderr}")
-        raise RuntimeError(f"Failed to commit changes in {repo_name}: {e.stderr}") from e
+        raise mark_logged(RuntimeError(f"Failed to commit changes in {repo_name}: {e.stderr}")) from e
 
 
 def is_git_tracked(dir_path: Path) -> bool:

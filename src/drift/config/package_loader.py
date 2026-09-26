@@ -39,7 +39,7 @@ from ..core.constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
 )
-from ..core.exceptions import ConfigError
+from ..core.exceptions import ConfigError, mark_logged
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
@@ -249,6 +249,8 @@ def load_package_config_rendered(
             base_dir=package_dir,
             workspace_config=workspace_config,
         )
+    except ConfigError:
+        raise
     except (TypeError, ValueError) as e:
         raise ConfigError(f"Invalid package configuration for '{package_name}' in '{package_toml_path}': {e}") from e
     return config
@@ -327,12 +329,14 @@ def load_package_config_from_source_dir(
             base_dir=package_dir,
             workspace_config=workspace_config,
         )
+    except ConfigError:
+        raise
     except (TypeError, ValueError) as e:
         package_dir_log = package_dir.relative_to(workspace_config.drift_root) if workspace_config else package_dir
         err_msg = (f"Invalid configuration for package '{pkg_name}' in '{package_dir_log}' "
                    f"from {[str(x.relative_to(package_dir)) for x in source_files]}: {e}")
         logger.error(f"❌ {err_msg}")
-        raise ConfigError(err_msg) from e
+        raise mark_logged(ConfigError(err_msg)) from e
     return config
 
 

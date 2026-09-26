@@ -97,7 +97,7 @@ from ..core.constants import (
     InstallMethod,
     BackupSubfolder,
 )
-from ..core.exceptions import InstallCollisionError, HookExecutionError
+from ..core.exceptions import InstallCollisionError, HookExecutionError, mark_logged
 from ..core.ignore import DriftIgnore
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
@@ -1103,7 +1103,7 @@ def deploy_one_package_with_error_wrapping(
         if stdout_str.strip():
             err_msg += f"\nStdout:\n{stdout_str.strip()}"
         logger.error(err_msg)
-        raise RuntimeError(err_msg) from e
+        raise mark_logged(RuntimeError(err_msg)) from e
 
 
 def precheck_deployment_packages(

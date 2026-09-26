@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Any
 
 from .constants import ExitCode
 
@@ -6,6 +6,27 @@ from .constants import ExitCode
 class DriftError(Exception):
     """Base class for all Drift domain exceptions."""
     exit_code: int = ExitCode.GENERAL_ERROR
+    logged: bool = False
+
+    def __init__(self, *args: Any, logged: bool = False, **kwargs: Any) -> None:
+        super().__init__(*args)
+        self.logged = logged
+
+
+def mark_logged(exc: BaseException) -> BaseException:
+    """Marks any exception instance (built-in or domain) as having been logged to console output."""
+    setattr(exc, "logged", True)
+    return exc
+
+
+def is_logged(exc: BaseException) -> bool:
+    """Returns True if the exception has already been logged to console output."""
+    return getattr(exc, "logged", False)
+
+
+def is_drift_error(exc: BaseException) -> bool:
+    """Returns True if the exception is a custom Drift domain error."""
+    return isinstance(exc, DriftError)
 
 
 class ConfigError(DriftError, ValueError, TypeError):

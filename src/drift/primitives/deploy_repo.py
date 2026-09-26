@@ -18,7 +18,7 @@ from .install_repo import (
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
-from ..core.exceptions import HookExecutionError
+from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
 from ..core.constants import STATE_REGISTRY_FILE_NAME
 from ..core.state_registry import load_state_registry
 from ..core.result_models import (
@@ -178,9 +178,13 @@ def execute_sequential_compile_and_apply(
             raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
         completed_steps.append(CompletedStep(1, "template_rendering"))
     except Exception as e:
-        logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
         logger.info("👉 You can resolve the template issues and simply try 'drift deploy' again.")
-        raise RuntimeError(f"{failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
     # 2. Commit sandbox changes
     failed_step = "Step 2 (Sandbox History Committing)"
@@ -194,9 +198,13 @@ def execute_sequential_compile_and_apply(
         )
         completed_steps.append(CompletedStep(2, "render_commit"))
     except Exception as e:
-        logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
         logger.info("👉 Please resolve any render sandbox repository Git issues and try 'drift deploy' again.")
-        raise RuntimeError(f"{failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
     # 3. Stage render sandbox to install state base
     failed_step = "Step 3 (Sandbox Staging)"
@@ -248,13 +256,13 @@ def execute_sequential_compile_and_apply(
                 )
             except Exception as commit_err:
                 logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
-            logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure: {e.message}")
-            raise RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}") from e
+            logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
+            raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-        raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-        raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
     # 5. Commit state database configurations
     failed_step = "Step 5 (State Database Committing)"
@@ -267,14 +275,18 @@ def execute_sequential_compile_and_apply(
         )
         completed_steps.append(CompletedStep(5, "install_commit"))
     except Exception as e:
-        logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
         msg = (
             f"The deployment succeeded on your host, but committing to the state database failed.\n"
             f"👉 Please resolve the Git state manually by running:\n"
             f"    drift install-commit -m \"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}\""
         )
         print(msg, file=sys.stderr)
-        raise RuntimeError(f"{failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
     return install_res.packages, completed_steps
 

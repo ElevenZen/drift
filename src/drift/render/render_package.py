@@ -27,7 +27,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
-from ..core.exceptions import ConfigError, RenderCollisionError
+from ..core.exceptions import ConfigError, RenderCollisionError, is_logged, mark_logged, is_drift_error
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.result_models import PackageRenderResult, RenderResult
 from ..utils.file_ops import remove, copy_file
@@ -477,7 +477,11 @@ def run_primitive_2_render_packages(
                 err_msg = f"Config error: {e}"
             else:
                 err_msg = f"Error: {e}"
-            logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+            if is_logged(e):
+                logger.error(f"❌ Failed to render package '{package_name}'.")
+            else:
+                logger.error(f"❌ Failed to render package '{package_name}': {err_msg}")
+                mark_logged(e)
             errors.append((package_name, err_msg, e))
             results.append(PackageRenderResult(
                 package=package_name,

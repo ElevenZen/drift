@@ -5,7 +5,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import cast, Optional, List, TYPE_CHECKING
+from typing import cast, Optional, List, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.workspace_config import WorkspaceConfig, SettingsConfig
@@ -23,7 +23,7 @@ from ..core.constants import (
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
 from ..utils.env_utils import env_scope
-from ..core.exceptions import HookExecutionError
+from ..core.exceptions import HookExecutionError, mark_logged
 
 logger = logging.getLogger(__name__)
 
@@ -135,6 +135,135 @@ def execute_hook_command(
     )
 
 
+@dataclass(frozen=True)
+class HookFailureDetails:
+    """Diagnostic details extracted from a hook execution failure or timeout."""
+    exit_code: int
+    headline: str
+    stdout: str
+    stderr: str
+
+
+def _extract_str(val: Optional[Union[str, bytes]]) -> str:
+    """Normalizes optional str or bytes from process output to a clean string."""
+    if val is None:
+        return ""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="replace")
+    return str(val)
+
+
+def _extract_hook_failure_details(
+    exc: Union[subprocess.TimeoutExpired, subprocess.CalledProcessError, Exception],
+    pkg: str,
+    hook_name: str,
+    timeout_seconds: int,
+) -> HookFailureDetails:
+    """Extracts exit code, headline message, stdout, and stderr from a subprocess failure."""
+    if isinstance(exc, subprocess.TimeoutExpired):
+        return HookFailureDetails(
+            exit_code=124,
+            headline=f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.",
+            stdout=_extract_str(getattr(exc, "stdout", None) or getattr(exc, "output", None)),
+            stderr=_extract_str(getattr(exc, "stderr", None)),
+        )
+    if isinstance(exc, subprocess.CalledProcessError):
+        return HookFailureDetails(
+            exit_code=exc.returncode,
+            headline=f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {exc.returncode}.",
+            stdout=_extract_str(exc.stdout),
+            stderr=_extract_str(exc.stderr),
+        )
+    return HookFailureDetails(
+        exit_code=1,
+        headline=f"Lifecycle hook '{hook_name}' for package '{pkg}' failed: {exc}",
+        stdout="",
+        stderr="",
+    )
+
+
+def _format_hook_error_message(
+    headline: str,
+    cmd: List[str],
+    stdout_str: str,
+    stderr_str: str,
+) -> str:
+    """Formats a detailed multiline error message for hook failures."""
+    err_msg = (
+        f"{headline}\n"
+        f"Command: {shlex.join(cmd)}\n"
+    )
+    if stdout_str.strip():
+        err_msg += f"Stdout:\n{stdout_str.strip()}\n"
+    if stderr_str.strip():
+        err_msg += f"Stderr:\n{stderr_str.strip()}\n"
+    return err_msg
+
+
+def _should_rollback_on_hook_failure(
+    metadata: Optional[PackageConfig],
+    hook_name: str,
+) -> bool:
+    """Determines whether hook failure triggers workspace rollback based on package config."""
+    if metadata is not None:
+        return metadata.hooks.should_rollback_on_failure(hook_name)
+    return True
+
+
+def handle_hook_execution_failure(
+    exc: Union[subprocess.TimeoutExpired, subprocess.CalledProcessError, Exception],
+    pkg: str,
+    hook_name: str,
+    hook_path: Path,
+    cmd: List[str],
+    cwd: Path,
+    duration_ms: float,
+    timeout_seconds: int,
+    metadata: Optional[PackageConfig],
+    exec_flags: HookExecFlags,
+) -> HookResult:
+    """Handles lifecycle hook process failure or timeout, logs diagnostics, and returns HookResult or raises HookExecutionError."""
+    details = _extract_hook_failure_details(
+        exc=exc,
+        pkg=pkg,
+        hook_name=hook_name,
+        timeout_seconds=timeout_seconds,
+    )
+    err_msg = _format_hook_error_message(
+        headline=details.headline,
+        cmd=cmd,
+        stdout_str=details.stdout,
+        stderr_str=details.stderr,
+    )
+    logger.error(err_msg)
+
+    should_rollback = _should_rollback_on_hook_failure(metadata, hook_name)
+
+    if exec_flags.raise_on_error:
+        raise mark_logged(HookExecutionError(
+            package=pkg,
+            hook_name=hook_name,
+            message=err_msg,
+            requires_rollback=should_rollback,
+            exit_code=details.exit_code,
+        )) from exc
+
+    return HookResult(
+        command="hook",
+        package=pkg,
+        hook_name=hook_name,
+        status="FAILED",
+        exit_code=details.exit_code,
+        hook_path=str(hook_path),
+        cwd=str(cwd),
+        sudo=False,
+        duration_ms=duration_ms,
+        stdout=details.stdout,
+        stderr=details.stderr,
+        error_message=err_msg,
+    )
+
+
 def execute_hook_script(
     hook_path: Path,
     pkg: str,
@@ -197,83 +326,19 @@ def execute_hook_script(
                 stdout=proc.stdout if proc else None,
                 stderr=proc.stderr if proc else None
             )
-        except subprocess.TimeoutExpired as e:
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError) as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
-            stdout_str = cast(str, e.stdout) or ""
-            stderr_str = cast(str, e.stderr) or ""
-            display_cmd = cmd
-            err_msg = (
-                f"Lifecycle hook '{hook_name}' for package '{pkg}' timed out after {timeout_seconds} seconds.\n"
-                f"Command: {shlex.join(display_cmd)}\n"
-            )
-            if stdout_str.strip():
-                err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-            if stderr_str.strip():
-                err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-            logger.error(err_msg)
-            should_rollback = True
-            if metadata is not None and hasattr(metadata, "hooks") and metadata.hooks is not None:
-                should_rollback = metadata.hooks.should_rollback_on_failure(hook_name)
-            if exec_flags.raise_on_error:
-                raise HookExecutionError(
-                    package=pkg,
-                    hook_name=hook_name,
-                    message=err_msg,
-                    requires_rollback=should_rollback,
-                    exit_code=124,
-                ) from e
-            return HookResult(
-                command="hook",
-                package=pkg,
+            return handle_hook_execution_failure(
+                exc=e,
+                pkg=pkg,
                 hook_name=hook_name,
-                status="FAILED",
-                exit_code=124,
-                hook_path=str(hook_path),
-                cwd=str(cwd),
-                sudo=False,
+                hook_path=hook_path,
+                cmd=cmd,
+                cwd=cwd,
                 duration_ms=duration_ms,
-                stdout=stdout_str,
-                stderr=stderr_str,
-                error_message=err_msg
-            )
-        except subprocess.CalledProcessError as e:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            stdout_str = e.stdout or ""
-            stderr_str = e.stderr or ""
-            display_cmd = cmd
-            err_msg = (
-                f"Lifecycle hook '{hook_name}' for package '{pkg}' failed with exit code {e.returncode}.\n"
-                f"Command: {shlex.join(display_cmd)}\n"
-            )
-            if stdout_str.strip():
-                err_msg += f"Stdout:\n{stdout_str.strip()}\n"
-            if stderr_str.strip():
-                err_msg += f"Stderr:\n{stderr_str.strip()}\n"
-            logger.error(err_msg)
-            should_rollback = True
-            if metadata is not None and hasattr(metadata, "hooks") and metadata.hooks is not None:
-                should_rollback = metadata.hooks.should_rollback_on_failure(hook_name)
-            if exec_flags.raise_on_error:
-                raise HookExecutionError(
-                    package=pkg,
-                    hook_name=hook_name,
-                    message=err_msg,
-                    requires_rollback=should_rollback,
-                    exit_code=e.returncode,
-                ) from e
-            return HookResult(
-                command="hook",
-                package=pkg,
-                hook_name=hook_name,
-                status="FAILED",
-                exit_code=e.returncode,
-                hook_path=str(hook_path),
-                cwd=str(cwd),
-                sudo=False,
-                duration_ms=duration_ms,
-                stdout=stdout_str,
-                stderr=stderr_str,
-                error_message=err_msg
+                timeout_seconds=timeout_seconds,
+                metadata=metadata,
+                exec_flags=exec_flags,
             )
 
 

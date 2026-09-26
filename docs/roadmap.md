@@ -127,7 +127,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **Audit `check=False` subprocess calls across the codebase.** Many `subprocess.run(..., check=False)` calls ignore non-zero return codes. Each should either check and handle the return code, or document why it's intentionally ignored.
 
-- [ ] **Fix error message stacking.** Error messages repeat each other because inner error messages are appended to outer error messages, producing redundant multi-line errors. (from old roadmap)
+- [x] **Fix error message stacking.** Error messages repeat each other because inner error messages are appended to outer error messages, producing redundant multi-line errors. We can design like this: log the details at where original error happens, and for the outer errors, if the inner error is a drift custom error, then the error has been logged, so we do not need to log again, otherwise we should log the errors. That's my draft solution, the try-blocks should be analyzed to give a clear answer.
 
 - [ ] **Fix repeating "No packages are enabled" warnings in `drift repair`.** (from old roadmap)
 

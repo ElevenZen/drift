@@ -95,6 +95,9 @@ from .exceptions import (
     RenderCollisionError,
     InstallCollisionError,
     HookExecutionError,
+    mark_logged,
+    is_logged,
+    is_drift_error,
 )
 from .result_models import (
     SerializableModel,
@@ -247,6 +250,9 @@ __all__ = [
     "RenderCollisionError",
     "InstallCollisionError",
     "HookExecutionError",
+    "mark_logged",
+    "is_logged",
+    "is_drift_error",
     "SerializableModel",
     "NextActionType",
     "FileOperations",

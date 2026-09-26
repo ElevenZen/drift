@@ -1209,6 +1209,109 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             self.assertEqual(DEFAULT_HOOK_NON_INTERACTIVE_ENVS[k], v)
 
 
+    def test_handle_hook_execution_failure_timeout(self) -> None:
+        """Verifies handle_hook_execution_failure properly formats and handles TimeoutExpired."""
+        import subprocess
+        from drift.hooks.lifecycle_hooks import (
+            HookExecFlags,
+            handle_hook_execution_failure,
+            _extract_hook_failure_details,
+        )
+        from drift.core.exceptions import HookExecutionError, is_logged
+
+        exc = subprocess.TimeoutExpired(
+            cmd=["/bin/dummy"],
+            timeout=45,
+            output="partial stdout content",
+            stderr="partial stderr content",
+        )
+        # Test direct extraction
+        details = _extract_hook_failure_details(exc, pkg="pkg_timeout", hook_name="post_install", timeout_seconds=45)
+        self.assertEqual(details.exit_code, 124)
+        self.assertIn("timed out after 45 seconds", details.headline)
+        self.assertEqual(details.stdout, "partial stdout content")
+        self.assertEqual(details.stderr, "partial stderr content")
+
+        # Test handle with raise_on_error=True
+        with self.assertRaises(HookExecutionError) as ctx:
+            handle_hook_execution_failure(
+                exc=exc,
+                pkg="pkg_timeout",
+                hook_name="post_install",
+                hook_path=Path("/tmp/dummy.sh"),
+                cmd=["/bin/dummy"],
+                cwd=Path("/tmp"),
+                duration_ms=150.0,
+                timeout_seconds=45,
+                metadata=None,
+                exec_flags=HookExecFlags(raise_on_error=True),
+            )
+        self.assertTrue(is_logged(ctx.exception))
+        self.assertEqual(ctx.exception.hook_exit_code, 124)
+        self.assertEqual(ctx.exception.package, "pkg_timeout")
+        self.assertEqual(ctx.exception.hook_name, "post_install")
+        self.assertIs(ctx.exception.__cause__, exc)
+        self.assertIn("timed out after 45 seconds", ctx.exception.message)
+        self.assertIn("partial stdout content", ctx.exception.message)
+        self.assertIn("partial stderr content", ctx.exception.message)
+
+        # Test handle with raise_on_error=False
+        res = handle_hook_execution_failure(
+            exc=exc,
+            pkg="pkg_timeout",
+            hook_name="post_install",
+            hook_path=Path("/tmp/dummy.sh"),
+            cmd=["/bin/dummy"],
+            cwd=Path("/tmp"),
+            duration_ms=150.0,
+            timeout_seconds=45,
+            metadata=None,
+            exec_flags=HookExecFlags(raise_on_error=False),
+        )
+        self.assertEqual(res.status, "FAILED")
+        self.assertEqual(res.exit_code, 124)
+        self.assertEqual(res.duration_ms, 150.0)
+        self.assertEqual(res.stdout, "partial stdout content")
+        self.assertEqual(res.stderr, "partial stderr content")
+        self.assertIn("timed out after 45 seconds", res.error_message or "")
+
+    def test_handle_hook_execution_failure_called_process_error_with_bytes(self) -> None:
+        """Verifies handle_hook_execution_failure handles CalledProcessError and normalizes bytes output."""
+        import subprocess
+        from drift.hooks.lifecycle_hooks import (
+            HookExecFlags,
+            handle_hook_execution_failure,
+        )
+        from drift.core.exceptions import HookExecutionError, is_logged
+
+        exc = subprocess.CalledProcessError(
+            returncode=17,
+            cmd=["/bin/error_cmd"],
+            output=b"raw bytes stdout",
+            stderr=b"raw bytes stderr",
+        )
+
+        # Test handle with raise_on_error=False
+        res = handle_hook_execution_failure(
+            exc=exc,
+            pkg="pkg_cpe",
+            hook_name="pre_install",
+            hook_path=Path("/tmp/script.sh"),
+            cmd=["/bin/error_cmd"],
+            cwd=Path("/tmp"),
+            duration_ms=88.0,
+            timeout_seconds=60,
+            metadata=None,
+            exec_flags=HookExecFlags(raise_on_error=False),
+        )
+        self.assertEqual(res.status, "FAILED")
+        self.assertEqual(res.exit_code, 17)
+        self.assertEqual(res.stdout, "raw bytes stdout")
+        self.assertEqual(res.stderr, "raw bytes stderr")
+        self.assertIn("failed with exit code 17", res.error_message or "")
+        self.assertIn("raw bytes stderr", res.error_message or "")
+
+
 if __name__ == "__main__":
     unittest.main()
 

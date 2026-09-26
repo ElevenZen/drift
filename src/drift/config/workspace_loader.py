@@ -90,7 +90,6 @@ def assert_no_legacy_workspace_config(drift_root: Path) -> None:
     legacy_found = [x for x in legacy_candidates if x.is_file()]
     if not legacy_found:
         return
-    logger.error("❌ DEPRECATION ERROR: Legacy workspace configuration file detected!")
     err_box = (
         "\n" + "=" * 80 + "\n"
         "❌ DEPRECATION ERROR: Legacy workspace configuration file detected!\n\n"

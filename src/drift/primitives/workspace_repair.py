@@ -196,6 +196,8 @@ def repair_workspace_config(
             )
         else:
             ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, config_files_override=load_config_from)
+    except ConfigError:
+        raise
     except Exception as e:
         raise ConfigError(f"Failed to load workspace configuration during repair: {e}") from e
 
