@@ -44,7 +44,7 @@ from ..core.exceptions import ConfigError
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
-    env_scope,
+    env_resolve_scope,
     interpolate_config_dict,
     parse_env_dict,
     resolve_env_configs,
@@ -121,7 +121,7 @@ def render_or_load_toml(
 
     with tempfile.TemporaryDirectory(prefix=f"{package_name}_pkg_") as tmpdir:
         temp_path_obj = Path(tmpdir) / "drift_package.toml"
-        with env_scope(env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV):
+        with env_resolve_scope(env_res):
             from ..render.render_core import render_template_to_file
             render_template_to_file(
                 engine_config=engine,

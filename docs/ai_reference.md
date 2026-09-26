@@ -77,17 +77,19 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/core/state_registry.py): Builds destination ownership mapping across installed packages.
 *   [`registry.remove_package(pkg)`](../src/drift/core/state_registry.py): Unregisters package from `state.toml`.
 
-### [`utils/toml_utils.py`](../src/drift/utils/toml_utils.py) (TOML Parsing & Traversal)
+### [`utils/toml_utils.py`](../src/drift/utils/toml_utils.py) & [`utils/env_utils.py`](../src/drift/utils/env_utils.py)
 *   [`get_nested_from(data, keys, default=None, required=False, is_table=False, config_source=None)`](../src/drift/utils/toml_utils.py): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
 *   [`get_first_from(data, keys, default=None)`](../src/drift/utils/toml_utils.py): Retrieves the first matching key from alternative candidates.
 *   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/utils/toml_utils.py): Enforces strict key allowlists on config mappings.
+*   [`env_scope(envs, overwrite=True, env_keep=None, mask_values=False)`](../src/drift/utils/env_utils.py): Scoped environment manager with granular masking (`mask_values=True` or `mask_values=Iterable[str]`).
+*   [`env_resolve_scope(env_resolve, overwrite=True, env_keep=INITIAL_ENV)`](../src/drift/utils/env_utils.py): Context manager scoping `EnvResolve` with automatic secret masking.
 
 ### [`config/workspace_config.py`](../src/drift/config/workspace_config.py) & [`config/package_config.py`](../src/drift/config/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/config/workspace_config.py): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables into `EnvResolve`.
 *   [`resolve_and_interpolate_workspace_config(data, secrets_file=None) -> Tuple[Dict[str, Any], EnvResolve]`](../src/drift/config/workspace_config.py): Pure in-memory topological DAG resolution for workspace `[env]` tables (`override`, `secrets`, `default`, `fallback`), returning interpolated dictionary and `EnvResolve`.
 *   [`resolve_and_interpolate_package_config(data, package_name, workspace_config=None) -> Tuple[Dict[str, Any], EnvResolve]`](../src/drift/config/package_config.py): Pure in-memory topological DAG resolution and section interpolation for package configurations under 6-tier precedence (Package > Workspace within each macro tier; CLI context at Tier 1).
 *   [`PackageConfig.from_dict(data, package_name, base_dir, source_files=(), workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Instantiates strongly-typed package config and computes effective environment tables (`compute_effective_envs(workspace_config)`).
-*   [`PackageConfig.package_envs(overwrite=True)`](../src/drift/config/package_config.py): Scopes pre-resolved `self.env_resolve.effective_dict` into `os.environ` via `env_scope` without requiring runtime `workspace_config`.
+*   [`PackageConfig.package_envs()`](../src/drift/config/package_config.py): Scopes pre-resolved `self.env_resolve.effective_dict` into `os.environ` via `env_resolve_scope` with granular secret masking and zero runtime `workspace_config` requirement.
 *   [`load_package_config_from_source_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads, transforms, merges, and validates package configuration from source directory.
 *   [`load_package_config_from_render_dir(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads package configuration strictly from `render/<pkg>/` sandbox.
 *   [`load_package_config_for_install(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads package configuration strictly from `install/<pkg>/` state database.

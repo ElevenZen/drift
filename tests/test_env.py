@@ -32,6 +32,7 @@ from drift.utils.env_utils import (
     parse_env_file,
     parse_env_text,
     env_scope,
+    env_resolve_scope,
 )
 from drift.config.workspace_config import (
     WorkspaceConfig,
@@ -1302,10 +1303,10 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
         # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
         with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
-            with patch("drift.config.package_config.INITIAL_ENV", ["EXTERNAL_VAR"]):
-                with pkg_cfg.package_envs():
-                    self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
-                    self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
+            set_initial_env(["EXTERNAL_VAR"])
+            with pkg_cfg.package_envs():
+                self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
+                self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
 
     def test_load_package_config_from_source_dir_writes_stitched_toml_and_renders(self) -> None:
         """Verifies that PackageConfig.from_source_dir writes out stitched TOML and PackageConfig.from_rendered_file reads it."""
@@ -1929,6 +1930,15 @@ class TestEnvParsingAndAliasing(unittest.TestCase):
 class TestSecretsMaskingInLogs(unittest.TestCase):
     """Unit tests verifying secret value masking in debug logs."""
 
+    def test_env_resolve_secret_keys_property(self) -> None:
+        """Verifies EnvResolve.secret_keys returns the set of effective secret keys."""
+        res = EnvResolve(
+            current=EnvConfig(secrets={"LOCAL_KEY": "loc_val"}),
+            effective=EnvConfig(secrets={"GLOBAL_KEY": "glob_val", "LOCAL_KEY": "loc_val"}),
+            effective_dict={"GLOBAL_KEY": "glob_val", "LOCAL_KEY": "loc_val", "NORMAL_KEY": "norm_val"},
+        )
+        self.assertEqual(res.secret_keys, {"GLOBAL_KEY", "LOCAL_KEY"})
+
     def test_env_scope_masks_secret_values_in_logger(self) -> None:
         """env_scope with mask_values=True masks secret values with **** in logger output."""
         set_test_mode(True, enable_logging=True)
@@ -1940,6 +1950,140 @@ class TestSecretsMaskingInLogs(unittest.TestCase):
             log_output = "\n".join(cm.output)
             self.assertIn("TOP_SECRET_PASSWORD=****", log_output)
             self.assertNotIn("super_secret_value_12345", log_output)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_env_scope_selective_masking_with_iterable(self) -> None:
+        """env_scope with mask_values=Iterable[str] masks only specified secret keys in logger."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            os.environ["EXISTING_SECRET"] = "old_secret_val"
+            os.environ["EXISTING_NORMAL"] = "old_normal_val"
+
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with env_scope(
+                    {
+                        "NEW_SECRET": "secret_abc",
+                        "NEW_NORMAL": "normal_xyz",
+                        "EXISTING_SECRET": "updated_secret_def",
+                        "EXISTING_NORMAL": "updated_normal_uvw",
+                    },
+                    overwrite=True,
+                    mask_values={"NEW_SECRET", "EXISTING_SECRET"},
+                ):
+                    pass
+
+            log_output = "\n".join(cm.output)
+            # Loaded logs: secrets are masked, non-secrets are in clear text
+            self.assertIn("Environment variable loaded: NEW_SECRET=****", log_output)
+            self.assertIn("Environment variable loaded: EXISTING_SECRET=****", log_output)
+            self.assertIn("Environment variable loaded: NEW_NORMAL=normal_xyz", log_output)
+            self.assertIn("Environment variable loaded: EXISTING_NORMAL=updated_normal_uvw", log_output)
+
+            # Restored logs: restored secrets are masked, restored non-secrets are in clear text
+            self.assertIn("Environment variable unloaded: popped NEW_SECRET", log_output)
+            self.assertIn("Environment variable unloaded: popped NEW_NORMAL", log_output)
+            self.assertIn("Environment variable unloaded: restored EXISTING_SECRET=****", log_output)
+            self.assertIn("Environment variable unloaded: restored EXISTING_NORMAL=old_normal_val", log_output)
+
+            # Confirm raw secret values never appeared in logs
+            self.assertNotIn("secret_abc", log_output)
+            self.assertNotIn("updated_secret_def", log_output)
+            self.assertNotIn("old_secret_val", log_output)
+        finally:
+            os.environ.pop("EXISTING_SECRET", None)
+            os.environ.pop("EXISTING_NORMAL", None)
+            set_test_mode(True, enable_logging=False)
+
+    def test_env_resolve_scope_granular_masking(self) -> None:
+        """env_resolve_scope automatically extracts secret_keys and masks only secrets in debug logs."""
+        set_test_mode(True, enable_logging=True)
+        try:
+            os.environ["PRE_EXISTING_SECRET"] = "pre_secret_123"
+            env_res = EnvResolve(
+                effective=EnvConfig(
+                    override={"OVERRIDE_VAR": "my_override"},
+                    secrets={"MY_TOKEN": "secret_token_999", "PRE_EXISTING_SECRET": "new_secret_888"},
+                    default={"APP_HOST": "localhost"},
+                ),
+                effective_dict={
+                    "OVERRIDE_VAR": "my_override",
+                    "MY_TOKEN": "secret_token_999",
+                    "PRE_EXISTING_SECRET": "new_secret_888",
+                    "APP_HOST": "localhost",
+                },
+            )
+
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with env_resolve_scope(env_res):
+                    self.assertEqual(os.environ["MY_TOKEN"], "secret_token_999")
+                    self.assertEqual(os.environ["APP_HOST"], "localhost")
+
+            log_output = "\n".join(cm.output)
+            # Secrets masked
+            self.assertIn("Environment variable loaded: MY_TOKEN=****", log_output)
+            self.assertIn("Environment variable loaded: PRE_EXISTING_SECRET=****", log_output)
+            # Non-secrets in clear text
+            self.assertIn("Environment variable loaded: OVERRIDE_VAR=my_override", log_output)
+            self.assertIn("Environment variable loaded: APP_HOST=localhost", log_output)
+
+            # Restored secret is masked
+            self.assertIn("Environment variable unloaded: restored PRE_EXISTING_SECRET=****", log_output)
+
+            # No raw secrets leaked
+            self.assertNotIn("secret_token_999", log_output)
+            self.assertNotIn("new_secret_888", log_output)
+            self.assertNotIn("pre_secret_123", log_output)
+        finally:
+            os.environ.pop("PRE_EXISTING_SECRET", None)
+            set_test_mode(True, enable_logging=False)
+
+    def test_package_envs_selective_secret_masking(self) -> None:
+        """PackageConfig.package_envs masks package/workspace secrets while keeping facts/defaults in clear text."""
+        from drift.config.package_config import PackageConfig, PackageSectionConfig
+        from drift.config.workspace_config import WorkspaceConfig
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            ws = WorkspaceConfig(
+                drift_root=Path("/mock/root"),
+                env_resolve=EnvResolve(
+                    effective=EnvConfig(
+                        secrets={"WS_API_KEY": "super_secret_ws_key"},
+                        default={"GLOBAL_SETTING": "enabled"},
+                    )
+                ),
+            )
+            pkg = PackageConfig(
+                PackageSectionConfig(name="mask_pkg"),
+                env_resolve=EnvResolve(
+                    current=EnvConfig(
+                        secrets={"PKG_SECRET_TOKEN": "vault_token_777"},
+                        default={"LOCAL_SETTING": "custom_val"},
+                    )
+                ),
+            )
+            pkg.compute_effective_envs(ws)
+
+            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with pkg.package_envs():
+                    self.assertEqual(os.environ["PKG_SECRET_TOKEN"], "vault_token_777")
+                    self.assertEqual(os.environ["WS_API_KEY"], "super_secret_ws_key")
+                    self.assertEqual(os.environ["LOCAL_SETTING"], "custom_val")
+                    self.assertEqual(os.environ["drift_package_name"], "mask_pkg")
+
+            log_output = "\n".join(cm.output)
+            # Secrets masked
+            self.assertIn("PKG_SECRET_TOKEN=****", log_output)
+            self.assertIn("WS_API_KEY=****", log_output)
+            # Non-secrets in clear text
+            self.assertIn("LOCAL_SETTING=custom_val", log_output)
+            self.assertIn("GLOBAL_SETTING=enabled", log_output)
+            self.assertIn("drift_package_name=mask_pkg", log_output)
+
+            # Zero leakage
+            self.assertNotIn("vault_token_777", log_output)
+            self.assertNotIn("super_secret_ws_key", log_output)
         finally:
             set_test_mode(True, enable_logging=False)
 

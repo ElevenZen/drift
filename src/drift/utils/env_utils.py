@@ -65,6 +65,11 @@ class EnvResolve:
     effective: EnvConfig = field(default_factory=EnvConfig)
     effective_dict: Dict[str, str] = field(default_factory=dict)
 
+    @property
+    def secret_keys(self) -> Set[str]:
+        """Returns the set of all effective secret variable names."""
+        return set(self.effective.secrets.keys())
+
 
 ENV_SUBTABLE_ALIASES: Dict[str, Tuple[str, ...]] = {
     "override": ("override", "overwrite"),
@@ -254,7 +259,7 @@ def update_env_dict(
     source: Optional[Union[Mapping[str, Any], Iterable[Tuple[str, Any]]]],
     overwrite: bool = True,
     env_keep: Optional[Iterable[str]] = None,
-    mask_values: bool = False,
+    mask_values: Union[bool, Iterable[str]] = False,
 ) -> Tuple[MutableMapping[str, str], EnvSnapshot]:
     """Updates target environment mapping with key-value pairs from source.
 
@@ -264,7 +269,8 @@ def update_env_dict(
         overwrite: If True, overwrites existing keys in target unless protected by env_keep.
                    If False, only sets keys that are currently unset in target.
         env_keep: Optional set/iterable of variable names protected from being overwritten.
-        mask_values: If True, masks variable values in debug logs (e.g. key=****).
+        mask_values: If True, masks all variable values in debug logs. If an iterable of keys,
+                     masks only those specific keys (e.g. key=****).
 
     Returns:
         A tuple of (target, saved_envs) where saved_envs maps modified keys to their previous
@@ -280,6 +286,9 @@ def update_env_dict(
         keep_set = env_keep
     else:
         keep_set = set(env_keep)
+
+    mask_all = mask_values is True
+    mask_set = set(mask_values) if (mask_values and not isinstance(mask_values, bool)) else set()
 
     saved: EnvSnapshot = {}
     is_os_environ = target is os.environ
@@ -305,7 +314,7 @@ def update_env_dict(
         target[k_str] = v_str
 
         if (is_new or is_overwritten) and is_os_environ:
-            display_val = "****" if mask_values else v_str
+            display_val = "****" if (mask_all or k_str in mask_set) else v_str
             logger.debug(f"Environment variable loaded: {k_str}={display_val}")
 
     return target, saved
@@ -314,17 +323,21 @@ def update_env_dict(
 def restore_env_dict(
     target: MutableMapping[str, str],
     original_envs: Mapping[str, Optional[str]] = {},
-    mask_values: bool = False,
+    mask_values: Union[bool, Iterable[str]] = False,
 ) -> None:
     """Restores original values in target mapping from a snapshot dictionary.
 
     Args:
         target: The mutable target mapping (e.g. dict or os.environ) to restore in-place.
         original_envs: A snapshot dictionary mapping keys to their original values (None if unset).
-        mask_values: If True, masks restored variable values in debug logs (e.g. restored key=****).
+        mask_values: If True, masks all restored values in debug logs. If an iterable of keys,
+                     masks only those specific keys (e.g. restored key=****).
     """
     if not original_envs:
         return
+
+    mask_all = mask_values is True
+    mask_set = set(mask_values) if (mask_values and not isinstance(mask_values, bool)) else set()
 
     is_os_environ = target is os.environ
     for k, original_val in original_envs.items():
@@ -337,7 +350,7 @@ def restore_env_dict(
             current_val = target.get(k)
             target[k] = original_val
             if current_val != original_val:
-                display_val = "****" if mask_values else original_val
+                display_val = "****" if (mask_all or k in mask_set) else original_val
                 if is_os_environ:
                     logger.debug(f"Environment variable unloaded: restored {k}={display_val}")
 
@@ -346,7 +359,7 @@ def load_env_settings(
     envs: Optional[EnvInput],
     overwrite: bool = True,
     env_keep: Optional[Iterable[str]] = None,
-    mask_values: bool = False,
+    mask_values: Union[bool, Iterable[str]] = False,
 ) -> EnvSnapshot:
     """Loads environment settings into os.environ.
 
@@ -355,7 +368,7 @@ def load_env_settings(
         overwrite: If True, overwrite existing keys in os.environ (unless in env_keep).
                     If False, do not overwrite any keys already in os.environ.
         env_keep: Optional set or iterable of keys that must NOT be overwritten.
-        mask_values: If True, masks variable values in debug logs (e.g. key=****).
+        mask_values: If True or iterable of keys, masks variable values in debug logs (e.g. key=****).
 
     Returns:
         Dict[str, Optional[str]]: A dictionary of modified keys mapped to their original values
@@ -367,7 +380,7 @@ def load_env_settings(
 
 def unload_env_settings(
     original_envs: Mapping[str, Optional[str]] = {},
-    mask_values: bool = False,
+    mask_values: Union[bool, Iterable[str]] = False,
 ) -> None:
     """Restores the original environment values using the snapshot returned by load_env_settings."""
     restore_env_dict(os.environ, original_envs, mask_values=mask_values)
@@ -378,7 +391,7 @@ def env_scope(
     envs: Optional[EnvInput],
     overwrite: bool = True,
     env_keep: Optional[Iterable[str]] = None,
-    mask_values: bool = False,
+    mask_values: Union[bool, Iterable[str]] = False,
 ) -> Iterator[None]:
     """Context manager for loading and unloading environment settings."""
     saved_envs = load_env_settings(envs, overwrite=overwrite, env_keep=env_keep, mask_values=mask_values)
@@ -386,6 +399,22 @@ def env_scope(
         yield
     finally:
         unload_env_settings(saved_envs, mask_values=mask_values)
+
+
+@contextmanager
+def env_resolve_scope(
+    env_resolve: EnvResolve,
+    overwrite: bool = True,
+    env_keep: Iterable[str] = INITIAL_ENV,
+) -> Iterator[None]:
+    """Context manager scoping an EnvResolve instance into os.environ with granular secret masking."""
+    with env_scope(
+        env_resolve.effective_dict,
+        overwrite=overwrite,
+        env_keep=env_keep,
+        mask_values=env_resolve.secret_keys,
+    ):
+        yield
 
 
 def python_envsubst(

@@ -397,13 +397,10 @@ class PackageConfig:
         return self.get_render_engines(workspace_config)
 
     @contextmanager
-    def package_envs(
-        self,
-        overwrite: bool = True
-    ) -> Iterator[None]:
+    def package_envs(self) -> Iterator[None]:
         """Context manager to activate package-specific environment variables and secrets in os.environ."""
-        from ..utils.env_utils import env_scope
-        with env_scope(self.env_resolve.effective_dict, overwrite=overwrite, env_keep=INITIAL_ENV):
+        from ..utils.env_utils import env_resolve_scope
+        with env_resolve_scope(self.env_resolve):
             yield
 
     @classmethod

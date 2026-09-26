@@ -192,6 +192,7 @@ from .utils import (
     load_env_settings,
     unload_env_settings,
     env_scope,
+    env_resolve_scope,
     python_envsubst,
     topological_sort_env,
     resolve_env_references,
