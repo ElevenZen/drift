@@ -8,6 +8,9 @@ from .stage_repo import (
     PackageStageChanges,
     apply_package_stage_changes,
     assert_packages_stage_ready,
+    prepare_stage_packages,
+    execute_stage_packages,
+    StagePlan,
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
@@ -72,6 +75,9 @@ from .workspace_init import (
 __all__ = [
     "run_primitive_1_reverse_sync",
     "run_primitive_4_stage_render_to_install",
+    "prepare_stage_packages",
+    "execute_stage_packages",
+    "StagePlan",
     "PackageStageChanges",
     "apply_package_stage_changes",
     "assert_packages_stage_ready",

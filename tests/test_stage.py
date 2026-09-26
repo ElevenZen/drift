@@ -14,6 +14,9 @@ from drift.config.workspace_config import WorkspaceConfig
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
     assert_packages_stage_ready,
+    prepare_stage_packages,
+    execute_stage_packages,
+    StagePlan,
 )
 from drift.render.render_package import render_package
 
@@ -1148,6 +1151,49 @@ class TestStageRepo(unittest.TestCase):
             state_registry=registry,
             force=True,
         )
+
+    def test_prepare_and_execute_stage_packages_sub_stages(self) -> None:
+        """Verifies that prepare_stage_packages and execute_stage_packages can be executed in sequence."""
+        from drift.config.package_config import PackageConfig
+
+        pkg_name = "pkg_a"
+        file_path = self.render_dir / pkg_name / "sub_stage_test.txt"
+        file_path.write_text("hello sub stages", encoding="utf-8")
+
+        # 1. prepare_stage_packages returns valid StagePlan
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=[pkg_name])
+        self.assertIsInstance(plan, StagePlan)
+        self.assertIn(pkg_name, plan.pkg_metadata)
+        self.assertIsInstance(plan.pkg_metadata[pkg_name], PackageConfig)
+
+        # 2. execute_stage_packages stages the package
+        changes = execute_stage_packages(
+            self.workspace_config,
+            pkg_metadata=plan.pkg_metadata,
+            state_registry=plan.state_registry,
+        )
+        self.assertIn(pkg_name, changes)
+        self.assertTrue(changes[pkg_name].has_changes)
+        self.assertTrue((self.install_dir / pkg_name / "sub_stage_test.txt").exists())
+
+        # 3. prepare_stage_packages with no active packages returns empty StagePlan
+        empty_config = WorkspaceConfig(
+            drift_root=self.drift_root / "empty",
+            packages_enable={},
+            packages_enable_default=False,
+        )
+        (self.drift_root / "empty" / "render").mkdir(parents=True, exist_ok=True)
+        (self.drift_root / "empty" / "install").mkdir(parents=True, exist_ok=True)
+        empty_plan = prepare_stage_packages(empty_config)
+        self.assertEqual(empty_plan.pkg_metadata, {})
+
+        # 4. execute_stage_packages with empty pkg_metadata returns empty dict
+        empty_changes = execute_stage_packages(
+            self.workspace_config,
+            pkg_metadata={},
+            state_registry=plan.state_registry,
+        )
+        self.assertEqual(empty_changes, {})
 
 
 if __name__ == "__main__":

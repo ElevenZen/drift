@@ -10,7 +10,12 @@ from ..config.workspace_config import WorkspaceConfig
 from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
-from .stage_repo import run_primitive_4_stage_render_to_install, PackageStageChanges
+from .stage_repo import (
+    run_primitive_4_stage_render_to_install,
+    prepare_stage_packages,
+    execute_stage_packages,
+    PackageStageChanges,
+)
 from .install_repo import (
     run_primitive_5_install_deployment,
     run_primitive_6_commit_install_repo,
@@ -206,19 +211,40 @@ def execute_sequential_compile_and_apply(
         logger.info("👉 Please resolve any render sandbox repository Git issues and try 'drift deploy' again.")
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
-    # 3. Stage render sandbox to install state base
+    # 3a. Pre-flight Validation & Assertion for Sandbox Staging (Read-Only)
+    failed_step = "Step 3 (Sandbox Staging Pre-flight)"
+    try:
+        stage_plan = prepare_stage_packages(
+            workspace_config,
+            target_pkgs=target_pkgs,
+            force=force,
+        )
+    except Exception as e:
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
+        logger.info("👉 Please resolve any staging pre-flight issues and try 'drift deploy' again.")
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
+
+    if not stage_plan.pkg_metadata:
+        logger.info("✨ No active packages are enabled for staging/deployment. Skipping physical deployment.")
+        return [], completed_steps
+
+    # 3b. Stage render sandbox to install state base (State-Mutating)
     failed_step = "Step 3 (Sandbox Staging)"
     try:
         logger.info("   [3/5] Staging rendered changes from render/ to install/ state database ...")
-        package_changes = run_primitive_4_stage_render_to_install(
+        package_changes = execute_stage_packages(
             workspace_config,
-            target_pkgs=target_pkgs,
-            force=force
+            pkg_metadata=stage_plan.pkg_metadata,
+            state_registry=stage_plan.state_registry,
         )
         completed_steps.append(CompletedStep(3, "sandbox_staging"))
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-        raise RuntimeError(f"Midway crash: {failed_step} failed.") from e
+        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
     changed_pkgs = [pkg for pkg, change in package_changes.items() if change.has_changes]
     if redeploy:
@@ -247,19 +273,19 @@ def execute_sequential_compile_and_apply(
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except HookExecutionError as e:
-        if not e.requires_rollback:
-            try:
-                run_primitive_6_commit_install_repo(
-                    workspace_config,
-                    commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
-                    target_pkgs=pkgs_to_install
-                )
-            except Exception as commit_err:
-                logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
-            logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
-            raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
-        print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        if e.requires_rollback:
+            print_emergency_recovery_card(failed_step, str(e), target_pkgs)
+            raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        try:
+            run_primitive_6_commit_install_repo(
+                workspace_config,
+                commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+                target_pkgs=pkgs_to_install
+            )
+        except Exception as commit_err:
+            logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
+        logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
+        raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e

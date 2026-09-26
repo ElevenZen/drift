@@ -303,6 +303,9 @@ from .render import (
 from .primitives import (
     run_primitive_1_reverse_sync,
     run_primitive_4_stage_render_to_install,
+    prepare_stage_packages,
+    execute_stage_packages,
+    StagePlan,
     PackageStageChanges,
     apply_package_stage_changes,
     run_primitive_5_install_deployment,

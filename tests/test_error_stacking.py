@@ -18,6 +18,7 @@ from drift.core.exceptions import (
 )
 from drift.config.workspace_config import WorkspaceConfig
 from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+from drift.primitives.stage_repo import StagePlan
 
 
 class TestErrorStacking(unittest.TestCase):
@@ -113,15 +114,17 @@ class TestErrorStacking(unittest.TestCase):
 
     @patch("drift.primitives.deploy_repo.run_primitive_6_commit_install_repo")
     @patch("drift.primitives.deploy_repo.run_primitive_5_install_deployment")
-    @patch("drift.primitives.deploy_repo.run_primitive_4_stage_render_to_install")
+    @patch("drift.primitives.deploy_repo.execute_stage_packages")
+    @patch("drift.primitives.deploy_repo.prepare_stage_packages")
     @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
     @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
     def test_deploy_step4_hook_error_does_not_repeat_hook_message_in_step_log(
-        self, mock_p2, mock_p3, mock_p4, mock_p5, mock_p6
+        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_p5, mock_p6
     ) -> None:
         """When Step 4 encounters HookExecutionError, it logs the abort without duplicating the multi-line hook message."""
         mock_p2.return_value = MagicMock(status="SUCCESS")
-        mock_p4.return_value = {"pkg_a": MagicMock(has_changes=True)}
+        mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
+        mock_execute.return_value = {"pkg_a": MagicMock(has_changes=True)}
         
         hook_err = HookExecutionError(
             package="pkg_a",
@@ -142,6 +145,47 @@ class TestErrorStacking(unittest.TestCase):
         self.assertNotIn("No such file", logs)
         self.assertNotIn("Command: /bin/false", logs)
         mock_p6.assert_called_once()
+
+    @patch("drift.primitives.deploy_repo.print_emergency_recovery_card")
+    @patch("drift.primitives.deploy_repo.prepare_stage_packages")
+    @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
+    @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
+    def test_deploy_step3_preflight_assert_failure_does_not_print_recovery_card(
+        self, mock_p2, mock_p3, mock_prepare, mock_recovery_card
+    ) -> None:
+        """When Step 3 fails during pre-flight assertion, logs error without printing emergency recovery card."""
+        from drift.core.exceptions import DriftDetectedError
+
+        mock_p2.return_value = MagicMock(status="SUCCESS")
+        mock_prepare.side_effect = DriftDetectedError("Uncommitted modifications detected in install/pkg_a")
+
+        with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
+            with self.assertRaises(RuntimeError) as ctx:
+                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        logs = "\n".join(cm.output)
+        self.assertIn("❌ [CRITICAL] Step 3 (Sandbox Staging Pre-flight) failed.", logs)
+        self.assertIn("Step 3 (Sandbox Staging Pre-flight) failed.", str(ctx.exception))
+        mock_recovery_card.assert_not_called()
+
+    @patch("drift.primitives.deploy_repo.print_emergency_recovery_card")
+    @patch("drift.primitives.deploy_repo.execute_stage_packages")
+    @patch("drift.primitives.deploy_repo.prepare_stage_packages")
+    @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
+    @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
+    def test_deploy_step3_staging_execution_failure_prints_recovery_card(
+        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_recovery_card
+    ) -> None:
+        """When Step 3 fails during physical staging execution, emergency recovery card is printed."""
+        mock_p2.return_value = MagicMock(status="SUCCESS")
+        mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
+        mock_execute.side_effect = OSError("Disk full while writing install state")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        self.assertIn("Midway crash: Step 3 (Sandbox Staging) failed.", str(ctx.exception))
+        mock_recovery_card.assert_called_once()
 
     def test_render_packages_skips_inner_msg_if_already_logged(self) -> None:
         """When render_package raises an already logged exception, run_primitive_2_render_packages logs package context without repeating details."""

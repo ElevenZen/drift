@@ -4,31 +4,36 @@
 Architecture & Call Chain Overview
 ===============================================================================
 
-Layer 5: Primitive Entry Point
-    run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force)
-        1. Package Discovery & Selection:
-            workspace_config.filter_render_packages_by_target
-        2. Functional Pipeline (Collect >> Filter >> Assert):
-            Collect: PackageConfig.from_render_dir
-            Filter: enable_install predicate
-            Assert: assert_packages_stage_ready [Layer 1]
-                metadata.hooks.assert_hooks_exist
-                state_registry.get_midway_packages
-                assert_install_pkg_dir_clean [Layer 1]
-        3. Diff & Change Classification:
-            compute_package_stage_diff(pkg, install_base, render_base) [Layer 2]
-                compare_folders (deployable diff with DriftIgnore)
-                compare_folders (physical diff without DriftIgnore)
-        4. Staging Transaction Execution (if packages have physical changes):
-            stage_modified_packages(packages_to_stage, pkg_metadata, ...) [Layer 4]
-                assert_can_escalate (if sudo required)
-                state_registry.set_package_state("staging") & save
-                apply_package_stage_changes(pkg, ...) [Layer 3]
-                    remove_with_parents (direct physical deletion)
-                    copy_file / copy_permissions (additions & modifications)
-                    generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
-                state_registry.set_package_state("staged") & save
-        5. Return Summary Map of Changed Packages
+Pipeline Architecture:
+    1. Pre-flight Preparation & Assertion (Read-Only):
+        prepare_stage_packages(workspace_config, target_pkgs, force) [Layer 4]
+            - Package Discovery & Selection (filter_render_packages_by_target)
+            - Metadata Resolution (PackageConfig.from_render_dir)
+            - Filtering (enable_install predicate)
+            - Pre-flight Readiness (assert_packages_stage_ready [Layer 1])
+                * metadata.hooks.assert_hooks_exist
+                * state_registry.get_midway_packages
+                * assert_install_pkg_dir_clean [Layer 1]
+            -> Returns StagePlan(pkg_metadata, state_registry)
+
+    2. Diff Computation & Staging Execution (State-Mutating):
+        execute_stage_packages(workspace_config, pkg_metadata, state_registry) [Layer 4]
+            - Diff & Change Classification:
+                compute_package_stage_diff(pkg, install_base, render_base) [Layer 2]
+            - Staging Transaction Execution (for packages with physical changes):
+                stage_modified_packages(packages_to_stage, pkg_metadata, ...) [Layer 4]
+                    * assert_can_escalate (if sudo required)
+                    * state_registry.set_package_state("staging") & save
+                    * apply_package_stage_changes(pkg, ...) [Layer 3]
+                        - remove_with_parents (direct physical deletion)
+                        - copy_file / copy_permissions (additions & modifications)
+                        - generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
+                    * state_registry.set_package_state("staged") & save
+            -> Returns Summary Map of Changed Packages
+
+    3. Public Composite Primitive Entry Point:
+        run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force) [Layer 5]
+            = prepare_stage_packages >> execute_stage_packages
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
@@ -40,8 +45,10 @@ Layers (ordered bottom-up by dependency):
         compute_package_stage_diff
     Layer 3: Single Package Physical Staging
         apply_package_stage_changes
-    Layer 4: Staging Transaction & State Management
+    Layer 4: Staging Transaction & Sub-stages
         stage_modified_packages
+        prepare_stage_packages
+        execute_stage_packages
     Layer 5: Public Primitive Entry Point
         run_primitive_4_stage_render_to_install
 ===============================================================================
@@ -70,6 +77,13 @@ from ..core.state_registry import load_state_registry, StateRegistry
 from ..core.exceptions import DriftDetectedError
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class StagePlan:
+    """Pre-flight validated staging plan containing package configurations and state registry."""
+    pkg_metadata: Dict[str, PackageConfig]
+    state_registry: StateRegistry
 
 
 @dataclass
@@ -355,6 +369,141 @@ def stage_modified_packages(
     state_registry.save()
 
 
+def prepare_stage_packages(
+    workspace_config: WorkspaceConfig,
+    target_pkgs: Union[str, Sequence[str]] = (),
+    force: bool = False,
+) -> StagePlan:
+    """Discovers, validates, and prepares packages for staging from render/ to install/.
+
+    Runs pre-flight assertion guards (hook existence, midway transaction state, install repo cleanliness).
+    Does NOT modify the filesystem or mutate state registry.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
+        force: If True, bypasses checks for midway failed package states and uncommitted install modifications.
+
+    Returns:
+        StagePlan containing validated package metadata map and state registry.
+    """
+    if isinstance(target_pkgs, str):
+        target_pkgs_seq: Sequence[str] = [target_pkgs]
+    else:
+        target_pkgs_seq = target_pkgs if target_pkgs else ()
+
+    render_base = workspace_config.render_path
+    install_base = workspace_config.install_path
+    state_file = install_base / "state.toml"
+    state_registry = load_state_registry(state_file)
+
+    # Load active packages from render directory
+    active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs_seq or None)
+    if not active_packages:
+        logger.info("No active packages selected for staging. Skipping.")
+        return StagePlan(pkg_metadata={}, state_registry=state_registry)
+
+    # 1. Collect: Load metadata for active packages from RENDER directory
+    all_metadata: Dict[str, PackageConfig] = {
+        pkg: PackageConfig.from_render_dir(render_base / pkg, workspace_config)
+        for pkg in active_packages
+    }
+
+    # 2. Filter: Retain only packages enabled for installation/deployment
+    pkg_metadata = {
+        pkg: meta for pkg, meta in all_metadata.items()
+        if meta.package.enable_install
+    }
+    if not pkg_metadata:
+        logger.info("No active packages are enabled for installation/deployment. Skipping.")
+        return StagePlan(pkg_metadata={}, state_registry=state_registry)
+
+    # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
+    assert_packages_stage_ready(
+        pkg_metadata=pkg_metadata,
+        render_base=render_base,
+        install_base=install_base,
+        state_registry=state_registry,
+        force=force,
+    )
+
+    return StagePlan(pkg_metadata=pkg_metadata, state_registry=state_registry)
+
+
+def execute_stage_packages(
+    workspace_config: WorkspaceConfig,
+    pkg_metadata: Mapping[str, PackageConfig],
+    state_registry: StateRegistry,
+) -> Dict[str, PackageStageChanges]:
+    """Computes stage diffs and applies physical file changes and state transitions from render/ to install/.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        pkg_metadata: Pre-flight validated package metadata mapping.
+        state_registry: Active state registry for tracking staging state transitions.
+
+    Returns:
+        A dictionary mapping package name to PackageStageChanges objects for all packages with changes.
+    """
+    if not pkg_metadata:
+        return {}
+
+    render_base = workspace_config.render_path
+    install_base = workspace_config.install_path
+
+    logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
+
+    # 1. Compute stage diffs and deployable changes for all packages
+    computed_diffs = {
+        pkg: compute_package_stage_diff(
+            pkg=pkg,
+            install_base=install_base,
+            render_base=render_base,
+        )
+        for pkg in pkg_metadata.keys()
+    }
+
+    # Identify packages that have physical stage changes
+    packages_to_stage = {
+        pkg: (changes, ignore_handler)
+        for pkg, (changes, ignore_handler) in computed_diffs.items()
+        if changes.has_changes
+    }
+
+    # 2. Apply physical changes and state transitions for modified packages
+    if packages_to_stage:
+        stage_modified_packages(
+            packages_to_stage=packages_to_stage,
+            pkg_metadata=pkg_metadata,
+            install_base=install_base,
+            render_base=render_base,
+            state_registry=state_registry,
+        )
+
+    # 3. Extract dictionary of changed packages for return value
+    changed_package_map = {pkg: changes for pkg, (changes, _) in packages_to_stage.items()}
+
+    # 4. Prepare summary of changes for logging
+    if changed_package_map:
+        logger.info("✨ Staging completed. Summary of changes:")
+        for pkg_change in changed_package_map.values():
+            dep = pkg_change.deployable_changes
+            non_dep = pkg_change.non_deployable_changes
+            logger.info(f"   Package '{pkg_change.package_name}': "
+                        f"+{len(dep.added)}, "
+                        f"~{len(dep.modified)}, "
+                        f"-{len(dep.deleted)}")
+            if pkg_change.has_non_deployable_changes:
+                logger.info(f"     (metadata/hooks: "
+                            f"+{len(non_dep.added)}, "
+                            f"~{len(non_dep.modified)}, "
+                            f"-{len(non_dep.deleted)})")
+    else:
+        logger.info("✨ Staging completed. No changes detected.")
+
+    return changed_package_map
+
+
 # =====================================================================
 # Layer 5: Public Primitive Entry Point
 # =====================================================================
@@ -376,96 +525,12 @@ def run_primitive_4_stage_render_to_install(
     Returns:
         A dictionary mapping package name to PackageStageChanges objects for all packages with changes.
     """
-    if isinstance(target_pkgs, str):
-        target_pkgs_seq: Sequence[str] = [target_pkgs]
-    else:
-        target_pkgs_seq = target_pkgs if target_pkgs else ()
-
-    # Load active packages from render directory
-    active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs_seq or None)
-
-    # If active_packages is empty, we should just return empty dict and not proceed further.
-    if not active_packages:
-        logger.info("No active packages selected for staging. Skipping.")
+    plan = prepare_stage_packages(workspace_config, target_pkgs=target_pkgs, force=force)
+    if not plan.pkg_metadata:
         return {}
-
-    render_base = workspace_config.render_path
-    install_base = workspace_config.install_path
-
-    # 1. Collect: Load metadata for active packages from RENDER directory
-    all_metadata: Dict[str, PackageConfig] = {
-        pkg: PackageConfig.from_render_dir(render_base / pkg, workspace_config)
-        for pkg in active_packages
-    }
-
-    # 2. Filter: Retain only packages enabled for installation/deployment
-    pkg_metadata = {
-        pkg: meta for pkg, meta in all_metadata.items()
-        if meta.package.enable_install
-    }
-    if not pkg_metadata:
-        logger.info("No active packages are enabled for installation/deployment. Skipping.")
-        return {}
-
-    # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
-    state_file = install_base / "state.toml"
-    state_registry = load_state_registry(state_file)
-    assert_packages_stage_ready(
-        pkg_metadata=pkg_metadata,
-        render_base=render_base,
-        install_base=install_base,
-        state_registry=state_registry,
-        force=force,
+    return execute_stage_packages(
+        workspace_config,
+        pkg_metadata=plan.pkg_metadata,
+        state_registry=plan.state_registry,
     )
 
-    logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
-
-    # 4. Compute stage diffs and deployable changes for all packages
-    computed_diffs = {
-        pkg: compute_package_stage_diff(
-            pkg=pkg,
-            install_base=install_base,
-            render_base=render_base,
-        )
-        for pkg in pkg_metadata.keys()
-    }
-
-    # Identify packages that have physical stage changes
-    packages_to_stage = {
-        pkg: (changes, ignore_handler)
-        for pkg, (changes, ignore_handler) in computed_diffs.items()
-        if changes.has_changes
-    }
-
-    # 4. Apply physical changes and state transitions for modified packages
-    if packages_to_stage:
-        stage_modified_packages(
-            packages_to_stage=packages_to_stage,
-            pkg_metadata=pkg_metadata,
-            install_base=install_base,
-            render_base=render_base,
-            state_registry=state_registry,
-        )
-
-    # 5. Extract dictionary of changed packages for return value
-    changed_package_map = {pkg: changes for pkg, (changes, _) in packages_to_stage.items()}
-
-    # 6. Prepare summary of changes for logging
-    if changed_package_map:
-        logger.info("✨ Staging completed. Summary of changes:")
-        for pkg_change in changed_package_map.values():
-            dep = pkg_change.deployable_changes
-            non_dep = pkg_change.non_deployable_changes
-            logger.info(f"   Package '{pkg_change.package_name}': "
-                        f"+{len(dep.added)}, "
-                        f"~{len(dep.modified)}, "
-                        f"-{len(dep.deleted)}")
-            if pkg_change.has_non_deployable_changes:
-                logger.info(f"     (metadata/hooks: "
-                            f"+{len(non_dep.added)}, "
-                            f"~{len(non_dep.modified)}, "
-                            f"-{len(non_dep.deleted)})")
-    else:
-        logger.info("✨ Staging completed. No changes detected.")
-
-    return changed_package_map
