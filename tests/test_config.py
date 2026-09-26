@@ -2153,19 +2153,26 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         """Verifies the complete 6-tier environment variable preemption hierarchy."""
         from drift.config.workspace_config import WorkspaceConfig
 
-        # Setup workspace config
+        # Setup workspace config with workspace-level default variables
         workspace_config = WorkspaceConfig(
             drift_root=Path("/test/workspace"),
+            env_resolve=EnvResolve(
+                effective=EnvConfig(
+                    default={
+                        "GLOBAL_VAR": "from_workspace",
+                        "OVERRIDDEN_BY_PACKAGE": "from_workspace",
+                        "FALLBACK_TEST": "from_workspace",
+                    }
+                )
+            ),
         )
 
         with patch.dict(
             os.environ,
             {
                 "drift_os": "linux",
-                "GLOBAL_VAR": "from_workspace",
                 "CLI_VAR": "from_cli",
-                "OVERRIDDEN_BY_PACKAGE": "from_workspace",
-                "FALLBACK_TEST": "from_workspace",
+                "OVERRIDDEN_BY_PACKAGE": "from_workspace_outer",
             },
             clear=False,
         ):
@@ -2208,7 +2215,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
 
             # After context exit: package variables are cleanly restored
-            self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace")
+            self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace_outer")
             self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
             self.assertNotIn("drift_package_name", os.environ)
 

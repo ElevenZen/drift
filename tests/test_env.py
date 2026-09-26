@@ -1800,68 +1800,64 @@ class TestEnvPrecedenceLadder(unittest.TestCase):
 
     def test_complete_6_tier_precedence_cascade_on_single_key(self) -> None:
         """Tests that resolution strictly follows Tier 1 (CLI) > Tier 2 (Override) > Tier 3 (Facts) > Tier 4 (Secrets) > Tier 5 (Default) > Tier 6 (Fallback)."""
-        from drift.utils.env_utils import resolve_env_configs, build_effective_env_dict
-
-        # 1. All 6 tiers defined -> Tier 1 (CLI) wins
+        # 1. All 6 tiers defined -> Tier 2 (Override) wins in pure effective_dict; Tier 1 (CLI) wins when activated in env_resolve_scope
         os.environ["LADDER_KEY"] = "tier1_cli"
-        with patch("drift.utils.env_utils.INITIAL_ENV", ["LADDER_KEY"]):
-            config_all = EnvConfig(
-                override={"LADDER_KEY": "tier2_override"},
-                secrets={"LADDER_KEY": "tier4_secrets"},
-                default={"LADDER_KEY": "tier5_default"},
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_all = resolve_env_configs(config_all, extra_facts={"LADDER_KEY": "tier3_facts"})
-            self.assertEqual(res_all.effective_dict["LADDER_KEY"], "tier1_cli")
+        set_initial_env(["LADDER_KEY"])
+        config_all = EnvConfig(
+            override={"LADDER_KEY": "tier2_override"},
+            secrets={"LADDER_KEY": "tier4_secrets"},
+            default={"LADDER_KEY": "tier5_default"},
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_all = resolve_env_configs(config_all, extra_facts={"LADDER_KEY": "tier3_facts"})
+        self.assertEqual(res_all.effective_dict["LADDER_KEY"], "tier2_override")
+        with env_resolve_scope(res_all):
+            self.assertEqual(os.environ["LADDER_KEY"], "tier1_cli")
 
         # 2. Tier 1 absent -> Tier 2 (Override) wins over Facts, Secrets, Default, Fallback
         os.environ.pop("LADDER_KEY", None)
-        with patch("drift.utils.env_utils.INITIAL_ENV", []):
-            config_no_cli = EnvConfig(
-                override={"LADDER_KEY": "tier2_override"},
-                secrets={"LADDER_KEY": "tier4_secrets"},
-                default={"LADDER_KEY": "tier5_default"},
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_t2 = resolve_env_configs(config_no_cli, extra_facts={"LADDER_KEY": "tier3_facts"})
-            self.assertEqual(res_t2.effective_dict["LADDER_KEY"], "tier2_override")
+        set_initial_env([])
+        config_no_cli = EnvConfig(
+            override={"LADDER_KEY": "tier2_override"},
+            secrets={"LADDER_KEY": "tier4_secrets"},
+            default={"LADDER_KEY": "tier5_default"},
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_t2 = resolve_env_configs(config_no_cli, extra_facts={"LADDER_KEY": "tier3_facts"})
+        self.assertEqual(res_t2.effective_dict["LADDER_KEY"], "tier2_override")
 
         # 3. Tier 1 & 2 absent -> Tier 3 (Facts) wins over Secrets, Default, Fallback
-        with patch("drift.utils.env_utils.INITIAL_ENV", []):
-            config_no_t2 = EnvConfig(
-                secrets={"LADDER_KEY": "tier4_secrets"},
-                default={"LADDER_KEY": "tier5_default"},
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_t3 = resolve_env_configs(config_no_t2, extra_facts={"LADDER_KEY": "tier3_facts"})
-            self.assertEqual(res_t3.effective_dict["LADDER_KEY"], "tier3_facts")
+        config_no_t2 = EnvConfig(
+            secrets={"LADDER_KEY": "tier4_secrets"},
+            default={"LADDER_KEY": "tier5_default"},
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_t3 = resolve_env_configs(config_no_t2, extra_facts={"LADDER_KEY": "tier3_facts"})
+        self.assertEqual(res_t3.effective_dict["LADDER_KEY"], "tier3_facts")
 
         # 4. Tier 1, 2, 3 absent -> Tier 4 (Secrets) wins over Default, Fallback
-        with patch("drift.utils.env_utils.INITIAL_ENV", []):
-            config_no_t3 = EnvConfig(
-                secrets={"LADDER_KEY": "tier4_secrets"},
-                default={"LADDER_KEY": "tier5_default"},
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_t4 = resolve_env_configs(config_no_t3, extra_facts={})
-            self.assertEqual(res_t4.effective_dict["LADDER_KEY"], "tier4_secrets")
+        config_no_t3 = EnvConfig(
+            secrets={"LADDER_KEY": "tier4_secrets"},
+            default={"LADDER_KEY": "tier5_default"},
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_t4 = resolve_env_configs(config_no_t3, extra_facts={})
+        self.assertEqual(res_t4.effective_dict["LADDER_KEY"], "tier4_secrets")
 
         # 5. Tier 1, 2, 3, 4 absent -> Tier 5 (Default) wins over Fallback
-        with patch("drift.utils.env_utils.INITIAL_ENV", []):
-            config_no_t4 = EnvConfig(
-                default={"LADDER_KEY": "tier5_default"},
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_t5 = resolve_env_configs(config_no_t4, extra_facts={})
-            self.assertEqual(res_t5.effective_dict["LADDER_KEY"], "tier5_default")
+        config_no_t4 = EnvConfig(
+            default={"LADDER_KEY": "tier5_default"},
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_t5 = resolve_env_configs(config_no_t4, extra_facts={})
+        self.assertEqual(res_t5.effective_dict["LADDER_KEY"], "tier5_default")
 
         # 6. Only Tier 6 (Fallback) defined -> Fallback provides the value
-        with patch("drift.utils.env_utils.INITIAL_ENV", []):
-            config_only_t6 = EnvConfig(
-                fallback={"LADDER_KEY": "tier6_fallback"},
-            )
-            res_t6 = resolve_env_configs(config_only_t6, extra_facts={})
-            self.assertEqual(res_t6.effective_dict["LADDER_KEY"], "tier6_fallback")
+        config_only_t6 = EnvConfig(
+            fallback={"LADDER_KEY": "tier6_fallback"},
+        )
+        res_t6 = resolve_env_configs(config_only_t6, extra_facts={})
+        self.assertEqual(res_t6.effective_dict["LADDER_KEY"], "tier6_fallback")
 
 
 class TestEnvParsingAndAliasing(unittest.TestCase):

@@ -139,13 +139,12 @@ def build_effective_env_dict(
     extra_facts: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
     """Flattens an EnvConfig into an effective environment dictionary following 6-Tier Precedence."""
-    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
-    effective_env = dict(os.environ)
-    update_env_dict(effective_env, env_config.fallback, overwrite=False)
+    protected_facts = set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
+    effective_env = dict(env_config.fallback)
     update_env_dict(effective_env, env_config.default, overwrite=True, env_keep=protected_facts)
     update_env_dict(effective_env, env_config.secrets, overwrite=True, env_keep=protected_facts, mask_values=True)
-    update_env_dict(effective_env, extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
-    update_env_dict(effective_env, env_config.override, overwrite=True, env_keep=set(INITIAL_ENV))
+    update_env_dict(effective_env, extra_facts or {}, overwrite=True)
+    update_env_dict(effective_env, env_config.override, overwrite=True)
     return effective_env
 
 
