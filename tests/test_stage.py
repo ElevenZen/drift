@@ -13,7 +13,7 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
-    assert_stage_packages_ready,
+    assert_packages_stage_ready,
 )
 from drift.render.render_package import render_package
 
@@ -1079,7 +1079,7 @@ class TestStageRepo(unittest.TestCase):
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_a), "staged")
 
-    def test_assert_stage_packages_ready(self) -> None:
+    def test_assert_packages_stage_ready(self) -> None:
         """Verifies hook existence, midway transaction state, and install directory cleanliness assertions."""
         from drift.config.package_config import PackageConfig
         from drift.core.state_registry import StateRegistry
@@ -1093,7 +1093,7 @@ class TestStageRepo(unittest.TestCase):
         registry = StateRegistry()
 
         # 1. Valid clean state passes
-        assert_stage_packages_ready(
+        assert_packages_stage_ready(
             pkg_metadata=pkg_metadata,
             render_base=self.render_dir,
             install_base=self.install_dir,
@@ -1104,7 +1104,7 @@ class TestStageRepo(unittest.TestCase):
         # 2. Midway state in registry raises RuntimeError
         registry.set_package_state("pkg_a", "installing")
         with self.assertRaises(RuntimeError) as ctx:
-            assert_stage_packages_ready(
+            assert_packages_stage_ready(
                 pkg_metadata=pkg_metadata,
                 render_base=self.render_dir,
                 install_base=self.install_dir,
@@ -1114,7 +1114,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("Safety Abort: Package(s) in midway transaction state:", str(ctx.exception))
 
         # 3. Midway state with force=True bypasses the check
-        assert_stage_packages_ready(
+        assert_packages_stage_ready(
             pkg_metadata=pkg_metadata,
             render_base=self.render_dir,
             install_base=self.install_dir,
@@ -1132,7 +1132,7 @@ class TestStageRepo(unittest.TestCase):
         (pkg_install_dir / "untracked.txt").write_text("dirty", encoding="utf-8")
 
         with self.assertRaises(DriftDetectedError):
-            assert_stage_packages_ready(
+            assert_packages_stage_ready(
                 pkg_metadata=pkg_metadata,
                 render_base=self.render_dir,
                 install_base=self.install_dir,
@@ -1141,7 +1141,7 @@ class TestStageRepo(unittest.TestCase):
             )
 
         # 5. Dirty install repo with force=True bypasses the check
-        assert_stage_packages_ready(
+        assert_packages_stage_ready(
             pkg_metadata=pkg_metadata,
             render_base=self.render_dir,
             install_base=self.install_dir,

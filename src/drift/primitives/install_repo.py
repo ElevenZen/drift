@@ -11,14 +11,14 @@ Layer 5: Public Primitive Entry Points
             workspace_config.filter_install_packages_by_target
             PackageConfig.from_install_dir
         2. Pre-flight Validation & Pre-Transaction Conflict Audit:
-            precheck_deployment_packages [Layer 4]
+            assert_packages_deployment_ready [Layer 4]
                 assert_can_escalate (if any target requires sudo)
                 assert_hooks_exist (lifecycle hooks)
                 assert_no_cross_package_conflicts [Layer 4]
         3. Execute Single-Package Deployments:
             deploy_one_package_with_error_wrapping [Layer 4]
                 deploy_one_package [Layer 4]
-                    precheck_single_package [Layer 4] (midway transaction, drift root collisions, writable checks)
+                    assert_one_package_deployment_ready [Layer 4] (midway transaction, drift root collisions, writable checks)
                     state_registry.set_package_state("installing") & save
                     pkg_config.package_envs context
                     deploy_one_package_impl [Layer 4]
@@ -66,11 +66,11 @@ Layers (ordered bottom-up by dependency):
     Layer 4: Single-Package Pipeline & Pre-flight Validation
         _gather_package_destination_targets
         assert_no_cross_package_conflicts
-        precheck_single_package
+        assert_one_package_deployment_ready
         deploy_one_package_impl
         deploy_one_package
         deploy_one_package_with_error_wrapping
-        precheck_deployment_packages
+        assert_packages_deployment_ready
     Layer 5: Public Primitive Entry Points
         run_primitive_5_install_deployment
         run_primitive_6_commit_install_repo
@@ -815,7 +815,7 @@ def assert_no_cross_package_conflicts(
     raise InstallCollisionError("\n".join(conflict_lines))
 
 
-def precheck_single_package(
+def assert_one_package_deployment_ready(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
@@ -1053,7 +1053,7 @@ def deploy_one_package(
     install_base = workspace_config.install_path
     metadata = PackageConfig.from_install_dir(install_base / pkg, workspace_config)
 
-    skip_res = precheck_single_package(
+    skip_res = assert_one_package_deployment_ready(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
@@ -1106,7 +1106,7 @@ def deploy_one_package_with_error_wrapping(
         raise mark_logged(RuntimeError(err_msg)) from e
 
 
-def precheck_deployment_packages(
+def assert_packages_deployment_ready(
     workspace_config: WorkspaceConfig,
     discovered_packages: Iterable[str],
     pkg_metadata_map: Mapping[str, PackageConfig],
@@ -1174,7 +1174,7 @@ def run_primitive_5_install_deployment(
         for pkg in discovered_packages
     }
 
-    precheck_deployment_packages(
+    assert_packages_deployment_ready(
         workspace_config=workspace_config,
         discovered_packages=discovered_packages,
         pkg_metadata_map=pkg_metadata_map,

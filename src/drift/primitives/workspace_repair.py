@@ -441,7 +441,7 @@ def repair_engine_inputs(
     return actions
 
 
-def migrate_single_package_metadata(
+def migrate_one_package_metadata(
     repo_dir: Path,
     pkg_dir: Path,
     dry_run: bool = False,
@@ -507,7 +507,7 @@ def repair_repo_package_metadata(
     for pkg_dir in sorted(repo_dir.iterdir()):
         if not pkg_dir.is_dir() or pkg_dir.name.startswith("."):
             continue
-        pkg_actions, was_migrated = migrate_single_package_metadata(repo_dir, pkg_dir, dry_run=dry_run)
+        pkg_actions, was_migrated = migrate_one_package_metadata(repo_dir, pkg_dir, dry_run=dry_run)
         actions.extend(pkg_actions)
         if was_migrated:
             migrated_pkgs.append(pkg_dir.name)

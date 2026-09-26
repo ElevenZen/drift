@@ -187,7 +187,7 @@ def run_health_probe_from_install(
     return _execute_health_hook_no_throw(_trigger, pkg=pkg, target_dir=target_dir)
 
 
-def run_single_package_health_probe(
+def run_one_package_health_probe(
     workspace_config: WorkspaceConfig,
     pkg: str,
     timeout_override: Optional[int] = None,
@@ -258,7 +258,7 @@ def run_primitive_health_checks(
     total_duration = 0.0
 
     for pkg in targets:
-        probe_res = run_single_package_health_probe(
+        probe_res = run_one_package_health_probe(
             workspace_config=workspace_config,
             pkg=pkg,
             timeout_override=timeout_override,

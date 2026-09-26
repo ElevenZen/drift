@@ -18,7 +18,7 @@ from drift.core.constants import (
 )
 from drift.core.state_registry import load_state_registry, save_state_registry
 from drift.primitives.package_health import (
-    run_single_package_health_probe,
+    run_one_package_health_probe,
     run_primitive_health_checks,
 )
 from drift.hooks.lifecycle_hooks import HookExecFlags
@@ -76,7 +76,7 @@ DEFAULT = true
         os.environ.clear()
         os.environ.update(self.original_environ)
 
-    def test_health_single_package_pass(self):
+    def test_health_one_package_pass(self):
         """Verifies that a passing health probe hook returns HEALTHY status with output and correct CWD."""
         pkg = "pkg_healthy"
         pkg_install_dir = self.install_dir / pkg
@@ -100,13 +100,13 @@ exit 0
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg)
+        res = run_one_package_health_probe(self.workspace_config, pkg)
         self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
         self.assertEqual(res.exit_code, 0)
         self.assertIn(f"OK: {pkg} is running in {self.system_target_dir}", res.stdout)
         self.assertGreaterEqual(res.duration_ms, 0.0)
 
-    def test_health_single_package_fail(self):
+    def test_health_one_package_fail(self):
         """Verifies that a failing health probe hook returns UNHEALTHY status with stderr."""
         pkg = "pkg_unhealthy"
         pkg_install_dir = self.install_dir / pkg
@@ -130,14 +130,14 @@ exit 2
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(
+        res = run_one_package_health_probe(
             self.workspace_config, pkg, flags=HookExecFlags(streaming=False)
         )
         self.assertEqual(res.status, PackageHealthStatus.UNHEALTHY)
         self.assertEqual(res.exit_code, 2)
         self.assertIn("ERROR: Daemon unreachable on port 8080", res.stderr)
 
-    def test_health_single_package_timeout(self):
+    def test_health_one_package_timeout(self):
         """Verifies that a probe exceeding its timeout returns TIMEOUT status."""
         pkg = "pkg_timeout"
         pkg_install_dir = self.install_dir / pkg
@@ -161,7 +161,7 @@ exit 0
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg, timeout_override=1)
+        res = run_one_package_health_probe(self.workspace_config, pkg, timeout_override=1)
         self.assertEqual(res.status, PackageHealthStatus.TIMEOUT)
         self.assertIsNotNone(res.error_message)
         assert res.error_message is not None
@@ -183,7 +183,7 @@ exit 0
         health = "drift_hooks/non_existent.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg)
+        res = run_one_package_health_probe(self.workspace_config, pkg)
         self.assertEqual(res.status, PackageHealthStatus.MISSING_HOOK)
 
     def test_health_no_hook_configured(self):
@@ -199,12 +199,12 @@ exit 0
         install_method = "copy"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg)
+        res = run_one_package_health_probe(self.workspace_config, pkg)
         self.assertEqual(res.status, PackageHealthStatus.NO_HOOK)
 
     def test_health_not_installed(self):
         """Verifies that querying health for an uninstalled package returns NOT_INSTALLED."""
-        res = run_single_package_health_probe(self.workspace_config, "non_existent_pkg")
+        res = run_one_package_health_probe(self.workspace_config, "non_existent_pkg")
         self.assertEqual(res.status, PackageHealthStatus.NOT_INSTALLED)
 
     def test_health_runs_without_sudo_elevation(self):
@@ -233,7 +233,7 @@ exit 0
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "OK"
             mock_run.return_value.stderr = ""
-            res = run_single_package_health_probe(self.workspace_config, pkg)
+            res = run_one_package_health_probe(self.workspace_config, pkg)
             called_cmd = mock_run.call_args[0][0]
             self.assertNotEqual(called_cmd[0], "sudo")
             self.assertEqual(called_cmd[0], str(hook_script))
@@ -369,7 +369,7 @@ exit 0
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg, from_stage="source")
+        res = run_one_package_health_probe(self.workspace_config, pkg, from_stage="source")
         self.assertEqual(res.status, PackageHealthStatus.HEALTHY)
         self.assertEqual(res.exit_code, 0)
         self.assertIn("HEALTH_pkg_templated_health_9090", res.stdout)
@@ -447,14 +447,14 @@ exit 0
         """, encoding="utf-8")
 
         # 1. from_stage="install" -> executes static file directly
-        res_install = run_single_package_health_probe(self.workspace_config, pkg, from_stage="install")
+        res_install = run_one_package_health_probe(self.workspace_config, pkg, from_stage="install")
         self.assertEqual(res_install.status, PackageHealthStatus.HEALTHY)
         self.assertIn("INSTALL_STATIC_OUTPUT", res_install.stdout)
         self.assertNotIn("SRC_OUTPUT", res_install.stdout)
         self.assertEqual(res_install.hook_path, str(install_hook))
 
         # 2. from_stage="source" -> renders template and executes from render/
-        res_src = run_single_package_health_probe(self.workspace_config, pkg, from_stage="source")
+        res_src = run_one_package_health_probe(self.workspace_config, pkg, from_stage="source")
         self.assertEqual(res_src.status, PackageHealthStatus.HEALTHY)
         self.assertIn("SRC_OUTPUT_pkg_dual_stage", res_src.stdout)
         self.assertNotIn("INSTALL_STATIC_OUTPUT", res_src.stdout)

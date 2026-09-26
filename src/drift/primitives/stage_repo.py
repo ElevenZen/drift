@@ -11,7 +11,7 @@ Layer 5: Primitive Entry Point
         2. Functional Pipeline (Collect >> Filter >> Assert):
             Collect: PackageConfig.from_render_dir
             Filter: enable_install predicate
-            Assert: assert_stage_packages_ready [Layer 1]
+            Assert: assert_packages_stage_ready [Layer 1]
                 metadata.hooks.assert_hooks_exist
                 state_registry.get_midway_packages
                 assert_install_pkg_dir_clean [Layer 1]
@@ -34,7 +34,7 @@ Layer 5: Primitive Entry Point
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
         assert_install_pkg_dir_clean
-        assert_stage_packages_ready
+        assert_packages_stage_ready
         generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
         compute_package_stage_diff
@@ -143,7 +143,7 @@ def assert_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
         )
 
 
-def assert_stage_packages_ready(
+def assert_packages_stage_ready(
     pkg_metadata: Mapping[str, PackageConfig],
     render_base: Path,
     install_base: Path,
@@ -410,7 +410,7 @@ def run_primitive_4_stage_render_to_install(
     # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
     state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)
-    assert_stage_packages_ready(
+    assert_packages_stage_ready(
         pkg_metadata=pkg_metadata,
         render_base=render_base,
         install_base=install_base,

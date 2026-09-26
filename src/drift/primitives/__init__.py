@@ -7,7 +7,7 @@ from .stage_repo import (
     run_primitive_4_stage_render_to_install,
     PackageStageChanges,
     apply_package_stage_changes,
-    assert_stage_packages_ready,
+    assert_packages_stage_ready,
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
@@ -16,6 +16,7 @@ from .install_repo import (
     PackageInstallContext,
     deploy_one_package,
     deploy_one_package_impl,
+    assert_packages_deployment_ready,
 )
 from .uninstall_repo import (
     run_primitive_7_uninstall_packages,
@@ -73,7 +74,8 @@ __all__ = [
     "run_primitive_4_stage_render_to_install",
     "PackageStageChanges",
     "apply_package_stage_changes",
-    "assert_stage_packages_ready",
+    "assert_packages_stage_ready",
+    "assert_packages_deployment_ready",
     "run_primitive_5_install_deployment",
     "run_primitive_6_commit_install_repo",
     "DeployOptions",
