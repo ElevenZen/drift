@@ -11,7 +11,10 @@ from drift.core.constants import (
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
 from drift.config.workspace_config import WorkspaceConfig
-from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+from drift.primitives.stage_repo import (
+    run_primitive_4_stage_render_to_install,
+    assert_stage_packages_ready,
+)
 from drift.render.render_package import render_package
 
 
@@ -1075,6 +1078,76 @@ class TestStageRepo(unittest.TestCase):
         # 6. Verify state in state.toml is updated to "staged"
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_a), "staged")
+
+    def test_assert_stage_packages_ready(self) -> None:
+        """Verifies hook existence, midway transaction state, and install directory cleanliness assertions."""
+        from drift.config.package_config import PackageConfig
+        from drift.core.state_registry import StateRegistry
+        from drift.core.exceptions import DriftDetectedError
+        import subprocess
+
+        # Set up a rendered package
+        render_package(self.workspace_config, self.pkg_a_src)
+        meta = PackageConfig.from_render_dir(self.render_dir / "pkg_a", self.workspace_config)
+        pkg_metadata = {"pkg_a": meta}
+        registry = StateRegistry()
+
+        # 1. Valid clean state passes
+        assert_stage_packages_ready(
+            pkg_metadata=pkg_metadata,
+            render_base=self.render_dir,
+            install_base=self.install_dir,
+            state_registry=registry,
+            force=False,
+        )
+
+        # 2. Midway state in registry raises RuntimeError
+        registry.set_package_state("pkg_a", "installing")
+        with self.assertRaises(RuntimeError) as ctx:
+            assert_stage_packages_ready(
+                pkg_metadata=pkg_metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=registry,
+                force=False,
+            )
+        self.assertIn("Safety Abort: Package(s) in midway transaction state:", str(ctx.exception))
+
+        # 3. Midway state with force=True bypasses the check
+        assert_stage_packages_ready(
+            pkg_metadata=pkg_metadata,
+            render_base=self.render_dir,
+            install_base=self.install_dir,
+            state_registry=registry,
+            force=True,
+        )
+
+        # 4. Dirty install repo raises DriftDetectedError without force
+        registry.set_package_state("pkg_a", "staged")
+        subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)
+        pkg_install_dir = self.install_dir / "pkg_a"
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "untracked.txt").write_text("dirty", encoding="utf-8")
+
+        with self.assertRaises(DriftDetectedError):
+            assert_stage_packages_ready(
+                pkg_metadata=pkg_metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=registry,
+                force=False,
+            )
+
+        # 5. Dirty install repo with force=True bypasses the check
+        assert_stage_packages_ready(
+            pkg_metadata=pkg_metadata,
+            render_base=self.render_dir,
+            install_base=self.install_dir,
+            state_registry=registry,
+            force=True,
+        )
 
 
 if __name__ == "__main__":

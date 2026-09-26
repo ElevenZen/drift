@@ -7,6 +7,7 @@ from .stage_repo import (
     run_primitive_4_stage_render_to_install,
     PackageStageChanges,
     apply_package_stage_changes,
+    assert_stage_packages_ready,
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
@@ -72,6 +73,7 @@ __all__ = [
     "run_primitive_4_stage_render_to_install",
     "PackageStageChanges",
     "apply_package_stage_changes",
+    "assert_stage_packages_ready",
     "run_primitive_5_install_deployment",
     "run_primitive_6_commit_install_repo",
     "DeployOptions",

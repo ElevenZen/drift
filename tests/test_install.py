@@ -132,22 +132,22 @@ class TestInstallRepo(unittest.TestCase):
         installed = registry.filter_by_states(["installed"])
         self.assertEqual(installed, [("pkg3", "installed")])
 
-        # Test filter_by_states with package_names subset
-        staging = registry.filter_by_states(["staging"], package_names=["pkg1", "pkg3"])
+        # Test filter_by_states with target_packages subset
+        staging = registry.filter_by_states(["staging"], target_packages=["pkg1", "pkg3"])
         self.assertEqual(staging, [("pkg1", "staging")])
 
         # Test get_midway_packages with all packages
         midway_all = registry.get_midway_packages()
         self.assertEqual(midway_all, [("pkg1", "staging"), ("pkg2", "installing")])
 
-        # Test get_midway_packages with package_names subset
+        # Test get_midway_packages with target_packages subset
         midway_subset = registry.get_midway_packages(["pkg2", "pkg3"])
         self.assertEqual(midway_subset, [("pkg2", "installing")])
 
         # Test filter_by_states and get_midway_packages with lazy generators (unmaterialized)
         states_gen = (s for s in ["staging", "installing"])
         pkgs_gen = (p for p in ["pkg1", "pkg3"])
-        self.assertEqual(registry.filter_by_states(states_gen, package_names=pkgs_gen), [("pkg1", "staging")])
+        self.assertEqual(registry.filter_by_states(states_gen, target_packages=pkgs_gen), [("pkg1", "staging")])
 
         pkgs_midway_gen = (p for p in ["pkg2", "pkg3"])
         self.assertEqual(registry.get_midway_packages(pkgs_midway_gen), [("pkg2", "installing")])

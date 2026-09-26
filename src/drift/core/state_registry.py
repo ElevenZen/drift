@@ -154,19 +154,19 @@ class StateRegistry:
     def filter_by_states(
         self,
         states: Iterable[str],
-        package_names: Optional[Iterable[str]] = None,
+        target_packages: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
         """Filters packages matching any of the specified states.
 
         Args:
             states: An iterable of state names to filter by.
-            package_names: Optional subset of package names to check. If None, checks all packages in registry.
+            target_packages: Optional subset of package names to check. If None, checks all packages in registry.
 
         Returns:
             A list of (package_name, state) tuples for packages matching the states.
         """
         states_set = set(states)
-        target_names = package_names if package_names is not None else self.packages.keys()
+        target_names = target_packages if target_packages is not None else self.packages.keys()
         all_packages: List[Tuple[str, str]] = [
             (pkg, self.packages[pkg].state)
             for pkg in target_names
@@ -176,17 +176,17 @@ class StateRegistry:
 
     def get_midway_packages(
         self,
-        package_names: Optional[Iterable[str]] = None,
+        target_packages: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
         """Finds packages currently in a midway transaction state ('staging' or 'installing').
 
         Args:
-            package_names: Optional subset of package names to check. If None, checks all packages in registry.
+            target_packages: Optional subset of package names to check. If None, checks all packages in registry.
 
         Returns:
             A list of (package_name, state) tuples for packages in midway transaction states.
         """
-        return self.filter_by_states(MIDWAY_TRANSACTION_STATES, package_names=package_names)
+        return self.filter_by_states(MIDWAY_TRANSACTION_STATES, target_packages=target_packages)
 
     def is_package_in_midway_state(self, pkg: str) -> bool:
         """Checks if a specific package is currently in a midway transaction state."""

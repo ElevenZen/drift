@@ -6,12 +6,15 @@ Architecture & Call Chain Overview
 
 Layer 5: Primitive Entry Point
     run_primitive_4_stage_render_to_install(workspace_config, target_pkgs, force)
-        1. Package Discovery & Config Validation:
+        1. Package Discovery & Selection:
             workspace_config.filter_render_packages_by_target
-            PackageConfig.from_render_dir
-        2. Transaction Safety & Sentinel Checks:
-            state_registry.get_midway_packages
-            assert_install_pkg_dir_clean [Layer 1]
+        2. Functional Pipeline (Collect >> Filter >> Assert):
+            Collect: PackageConfig.from_render_dir
+            Filter: enable_install predicate
+            Assert: assert_stage_packages_ready [Layer 1]
+                metadata.hooks.assert_hooks_exist
+                state_registry.get_midway_packages
+                assert_install_pkg_dir_clean [Layer 1]
         3. Diff & Change Classification:
             compute_package_stage_diff(pkg, install_base, render_base) [Layer 2]
                 compare_folders (deployable diff with DriftIgnore)
@@ -31,6 +34,7 @@ Layer 5: Primitive Entry Point
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
         assert_install_pkg_dir_clean
+        assert_stage_packages_ready
         generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
         compute_package_stage_diff
@@ -137,6 +141,48 @@ def assert_install_pkg_dir_clean(install_base: Path, pkg: str) -> None:
             f"Package '{pkg}' in install directory has uncommitted local modifications. "
             "Please commit or stash your changes before staging, or use --force flag to bypass this check."
         )
+
+
+def assert_stage_packages_ready(
+    pkg_metadata: Mapping[str, PackageConfig],
+    render_base: Path,
+    install_base: Path,
+    state_registry: StateRegistry,
+    force: bool = False,
+) -> None:
+    """Validates that packages in render/ are ready for staging into install/.
+
+    Pre-flight safety assertions:
+    1. Hook file existence in render/ sandbox for each enabled package.
+    2. When force is False, validates that no package is in a midway transaction state
+       ('staging' or 'installing') in the state registry.
+    3. When force is False, validates that no package directory in install/ has uncommitted
+       local git modifications.
+
+    Raises:
+        FileNotFoundError: If a configured hook file does not exist in render/.
+        RuntimeError: If any package is in a midway transaction state.
+        DriftDetectedError: If an install package directory has uncommitted modifications.
+    """
+    for pkg, metadata in pkg_metadata.items():
+        metadata.hooks.assert_hooks_exist(render_base / pkg, is_source=False)
+
+    if force:
+        return
+
+    midway_pkgs = state_registry.get_midway_packages(target_packages=pkg_metadata.keys())
+    if midway_pkgs:
+        pkg_names = [pkg for pkg, _ in midway_pkgs]
+        pkg_cmd_str = shlex.join(pkg_names)
+        details = ", ".join(f"'{pkg}' ({state})" for pkg, state in midway_pkgs)
+        raise RuntimeError(
+            f"Safety Abort: Package(s) in midway transaction state: {details}, "
+            f"indicating a previous operation failed midway. "
+            f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying."
+        )
+
+    for pkg in pkg_metadata.keys():
+        assert_install_pkg_dir_clean(install_base, pkg)
 
 
 def generate_stage_stow_ignore(
@@ -346,55 +392,43 @@ def run_primitive_4_stage_render_to_install(
     render_base = workspace_config.render_path
     install_base = workspace_config.install_path
 
-    # 1. First find all active packages to process and load their metadata from RENDER directory
-    # Filter out packages that are not enabled for installation/deployment.
-    pkg_metadata = {}
-    for pkg in active_packages:
-        metadata = PackageConfig.from_render_dir(render_base / pkg, workspace_config)
-        if not metadata.package.enable_install:
-            continue
-        # Verify hook files exist and are regular files in render/ sandbox
-        metadata.hooks.assert_hooks_exist(render_base / pkg, is_source=False)
-        pkg_metadata[pkg] = metadata
+    # 1. Collect: Load metadata for active packages from RENDER directory
+    all_metadata: Dict[str, PackageConfig] = {
+        pkg: PackageConfig.from_render_dir(render_base / pkg, workspace_config)
+        for pkg in active_packages
+    }
 
-    # Check if active_packages is empty after filtering by enable_install
+    # 2. Filter: Retain only packages enabled for installation/deployment
+    pkg_metadata = {
+        pkg: meta for pkg, meta in all_metadata.items()
+        if meta.package.enable_install
+    }
     if not pkg_metadata:
         logger.info("No active packages are enabled for installation/deployment. Skipping.")
         return {}
 
-    # 2. First verify package states from state registry before checking uncommitted changes.
-    # If a package is in 'staging' or 'installing' state, a previous operation failed midway
-    # (which naturally causes uncommitted changes in install/), so we must report the mid-fail state first.
+    # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
     state_file = install_base / "state.toml"
     state_registry = load_state_registry(state_file)
-    if not force:
-        midway_pkgs = state_registry.get_midway_packages(list(pkg_metadata.keys()))
-        if midway_pkgs:
-            pkg_names = [pkg for pkg, _ in midway_pkgs]
-            pkg_cmd_str = shlex.join(pkg_names)
-            details = ", ".join(f"'{pkg}' ({state})" for pkg, state in midway_pkgs)
-            raise RuntimeError(
-                f"Safety Abort: Package(s) in midway transaction state: {details}, "
-                f"indicating a previous operation failed midway. "
-                f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying."
-            )
-
-        # Check every package folder in install/ if it has uncommitted local modifications.
-        # If so and the force flag is not present, raise a DriftDetectedError.
-        for pkg in pkg_metadata.keys():
-            assert_install_pkg_dir_clean(install_base, pkg)
+    assert_stage_packages_ready(
+        pkg_metadata=pkg_metadata,
+        render_base=render_base,
+        install_base=install_base,
+        state_registry=state_registry,
+        force=force,
+    )
 
     logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
 
-    # 3. Compute stage diffs and deployable changes for all packages
-    computed_diffs = {}
-    for pkg in pkg_metadata.keys():
-        stage_changes, ignore_handler = compute_package_stage_diff(
+    # 4. Compute stage diffs and deployable changes for all packages
+    computed_diffs = {
+        pkg: compute_package_stage_diff(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
         )
-        computed_diffs[pkg] = (stage_changes, ignore_handler)
+        for pkg in pkg_metadata.keys()
+    }
 
     # Identify packages that have physical stage changes
     packages_to_stage = {
