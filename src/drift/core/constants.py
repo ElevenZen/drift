@@ -102,6 +102,7 @@ FORBIDDEN_PACKAGE_NAMES: frozenset = frozenset({
     ".gitignore",
 })
 MIDWAY_TRANSACTION_STATES: frozenset = frozenset({"staging", "installing"})
+ROLLBACK_ELIGIBLE_STATES: frozenset = frozenset({"staging", "staged", "installing"})
 
 WINDOWS_PLATFORM_ALIASES = ("windows", "win32", "winos", "win")
 WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES

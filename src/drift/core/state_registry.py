@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Dict, Optional, List, Mapping, Tuple, Iterable, Any
 from ..utils.toml_utils import parse_toml
 from .exceptions import ConfigError
-from .constants import MIDWAY_TRANSACTION_STATES, InstallMethod
+from .constants import MIDWAY_TRANSACTION_STATES, ROLLBACK_ELIGIBLE_STATES, InstallMethod
 
 
 
@@ -179,6 +179,7 @@ class StateRegistry:
         target_packages: Optional[Iterable[str]] = None,
     ) -> List[Tuple[str, str]]:
         """Finds packages currently in a midway transaction state ('staging' or 'installing').
+        'staged' is not included because it is the state for installing packages.
 
         Args:
             target_packages: Optional subset of package names to check. If None, checks all packages in registry.
@@ -187,6 +188,20 @@ class StateRegistry:
             A list of (package_name, state) tuples for packages in midway transaction states.
         """
         return self.filter_by_states(MIDWAY_TRANSACTION_STATES, target_packages=target_packages)
+
+    def get_rollback_eligible_packages(
+        self,
+        target_packages: Optional[Iterable[str]] = None,
+    ) -> List[Tuple[str, str]]:
+        """Finds packages currently in an uncommitted state eligible for rollback ('staging', 'staged', or 'installing').
+
+        Args:
+            target_packages: Optional subset of package names to check. If None, checks all packages in registry.
+
+        Returns:
+            A list of (package_name, state) tuples for packages in rollback eligible states.
+        """
+        return self.filter_by_states(ROLLBACK_ELIGIBLE_STATES, target_packages=target_packages)
 
     def is_package_in_midway_state(self, pkg: str) -> bool:
         """Checks if a specific package is currently in a midway transaction state."""

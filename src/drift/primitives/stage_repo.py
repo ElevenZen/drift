@@ -76,6 +76,7 @@ from ..core.exceptions import MidwayTransactionError
 from .package_assertions import (
     assert_packages_hooks_exist,
     assert_install_pkg_dirs_clean,
+    assert_packages_not_in_midway_state,
 )
 
 logger = logging.getLogger(__name__)
@@ -175,17 +176,7 @@ def assert_packages_stage_ready(
         return
 
     # 2. Collect all midway transaction state packages before raising
-    midway_pkgs = state_registry.get_midway_packages(target_packages=pkg_metadata.keys())
-    if midway_pkgs:
-        pkg_names = [pkg for pkg, _ in midway_pkgs]
-        pkg_cmd_str = shlex.join(pkg_names)
-        details = ", ".join(f"'{pkg}' ({state})" for pkg, state in midway_pkgs)
-        raise MidwayTransactionError(
-            f"Safety Abort: Package(s) in midway transaction state: {details}, "
-            f"indicating a previous operation failed midway. "
-            f"Please run 'drift rollback {pkg_cmd_str}' to restore a clean state before retrying.",
-            packages=pkg_names,
-        )
+    assert_packages_not_in_midway_state(pkg_metadata.keys(), state_registry)
 
     # 3. Collect all unclean package directories before raising
     assert_install_pkg_dirs_clean(install_base, pkg_metadata.keys())

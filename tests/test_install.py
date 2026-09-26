@@ -25,11 +25,19 @@ from drift.core.state_registry import (
         StateRegistry,
         PackageState
 )
-from drift.core.exceptions import InstallCollisionError, CrossPackageCollisionError, HookMissingError
+from drift.core.exceptions import (
+    InstallCollisionError,
+    CrossPackageCollisionError,
+    HookMissingError,
+    PackageInstallDirMissingError,
+)
 from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
         resolve_target_path,
         run_primitive_5_install_deployment,
+        prepare_install_deployment,
+        execute_install_deployment,
+        DeployPlan,
         get_stow_version,
         is_stow_version_sufficient,
         find_internal_symlink_conflicts,
@@ -38,6 +46,8 @@ from drift.primitives.install_repo import (
         deploy_one_package,
         DeployOptions,
         PackageInstallContext,
+)
+from drift.primitives.package_assertions import (
         assert_no_cross_package_conflicts,
 )
 from drift.utils.file_ops import (
@@ -139,6 +149,10 @@ class TestInstallRepo(unittest.TestCase):
         # Test get_midway_packages with all packages
         midway_all = registry.get_midway_packages()
         self.assertEqual(midway_all, [("pkg1", "staging"), ("pkg2", "installing")])
+
+        # Test get_rollback_eligible_packages with all packages
+        rollback_all = registry.get_rollback_eligible_packages()
+        self.assertEqual(rollback_all, [("pkg1", "staging"), ("pkg2", "installing"), ("pkg4", "staged")])
 
         # Test get_midway_packages with target_packages subset
         midway_subset = registry.get_midway_packages(["pkg2", "pkg3"])
@@ -599,13 +613,12 @@ class TestInstallRepo(unittest.TestCase):
             res.stderr = ""
             return res
 
-        from unittest.mock import patch
-        from drift.primitives.install_repo import DeployOptions
+        meta = PackageConfig.from_install_dir(self.install_dir / pkg, self.workspace_config)
         with patch("drift.hooks.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
             deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
-                pkg=pkg,
+                metadata=meta,
                 options=DeployOptions(resolve_symlinks=False, force=True)
             )
 
@@ -1189,7 +1202,9 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         
         self.assertIn("Safety Abort", str(ctx.exception))
-        self.assertIn("currently in 'installing' state", str(ctx.exception))
+        self.assertIn("Package(s) in midway transaction state", str(ctx.exception))
+        self.assertIn("pkg_installing", str(ctx.exception))
+        self.assertEqual(ctx.exception.packages, [pkg])
 
         # Attempt with force=True - should proceed (and succeed here)
         run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(force=True))
@@ -1253,10 +1268,11 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
+        meta_disabled = PackageConfig.from_install_dir(self.install_dir / pkg_disabled, self.workspace_config)
         res_disabled = deploy_one_package(
             workspace_config=self.workspace_config,
             state_registry=registry,
-            pkg=pkg_disabled,
+            metadata=meta_disabled,
             options=DeployOptions(resolve_symlinks=True, force=False)
         )
         self.assertEqual(res_disabled.status, "SKIPPED")
@@ -1268,7 +1284,7 @@ class TestInstallRepo(unittest.TestCase):
         res_forced = deploy_one_package(
             workspace_config=self.workspace_config,
             state_registry=registry,
-            pkg=pkg_disabled,
+            metadata=meta_disabled,
             options=DeployOptions(resolve_symlinks=True, force=True)
         )
         self.assertEqual(res_forced.status, "SKIPPED")
@@ -1276,10 +1292,6 @@ class TestInstallRepo(unittest.TestCase):
 
         # 2. Test package with missing install directory (corrupted stage)
         pkg_missing = "pkg_missing_dir"
-        # Setup drift_package.toml in source only so PackageConfig.from_install_dir doesn't find it in install/
-        # Or place drift_package.toml in a file instead of directory
-        # If install/pkg_missing_dir doesn't exist, PackageConfig.from_install_dir raises error before deploy_one_package
-        # If install/pkg_missing_dir has a config file but is not a dir for files:
         pkg_missing_dir = self.install_dir / pkg_missing
         (pkg_missing_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
         (pkg_missing_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -1288,10 +1300,8 @@ class TestInstallRepo(unittest.TestCase):
         install_method = "copy"
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
-        # Remove directory right after loading config or test missing install_pkg_dir
         shutil.rmtree(pkg_missing_dir)
 
-        # Mock config loading to return metadata for missing dir
         metadata = PackageConfig(
             PackageSectionConfig(
                 name=pkg_missing,
@@ -1299,16 +1309,16 @@ class TestInstallRepo(unittest.TestCase):
                 target_directory=self.system_target_dir,
             )
         )
-        with patch("drift.primitives.install_repo.PackageConfig.from_install_dir", return_value=metadata):
-            res_missing = deploy_one_package(
+        with self.assertRaises(PackageInstallDirMissingError) as cm:
+            deploy_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
-                pkg=pkg_missing,
+                metadata=metadata,
                 options=DeployOptions(resolve_symlinks=True, force=False)
             )
-            self.assertEqual(res_missing.status, "SKIPPED")
-            reloaded2 = load_state_registry(state_file)
-            self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "installing")
+        self.assertIn("does not exist", str(cm.exception))
+        reloaded2 = load_state_registry(state_file)
+        self.assertNotEqual(reloaded2.get_package_state(pkg_missing), "installing")
 
     def test_deploy_executes_hooks_ignored_in_drift_ignore(self) -> None:
         """Verifies that hook scripts listed in .drift_ignore are staged to install/, executed, and not deployed to host."""
@@ -2046,7 +2056,6 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("pkg_b", err_msg)
         self.assertIn("pkg_c", err_msg)
         self.assertEqual(ctx.exception.packages, ["pkg_a", "pkg_b", "pkg_c"])
-        self.assertEqual(ctx.exception.conflicting_packages, ["pkg_a", "pkg_b", "pkg_c"])
         self.assertEqual(len(ctx.exception.conflicts), 2)
 
     def test_cross_package_inter_package_conflict_excludes_redeploying_package(self) -> None:
@@ -2096,7 +2105,6 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("Cross-package destination conflicts detected (1 collision(s)):", err_msg)
         self.assertIn("Package 'pkg_new' (current batch) collides with 'pkg_installed' (already installed)", err_msg)
         self.assertEqual(ctx.exception.packages, ["pkg_installed", "pkg_new"])
-        self.assertEqual(ctx.exception.conflicting_packages, ["pkg_installed", "pkg_new"])
         self.assertEqual(len(ctx.exception.conflicts), 1)
 
     def test_target_directory_migration_clean_migration(self) -> None:
@@ -2287,6 +2295,72 @@ class TestInstallRepo(unittest.TestCase):
         self.assertNotIn(target_a / "readme.txt", ownership_ex_a)
         self.assertEqual(ownership_ex_a[target_b / "main.py"], "pkg_b")
         self.assertEqual(registry.get_file_owner(target_b / "main.py"), "pkg_b")
+
+    def test_prepare_and_execute_install_deployment_pipeline(self) -> None:
+        """Verifies prepare_install_deployment returns DeployPlan and execute_install_deployment deploys it."""
+        pkg = "pkg_copy"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (install_pkg_dir / "app.conf").write_text("setting = 1\n", encoding="utf-8")
+
+        # 1. Prepare phase
+        plan = prepare_install_deployment(self.workspace_config, [pkg])
+        self.assertIsInstance(plan, DeployPlan)
+        self.assertEqual(plan.discovered_packages, [pkg])
+        self.assertIn(pkg, plan.pkg_metadata_map)
+        self.assertEqual(plan.pkg_metadata_map[pkg].name, pkg)
+        self.assertIsInstance(plan.state_registry, StateRegistry)
+        self.assertIsInstance(plan.options, DeployOptions)
+
+        # Host system not yet modified
+        self.assertFalse((self.system_target_dir / "app.conf").exists())
+
+        # 2. Execute phase
+        result = execute_install_deployment(self.workspace_config, plan=plan)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual(len(result.packages), 1)
+        self.assertEqual(result.packages[0].package, pkg)
+        self.assertEqual(result.packages[0].status, "SUCCESS")
+
+        # Host system has file deployed
+        self.assertTrue((self.system_target_dir / "app.conf").is_file())
+        self.assertEqual((self.system_target_dir / "app.conf").read_text(encoding="utf-8"), "setting = 1\n")
+
+        # State registry recorded as installed
+        registry = load_state_registry(self.install_dir / "state.toml")
+        self.assertEqual(registry.get_package_state(pkg), "installed")
+
+    def test_prepare_install_deployment_preflight_guard_failure(self) -> None:
+        """Verifies prepare_install_deployment runs pre-flight checks and aborts before touching host system."""
+        pkg = "pkg_copy"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        pre_install = "drift_hooks/non_existent_hook.sh"
+        """, encoding="utf-8")
+        (install_pkg_dir / "app.conf").write_text("setting = 1\n", encoding="utf-8")
+
+        with self.assertRaises(HookMissingError) as ctx:
+            prepare_install_deployment(self.workspace_config, [pkg])
+
+        self.assertEqual(ctx.exception.packages, [pkg])
+        # Host system was never touched
+        self.assertFalse((self.system_target_dir / "app.conf").exists())
+        # State was never set to installing
+        registry = load_state_registry(self.install_dir / "state.toml")
+        self.assertIsNone(registry.get_package_state(pkg))
 
 
 class TestStowVersionDetection(unittest.TestCase):

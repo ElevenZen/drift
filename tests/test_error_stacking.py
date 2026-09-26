@@ -113,18 +113,20 @@ class TestErrorStacking(unittest.TestCase):
         self.assertIn("❌ [CRITICAL] Step 1 (Template Rendering) failed. Error: 'unexpected_system_dict_key'", logs)
 
     @patch("drift.primitives.deploy_repo.run_primitive_6_commit_install_repo")
-    @patch("drift.primitives.deploy_repo.run_primitive_5_install_deployment")
+    @patch("drift.primitives.deploy_repo.execute_install_deployment")
+    @patch("drift.primitives.deploy_repo.prepare_install_deployment")
     @patch("drift.primitives.deploy_repo.execute_stage_packages")
     @patch("drift.primitives.deploy_repo.prepare_stage_packages")
     @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")
     @patch("drift.primitives.deploy_repo.run_primitive_2_render_packages")
     def test_deploy_step4_hook_error_does_not_repeat_hook_message_in_step_log(
-        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_p5, mock_p6
+        self, mock_p2, mock_p3, mock_prepare, mock_execute, mock_prepare_deploy, mock_execute_deploy, mock_p6
     ) -> None:
         """When Step 4 encounters HookExecutionError, it logs the abort without duplicating the multi-line hook message."""
         mock_p2.return_value = MagicMock(status="SUCCESS")
         mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
         mock_execute.return_value = {"pkg_a": MagicMock(has_changes=True)}
+        mock_prepare_deploy.return_value = MagicMock()
         
         hook_err = HookExecutionError(
             package="pkg_a",
@@ -132,7 +134,7 @@ class TestErrorStacking(unittest.TestCase):
             message="Hook failed with exit code 127.\nCommand: /bin/false\nStderr: No such file",
             requires_rollback=False,
         )
-        mock_p5.side_effect = hook_err
+        mock_execute_deploy.side_effect = hook_err
 
         with self.assertLogs("drift.primitives.deploy_repo", level="ERROR") as cm:
             with self.assertRaises(RuntimeError):

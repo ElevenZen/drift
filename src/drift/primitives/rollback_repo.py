@@ -84,12 +84,12 @@ def validate_rollback_packages(
     if force:
         return sorted(set(discovered_packages))
 
-    midway_pkgs = state_registry.get_midway_packages(discovered_packages)
-    packages_to_rollback = {pkg for pkg, _ in midway_pkgs}
+    eligible_pkgs = state_registry.get_rollback_eligible_packages(discovered_packages)
+    packages_to_rollback = {pkg for pkg, _ in eligible_pkgs}
     packages_state_wrong = set(discovered_packages) - packages_to_rollback
     if packages_state_wrong:
         raise RuntimeError(
-            "The following packages are not in a failed midway/conflict state ('staging' or 'installing'): "
+            "The following packages are not in a failed midway/conflict state ('staging', 'staged', or 'installing'): "
             f"[{','.join(sorted(packages_state_wrong))}]. "
             "Running 'rollback' now will bypass reverse synchronization and hard-reset "
             "all configuration files on your system, destroying any local drift. "
@@ -157,7 +157,7 @@ def run_primitive_8_rollback_recovery(
     Args:
         workspace_config: The workspace configuration instance.
         package_names: Specific package name(s) to rollback, or None for all target packages.
-        force: If True, bypasses the failed midway conflict state safeguard ('staging' or 'installing'),
+        force: If True, bypasses the failed midway conflict state safeguard ('staging', 'staged', or 'installing'),
             allowing a hard reset of packages to their last committed clean Git HEAD state even if they
             are currently in 'installed' state.
         flags: Optional HookExecFlags controlling hook execution options.

@@ -34,8 +34,8 @@ This document provides a concise, high-density architecture reference, primitive
 | **P1** | `drift reverse-sync` | [`src/drift/primitives/reverse_sync.py`](../src/drift/primitives/reverse_sync.py) | `run_primitive_1_reverse_sync` | `ReverseSyncResult` |
 | **P2** | `drift render` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_2_render_packages` | `List[PackageRenderResult]` |
 | **P3** | `drift render-commit` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_3_commit_render_repo` | `RenderCommitResult` |
-| **P4** | `drift stage` | [`src/drift/primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) | `run_primitive_4_stage_render_to_install` | `List[PackageStageChanges]` |
-| **P5** | `drift apply` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_5_install_deployment` | `List[PackageInstallResult]` |
+| **P4** | `drift stage` | [`src/drift/primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) | `run_primitive_4_stage_render_to_install` (`prepare_stage_packages`, `execute_stage_packages`) | `List[PackageStageChanges]` |
+| **P5** | `drift apply` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_5_install_deployment` (`prepare_install_deployment`, `execute_install_deployment`) | `List[PackageInstallResult]` |
 | **P6** | `drift install-commit` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_6_commit_install_repo` | `InstallCommitResult` |
 | **P7** | `drift uninstall` | [`src/drift/primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) | `run_primitive_7_uninstall_packages` | `UninstallResult` |
 | **P8** | `drift rollback` | [`src/drift/primitives/rollback_repo.py`](../src/drift/primitives/rollback_repo.py) | `run_primitive_8_rollback_recovery` | `RollbackResult` |
@@ -83,6 +83,8 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/utils/toml_utils.py): Enforces strict key allowlists on config mappings.
 *   [`env_scope(envs, overwrite=True, env_keep=None, mask_values=False)`](../src/drift/utils/env_utils.py): Scoped environment manager with granular masking (`mask_values=True` or `mask_values=Iterable[str]`).
 *   [`env_resolve_scope(env_resolve, overwrite=True, env_keep=INITIAL_ENV)`](../src/drift/utils/env_utils.py): Context manager scoping `EnvResolve` with automatic secret masking.
+*   [`topological_sort(graph, error_cls=ValueError) -> List[T]`](../src/drift/utils/env_utils.py): Generic Kahn's algorithm topological sorting for dependency DAGs with cycle detection.
+*   [`topological_sort_env(raw_env, error_cls=ConfigError) -> List[str]`](../src/drift/utils/env_utils.py): Computes evaluation order for environment variables referencing internal dependencies.
 
 ### [`config/workspace_config.py`](../src/drift/config/workspace_config.py) & [`config/package_config.py`](../src/drift/config/package_config.py)
 *   [`load_workspace_config(drift_root, search_parents=True) -> WorkspaceConfig`](../src/drift/config/workspace_config.py): Loads layered workspace config, merges `.local.toml`, `.envst.toml`, `secrets.env`, and DAG variables into `EnvResolve`.
@@ -100,6 +102,12 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/utils/git_utils.py): Scoped `git add` and `git commit`.
 *   [`has_uncommitted_modifications(repo_path, subpath=None) -> bool`](../src/drift/utils/git_utils.py): Checks porcelain status.
 
+### [`primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) & [`primitives/install_repo.py`](../src/drift/primitives/install_repo.py)
+*   [`prepare_stage_packages(workspace_config, target_pkgs, force) -> StagePlan`](../src/drift/primitives/stage_repo.py): Read-only pre-flight assertion and staging plan preparation.
+*   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry) -> Dict[str, PackageStageChanges]`](../src/drift/primitives/stage_repo.py): State-mutating physical file staging from `render/` to `install/`.
+*   [`prepare_install_deployment(workspace_config, packages_to_redeploy, options) -> DeployPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, and cross-package conflict validation.
+*   [`execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`](../src/drift/primitives/install_repo.py): State-mutating physical deployment of configurations to host system target paths.
+
 ### [`primitives/adopt_repo.py`](../src/drift/primitives/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
 *   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Entry point reconciling drifts across packages.
 *   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/primitives/adopt_repo.py): Reconciles single-package additions, deletions, renames, and modifications.
@@ -114,10 +122,16 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`PackageHooks`](../src/drift/hooks/lifecycle_hooks.py): Hook trigger handlers (`trigger_pre_source`, `trigger_post_render`, `trigger_pre_install`, `trigger_post_install`, `trigger_pre_update`, `trigger_post_update`, `trigger_pre_uninstall`, `trigger_post_uninstall`).
 
 ### [`core/exceptions.py`](../src/drift/core/exceptions.py) & Standard Exit Codes
-*   [`InstallCollisionError`](../src/drift/core/exceptions.py) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, or symlinked parent directory. Specialized subclass [`CrossPackageCollisionError`](../src/drift/core/exceptions.py) (`packages`, `conflicting_packages`, `conflicts`) is raised on cross-package destination path conflicts.
-*   [`ConfigError`](../src/drift/core/exceptions.py) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or DAG cyclic dependency.
-*   [`RenderError`](../src/drift/core/exceptions.py) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure.
-*   [`HookExecutionError`](../src/drift/core/exceptions.py): Script execution timeout or non-zero returncode.
+*   [`DriftError`](../src/drift/core/exceptions.py) (`ExitCode.GENERAL_ERROR = 1`): Base class for all domain exceptions (`packages: List[str]`, `logged: bool`).
+*   [`InstallCollisionError`](../src/drift/core/exceptions.py) (`ExitCode.COLLISION_ERROR = 5`): Raised on root escape, target pointing inside workspace, or symlinked parent directory. Specialized subclass [`CrossPackageCollisionError`](../src/drift/core/exceptions.py) (`packages`, `conflicts`) is raised on cross-package destination path conflicts.
+*   [`ConfigError`](../src/drift/core/exceptions.py) (`ExitCode.CONFIG_ERROR = 2`): Invalid TOML/YAML/JSON or invalid target directory path.
+*   [`DriftDetectedError`](../src/drift/core/exceptions.py) (`ExitCode.DRIFT_DETECTED = 3`): Uncommitted local modifications in `install/` package directory.
+*   [`RenderError`](../src/drift/core/exceptions.py) (`ExitCode.RENDER_ERROR = 4`): Template compilation failure. Subclass [`RenderCollisionError`](../src/drift/core/exceptions.py).
+*   [`HookMissingError`](../src/drift/core/exceptions.py): Missing or invalid lifecycle hook file.
+*   [`HookExecutionError`](../src/drift/core/exceptions.py): Lifecycle hook execution failure.
+*   [`MidwayTransactionError`](../src/drift/core/exceptions.py): Package in midway transaction state ('staging' or 'installing').
+*   [`PackageInstallDirMissingError`](../src/drift/core/exceptions.py): Package install directory missing from `install/`.
+*   [`TargetPermissionError`](../src/drift/core/exceptions.py): Destination target directory is not writable on host system.
 
 ---
 
@@ -158,7 +172,7 @@ This document provides a concise, high-density architecture reference, primitive
 10. **Target Directory Migration & Cross-Package Conflict Audit**:
     *   **Target Directory Migration**: Changing `target_directory` in package configuration triggers an atomic re-targeting during deployment: previous deployed files are undeployed/deleted from the old target, `redeploy = True` is enforced to populate the new target, while uninstallation hooks and backup restoration are NOT executed.
     *   **Cross-Package Destination Conflict Audit**: Before executing physical deployment, Drift audits all destination path claims across the batch and external installed packages in `state.toml`, reporting all intra-batch and inter-package path collisions together ([`CrossPackageCollisionError`](../src/drift/core/exceptions.py)).
-    *   **Midway Transaction States**: `MIDWAY_TRANSACTION_STATES = ("staging", "installing")`. Packages in midway states require `--force` or `drift rollback` to proceed.
+    *   **Midway & Rollback Transaction States**: `MIDWAY_TRANSACTION_STATES = ("staging", "installing")` for in-flight crash locks. `ROLLBACK_ELIGIBLE_STATES = ("staging", "staged", "installing")` defines packages with uncommitted state in `install/` eligible for `drift rollback` without `--force`.
 11. **Python Preprocessor Hook Clean-Room Invariant**:
     *   Dynamic Python preprocessor hooks (`drift_workspace.py` / `drift_package.py`) execute purely in-memory with **zero footprint on `os.environ`**.
     *   Ambient `os.environ` is never mutated during Python hook execution; all secrets, system facts, package facts, and CLI variables are passed strictly via `context.env`, `context.facts`, and `context.package_facts`.

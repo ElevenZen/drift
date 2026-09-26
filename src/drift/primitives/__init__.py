@@ -6,6 +6,11 @@ from .reverse_sync import (
 from .package_assertions import (
     assert_packages_hooks_exist,
     assert_install_pkg_dirs_clean,
+    assert_packages_not_in_midway_state,
+    assert_packages_install_dirs_exist,
+    assert_packages_target_dirs_valid,
+    assert_packages_target_dirs_writable,
+    assert_no_cross_package_conflicts,
 )
 from .stage_repo import (
     run_primitive_4_stage_render_to_install,
@@ -18,6 +23,9 @@ from .stage_repo import (
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
+    prepare_install_deployment,
+    execute_install_deployment,
+    DeployPlan,
     run_primitive_6_commit_install_repo,
     DeployOptions,
     PackageInstallContext,
@@ -86,8 +94,16 @@ __all__ = [
     "apply_package_stage_changes",
     "assert_packages_hooks_exist",
     "assert_install_pkg_dirs_clean",
+    "assert_packages_not_in_midway_state",
+    "assert_packages_install_dirs_exist",
+    "assert_packages_target_dirs_valid",
+    "assert_packages_target_dirs_writable",
+    "assert_no_cross_package_conflicts",
     "assert_packages_stage_ready",
     "assert_packages_deployment_ready",
+    "prepare_install_deployment",
+    "execute_install_deployment",
+    "DeployPlan",
     "run_primitive_5_install_deployment",
     "run_primitive_6_commit_install_repo",
     "DeployOptions",

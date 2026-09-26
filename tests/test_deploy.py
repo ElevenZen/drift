@@ -7,11 +7,17 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, InstallMethod
+from drift.core.result_models import NextActionType
+from drift.core.exceptions import HookMissingError, TargetPermissionError
 from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.state_registry import load_state_registry, save_state_registry
-from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
+from drift.primitives.deploy_repo import (
+    run_primitive_deploy_pipeline,
+    run_primitive_deploy_pipeline_with_error_handling,
+)
+from drift.primitives.rollback_repo import run_primitive_8_rollback_recovery
 
 
 class TestDeploy(unittest.TestCase):
@@ -154,7 +160,7 @@ target_directory = "{self.system_target_dir}"
         ).stdout
         self.assertEqual(snapshot_content, "Modified on host system directly!")
 
-    @patch("drift.primitives.deploy_repo.run_primitive_5_install_deployment")
+    @patch("drift.primitives.deploy_repo.execute_install_deployment")
     def test_deploy_pipeline_midway_crash_prints_recovery_card(self, mock_install) -> None:
         """Verifies that midway crashes during stage 2 capture, print recovery blocks, and abort."""
         mock_install.side_with_err = PermissionError("Permission Denied: mock error")
@@ -331,12 +337,14 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(state_registry.get_package_state("pkg_a"), "installing")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
+        from drift.config.package_config import PackageConfig
         from drift.primitives.install_repo import deploy_one_package_with_error_wrapping, DeployOptions
+        meta_a = PackageConfig.from_install_dir(self.install_dir / "pkg_a", self.workspace_config)
         with self.assertRaises(RuntimeError) as ctx2:
             deploy_one_package_with_error_wrapping(
                 workspace_config=self.workspace_config,
                 state_registry=state_registry,
-                pkg="pkg_a",
+                metadata=meta_a,
                 options=DeployOptions(resolve_symlinks=True, force=False),
             )
         self.assertIn("Safety Abort", str(ctx2.exception))
@@ -561,6 +569,290 @@ target_directory = "{self.system_target_dir}"
         res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], redeploy=True)
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
+
+    def test_deploy_step4a_prepare_failure_for_copy_package_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails for COPY packages, rollback IS triggered to clean uncommitted install state."""
+        # 1. Initial successful deployment of copy package
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        reg = load_state_registry(self.state_file)
+        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.COPY)
+
+        # 2. Modify package file so staging detects changes and proceeds to Step 4
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / "file.txt").write_text("modified content", encoding="utf-8")
+
+        # 3. Deploy update with prepare_install_deployment failing on target permission
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertIn("Step 4 (Deployment Pre-flight) failed.", res.failure.error_message)
+
+        # Verify emergency recovery card WAS printed
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+        # Verify executing rollback works cleanly on 'staged' state without --force
+        rollback_res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(rollback_res.status, "SUCCESS")
+
+    def test_deploy_step4a_prepare_failure_for_stow_package_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails for STOW packages, rollback IS triggered."""
+        # 1. Set pkg_a to stow in source config and deploy initially
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        reg = load_state_registry(self.state_file)
+        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.STOW)
+
+        # 2. Modify package file so staging detects changes and proceeds to Step 4
+        (pkg_dir / "file.txt").write_text("stow modified content", encoding="utf-8")
+
+        # 3. Deploy update with prepare_install_deployment failing on pre-flight: should trigger rollback due to stow symlinks
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+
+        # Verify emergency recovery card WAS printed
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+    def test_deploy_step4a_prepare_failure_for_stow_with_generic_error_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails with a generic error (no packages attribute) and package is STOW, rollback is triggered."""
+        # 1. Configure pkg_a as STOW and initial deploy
+        pkg_dir = self.source_dir / "pkg_a"
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # 2. Modify file so changes are detected
+        (self.source_dir / "pkg_a" / "file.txt").write_text("updated", encoding="utf-8")
+
+        # 3. Patch prepare_install_deployment to raise generic error without packages attribute
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=RuntimeError("Generic unexpected failure"),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+    def test_deploy_step4a_prepare_failure_for_copy_with_generic_error_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails with a generic error for COPY packages, rollback IS triggered."""
+        # 1. Initial deployment of copy package
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+
+        # 2. Modify file so changes are detected
+        (self.source_dir / "pkg_a" / "file.txt").write_text("updated", encoding="utf-8")
+
+        # 3. Patch prepare_install_deployment to raise generic error without packages attribute
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=RuntimeError("Generic unexpected failure"),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+    def test_deploy_step4a_prepare_failure_with_stow_and_copy_packages_rolls_back_all_staged(self) -> None:
+        """When deploying both STOW and COPY packages and Step 4a fails, rollback targets ALL staged packages."""
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
+
+        pkg_a_dir = self.source_dir / "pkg_a"
+        (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "stow"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        # Initial deployment of both
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
+        reg = load_state_registry(self.state_file)
+        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.STOW)
+        self.assertEqual(reg.get_package_install_method("pkg_b"), InstallMethod.COPY)
+
+        # Modify both packages
+        (pkg_a_dir / "file.txt").write_text("stow modified", encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("copy modified", encoding="utf-8")
+
+        # Deploy both, but prepare_install_deployment fails on pkg_b (the COPY package!)
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        # Recommended command must target ALL staged packages whose install state was modified!
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a pkg_b")
+        card_output = stderr_capture.getvalue()
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", card_output)
+        self.assertIn("drift rollback pkg_a pkg_b", card_output)
+
+        # Verify rollback recovers both packages cleanly
+        rollback_res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a", "pkg_b"], force=False)
+        self.assertEqual(rollback_res.status, "SUCCESS")
+
+    def test_deploy_step4a_prepare_failure_with_multiple_copy_packages_triggers_rollback(self) -> None:
+        """When deploying multiple COPY packages and Step 4a fails, rollback IS triggered for all staged packages."""
+        pkg_b_dir = self.source_dir / "pkg_b"
+        pkg_b_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
+
+        # Initial deployment
+        run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
+
+        # Modify both
+        (self.source_dir / "pkg_a" / "file.txt").write_text("mod a", encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("mod b", encoding="utf-8")
+
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a pkg_b")
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
+
+    def test_deploy_step4a_prepare_failure_for_first_time_package_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails for first-time installed package, rollback IS triggered to clean install directory."""
+        # 1. State registry is initially empty (pkg_a has never been deployed)
+        reg = load_state_registry(self.state_file)
+        self.assertIsNone(reg.get_package_install_method("pkg_a"))
+
+        # 2. Deploy for the first time, but prepare_install_deployment fails on pre-flight
+        import sys
+        stderr_capture = StringIO()
+        orig_stderr = sys.stderr
+        sys.stderr = stderr_capture
+        try:
+            with patch(
+                "drift.primitives.deploy_repo.prepare_install_deployment",
+                side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
+            ):
+                res = run_primitive_deploy_pipeline_with_error_handling(
+                    self.workspace_config, packages_to_deploy=["pkg_a"]
+                )
+        finally:
+            sys.stderr = orig_stderr
+
+        self.assertEqual(res.status, "FAILED")
+        self.assertIsNotNone(res.failure)
+        self.assertTrue(res.failure.requires_rollback)
+        self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
+        self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
+        self.assertIn("Step 4 (Deployment Pre-flight) failed.", res.failure.error_message)
+        self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
 
 if __name__ == "__main__":

@@ -326,6 +326,23 @@ class TestRollback(unittest.TestCase):
         reloaded_registry = load_state_registry(state_file)
         self.assertEqual(reloaded_registry.get_package_state("pkg_a"), "installed")
 
+    def test_rollback_staged_package_succeeds_without_force(self) -> None:
+        """Verifies that a package in 'staged' state (e.g. after Step 4a failure) can be rolled back without --force."""
+        # Dirty pkg_a and set to 'staged'
+        with open(self.pkg_a_install / "file.txt", "w", encoding="utf-8") as f:
+            f.write("dirty staged content")
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "staged")
+        save_state_registry(registry)
+
+        res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.restored_packages, ["pkg_a"])
+        self.assertEqual((self.pkg_a_install / "file.txt").read_text(encoding="utf-8"), "clean content")
+        reloaded = load_state_registry(state_file)
+        self.assertEqual(reloaded.get_package_state("pkg_a"), "installed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1129,7 +1129,7 @@ class TestStageRepo(unittest.TestCase):
         )
 
         # 4. Dirty install repo raises DriftDetectedError without force
-        registry.set_package_state("pkg_a", "staged")
+        registry.set_package_state("pkg_a", "installed")
         subprocess.run(["git", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=str(self.install_dir), check=True)
         subprocess.run(["git", "config", "user.name", "Test User"], cwd=str(self.install_dir), check=True)

@@ -18,13 +18,16 @@ from .stage_repo import (
 )
 from .install_repo import (
     run_primitive_5_install_deployment,
+    prepare_install_deployment,
+    execute_install_deployment,
+    DeployPlan,
     run_primitive_6_commit_install_repo,
     DeployOptions,
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
-from ..core.constants import STATE_REGISTRY_FILE_NAME
+from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod
 from ..core.state_registry import load_state_registry
 from ..core.result_models import (
     NextActionType,
@@ -54,7 +57,7 @@ def check_and_prevent_system_drifts(
     state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
     if state_file.exists() and not force:
         state_registry = load_state_registry(state_file)
-        midway_pkgs = state_registry.get_midway_packages(target_pkgs)
+        midway_pkgs = state_registry.get_rollback_eligible_packages(target_pkgs)
 
         if midway_pkgs:
             pkg_names = [p[0] for p in midway_pkgs]
@@ -260,21 +263,35 @@ def execute_sequential_compile_and_apply(
         logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
         return [], completed_steps
 
-    # 4. Physical Deployment of configurations to host system target paths
+    deploy_options = DeployOptions(
+        resolve_symlinks=True,
+        force=force,
+        redeploy=redeploy,
+        package_changes=package_changes,
+        flags=hook_flags,
+    )
+
+    # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
+    failed_step = "Step 4 (Deployment Pre-flight)"
+    try:
+        deploy_plan = prepare_install_deployment(
+            workspace_config,
+            packages_to_redeploy=pkgs_to_install,
+            options=deploy_options,
+        )
+    except Exception as e:
+        print_emergency_recovery_card(failed_step, str(e), pkgs_to_install)
+        err = RuntimeError(f"Midway crash: {failed_step} failed.")
+        raise mark_logged(err) from e
+
+    # 4b. Physical Deployment of configurations to host system target paths (State-Mutating)
     failed_step = "Step 4 (Physical Deploy/Install)"
     pkgs_install_label = ", ".join(pkgs_to_install)
     try:
         logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
-        install_res = run_primitive_5_install_deployment(
+        install_res = execute_install_deployment(
             workspace_config,
-            packages_to_redeploy=pkgs_to_install,
-            options=DeployOptions(
-                resolve_symlinks=True,
-                force=force,
-                redeploy=redeploy,
-                package_changes=package_changes,
-                flags=hook_flags,
-            ),
+            plan=deploy_plan,
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except HookExecutionError as e:
@@ -430,7 +447,8 @@ def run_primitive_deploy_pipeline_with_error_handling(
             rec_cmd = "drift adopt"
         elif requires_rollback:
             next_action = NextActionType.ROLLBACK
-            rec_cmd = f"drift rollback {shlex.join(packages_to_deploy)}".strip()
+            rollback_pkgs = packages_to_deploy
+            rec_cmd = f"drift rollback {shlex.join(rollback_pkgs)}".strip()
         else:
             next_action = NextActionType.FIX_TEMPLATE
             rec_cmd = "drift deploy"
