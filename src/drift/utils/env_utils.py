@@ -1,4 +1,57 @@
-"""Environment variable utilities, secret vault loading, and scoped context managers."""
+"""Environment variable utilities, secret vault loading, and scoped context managers.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 4: Scoped Activation Context Managers
+    env_scope(envs, overwrite, env_keep, mask_values)
+        load_env_settings -> update_env_dict(os.environ, ...) [Layer 2]
+        yield
+        unload_env_settings -> restore_env_dict(os.environ, ...) [Layer 2]
+
+    env_resolve_scope(env_resolve, overwrite, env_keep)
+        env_scope(env_resolve.effective_dict, mask_values=env_resolve.secret_keys) [Layer 4]
+
+Layer 3: Configuration Resolution & Interpolation Pipeline
+    resolve_env_configs(current_layer, lower_layer, extra_facts)
+        topological_sort_env [Layer 1] (Kahn's algorithm for cycle detection)
+        resolve_env_references [Layer 1] (per-tier DAG expansion)
+        build_effective_env_dict [Layer 1] (6-tier flattening)
+        -> EnvResolve(current, effective, effective_dict)
+
+    interpolate_config_dict(data, env, exclude_keys, error_cls)
+        python_envsubst [Layer 1] (recursive dict/list/str traversal)
+
+Layer 2: os.environ Mutation Primitives
+    load_env_settings(envs, overwrite, env_keep, mask_values) -> EnvSnapshot
+        update_env_dict(os.environ, ...) [Layer 1]
+    unload_env_settings(original_envs, mask_values)
+        restore_env_dict(os.environ, ...) [Layer 1]
+
+Layer 1: Pure Functional Primitives (no os.environ mutation)
+    Data Structures:
+        EnvConfig(override, secrets, default, fallback)
+        EnvResolve(current, effective, effective_dict)
+        EnvSnapshot = Dict[str, Optional[str]]
+
+    Parsing & Validation:
+        parse_env_dict(env_data, context_desc) -> EnvConfig
+        parse_env_text(content) -> Dict[str, str]
+        parse_env_file(file_path) -> Dict[str, str]
+        parse_secrets_env(drift_root) -> Dict[str, str]
+        merge_kvpairs(mappings) -> Dict[str, str]
+
+    Reference Resolution:
+        topological_sort_env(raw_env, error_cls) -> List[str]
+        resolve_env_references(raw_env, base_env, error_cls) -> Dict[str, str]
+        python_envsubst(template_content, error_cls, env) -> str
+
+    Dict Manipulation:
+        update_env_dict(target, source, overwrite, env_keep, mask_values) -> (target, EnvSnapshot)
+        restore_env_dict(target, original_envs, mask_values) -> None
+        build_effective_env_dict(env_config, extra_facts) -> Dict[str, str]
+"""
 
 import os
 import re
@@ -19,7 +72,6 @@ from typing import (
     Iterable,
     Any,
     Type,
-    TypeVar,
 )
 
 from ..core.constants import (
@@ -31,9 +83,6 @@ from ..core.constants import (
 from ..core.exceptions import ConfigError, DriftError, RenderError
 
 logger = logging.getLogger(__name__)
-
-K = TypeVar("K")
-V = TypeVar("V")
 
 EnvInput = Union[Mapping[str, str], Iterable[Tuple[str, str]]]
 EnvSnapshot = Dict[str, Optional[str]]
@@ -90,7 +139,7 @@ def _extract_env_subtable(
     return {str(k): str(v) for k, v in table_data.items()}
 
 
-def merge_kvpairs(mappings: Iterable[Mapping[K, V]]) -> Dict[K, V]:
+def merge_kvpairs(mappings: Iterable[Mapping[str, str]]) -> Dict[str, str]:
     """Pure functional helper to merge multiple key-value mappings into a single dictionary."""
     return {k: v for m in mappings for k, v in m.items()}
 
@@ -139,7 +188,7 @@ def build_effective_env_dict(
     extra_facts: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, str]:
     """Flattens an EnvConfig into an effective environment dictionary following 6-Tier Precedence."""
-    protected_facts = set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
+    protected_facts = DRIFT_SYSTEM_FACT_KEYS | (extra_facts or {}).keys()
     effective_env = dict(env_config.fallback)
     update_env_dict(effective_env, env_config.default, overwrite=True, env_keep=protected_facts)
     update_env_dict(effective_env, env_config.secrets, overwrite=True, env_keep=protected_facts, mask_values=True)
@@ -167,30 +216,38 @@ def resolve_env_configs(
         EnvResolve containing current layer tables, cumulative effective tables, and flattened runtime dictionary.
     """
     lower = lower_layer or EnvConfig()
-    protected_facts = set(INITIAL_ENV) | set(DRIFT_SYSTEM_FACT_KEYS) | set((extra_facts or {}).keys())
-    base_env, _ = update_env_dict(dict(os.environ), extra_facts or {}, overwrite=True, env_keep=set(INITIAL_ENV))
+    facts_keys = (extra_facts or {}).keys()
+    protected_facts = INITIAL_ENV | DRIFT_SYSTEM_FACT_KEYS | facts_keys
+
+    # Seed resolution base from INITIAL_ENV keys only (not full os.environ)
+    initial_seed = {k: os.environ[k] for k in INITIAL_ENV if k in os.environ}
+    base_env: Dict[str, str] = dict(initial_seed)
+    update_env_dict(base_env, extra_facts or {}, overwrite=True, env_keep=INITIAL_ENV)
 
     # 1. Tier 4 (Secrets): Target secrets > Lower secrets
-    secrets_base, _ = update_env_dict(dict(base_env), lower.secrets,
-                                      overwrite=True, env_keep=protected_facts, mask_values=True)
+    secrets_base = dict(base_env)
+    update_env_dict(secrets_base, lower.secrets, overwrite=True, env_keep=protected_facts, mask_values=True)
     resolved_secrets = resolve_env_references(current_layer.secrets, base_env=secrets_base, error_cls=ConfigError) if current_layer.secrets else {}
     effective_secrets = {**lower.secrets, **resolved_secrets}
 
     # 2. Tier 6 (Fallback): Target fallback > Lower fallback (can reference secrets)
-    fallback_base, _ = update_env_dict(dict(secrets_base), effective_secrets, overwrite=True, env_keep=protected_facts)
-    fallback_base, _ = update_env_dict(dict(fallback_base), lower.fallback, overwrite=False)
+    fallback_base = dict(secrets_base)
+    update_env_dict(fallback_base, effective_secrets, overwrite=True, env_keep=protected_facts)
+    update_env_dict(fallback_base, lower.fallback, overwrite=False)
     resolved_fallback = resolve_env_references(current_layer.fallback, base_env=fallback_base, error_cls=ConfigError) if current_layer.fallback else {}
     effective_fallback = {**lower.fallback, **resolved_fallback}
 
     # 3. Tier 5 (Default): Target default > Lower default (can reference secrets + fallback)
-    default_base, _ = update_env_dict(dict(fallback_base), effective_fallback, overwrite=True, env_keep=protected_facts)
-    default_base, _ = update_env_dict(dict(default_base), lower.default, overwrite=True, env_keep=protected_facts)
+    default_base = dict(fallback_base)
+    update_env_dict(default_base, effective_fallback, overwrite=True, env_keep=protected_facts)
+    update_env_dict(default_base, lower.default, overwrite=True, env_keep=protected_facts)
     resolved_default = resolve_env_references(current_layer.default, base_env=default_base, error_cls=ConfigError) if current_layer.default else {}
     effective_default = {**lower.default, **resolved_default}
 
     # 4. Tier 2 (Override): Target override > Lower override (can reference all)
-    override_base, _ = update_env_dict(dict(default_base), effective_default, overwrite=True, env_keep=protected_facts)
-    override_base, _ = update_env_dict(dict(override_base), lower.override, overwrite=True, env_keep=set(INITIAL_ENV))
+    override_base = dict(default_base)
+    update_env_dict(override_base, effective_default, overwrite=True, env_keep=protected_facts)
+    update_env_dict(override_base, lower.override, overwrite=True, env_keep=INITIAL_ENV)
     resolved_override = resolve_env_references(current_layer.override, base_env=override_base, error_cls=ConfigError) if current_layer.override else {}
     effective_override = {**lower.override, **resolved_override}
 
@@ -438,12 +495,9 @@ def python_envsubst(
         error_cls: If any unescaped referenced variable is not defined in the environment.
     """
     environ = env if env is not None else os.environ
-    pattern = re.compile(r"(\\)?\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))")
 
     def replace_var(match: re.Match) -> str:
-        escaped = match.group(1)
-        braced_var = match.group(2)
-        plain_var = match.group(3)
+        escaped, braced_var, plain_var = match.group(1), match.group(2), match.group(3)
         var_name = braced_var or plain_var
 
         if escaped:
@@ -459,10 +513,30 @@ def python_envsubst(
             )
         return str(environ[var_name])
 
-    return pattern.sub(replace_var, template_content)
+    return ENV_VAR_PATTERN.sub(replace_var, template_content)
 
 
-VAR_PATTERN = re.compile(r"(?<!\\)\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))")
+# =====================================================================
+# Variable Reference Extraction
+# =====================================================================
+
+ENV_VAR_PATTERN = re.compile(r"(\\)?\$(?:\{([a-zA-Z_][a-zA-Z0-9_]*)\}|([a-zA-Z_][a-zA-Z0-9_]*))")
+"""Unified pattern matching $VAR / ${VAR} references with optional backslash escape group.
+
+Capture groups:
+    1: Backslash escape prefix (if present, the reference is literal)
+    2: Braced variable name (e.g. 'FOO' from '${FOO}')
+    3: Plain variable name (e.g. 'FOO' from '$FOO')
+"""
+
+
+def extract_var_refs(value: str) -> Set[str]:
+    """Extracts the set of unescaped variable names referenced in a value string."""
+    return {
+        braced or plain
+        for escaped, braced, plain in ENV_VAR_PATTERN.findall(value)
+        if not escaped
+    }
 
 
 def topological_sort_env(
@@ -492,7 +566,7 @@ def topological_sort_env(
     in_degree: Dict[str, int] = {}
 
     for k, v in raw_dict.items():
-        refs = {m[0] or m[1] for m in VAR_PATTERN.findall(v)}
+        refs = extract_var_refs(v)
         # Check for immediate self-reference
         if k in refs:
             raise error_cls(f"Cyclic dependency detected in environment variable: '{k}' references itself.")
@@ -600,7 +674,7 @@ def interpolate_config_dict(
         return tuple(interpolate_config_dict(item, env=env, exclude_keys=None, error_cls=error_cls) for item in data)
     elif isinstance(data, str):
         if "$" in data:
-            return python_envsubst(data, env=dict(env), error_cls=error_cls)
+            return python_envsubst(data, env=env, error_cls=error_cls)
         return data
     else:
         return data

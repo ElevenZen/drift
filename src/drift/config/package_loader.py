@@ -35,7 +35,6 @@ from typing import (
 )
 
 from ..core.constants import (
-    INITIAL_ENV,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,

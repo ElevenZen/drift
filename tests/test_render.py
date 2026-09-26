@@ -588,7 +588,7 @@ class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
         inject_system_facts()

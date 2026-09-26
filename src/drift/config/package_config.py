@@ -42,7 +42,6 @@ from typing import (
 )
 
 from ..core.constants import (
-    INITIAL_ENV,
     InstallMethod,
     WINDOWS_PLATFORM_ALIASES,
 )

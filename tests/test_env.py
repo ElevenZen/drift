@@ -47,7 +47,7 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -264,7 +264,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
 
@@ -309,7 +309,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
         """
         var_name = "DRIFT_PRECEDENCE_VAR_1"
         os.environ[var_name] = "host_wins"
-        set_initial_env([var_name] + list(self.original_environ.keys()))
+        set_initial_env({var_name, *self.original_environ.keys()})
 
         # Write drift_workspace.toml with [env.default]
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
@@ -500,7 +500,7 @@ pkg_test = true
         """Host env overrides secrets even when the variable is not in drift_workspace.toml."""
         var_name = "DRIFT_HOST_SECRET_VAR"
         os.environ[var_name] = "host_api_key"
-        set_initial_env([var_name] + list(self.original_environ.keys()))
+        set_initial_env({var_name, *self.original_environ.keys()})
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -591,7 +591,7 @@ DEFAULT = true
         os.environ.pop("VAR_C", None)
         os.environ.pop("VAR_F", None)
 
-        set_initial_env(["VAR_A", "VAR_D", "VAR_E"] + list(self.original_environ.keys()))
+        set_initial_env({"VAR_A", "VAR_D", "VAR_E", *self.original_environ.keys()})
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -767,7 +767,7 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.mkdtemp()
         self.drift_root = Path(self.temp_dir).resolve()
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1408,7 +1408,7 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name)
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1683,11 +1683,7 @@ class TestMergeKvPairs(unittest.TestCase):
         m2 = {"b": "override", "c": "3"}
         self.assertEqual(merge_kvpairs([m1, m2]), {"a": "1", "b": "override", "c": "3"})
 
-    def test_merge_kvpairs_heterogeneous_types(self) -> None:
-        from drift.utils.env_utils import merge_kvpairs
-        m1 = {1: ["x"], 2: ["y"]}
-        m2 = {2: ["z"], 3: ["w"]}
-        self.assertEqual(merge_kvpairs([m1, m2]), {1: ["x"], 2: ["z"], 3: ["w"]})
+
 
 
 class TestEnvDagResolutionOrder(unittest.TestCase):
@@ -1696,7 +1692,7 @@ class TestEnvDagResolutionOrder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
@@ -1791,7 +1787,7 @@ class TestEnvPrecedenceLadder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()

@@ -12,7 +12,7 @@ from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORK
 class TestIntegration(unittest.TestCase):
     def setUp(self):
         self.original_environ = dict(os.environ)
-        self.original_initial_env = list(INITIAL_ENV)
+        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base_path = Path(self.temp_dir.name).resolve()
         

@@ -22,7 +22,6 @@ from ..core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
-    INITIAL_ENV,
 )
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
