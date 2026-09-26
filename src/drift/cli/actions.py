@@ -617,7 +617,7 @@ def execute_health(
     health_result = run_primitive_health_checks(
         workspace_config=workspace_config,
         package_names=package_names,
-        custom_timeout=timeout,
+        timeout_override=timeout,
         from_stage=from_stage
     )
 

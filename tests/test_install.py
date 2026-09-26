@@ -394,10 +394,10 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(target_file.read_text(encoding="utf-8"), "actual content")
 
     def test_lifecycle_hook_failure_and_timeout(self) -> None:
-        """Verifies trigger_package_hook handles failures and timeouts with detailed logging and RuntimeError."""
+        """Verifies trigger_hook handles failures and timeouts with detailed logging and RuntimeError."""
         from unittest.mock import patch
         import subprocess
-        from drift.hooks.lifecycle_hooks import trigger_package_hook
+        from drift.hooks.lifecycle_hooks import trigger_hook
         
         pkg = "pkg_copy"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -427,7 +427,7 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Some severe error output"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_hook(
+                trigger_hook(
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
@@ -445,7 +445,7 @@ class TestInstallRepo(unittest.TestCase):
                 stderr="Standard timeout stderr"
             )
             with self.assertRaises(RuntimeError) as ctx:
-                trigger_package_hook(
+                trigger_hook(
                     pkg=pkg,
                     hook_name="post_install",
                     metadata=config,
@@ -463,7 +463,7 @@ class TestInstallRepo(unittest.TestCase):
             hooks=PackageHooks(post_install=Path(pkg_install_dir) / "non_existent_script.sh")
         )
         with self.assertRaises(FileNotFoundError) as ctx:
-            trigger_package_hook(
+            trigger_hook(
                 pkg=pkg,
                 hook_name="post_install",
                 metadata=config_missing,
@@ -474,7 +474,7 @@ class TestInstallRepo(unittest.TestCase):
     def test_lifecycle_hooks_sudo_privileges(self) -> None:
         """Verifies that only pre/post_install and pre/post_update hooks run with sudo when sudo=True."""
         from unittest.mock import patch
-        from drift.hooks.lifecycle_hooks import trigger_package_hook
+        from drift.hooks.lifecycle_hooks import trigger_hook
 
         pkg = "pkg_hooks_sudo"
         pkg_install_dir = os.path.join(self.install_dir, pkg)
@@ -515,7 +515,7 @@ class TestInstallRepo(unittest.TestCase):
         for hook_name in LIFECYCLE_HOOK_NAMES:
             with patch("drift.hooks.lifecycle_hooks.run_command") as mock_run:
                 mock_run.return_value.returncode = 0
-                trigger_package_hook(
+                trigger_hook(
                     pkg=pkg,
                     hook_name=hook_name,
                     metadata=config_sudo,

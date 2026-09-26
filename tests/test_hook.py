@@ -555,7 +555,7 @@ echo "VALUE=$DYNAMIC_VAL"
         )
         pkg_config = PackageConfig(PackageSectionConfig(name="pkg_hook"), hooks=hooks)
 
-        with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
+        with patch("drift.hooks.lifecycle_hooks.trigger_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
             hooks.trigger("pre_install", cwd=self.drift_root, flags=HookExecFlags(streaming=False))
             mock_trigger.assert_called_with(
@@ -731,7 +731,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_hook_exec_flags_resolve_with_settings(self) -> None:
         """Verifies that HookExecFlags.resolve correctly respects SettingsConfig defaults."""
-        from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_package_hook_with_render
+        from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_hook_with_render
         from drift.config.workspace_config import SettingsConfig, WorkspaceConfig
 
         # 1. No flags, no settings -> defaults to True
@@ -748,7 +748,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         f3 = HookExecFlags.resolve(flags=f_explicit, settings=s_disabled)
         self.assertTrue(f3.inject_non_interactive_envs)
 
-        # 4. WorkspaceConfig integration via trigger_package_hook_with_render
+        # 4. WorkspaceConfig integration via trigger_hook_with_render
         ws_config = WorkspaceConfig(
             drift_root=self.drift_root,
             settings=SettingsConfig(hook_inject_non_interactive_envs=False)
@@ -760,7 +760,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             encoding="utf-8"
         )
         with patch.dict(os.environ, {"PAGER": "custom_more_pager"}, clear=False):
-            res = trigger_package_hook_with_render(
+            res = trigger_hook_with_render(
                 workspace_config=ws_config,
                 package_name="pkg_hook",
                 hook_name="pre_source",
@@ -789,7 +789,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         )
         pkg_config = PackageConfig(PackageSectionConfig(name="pkg_hook"), hooks=hooks)
 
-        with patch("drift.hooks.lifecycle_hooks.trigger_package_hook") as mock_trigger:
+        with patch("drift.hooks.lifecycle_hooks.trigger_hook") as mock_trigger:
             mock_trigger.return_value = MagicMock()
 
             # 1. trigger_pre_install without explicit cwd defaults to pre_install.parent
@@ -1054,7 +1054,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
 
     def test_external_shared_hook_trigger_with_render(self) -> None:
         """Verifies that an external hook outside the package directory is executed directly without rendering."""
-        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook, trigger_package_hook_with_render
+        from drift.hooks.lifecycle_hooks import trigger_pre_source_hook, trigger_hook_with_render
         from drift.hooks.trigger_hook import run_primitive_trigger_hook
 
         # Create a shared script outside package directory
@@ -1310,6 +1310,193 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
         self.assertEqual(res.stderr, "raw bytes stderr")
         self.assertIn("failed with exit code 17", res.error_message or "")
         self.assertIn("raw bytes stderr", res.error_message or "")
+
+
+    def test_resolve_hook_source_path_static_and_external(self) -> None:
+        """Verifies resolve_hook_source_path resolves static package hooks and external hooks."""
+        from drift.hooks.lifecycle_hooks import resolve_hook_source_path
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_hooks import PackageHooks
+
+        # 1. Static script inside package drift_hooks
+        static_script = self.drift_hooks_dir / "static_hook.sh"
+        static_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        static_script.chmod(0o755)
+
+        pkg_config = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks.from_dict({"pre_source": "drift_hooks/static_hook.sh"}, base_dir=self.src_pkg_dir),
+        )
+        resolved = resolve_hook_source_path(
+            workspace_config=self.workspace_config,
+            pkg_config=pkg_config,
+            hook_name="pre_source",
+        )
+        self.assertEqual(resolved, static_script.resolve())
+
+        # 2. External absolute hook
+        ext_script = self.drift_root / "ext_hook.sh"
+        ext_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        pkg_ext_config = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks(pre_source=ext_script),
+        )
+        resolved_ext = resolve_hook_source_path(
+            workspace_config=self.workspace_config,
+            pkg_config=pkg_ext_config,
+            hook_name="pre_source",
+        )
+        self.assertEqual(resolved_ext, ext_script)
+
+        # 3. Not configured hook raises FileNotFoundError
+        with self.assertRaises(FileNotFoundError) as ctx:
+            resolve_hook_source_path(
+                workspace_config=self.workspace_config,
+                pkg_config=pkg_config,
+                hook_name="post_install",
+            )
+        self.assertIn("not configured", str(ctx.exception))
+
+        # 4. Missing hook file raises FileNotFoundError
+        pkg_missing_config = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks.from_dict({"pre_source": "drift_hooks/non_existent.sh"}, base_dir=self.src_pkg_dir),
+        )
+        with self.assertRaises(FileNotFoundError) as ctx:
+            resolve_hook_source_path(
+                workspace_config=self.workspace_config,
+                pkg_config=pkg_missing_config,
+                hook_name="pre_source",
+            )
+        self.assertIn("not found", str(ctx.exception))
+
+        # 5. Directory path instead of file raises FileNotFoundError
+        pkg_dir_config = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks.from_dict({"pre_source": "drift_hooks"}, base_dir=self.src_pkg_dir),
+        )
+        with self.assertRaises(FileNotFoundError) as ctx:
+            resolve_hook_source_path(
+                workspace_config=self.workspace_config,
+                pkg_config=pkg_dir_config,
+                hook_name="pre_source",
+            )
+        self.assertIn("not a regular file", str(ctx.exception))
+
+    def test_resolve_hook_exec_path_external_and_rendered(self) -> None:
+        """Verifies resolve_hook_exec_path returns external path directly or renders package-internal hooks into sandbox."""
+        from drift.hooks.lifecycle_hooks import resolve_hook_exec_path
+        from drift.config.package_config import PackageConfig
+        from drift.config.package_hooks import PackageHooks
+
+        # 1. External hook returns source path unchanged
+        ext_script = self.drift_root / "ext_exec.sh"
+        ext_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        pkg_ext = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks(pre_source=ext_script),
+        )
+        res_ext = resolve_hook_exec_path(
+            workspace_config=self.workspace_config,
+            pkg_config=pkg_ext,
+            hook_name="pre_source",
+            hook_source_path=ext_script,
+        )
+        self.assertEqual(res_ext, ext_script)
+
+        # 2. Package-internal hook renders into render sandbox
+        static_script = self.drift_hooks_dir / "internal.sh"
+        static_script.write_text("#!/bin/sh\necho ok\n", encoding="utf-8")
+        static_script.chmod(0o755)
+
+        pkg_internal = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks.from_dict({"pre_source": "drift_hooks/internal.sh"}, base_dir=self.src_pkg_dir),
+        )
+        res_rendered = resolve_hook_exec_path(
+            workspace_config=self.workspace_config,
+            pkg_config=pkg_internal,
+            hook_name="pre_source",
+            hook_source_path=static_script,
+        )
+        expected_sandbox = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "internal.sh"
+        self.assertEqual(res_rendered, expected_sandbox)
+        # 3. Nested relative directory inside drift_hooks
+        nested_script = self.drift_hooks_dir / "nested" / "custom.sh"
+        nested_script.parent.mkdir(parents=True, exist_ok=True)
+        nested_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        nested_script.chmod(0o755)
+
+        pkg_nested = PackageConfig(
+            PackageSectionConfig(name="pkg_hook"),
+            hooks=PackageHooks.from_dict({"pre_source": "drift_hooks/nested/custom.sh"}, base_dir=self.src_pkg_dir),
+        )
+        res_nested = resolve_hook_exec_path(
+            workspace_config=self.workspace_config,
+            pkg_config=pkg_nested,
+            hook_name="pre_source",
+            hook_source_path=nested_script,
+        )
+        expected_nested = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "nested" / "custom.sh"
+        self.assertEqual(res_nested, expected_nested)
+
+    def test_assert_valid_hook_file(self) -> None:
+        """Verifies assert_valid_hook_file raises FileNotFoundError for missing or non-file paths."""
+        from drift.hooks.lifecycle_hooks import assert_valid_hook_file
+
+        valid_file = self.drift_hooks_dir / "valid.sh"
+        valid_file.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+
+        # Valid returns path
+        res = assert_valid_hook_file(valid_file, "pkg_test", "probe")
+        self.assertEqual(res, valid_file)
+
+        # None path
+        with self.assertRaises(FileNotFoundError):
+            assert_valid_hook_file(None, "pkg_test", "probe")
+
+        # Non-existent
+        with self.assertRaises(FileNotFoundError):
+            assert_valid_hook_file(self.drift_hooks_dir / "missing.sh", "pkg_test", "probe")
+
+        # Directory
+        with self.assertRaises(FileNotFoundError):
+            assert_valid_hook_file(self.drift_hooks_dir, "pkg_test", "probe")
+
+    def test_parse_shebang_args(self) -> None:
+        """Verifies _parse_shebang_args parses shebang arguments correctly."""
+        from drift.hooks.lifecycle_hooks import _parse_shebang_args
+
+        script_with_shebang = self.drift_hooks_dir / "shebang.sh"
+        script_with_shebang.write_text("#!/usr/bin/env python3 -u\nprint('hi')\n", encoding="utf-8")
+        self.assertEqual(_parse_shebang_args(script_with_shebang), ["/usr/bin/env", "python3", "-u"])
+
+        script_no_shebang = self.drift_hooks_dir / "no_shebang.sh"
+        script_no_shebang.write_text("echo 'hello'\n", encoding="utf-8")
+        self.assertIsNone(_parse_shebang_args(script_no_shebang))
+
+        self.assertIsNone(_parse_shebang_args(self.drift_hooks_dir / "non_existent.sh"))
+
+    def test_execute_hook_script_non_absolute_cwd_raises_value_error(self) -> None:
+        """Verifies execute_hook_script raises ValueError when cwd is not absolute."""
+        from drift.hooks.lifecycle_hooks import execute_hook_script
+        from drift.config.package_config import PackageConfig
+
+        script = self.drift_hooks_dir / "run.sh"
+        script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        script.chmod(0o755)
+
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
+
+        with self.assertRaises(ValueError) as ctx:
+            execute_hook_script(
+                hook_path=script,
+                pkg="pkg_hook",
+                hook_name="probe",
+                metadata=pkg_config,
+                cwd=Path("relative/cwd"),
+            )
+        self.assertIn("must be absolute", str(ctx.exception))
 
 
 if __name__ == "__main__":

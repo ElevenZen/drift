@@ -1,8 +1,42 @@
+"""Package lifecycle hooks execution, template rendering, and error handling.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 1: Execution Control Flags & Invocation Commands
+    - HookExecFlags: Execution control flags (streaming, timeout, non-interactive envs)
+    - build_hook_execution_command_win32(): Windows extension-based command builder
+    - build_hook_execution_command_posix(): POSIX permission & shebang command builder
+    - build_hook_execution_command(): Cross-platform command dispatcher
+
+Layer 2: Failure Diagnostics & Process Execution
+    - HookFailureDetails: Extracted process failure details
+    - _extract_hook_failure_details(): Normalizes exit code, stdout, and stderr
+    - _format_hook_error_message(): Formats multiline error diagnostics
+    - handle_hook_execution_failure(): Logs errors, manages rollback, produces HookResult/raises
+    - execute_hook_command(): User-space process execution with timeout
+    - execute_hook_script(): Low-level hook execution in environment scope
+
+Layer 3: Path Resolution & Sandbox Compilation
+    - assert_valid_hook_file(): Read-only validation guard for hook scripts
+    - resolve_hook_source_path(): Resolves static script or template source path
+    - resolve_hook_exec_path(): Compiles hooks into render sandbox if internal
+
+Layer 4: High-Level Hook Triggers
+    - trigger_hook_with_render(): Full pipeline with render sandbox and package envs
+    - trigger_pre_source_hook(): Convenience wrapper for pre_source
+    - trigger_probe_hook(): Convenience wrapper for probe
+    - trigger_hook(): Direct execution from static path
+===============================================================================
+"""
+
 import sys
 import time
 import logging
 import shlex
 import subprocess
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast, Optional, List, Union, TYPE_CHECKING
@@ -16,13 +50,13 @@ from ..utils.process_utils import run_command
 from ..core.result_models import HookResult
 from ..core.constants import (
     DEFAULT_HOOK_COMMON_ENVS,
-    DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS,
     DEFAULT_HOOK_NON_INTERACTIVE_ENVS,
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
 from ..utils.env_utils import env_scope
+from ..utils.path_utils import is_relative_to
 from ..core.exceptions import HookExecutionError, mark_logged
 
 logger = logging.getLogger(__name__)
@@ -80,6 +114,21 @@ def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
         return [str(hook_path)]
 
 
+def _parse_shebang_args(hook_path: Path) -> Optional[List[str]]:
+    """Extracts shebang interpreter arguments from the script's first line if present."""
+    try:
+        with hook_path.open("r", encoding="utf-8", errors="ignore") as f:
+            first_line = f.readline().strip()
+            if first_line.startswith("#!"):
+                shebang = first_line[2:].strip()
+                args = shlex.split(shebang)
+                if args:
+                    return args
+    except (OSError, ValueError) as exc:
+        logger.debug(f"Could not parse shebang from '{hook_path}': {exc}")
+    return None
+
+
 def build_hook_execution_command_posix(hook_path: Path) -> List[str]:
     """Generates POSIX invocation command based on permissions, file extension, and shebang."""
     try:
@@ -97,17 +146,9 @@ def build_hook_execution_command_posix(hook_path: Path) -> List[str]:
     elif ext == ".py":
         return [sys.executable, str(hook_path)]
 
-    # Check shebang line
-    try:
-        with hook_path.open("r", encoding="utf-8", errors="ignore") as f:
-            first_line = f.readline().strip()
-            if first_line.startswith("#!"):
-                shebang = first_line[2:].strip()
-                shebang_args = shlex.split(shebang)
-                if shebang_args:
-                    return shebang_args + [str(hook_path)]
-    except (OSError, ValueError) as exc:
-        logger.debug(f"Could not parse shebang from '{hook_path}': {exc}")
+    shebang_args = _parse_shebang_args(hook_path)
+    if shebang_args:
+        return shebang_args + [str(hook_path)]
 
     return ["/bin/bash", str(hook_path)]
 
@@ -264,13 +305,30 @@ def handle_hook_execution_failure(
     )
 
 
+def assert_valid_hook_file(hook_path: Optional[Path], package_name: str, hook_name: str) -> Path:
+    """Validates that a resolved hook path exists and is a regular file.
+
+    Raises:
+        FileNotFoundError: If the hook file does not exist or is not a regular file.
+    """
+    if not hook_path or not hook_path.exists():
+        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {hook_path}"
+        logger.error(err_msg)
+        raise FileNotFoundError(err_msg)
+    if not hook_path.is_file():
+        err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {hook_path}"
+        logger.error(err_msg)
+        raise FileNotFoundError(err_msg)
+    return hook_path
+
+
 def execute_hook_script(
     hook_path: Path,
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
     cwd: Path,
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a hook script in user space with cwd validation, full environment inheritance, and timeout/error handling.
@@ -283,27 +341,26 @@ def execute_hook_script(
         FileNotFoundError: If the hook script file does not exist on disk.
         RuntimeError: If flags.raise_on_error is True and the hook script command times out or exits with a non-zero return code.
     """
-    if not hook_path.exists():
-        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{pkg}' not found: {hook_path}"
-        logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
+    assert_valid_hook_file(hook_path=hook_path, package_name=pkg, hook_name=hook_name)
 
-    assert cwd.is_absolute(), f"Working directory '{cwd}' must be absolute."
+    if not cwd.is_absolute():
+        raise ValueError(f"Working directory '{cwd}' must be absolute.")
 
     logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
     logger.debug(f"   Script: {hook_path}")
     logger.debug(f"   CWD:    {cwd}")
 
     cmd = build_hook_execution_command(hook_path)
-    timeout_seconds = custom_timeout if custom_timeout is not None else metadata.hooks.timeout
+    timeout_seconds = timeout_override if timeout_override is not None else metadata.hooks.timeout
 
     start_time = time.perf_counter()
     exec_flags = HookExecFlags.resolve(flags)
 
-    env_injections = {
-        **DEFAULT_HOOK_COMMON_ENVS,
-        **(DEFAULT_HOOK_NON_INTERACTIVE_EXTERNAL_ENVS if exec_flags.inject_non_interactive_envs else {}),
-    }
+    env_injections = (
+        DEFAULT_HOOK_NON_INTERACTIVE_ENVS
+        if exec_flags.inject_non_interactive_envs
+        else DEFAULT_HOOK_COMMON_ENVS
+    )
     with env_scope(env_injections, overwrite=True):
         try:
             proc = execute_hook_command(
@@ -342,12 +399,134 @@ def execute_hook_script(
             )
 
 
-def trigger_package_hook_with_render(
+def _load_package_config_for_hook(
+    workspace_config: "WorkspaceConfig",
+    package_name: str,
+    pkg_config_override: Optional[PackageConfig],
+) -> Optional[PackageConfig]:
+    """Loads PackageConfig for hook execution, returning None if drift_package.toml does not exist."""
+    if pkg_config_override is not None:
+        return pkg_config_override
+    src_pkg_dir = workspace_config.source_path / package_name
+    try:
+        return PackageConfig.from_source_dir(
+            package_dir=src_pkg_dir,
+            workspace_config=workspace_config,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def resolve_hook_source_path(
+    workspace_config: "WorkspaceConfig",
+    pkg_config: PackageConfig,
+    hook_name: str,
+    engines_override: Optional["RenderEngineRegistry"] = None,
+) -> Path:
+    """Resolves and validates the source file path (static script or template) for a package lifecycle hook.
+
+    Raises:
+        FileNotFoundError: If the hook file is not configured, not found on disk, or is not a regular file.
+    """
+    package_name = pkg_config.name
+    hook_file_val = getattr(pkg_config.hooks, hook_name, None)
+    if not hook_file_val:
+        err_msg = f"Lifecycle hook '{hook_name}' is not configured for package '{package_name}'."
+        logger.error(err_msg)
+        raise FileNotFoundError(err_msg)
+
+    rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
+    src_pkg_dir = workspace_config.source_path / package_name
+
+    if rel_hook_path is None:
+        # If hook is an external absolute path outside package hierarchy, execute it directly
+        hook_source_path = Path(hook_file_val)
+    else:
+        # If hook is inside the package directory hierarchy, check if it exists in the source directory first
+        # If not, check if it can be rendered from the source directory using the package's render engines
+        hook_parent_in_src = src_pkg_dir / rel_hook_path.parent
+        static_candidate = hook_parent_in_src / rel_hook_path.name
+        if static_candidate.exists():
+            hook_source_path = static_candidate
+        else:
+            hook_engines = (
+                engines_override
+                if engines_override is not None
+                else pkg_config.package_render_engines(workspace_config)
+            )
+            match_info = hook_engines.find_source_file_for_rendered_names(
+                hook_parent_in_src,
+                [rel_hook_path.name],
+            )
+            hook_source_path = match_info.path if match_info else None
+
+    return assert_valid_hook_file(
+        hook_path=hook_source_path,
+        package_name=package_name,
+        hook_name=hook_name,
+    )
+
+
+def resolve_hook_exec_path(
+    workspace_config: "WorkspaceConfig",
+    pkg_config: PackageConfig,
+    hook_name: str,
+    hook_source_path: Path,
+    engines_override: Optional["RenderEngineRegistry"] = None,
+) -> Path:
+    """Resolves executable hook path, rendering package-internal hooks into the render sandbox if needed.
+
+    Raises:
+        RuntimeError: If rendered hook file was not produced after rendering.
+    """
+    rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
+    if rel_hook_path is None:
+        return hook_source_path
+
+    from ..render.render_package import render_subfolder_entries, prepare_package_render_engines
+
+    package_name = pkg_config.name
+    target_render_dir = workspace_config.render_path / package_name
+    hook_dest_dir = target_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+    effective_engines = (
+        engines_override
+        if engines_override is not None
+        else prepare_package_render_engines(
+            workspace_config=workspace_config,
+            pkg_config=pkg_config,
+            render_pkg_dir=target_render_dir,
+        )
+    )
+    src_pkg_dir = workspace_config.source_path / package_name
+    hooks_src_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
+    if hooks_src_dir.is_dir():
+        render_subfolder_entries(
+            src_dir=hooks_src_dir,
+            dest_dir=hook_dest_dir,
+            drift_root=workspace_config.drift_root,
+            pkg_config=pkg_config,
+            render_engines=effective_engines,
+            skip_drift_hooks=False,
+        )
+    sub_rel = (
+        rel_hook_path.relative_to(Path(DRIFT_HOOKS_DIR_NAME))
+        if is_relative_to(rel_hook_path, Path(DRIFT_HOOKS_DIR_NAME))
+        else rel_hook_path
+    )
+    hook_exec_path = hook_dest_dir / sub_rel
+    if not hook_exec_path.exists():
+        raise RuntimeError(
+            f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering."
+        )
+    return hook_exec_path
+
+
+def trigger_hook_with_render(
     workspace_config: "WorkspaceConfig",
     package_name: str,
     hook_name: str,
-    custom_cwd: Optional[Path] = None,  
-    custom_timeout: Optional[int] = None,
+    cwd_override: Optional[Path] = None,  
+    timeout_override: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
     pkg_config_override: Optional[PackageConfig] = None,
     engines_override: Optional["RenderEngineRegistry"] = None,
@@ -358,7 +537,7 @@ def trigger_package_hook_with_render(
     it is rendered into the render sandbox directory first before execution.
     Otherwise it will be executed directly without rendering.
 
-    custom_cwd: Optional working directory for hook execution. If not provided, defaults to the package source directory.
+    cwd_override: Optional working directory for hook execution. If not provided, defaults to the package source directory.
     pkg_config_override: Optional pre-loaded PackageConfig. If not provided, loads from package source dir.
     engines_override: Optional pre-prepared RenderEngineRegistry (skips re-rendering engine input templates).
     """
@@ -372,117 +551,47 @@ def trigger_package_hook_with_render(
             f"Package '{package_name}' source directory not found: {src_pkg_dir}"
         )
 
-    pkg_config = pkg_config_override
-    if pkg_config is None:
-        try:
-            pkg_config = PackageConfig.from_source_dir(
-                package_dir=src_pkg_dir,
-                workspace_config=workspace_config
-            )
-        except FileNotFoundError:
-            # Package has no drift_package.toml -> no lifecycle hooks configured
-            return HookResult.skipped(
-                package=package_name,
-                hook_name=hook_name,
-                cwd=src_pkg_dir,
-                hook_base_dir=src_pkg_dir
-            )
-
-    hook_file_val = getattr(pkg_config.hooks, hook_name, None)
-    if not hook_file_val:
+    pkg_config = _load_package_config_for_hook(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        pkg_config_override=pkg_config_override,
+    )
+    if pkg_config is None or not getattr(pkg_config.hooks, hook_name, None):
         return HookResult.skipped(
             package=package_name,
             hook_name=hook_name,
             cwd=src_pkg_dir,
-            hook_base_dir=src_pkg_dir
+            hook_base_dir=src_pkg_dir,
         )
 
-    # Determine relative path if package-internal hook, otherwise treat as external hook
-    rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
+    hook_source_path = resolve_hook_source_path(
+        workspace_config=workspace_config,
+        pkg_config=pkg_config,
+        hook_name=hook_name,
+        engines_override=engines_override,
+    )
 
-    if rel_hook_path is None:
-        # If hook is an external absolute path outside package hierarchy, execute it directly
-        source_hook_path = Path(hook_file_val)
-    else:
-        # If hook is inside the package directory hierarchy, check if it exists in the source directory first
-        # If not, check if it can be rendered from the source directory using the package's render engines
-        hook_parent_in_src = src_pkg_dir / rel_hook_path.parent
-        static_candidate = hook_parent_in_src / rel_hook_path.name
-        if static_candidate.exists():
-            source_hook_path = static_candidate
-        else:
-            if engines_override is not None:
-                hook_engines = engines_override
-            else:
-                hook_engines = pkg_config.package_render_engines(workspace_config)
-
-            match_info = hook_engines.find_source_file_for_rendered_names(
-                hook_parent_in_src,
-                [rel_hook_path.name]
-            )
-            source_hook_path = match_info.path if match_info else None
-
-    if not source_hook_path or not source_hook_path.exists():
-        err_msg = f"Lifecycle hook file specified for '{hook_name}' in package '{package_name}' not found: {source_hook_path}"
-        logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
-
-    if not source_hook_path.is_file():
-        err_msg = f"Lifecycle hook path specified for '{hook_name}' in package '{package_name}' is not a regular file: {source_hook_path}"
-        logger.error(err_msg)
-        raise FileNotFoundError(err_msg)
-
-    def _execute() -> HookResult:
-        # Check if source hook path is inside src_pkg_dir
-        if rel_hook_path is not None:
-            from ..render.render_package import render_subfolder_entries, prepare_package_render_engines
-            target_render_dir = workspace_config.render_path / package_name
-            hook_dest_dir = target_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-            if engines_override is not None:
-                effective_engines = engines_override
-            else:
-                effective_engines = prepare_package_render_engines(
-                    workspace_config=workspace_config,
-                    pkg_config=pkg_config,
-                    render_pkg_dir=target_render_dir,
-                )
-            hooks_src_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
-            if hooks_src_dir.is_dir():
-                render_subfolder_entries(
-                    src_dir=hooks_src_dir,
-                    dest_dir=hook_dest_dir,
-                    drift_root=workspace_config.drift_root,
-                    pkg_config=pkg_config,
-                    render_engines=effective_engines,
-                    skip_drift_hooks=False,
-                )
-            sub_rel = rel_hook_path.relative_to(DRIFT_HOOKS_DIR_NAME)
-            hook_exec_path = hook_dest_dir / sub_rel
-            if not hook_exec_path.exists():
-                raise RuntimeError(
-                    f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering."
-                )
-        else:
-            hook_exec_path = source_hook_path
-
-        effective_cwd = custom_cwd or hook_exec_path.parent
-
+    env_ctx = pkg_config.package_envs() if exec_flags.load_envs else nullcontext()
+    with env_ctx:
+        hook_exec_path = resolve_hook_exec_path(
+            workspace_config=workspace_config,
+            pkg_config=pkg_config,
+            hook_name=hook_name,
+            hook_source_path=hook_source_path,
+            engines_override=engines_override,
+        )
+        effective_cwd = cwd_override or hook_exec_path.parent
         res = execute_hook_script(
             hook_path=hook_exec_path,
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,
             cwd=effective_cwd,
-            custom_timeout=custom_timeout,
+            timeout_override=timeout_override,
             flags=exec_flags,
         )
         res.hook_base_dir = str(src_pkg_dir)
         return res
-
-    if exec_flags.load_envs:
-        with pkg_config.package_envs():
-            return _execute()
-    return _execute()
 
 
 def trigger_pre_source_hook(
@@ -493,7 +602,7 @@ def trigger_pre_source_hook(
     engines_override: Optional["RenderEngineRegistry"] = None,
 ) -> HookResult:
     """Executes the pre_source hook for a package in the source directory."""
-    return trigger_package_hook_with_render(
+    return trigger_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name="pre_source",
@@ -512,7 +621,7 @@ def trigger_probe_hook(
 ) -> HookResult:
     """Executes the probe hook for a package in the source directory."""
     exec_flags = replace(flags, raise_on_error=False) if flags is not None else HookExecFlags(raise_on_error=False)
-    return trigger_package_hook_with_render(
+    return trigger_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name="probe",
@@ -522,12 +631,12 @@ def trigger_probe_hook(
     )
 
 
-def trigger_package_hook(
+def trigger_hook(
     pkg: str,
     hook_name: str,
     metadata: PackageConfig,
     cwd: Optional[Path] = None,
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> HookResult:
     """Executes a package hook script if specified and found.
@@ -569,7 +678,7 @@ def trigger_package_hook(
         hook_name=hook_name,
         metadata=metadata,
         cwd=effective_cwd,
-        custom_timeout=custom_timeout,
+        timeout_override=timeout_override,
         flags=exec_flags,
     )
     res.hook_base_dir = str(hook_path.parent)

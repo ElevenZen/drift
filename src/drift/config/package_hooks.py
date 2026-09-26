@@ -325,7 +325,8 @@ class PackageHooks:
             if not is_relative_to(norm_val, Path(DRIFT_HOOKS_DIR_NAME)):
                 name_str = f" for package '{package_name}'" if package_name else ""
                 raise ConfigError(
-                    f"Lifecycle hook '{hook_name}' path '{raw_val}'{name_str} must be located within '{DRIFT_HOOKS_DIR_NAME}/' directory. "
+                    f"Lifecycle hook '{hook_name}' path '{raw_val}'{name_str} must be located within '{DRIFT_HOOKS_DIR_NAME}/' directory "
+                    f"(hooks inside package directory are restricted to '{DRIFT_HOOKS_DIR_NAME}/'; external hooks outside package must use an absolute path). "
                     f"If sharing hooks across packages, create a symlink inside '{DRIFT_HOOKS_DIR_NAME}/'."
                 )
 
@@ -393,7 +394,7 @@ class PackageHooks:
         flags: Optional["HookExecFlags"] = None,
     ) -> HookResult:
         """Executes a package lifecycle hook script if specified and found."""
-        from ..hooks.lifecycle_hooks import HookExecFlags, trigger_package_hook
+        from ..hooks.lifecycle_hooks import HookExecFlags, trigger_hook
 
         exec_flags = HookExecFlags.resolve(flags=flags)
         if exec_flags.no_hooks:
@@ -404,7 +405,7 @@ class PackageHooks:
             )
         if self._package_config is None:
             raise RuntimeError("PackageHooks is not associated with a PackageConfig.")
-        return trigger_package_hook(
+        return trigger_hook(
             pkg=self._package_config.name,
             hook_name=hook_name,
             metadata=self._package_config,

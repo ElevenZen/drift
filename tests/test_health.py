@@ -161,7 +161,7 @@ exit 0
         health = "drift_hooks/health_check.sh"
         """, encoding="utf-8")
 
-        res = run_single_package_health_probe(self.workspace_config, pkg, custom_timeout=1)
+        res = run_single_package_health_probe(self.workspace_config, pkg, timeout_override=1)
         self.assertEqual(res.status, PackageHealthStatus.TIMEOUT)
         self.assertIsNotNone(res.error_message)
         assert res.error_message is not None

@@ -739,9 +739,16 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             PackageHooks.from_dict({"pre_install": "scripts/install.sh"}, package_name="my_pkg", base_dir=base)
         self.assertIn("must be located within 'drift_hooks/' directory", str(ctx.exception))
+        self.assertIn("hooks inside package directory are restricted", str(ctx.exception))
         self.assertIn("create a symlink inside 'drift_hooks/'", str(ctx.exception))
 
-        # 2. External absolute hook executable is allowed without drift_hooks/ restriction
+        # 2. Absolute hook path pointing inside package directory outside drift_hooks/ also raises ConfigError
+        with self.assertRaises(ConfigError) as ctx_abs:
+            PackageHooks.from_dict({"pre_install": str(base / "scripts/install.sh")}, package_name="my_pkg", base_dir=base)
+        self.assertIn("must be located within 'drift_hooks/' directory", str(ctx_abs.exception))
+        self.assertIn("hooks inside package directory are restricted", str(ctx_abs.exception))
+
+        # 3. External absolute hook executable is allowed without drift_hooks/ restriction
         ext_path = Path("/usr/local/bin/my_hook")
         hooks_ext = PackageHooks.from_dict({"post_install": str(ext_path)}, package_name="my_pkg", base_dir=base)
         self.assertEqual(hooks_ext.post_install, ext_path.resolve())

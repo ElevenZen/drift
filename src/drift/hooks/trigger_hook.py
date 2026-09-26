@@ -8,8 +8,8 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from .lifecycle_hooks import (
     HookExecFlags,
-    trigger_package_hook_with_render,
-    trigger_package_hook,
+    trigger_hook_with_render,
+    trigger_hook,
 )
 from ..core.constants import (
     LIFECYCLE_HOOK_NAMES,
@@ -41,11 +41,11 @@ def trigger_hook_from_source(
             f"Package '{package_name}' source directory not found: '{src_pkg_dir}'"
         ) from e
 
-    res = trigger_package_hook_with_render(
+    res = trigger_hook_with_render(
         workspace_config=workspace_config,
         package_name=package_name,
         hook_name=hook_name,
-        custom_cwd=cwd_override,
+        cwd_override=cwd_override,
         flags=flags,
         pkg_config_override=pkg_config,
     )
@@ -77,7 +77,7 @@ def trigger_hook_from_install(
 
     resolved_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     with pkg_config.package_envs():
-        res = trigger_package_hook(
+        res = trigger_hook(
             pkg=package_name,
             hook_name=hook_name,
             metadata=pkg_config,

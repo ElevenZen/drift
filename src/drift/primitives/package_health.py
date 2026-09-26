@@ -19,8 +19,8 @@ from ..core.result_models import (
 
 from ..hooks.lifecycle_hooks import (
     HookExecFlags,
-    trigger_package_hook_with_render,
-    trigger_package_hook,
+    trigger_hook_with_render,
+    trigger_hook,
 )
 
 logger = logging.getLogger(__name__)
@@ -94,7 +94,7 @@ def _execute_health_hook_no_throw(
 def run_health_probe_from_source(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
     """Executes the health probe hook by reading and compiling templates from the src/ directory."""
@@ -124,12 +124,12 @@ def run_health_probe_from_source(
         )
 
     return _execute_health_hook_no_throw(
-        lambda: trigger_package_hook_with_render(
+        lambda: trigger_hook_with_render(
             workspace_config=workspace_config,
             package_name=pkg,
             hook_name="health",
-            custom_cwd=target_dir,
-            custom_timeout=custom_timeout,
+            cwd_override=target_dir,
+            timeout_override=timeout_override,
             flags=hook_flags,
             pkg_config_override=pkg_config,
         ),
@@ -141,7 +141,7 @@ def run_health_probe_from_source(
 def run_health_probe_from_install(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
     """Executes the health probe hook directly from static files in the install/ directory without render."""
@@ -175,12 +175,12 @@ def run_health_probe_from_install(
 
     def _trigger():
         with pkg_config.package_envs():
-            return trigger_package_hook(
+            return trigger_hook(
                 pkg=pkg,
                 hook_name="health",
                 metadata=pkg_config,
                 cwd=target_dir,
-                custom_timeout=custom_timeout,
+                timeout_override=timeout_override,
                 flags=hook_flags,
             )
 
@@ -190,7 +190,7 @@ def run_health_probe_from_install(
 def run_single_package_health_probe(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageHealthResult:
@@ -207,13 +207,13 @@ def run_single_package_health_probe(
         return run_health_probe_from_source(
             workspace_config=workspace_config,
             pkg=pkg,
-            custom_timeout=custom_timeout,
+            timeout_override=timeout_override,
             flags=flags,
         )
     return run_health_probe_from_install(
         workspace_config=workspace_config,
         pkg=pkg,
-        custom_timeout=custom_timeout,
+        timeout_override=timeout_override,
         flags=flags,
     )
 
@@ -221,7 +221,7 @@ def run_single_package_health_probe(
 def run_primitive_health_checks(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    custom_timeout: Optional[int] = None,
+    timeout_override: Optional[int] = None,
     from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
     flags: Optional[HookExecFlags] = None,
 ) -> HealthResult:
@@ -261,7 +261,7 @@ def run_primitive_health_checks(
         probe_res = run_single_package_health_probe(
             workspace_config=workspace_config,
             pkg=pkg,
-            custom_timeout=custom_timeout,
+            timeout_override=timeout_override,
             from_stage=from_stage,
             flags=flags,
         )

@@ -395,7 +395,7 @@ class TestPackageRenderEngine(unittest.TestCase):
         self.assertEqual(pkg_adopt_res.status, "SUCCESS")
     def test_lifecycle_hook_with_package_render_engine_input_chaining(self) -> None:
         """Verifies lifecycle hooks resolve package-level engines with chained input templates."""
-        from drift.hooks.lifecycle_hooks import trigger_package_hook_with_render, HookExecFlags
+        from drift.hooks.lifecycle_hooks import trigger_hook_with_render, HookExecFlags
 
         if not shutil.which("envsubst"):
             self.skipTest("envsubst is not available on this system")
@@ -456,7 +456,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
 
         output_log = self.drift_root / "hook_output.log"
         with patch.dict(os.environ, {"DRIFT_HOOK_OUT": str(output_log)}):
-            res = trigger_package_hook_with_render(
+            res = trigger_hook_with_render(
                 workspace_config=workspace_config,
                 package_name="pkg_hook_chain",
                 hook_name="pre_source",
