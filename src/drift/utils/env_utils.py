@@ -15,7 +15,7 @@ Layer 4: Scoped Activation Context Managers
 
 Layer 3: Configuration Resolution & Interpolation Pipeline
     resolve_env_configs(current_layer, lower_layer, extra_facts)
-        topological_sort_env [Layer 1] (Kahn's algorithm for cycle detection)
+        topological_sort_env [Layer 1] (builds reference graph and invokes topological_sort)
         resolve_env_references [Layer 1] (per-tier DAG expansion)
         build_effective_env_dict [Layer 1] (6-tier flattening)
         -> EnvResolve(current, effective, effective_dict)
@@ -43,6 +43,7 @@ Layer 1: Pure Functional Primitives (no os.environ mutation)
         merge_kvpairs(mappings) -> Dict[str, str]
 
     Reference Resolution:
+        topological_sort(graph, error_cls, cycle_msg_prefix) -> List[T]
         topological_sort_env(raw_env, error_cls) -> List[str]
         resolve_env_references(raw_env, base_env, error_cls) -> Dict[str, str]
         python_envsubst(template_content, error_cls, env) -> str
@@ -72,6 +73,7 @@ from typing import (
     Iterable,
     Any,
     Type,
+    TypeVar,
 )
 
 from ..core.constants import (
@@ -539,51 +541,52 @@ def extract_var_refs(value: str) -> Set[str]:
     }
 
 
-def topological_sort_env(
-    raw_env: Mapping[str, Any],
-    error_cls: Type[DriftError] = ConfigError,
-) -> List[str]:
-    """Computes a topologically sorted evaluation order for environment variables using Kahn's algorithm.
+T = TypeVar("T")
 
-    Identifies variable references within raw_env keys (e.g. $VAR, ${VAR}), ignoring escaped
-    variables (e.g. \\$VAR), and returns a list of keys in valid evaluation order.
+
+def topological_sort(
+    graph: Mapping[T, Set[T]],
+    error_cls: Type[Exception] = ValueError,
+    cycle_msg_prefix: str = "Cyclic dependency detected",
+) -> List[T]:
+    """Computes a topologically sorted evaluation order for a directed acyclic graph (DAG) using Kahn's algorithm.
+
+    In this graph representation, graph[node] is the set of prerequisite dependencies that must
+    be processed before node.
 
     Args:
-        raw_env: Mapping of environment variable names to raw (possibly unexpanded) values.
-        error_cls: Exception class to raise on cyclic dependencies or immediate self-references.
+        graph: Mapping from each node to the set of nodes it depends on (prerequisites).
+        error_cls: Exception class to raise if a cyclic dependency or immediate self-reference is detected.
+        cycle_msg_prefix: Prefix for exception message on cyclic dependency detection.
 
     Returns:
-        List of environment variable keys in topological evaluation order.
+        List of nodes in valid topological evaluation order (prerequisites appear before dependents).
 
     Raises:
-        error_cls: If an immediate self-reference or cyclic dependency is detected.
+        error_cls: If one or more cycles are detected.
     """
-    raw_dict = {str(k): str(v) for k, v in raw_env.items()}
-    raw_keys = set(raw_dict.keys())
+    raw_keys = set(graph.keys())
 
-    # 1. Build dependency graph (only tracking internal dependencies within raw_dict)
-    graph: Dict[str, Set[str]] = {}
-    in_degree: Dict[str, int] = {}
+    # 1. Check for immediate self-reference
+    for node, deps in graph.items():
+        if node in deps:
+            raise error_cls(f"{cycle_msg_prefix}: '{node}' references itself.")
 
-    for k, v in raw_dict.items():
-        refs = extract_var_refs(v)
-        # Check for immediate self-reference
-        if k in refs:
-            raise error_cls(f"Cyclic dependency detected in environment variable: '{k}' references itself.")
-        # Check for reference intersection with keys in raw_env
-        internal_deps = refs & raw_keys
-        graph[k] = internal_deps
-        in_degree[k] = len(internal_deps)
+    # 2. In-degree represents the count of unmet prerequisites within the graph
+    in_degree: Dict[T, int] = {
+        node: len(deps & raw_keys)
+        for node, deps in graph.items()
+    }
 
-    # 2. Topological sort using Kahn's algorithm
+    # 3. Map each prerequisite to the set of nodes that depend on it
+    dependents: Dict[T, Set[T]] = {k: set() for k in raw_keys}
+    for node, deps in graph.items():
+        for dep in (deps & raw_keys):
+            dependents[dep].add(node)
+
+    # 4. Topological sort using Kahn's algorithm
     queue = [k for k, deg in in_degree.items() if deg == 0]
-    eval_order: List[str] = []
-
-    # Map each key to the set of keys that depend on it
-    dependents: Dict[str, Set[str]] = {k: set() for k in raw_keys}
-    for k, deps in graph.items():
-        for dep in deps:
-            dependents[dep].add(k)
+    eval_order: List[T] = []
 
     while queue:
         curr = queue.pop(0)
@@ -594,16 +597,50 @@ def topological_sort_env(
                 queue.append(dep)
 
     if len(eval_order) != len(raw_keys):
-        cyclic_keys = sorted([k for k, deg in in_degree.items() if deg > 0])
+        cyclic_keys = sorted([str(k) for k, deg in in_degree.items() if deg > 0])
         raise error_cls(
-            f"Cyclic dependency detected in environment variables among: {', '.join(cyclic_keys)}"
+            f"{cycle_msg_prefix} among: {', '.join(cyclic_keys)}"
         )
 
     return eval_order
 
 
+def topological_sort_env(
+    raw_env: Mapping[str, str],
+    error_cls: Type[DriftError] = ConfigError,
+) -> List[str]:
+    """Computes a topologically sorted evaluation order for environment variables using Kahn's algorithm.
+
+    Identifies variable references within raw_env keys (e.g. $VAR, ${VAR}), ignoring escaped
+    variables (e.g. \\$VAR), and returns a list of keys in valid evaluation order.
+
+    Args:
+        raw_env: Mapping of environment variable names to string values.
+        error_cls: Exception class to raise on cyclic dependencies or immediate self-references.
+
+    Returns:
+        List of environment variable keys in topological evaluation order.
+
+    Raises:
+        error_cls: If an immediate self-reference or cyclic dependency is detected.
+    """
+    raw_keys = set(raw_env.keys())
+
+    # Build dependency graph: each key maps to internal dependencies within raw_env
+    graph: Dict[str, Set[str]] = {
+        k: extract_var_refs(v) & raw_keys
+        for k, v in raw_env.items()
+    }
+
+    return topological_sort(
+        graph,
+        error_cls=error_cls,
+        cycle_msg_prefix="Cyclic dependency detected in environment variables",
+    )
+
+
 def resolve_env_references(
-    raw_env: Mapping[str, Any],
+    raw_env: Mapping[str, str],
     base_env: Mapping[str, str],
     error_cls: Type[DriftError] = ConfigError,
 ) -> Dict[str, str]:
@@ -614,7 +651,7 @@ def resolve_env_references(
     Cyclic dependencies will also trigger error_cls.
 
     Args:
-        raw_env: Dictionary of raw environment variable definitions.
+        raw_env: Mapping of raw environment variable definitions to strings.
         base_env: Required base environment mapping.
         error_cls: Exception class to raise on error (defaults to ConfigError).
 
@@ -624,14 +661,13 @@ def resolve_env_references(
     Raises:
         error_cls: If any referenced variable is missing or if a cyclic dependency is detected.
     """
-    raw_dict = {str(k): str(v) for k, v in raw_env.items()}
-    eval_order = topological_sort_env(raw_dict, error_cls=error_cls)
+    eval_order = topological_sort_env(raw_env, error_cls=error_cls)
 
     # Gradual evaluation in topological order
     resolved: Dict[str, str] = dict(base_env)
     result: Dict[str, str] = {}
     for k in eval_order:
-        rendered_val = python_envsubst(raw_dict[k], env=resolved, error_cls=error_cls)
+        rendered_val = python_envsubst(raw_env[k], env=resolved, error_cls=error_cls)
         resolved[k] = rendered_val
         result[k] = rendered_val
 

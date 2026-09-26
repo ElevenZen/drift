@@ -823,6 +823,36 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         self.assertEqual(target5["VAR_C"], "val_C")
         self.assertEqual(saved5, {"VAR_C": None})
 
+    def test_topological_sort_generic(self) -> None:
+        """Verifies topological_sort handles generic DAGs and catches cycles."""
+        from drift.utils.env_utils import topological_sort
+        from drift.core.exceptions import ConfigError
+
+        # Integer nodes: 3 depends on 2, 2 depends on 1
+        int_graph = {3: {2}, 2: {1}, 1: set()}
+        self.assertEqual(topological_sort(int_graph), [1, 2, 3])
+
+        # Diamond DAG with integers
+        diamond = {4: {2, 3}, 2: {1}, 3: {1}, 1: set()}
+        order = topological_sort(diamond)
+        self.assertEqual(order[0], 1)
+        self.assertEqual(set(order[1:3]), {2, 3})
+        self.assertEqual(order[3], 4)
+
+        # Immediate self-cycle
+        with self.assertRaises(ValueError) as ctx:
+            topological_sort({"A": {"A"}})
+        self.assertIn("Cyclic dependency detected: 'A' references itself.", str(ctx.exception))
+
+        # Mutual cycle
+        with self.assertRaises(ValueError) as ctx:
+            topological_sort({"A": {"B"}, "B": {"A"}})
+        self.assertIn("Cyclic dependency detected among: A, B", str(ctx.exception))
+
+        # Custom error class
+        with self.assertRaises(ConfigError):
+            topological_sort({"A": {"B"}, "B": {"A"}}, error_cls=ConfigError)
+
     def test_topological_sort_env(self) -> None:
         """Verifies topological_sort_env computes correct evaluation order and catches cycles."""
         from drift.utils.env_utils import topological_sort_env
