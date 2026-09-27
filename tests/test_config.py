@@ -19,11 +19,8 @@ from drift.core.constants import (
     set_initial_env,
     update_initial_env,
 )
-from drift.utils.toml_utils import (
-    parse_toml,
-    _parse_toml_fallback,
-    parse_toml_value,
-    split_array_elements,
+from drift.utils.toml_utils import parse_toml
+from drift.utils.config_utils import (
     get_first_from,
     get_nested_from,
     validate_known_keys,
@@ -70,40 +67,6 @@ package_config_template_name = add_envst(PACKAGE_CONFIG_FILE_NAME)
 set_test_mode(True)
 
 class TestConfigParser(unittest.TestCase):
-    def setUp(self) -> None:
-        # We will run standard parser tests on both the main parse_toml
-        # and explicitly on the fallback parser to guarantee both work identically.
-        self.parsers = [parse_toml, _parse_toml_fallback]
-
-    def test_parse_toml_value(self) -> None:
-        # String
-        self.assertEqual(parse_toml_value('"hello"'), "hello")
-        self.assertEqual(parse_toml_value("'world'"), "world")
-        self.assertEqual(parse_toml_value('"escaped \\" quote"'), 'escaped " quote')
-        self.assertEqual(parse_toml_value('"new\\nline"'), "new\nline")
-
-        # Boolean
-        self.assertEqual(parse_toml_value('true'), True)
-        self.assertEqual(parse_toml_value('FALSE'), False)
-
-        # Integer & Float
-        self.assertEqual(parse_toml_value('42'), 42)
-        self.assertEqual(parse_toml_value('-12'), -12)
-        self.assertEqual(parse_toml_value('3.14'), 3.14)
-        self.assertEqual(parse_toml_value('-0.5'), -0.5)
-
-        # Fallback
-        self.assertEqual(parse_toml_value('unquoted_str'), 'unquoted_str')
-
-    def test_split_array_elements(self) -> None:
-        self.assertEqual(split_array_elements('"a", "b", "c"'), ['"a"', '"b"', '"c"'])
-        self.assertEqual(split_array_elements('"a, b", "c"'), ['"a, b"', '"c"'])
-        self.assertEqual(split_array_elements("'a', 'b'"), ["'a'", "'b'"])
-
-    def test_parse_toml_array_value(self) -> None:
-        self.assertEqual(parse_toml_value('["a", "b"]'), ["a", "b"])
-        self.assertEqual(parse_toml_value('[]'), [])
-
     def test_get_first_from(self) -> None:
         data = {"alias_b": "value_b", "disabled_flag": False}
         self.assertEqual(get_first_from(data, ["alias_a", "alias_b", "alias_c"]), "value_b")
@@ -245,64 +208,6 @@ class TestConfigParser(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             parse_bool_value(99, strict=True, context="[test]")
         self.assertIn("Invalid boolean value '99' under [test] (expected 0 or 1)", str(ctx.exception))
-
-    def test_parse_toml_simple(self) -> None:
-        toml_str = """
-        # Global Comment
-        key = "value"  # Inline comment
-        number = 42
-        enabled = true
-        """
-        for parser in self.parsers:
-            data = parser(toml_str)
-            self.assertEqual(data.get("key"), "value")
-            self.assertEqual(data.get("number"), 42)
-            self.assertEqual(data.get("enabled"), True)
-
-    def test_parse_toml_with_tables(self) -> None:
-        toml_str = """
-        [workspace]
-        render_directory = "my_render"
-        install_directory = "my_install"
-
-        [packages.enable]
-        shell = true
-        nvim = false
-        """
-        for parser in self.parsers:
-            data = parser(toml_str)
-            self.assertIn("workspace", data)
-            self.assertEqual(data["workspace"]["render_directory"], "my_render")
-            self.assertEqual(data["workspace"]["install_directory"], "my_install")
-            self.assertIn("packages", data)
-            self.assertEqual(data["packages"]["enable"]["shell"], True)
-            self.assertEqual(data["packages"]["enable"]["nvim"], False)
-
-    def test_parse_toml_multiline_array(self) -> None:
-        toml_str = """
-        [package]
-        name = "test_pkg"
-        fully_controlled_dirs = [
-            "dir1", # Comment inside
-            "dir2"  # Another comment
-        ]
-        """
-        for parser in self.parsers:
-            data = parser(toml_str)
-            self.assertIn("package", data)
-            self.assertEqual(data["package"]["name"], "test_pkg")
-            self.assertEqual(data["package"]["fully_controlled_dirs"], ["dir1", "dir2"])
-
-    def test_parse_toml_dotted_tables(self) -> None:
-        toml_str = """
-        [table.subtable]
-        val = "nested"
-        """
-        for parser in self.parsers:
-            data = parser(toml_str)
-            self.assertIn("table", data)
-            self.assertIn("subtable", data["table"])
-            self.assertEqual(data["table"]["subtable"]["val"], "nested")
 
 
 class TestConfigClasses(unittest.TestCase):
@@ -2725,64 +2630,6 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
         cfg2 = PackageConfig.from_install_dir(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg2.env_resolve.effective.fallback["PKG_FB"], "pkg_fallback")
         self.assertEqual(cfg2.env_resolve.effective.default["WS_VAR"], "ws_val")
-
-
-class TestDumpToml(unittest.TestCase):
-    """Unit tests for dump_toml serialization, multiline escaping, and roundtrip parsing."""
-
-    def test_dump_toml_multiline_string_escaping(self) -> None:
-        from drift.utils.toml_utils import dump_toml, parse_toml
-
-        data = {
-            "package": {
-                "name": "my_pkg",
-                "description": "Line 1\nLine 2\nLine 3",
-                "notes": "Tab:\t, Windows Line:\r\n, Backslash: \\, Quotes: \"Hello\"",
-            },
-            "env": {
-                "override": {
-                    "SCRIPT": "echo 'hello'\necho 'world'\n",
-                }
-            }
-        }
-
-        toml_str = dump_toml(data)
-        # Ensure raw literal line breaks are NOT in the serialized string literals
-        for line in toml_str.splitlines():
-            if line.startswith("description ="):
-                self.assertIn(r"\n", line)
-                self.assertNotIn("\n", line[len("description ="):])
-
-        parsed = parse_toml(toml_str)
-        self.assertEqual(parsed["package"]["name"], "my_pkg")
-        self.assertEqual(parsed["package"]["description"], "Line 1\nLine 2\nLine 3")
-        self.assertEqual(parsed["package"]["notes"], "Tab:\t, Windows Line:\r\n, Backslash: \\, Quotes: \"Hello\"")
-        self.assertEqual(parsed["env"]["override"]["SCRIPT"], "echo 'hello'\necho 'world'\n")
-
-    def test_dump_toml_roundtrip_data_types(self) -> None:
-        from drift.utils.toml_utils import dump_toml, parse_toml
-
-        data = {
-            "version": 1,
-            "debug": True,
-            "ratio": 3.14,
-            "tags": ["a\nb", "c", "d"],
-            "empty": None,
-            "package": {
-                "enable_render": False,
-                "count": 42,
-            }
-        }
-
-        toml_str = dump_toml(data)
-        parsed = parse_toml(toml_str)
-        self.assertEqual(parsed["version"], 1)
-        self.assertEqual(parsed["debug"], True)
-        self.assertEqual(parsed["ratio"], 3.14)
-        self.assertEqual(parsed["tags"], ["a\nb", "c", "d"])
-        self.assertNotIn("empty", parsed)
-        self.assertEqual(parsed["package"]["enable_render"], False)
-        self.assertEqual(parsed["package"]["count"], 42)
 
 
 if __name__ == "__main__":

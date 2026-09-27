@@ -77,10 +77,12 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/core/state_registry.py): Builds destination ownership mapping across installed packages.
 *   [`registry.remove_package(pkg)`](../src/drift/core/state_registry.py): Unregisters package from `state.toml`.
 
-### [`utils/toml_utils.py`](../src/drift/utils/toml_utils.py) & [`utils/env_utils.py`](../src/drift/utils/env_utils.py)
-*   [`get_nested_from(data, keys, default=None, required=False, is_table=False, config_source=None)`](../src/drift/utils/toml_utils.py): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
-*   [`get_first_from(data, keys, default=None)`](../src/drift/utils/toml_utils.py): Retrieves the first matching key from alternative candidates.
-*   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/utils/toml_utils.py): Enforces strict key allowlists on config mappings.
+### [`utils/config_utils.py`](../src/drift/utils/config_utils.py), [`utils/toml_utils.py`](../src/drift/utils/toml_utils.py) & [`utils/env_utils.py`](../src/drift/utils/env_utils.py)
+*   [`get_nested_from(data, keys, default=None, required=False, is_table=False, context="configuration")`](../src/drift/utils/config_utils.py): Retrieves nested values via dot-delimited key paths or key sequences with optional validation.
+*   [`get_first_from(data, keys, default=None)`](../src/drift/utils/config_utils.py): Retrieves the first matching key from alternative candidates.
+*   [`validate_known_keys(data, known_keys, context="", message_prefix=None)`](../src/drift/utils/config_utils.py): Enforces strict key allowlists on config mappings.
+*   [`parse_bool_value(val, default=False, strict=False, context="")`](../src/drift/utils/config_utils.py): Coerces values (bool, string, int) to boolean with optional strict mode.
+*   [`parse_toml(content)`](../src/drift/utils/toml_utils.py), [`dump_toml(data)`](../src/drift/utils/toml_utils.py), [`merge_toml(a, b)`](../src/drift/utils/toml_utils.py): TOML parsing (stdlib `tomllib` on 3.11+, fallback on <3.11), serialization, and table merging.
 *   [`env_scope(envs, overwrite=True, env_keep=None, mask_values=False)`](../src/drift/utils/env_utils.py): Scoped environment manager with granular masking (`mask_values=True` or `mask_values=Iterable[str]`).
 *   [`env_resolve_scope(env_resolve, overwrite=True, env_keep=INITIAL_ENV)`](../src/drift/utils/env_utils.py): Context manager scoping `EnvResolve` with automatic secret masking.
 *   [`topological_sort(graph, error_cls=ValueError) -> List[T]`](../src/drift/utils/env_utils.py): Generic Kahn's algorithm topological sorting for dependency DAGs with cycle detection.

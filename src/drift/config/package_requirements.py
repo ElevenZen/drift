@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
 from ..core.exceptions import ConfigError
-from ..utils.toml_utils import get_first_from, validate_known_keys
+from ..utils.config_utils import get_first_from, validate_known_keys
 
 
 def match_ip_address(pattern: str, ip: str) -> bool:

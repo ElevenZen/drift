@@ -1,7 +1,94 @@
-import re
-from typing import Any, Iterable, List, Optional, Mapping, Union, Sequence
+"""TOML parsing, serialization, and table merging utilities for Drift.
 
-from ..core.exceptions import ConfigError
+===============================================================================
+Fallback Parser Specification Boundaries & Unsupported Features
+===============================================================================
+
+For older Python versions (< 3.11) where standard library `tomllib` is absent,
+`_parse_toml_fallback` implements a lightweight, self-contained subset tailored
+strictly to Drift's configuration files (`drift_workspace.toml`, `drift_package.toml`).
+
+Supported TOML Features:
+    - Tables (`[table]`) and dotted table headers (`[parent.child]`).
+    - Array of tables (`[[array.of.tables]]`) including nested subtables (`[arr.subtab]`).
+    - Scalars: double-quoted strings (with standard escapes: \\n, \\t, \\r, \\", \\\\),
+      single-quoted literal strings, integers, floats, booleans (true/false).
+    - Arrays: single-line, multiline, nested arrays, trailing commas, and inline comments.
+    - Inline tables: single and nested inline tables ({ a = { b = 1 } }), arrays of inline tables.
+
+Explicit Specification Boundaries & Unsupported Features:
+    - RFC 3339 Datetimes/Timestamps: parsed as unquoted strings.
+    - Alternate number bases (hex 0x, octal 0o, binary 0b), scientific notation (1e5),
+      and numeric underscores (1_000_000).
+    - Special float literals (inf, -inf, nan).
+    - Multiline string blocks (\"\"\"...\"\"\", '''...''').
+    - Unicode escape sequences (\\uXXXX, \\UXXXXXXXX).
+    - Left-hand side dotted assignment keys (a.b = 1 within a table stores "a.b" flatly
+      rather than creating a nested dictionary; section headers [a.b] work normally).
+    - Duplicate key collision guarding (later definitions overwrite earlier keys rather than raising errors).
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 3: Public Ingestion & Serialization Boundaries
+    parse_toml(content) -> dict
+        - Dispatches to stdlib `tomllib.loads` on Python >= 3.11
+        - Delegates to `_parse_toml_fallback` on Python < 3.11
+    dump_toml(data) -> str
+        - Serializes top-level key-values followed by table sections
+    merge_toml(dict_a, dict_b) -> dict
+        - Deep recursive dictionary merge for layered configuration tables
+
+Layer 2: Decomposed Fallback Parsing & Serialization Pipelines
+    Fallback Document Parser:
+        _parse_toml_fallback(content) -> dict
+            - Iterates raw lines, stripping comments via `_strip_line_comment`
+            - Accumulates multi-line expressions until state is clean
+            - Dispatches complete logical lines via `_apply_logical_line`
+        _strip_line_comment(raw_line, state) -> str
+            - Strips `#` comments outside strings while updating bracket/quote depth
+        _apply_logical_line(logical_line, root, cursor) -> Optional[dict]
+            - Dispatches section headers (`[[...]]`, `[...]`) and assignments (`key = val`)
+        _navigate_toml_table(root, keys, is_array_entry) -> dict
+            - Traverses or instantiates nested tables / array of tables along dotted paths
+
+    Value Tokenizer & Scalar Parser:
+        parse_toml_value(val_str) -> Any
+            - Dispatches arrays `[...]`, inline tables `{...}`, strings, and scalars
+        split_array_elements(array_str) -> List[str]
+            - Splits comma-separated elements respecting quotes, brackets, and braces
+        _parse_inline_table(val_str) -> dict
+            - Parses `{ key = "val", ... }` into a Python dictionary
+        _unescape_string(inner) -> str
+            - Decodes standard double-quoted string escape sequences (`\\n`, `\\t`, etc.)
+        _parse_scalar_value(val_str) -> Any
+            - Coerces booleans, integers, floats, and unquoted fallback strings
+
+    Document Serializer Helpers:
+        _dump_table(table_name, table_dict) -> List[str]
+            - Formats section tables `[name]` and 1-level nested subtables `[name.sub]`
+        _format_toml_value(val) -> Optional[str]
+            - Formats scalar types, strings, and lists into valid TOML syntax
+        _escape_toml_string(val) -> str
+            - Escapes special characters, control codes, and line breaks for string literals
+
+Layer 1: Lexical State & Delimiter Tracking Primitives
+    _ParserState (Dataclass)
+        - In-memory tracker for quote states (`in_double_quote`, `in_single_quote`)
+          and nesting depths (`open_brackets`, `open_braces`)
+        - `is_clean`: Invariant check for zero open delimiters
+        - `in_string`: Checks if currently inside a quoted string literal
+        - `in_brackets`: Checks if currently inside brackets or braces
+        - `toggle_quotes(char)`: Quote transition trigger
+        - `track_bracket(char, context_str)`: Nesting increment/decrement with
+          immediate error validation on unmatched closing delimiters
+===============================================================================
+"""
+
+from dataclasses import dataclass
+import re
+from typing import Any, List, Optional
 
 try:
     import tomllib  # type: ignore[import-not-found, unused-ignore] # pyright: ignore[reportMissingImports]
@@ -11,212 +98,263 @@ except ImportError:
     HAS_TOMLLIB = False
 
 
-def get_first_from(
-    data: Optional[Mapping[str, Any]],
-    keys: Iterable[str],
-    default: Any = None,
-) -> Any:
-    """Retrieves the first present value from a dictionary using an iterable of alternative key names.
+# =============================================================================
+# Layer 1: Lexical State & Delimiter Tracking Primitives
+# =============================================================================
 
-    Args:
-        data: Dictionary or mapping to search for keys.
-        keys: Candidate keys in order of precedence (can be a generator, tuple, list, etc.).
-        default: Fallback value if none of the candidate keys are present in data.
 
-    Returns:
-        The value of the first matching key in data, or default if no keys match.
+@dataclass
+class _ParserState:
+    """Tracks parser quoting and bracket/brace nesting depth during tokenization.
+
+    Maintains single-pass tokenizer state across characters and multiline buffers,
+    ensuring that commas, comments, and delimiters inside quoted strings or nested
+    brackets/braces are handled accurately.
     """
-    if not isinstance(data, (dict, Mapping)):
-        return default
-    return next((data[key] for key in keys if key in data), default)
+    in_double_quote: bool = False
+    in_single_quote: bool = False
+    open_brackets: int = 0
+    open_braces: int = 0
 
+    @property
+    def is_clean(self) -> bool:
+        """Returns True if no quotes, brackets, or braces are currently open."""
+        return (
+            not self.in_double_quote
+            and not self.in_single_quote
+            and self.open_brackets == 0
+            and self.open_braces == 0
+        )
 
-def get_nested_from(
-    data: Optional[Mapping[str, Any]],
-    keys: Union[str, Sequence[str]],
-    default: Any = None,
-    required: bool = False,
-    is_table: bool = False,
-    context: str = "configuration",
-) -> Any:
-    """Retrieves a nested value from a mapping given a dot-delimited key path or key sequence.
+    @property
+    def in_string(self) -> bool:
+        """Returns True if currently inside either a single or double quoted string."""
+        return self.in_double_quote or self.in_single_quote
 
-    Args:
-        data: Mapping to traverse.
-        keys: Dot-separated path string (e.g. "packages.enable") or sequence of keys.
-        default: Fallback value if the nested path is missing and required is False.
-        required: If True, raises ConfigError when the path does not exist.
-        is_table: If True and the retrieved value is not a table/mapping, raises ConfigError.
-        context: Context descriptor (e.g. "workspace configuration", "package configuration")
-            used in error messages.
+    @property
+    def in_brackets(self) -> bool:
+        """Returns True if currently inside brackets or braces."""
+        return self.open_brackets != 0 or self.open_braces != 0
 
-    Returns:
-        The nested value at the specified key path, or `default` if not found.
+    def toggle_quotes(self, char: str) -> bool:
+        """Toggles single or double quote state. Returns True if a quote state was toggled.
 
-    Raises:
-        ConfigError: If required is True and the key path is missing, or if is_table is True
-            and the found value is not a mapping.
-    """
-    path_str = keys if isinstance(keys, str) else ".".join(str(k) for k in keys)
-    path_parts = [k.strip() for k in keys.split(".")] if isinstance(keys, str) else [str(k) for k in keys]
-
-    if not isinstance(data, (dict, Mapping)):
-        if required:
-            raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
-        return default
-
-    val: Any = data
-    for key in path_parts:
-        if not isinstance(val, (dict, Mapping)) or key not in val:
-            if required:
-                raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
-            return default
-        val = val[key]
-
-    if val is None:
-        if required:
-            raise ConfigError(f"Missing '[{path_str}]' section in {context}.")
-        return default
-
-    if is_table and not isinstance(val, (dict, Mapping)):
-        raise ConfigError(f"'[{path_str}]' must be a TOML table.")
-
-    return val
-
-
-def parse_bool_value(
-    val: Any,
-    default: bool = False,
-    strict: bool = False,
-    context: str = "",
-) -> bool:
-    """Coerces a boolean, string, or numeric value into a boolean.
-
-    Recognizes standard boolean truthy strings: 'true', '1', 'yes', 'on', 'enable', 'enabled' (case-insensitive).
-    Recognizes standard boolean falsy strings: 'false', '0', 'no', 'off', 'disable', 'disabled' (case-insensitive).
-
-    Args:
-        val: Value to parse or coerce.
-        default: Fallback boolean value if val is None.
-        strict: If True, raises ConfigError for unparseable strings or non-boolean types.
-        context: Optional description of the field or section for error messages when strict=True.
-
-    Returns:
-        The coerced boolean value.
-
-    Raises:
-        ConfigError: If strict is True and val cannot be parsed as a valid boolean.
-    """
-    if val is None:
-        return default
-    if isinstance(val, bool):
-        return val
-    if isinstance(val, (int, float)):
-        if strict and val not in (0, 1):
-            ctx_str = f" under {context}" if context else ""
-            raise ConfigError(f"Invalid boolean value '{val}'{ctx_str} (expected 0 or 1).")
-        return bool(val)
-    if isinstance(val, str):
-        cleaned = val.strip().lower()
-        if cleaned in ("true", "1", "yes", "on", "enable", "enabled"):
+        Double quotes do not toggle when inside single quotes, and vice-versa.
+        """
+        if char == '"' and not self.in_single_quote:
+            self.in_double_quote = not self.in_double_quote
             return True
-        if cleaned in ("false", "0", "no", "off", "disable", "disabled"):
-            return False
-        if strict:
-            ctx_str = f" under {context}" if context else ""
-            raise ConfigError(f"Invalid boolean value '{val}'{ctx_str}.")
-        return default
-    if strict:
-        ctx_str = f" under {context}" if context else ""
-        raise ConfigError(f"Expected boolean value, got {type(val).__name__}{ctx_str}.")
-    return bool(val)
+        if char == "'" and not self.in_double_quote:
+            self.in_single_quote = not self.in_single_quote
+            return True
+        return False
+
+    def track_bracket(self, char: str, context_str: str = "") -> bool:
+        """Tracks nesting level for '[' / ']' and '{' / '}'.
+
+        Returns:
+            True if `char` was a recognized bracket/brace delimiter; False otherwise.
+
+        Raises:
+            ValueError: If an unmatched closing bracket ']' or brace '}' is encountered.
+        """
+        if char == '[':
+            self.open_brackets += 1
+            return True
+        elif char == ']':
+            if self.open_brackets == 0:
+                ctx = f" in: {context_str}" if context_str else ""
+                raise ValueError(f"Toml format error, unmatched closing bracket ']'{ctx}")
+            self.open_brackets -= 1
+            return True
+        elif char == '{':
+            self.open_braces += 1
+            return True
+        elif char == '}':
+            if self.open_braces == 0:
+                ctx = f" in: {context_str}" if context_str else ""
+                raise ValueError(f"Toml format error, unmatched closing brace '}}'{ctx}")
+            self.open_braces -= 1
+            return True
+        return False
 
 
-def validate_known_keys(
-    data: Optional[Mapping[str, Any]],
-    known_keys: Iterable[str],
-    context: str = "",
-    message_prefix: Optional[str] = None,
-    suffix: str = "",
-) -> None:
-    """Validates that all keys in a mapping are within a set of known valid keys.
-
-    Uses a functional filter to gather all unknown keys and raises a ConfigError
-    reporting all unknown keys if any are found.
-
-    Args:
-        data: The dictionary or mapping to validate.
-        known_keys: Iterable of allowed/known key names.
-        context: Context descriptor (e.g. "[settings]", "requirements") used to build
-            the error message prefix if message_prefix is not explicitly provided.
-        message_prefix: Explicit prefix for the error message (e.g. "Unknown workspace option").
-        suffix: Suffix appended to the error message (e.g. " for package 'foo'").
-
-    Raises:
-        ConfigError: If any keys in data are not in known_keys.
-    """
-    if not data or not isinstance(data, (dict, Mapping)):
-        return
-
-    known_set = set(known_keys)
-    unknown_keys = list(filter(lambda k: k not in known_set, data.keys()))
-    if not unknown_keys:
-        return
-
-    keys_str = ", ".join(f"'{k}'" for k in unknown_keys)
-    if message_prefix is not None:
-        prefix = message_prefix
-    elif context:
-        prefix = f"Unknown option under {context}"
-    else:
-        prefix = "Unknown option"
-
-    raise ConfigError(f"{prefix}: {keys_str}{suffix}")
-
-
-def set_nested_val(data: dict, keys: list, value: Any) -> None:
-    """Sets a value in a nested dictionary given a list of keys."""
-    current = data
-    for key in keys[:-1]:
-        if key not in current or not isinstance(current[key], dict):
-            current[key] = {}
-        current = current[key]
-    current[keys[-1]] = value
+# =============================================================================
+# Layer 2: Decomposed Value Parsing Pipeline
+# =============================================================================
 
 
 def split_array_elements(array_str: str) -> List[str]:
-    """Splits a TOML array string by commas, respecting double and single quotes."""
-    elements = []
-    current_element = []
-    in_double_quote = False
-    in_single_quote = False
-    
+    """Splits a TOML array or inline table string by commas, respecting quotes, brackets, and braces.
+
+    Iterates through the raw content string and accumulates character tokens into elements.
+    Commas encountered inside quoted strings or nested brackets/braces are treated as literal
+    characters rather than element separators.
+
+    Args:
+        array_str: Inner content of an array `[...]` or inline table `{...}`.
+
+    Returns:
+        List of unparsed element substring tokens with outer whitespace trimmed.
+
+    Raises:
+        ValueError: If there are unclosed quotes, brackets, or braces, or unmatched closing delimiters.
+    """
+    elements: List[str] = []
+    pending_element: List[str] = []
+    state = _ParserState()
+    escaped = False
+
+    def _submit_pending() -> None:
+        """Appends the accumulated pending characters to elements if non-empty, then resets."""
+        nonlocal pending_element
+        elem = "".join(pending_element).strip()
+        pending_element = []
+        if elem:
+            elements.append(elem)
+
     for char in array_str:
-        if char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            current_element.append(char)
-        elif char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            current_element.append(char)
-        elif char == ',' and not in_double_quote and not in_single_quote:
-            elements.append("".join(current_element).strip())
-            current_element = []
-        else:
-            current_element.append(char)
-            
-    if current_element:
-        elements.append("".join(current_element).strip())
-        
+        # Handle backslash escapes within double-quoted strings
+        if escaped:
+            pending_element.append(char)
+            escaped = False
+            continue
+
+        if char == "\\" and state.in_double_quote:
+            pending_element.append(char)
+            escaped = True
+            continue
+
+        # 1. Quoted string literals: preserve all characters and toggle state
+        if state.toggle_quotes(char) or state.in_string:
+            pending_element.append(char)
+            continue
+
+        # 2. Nested brackets and braces: preserve commas inside sub-structures
+        if state.track_bracket(char, array_str) or state.in_brackets:
+            pending_element.append(char)
+            continue
+
+        # 3. Non-comma scalars: accumulate normal characters
+        if char != ',':
+            pending_element.append(char)
+            continue
+
+        # 4. Top-level comma delimiter: split current element
+        _submit_pending()
+
+    # Flush any remaining token after the last comma
+    _submit_pending()
+
+    if not state.is_clean:
+        raise ValueError(f"Toml format error, unclosed brackets, braces, or quotes in: {array_str}")
+
     return elements
 
 
+def _parse_inline_table(val_str: str) -> dict:
+    """Parses a TOML inline table string like `{ a = 1, b = "val" }` into a Python dictionary.
+
+    Splits key-value assignments using `split_array_elements` to safely handle commas inside
+    nested strings, arrays, or sub-inline tables.
+
+    Args:
+        val_str: Raw inline table string enclosed in curly braces `{...}`.
+
+    Returns:
+        Dictionary mapping parsed keys to their recursively parsed values.
+    """
+    content = val_str[1:-1].strip()
+    if not content:
+        return {}
+
+    elements = split_array_elements(content)
+    table: dict = {}
+    for elem in elements:
+        if '=' in elem:
+            k, v = elem.split('=', 1)
+            table[k.strip()] = parse_toml_value(v.strip())
+    return table
+
+
+def _unescape_string(inner: str) -> str:
+    """Unescapes double-quoted TOML string escape sequences.
+
+    Supports standard TOML escape characters: quotes, newlines, tabs, carriage returns,
+    backspaces, formfeeds, and backslashes.
+
+    Args:
+        inner: String content stripped of outer quotation marks.
+
+    Returns:
+        Unescaped Python string.
+    """
+    return (
+        inner
+        .replace('\\"', '"')
+        .replace('\\n', '\n')
+        .replace('\\r', '\r')
+        .replace('\\t', '\t')
+        .replace('\\b', '\b')
+        .replace('\\f', '\f')
+        .replace('\\\\', '\\')
+    )
+
+
+def _parse_scalar_value(val_str: str) -> Any:
+    """Parses booleans, integers, floats, and unquoted fallback strings.
+
+    Args:
+        val_str: Raw scalar string token.
+
+    Returns:
+        Coerced Python bool, int, float, or original unquoted string.
+    """
+    val_lower = val_str.lower()
+    if val_lower == "true":
+        return True
+    if val_lower == "false":
+        return False
+
+    # Integer match (e.g. 42, -12, +5)
+    if re.match(r'^[-+]?\d+$', val_str):
+        try:
+            return int(val_str)
+        except ValueError:
+            pass
+
+    # Float match (e.g. 3.14, -0.5, +2.0)
+    if re.match(r'^[-+]?\d+\.\d+$', val_str):
+        try:
+            return float(val_str)
+        except ValueError:
+            pass
+
+    # Fallback to unquoted string representation
+    return val_str
+
+
 def parse_toml_value(val_str: str) -> Any:
-    """Parses a raw TOML value string into its appropriate Python type."""
+    """Parses a raw TOML value string into its appropriate Python type.
+
+    Evaluates values across data type boundaries:
+    1. Arrays (`[...]`) -> recursive list parsing
+    2. Inline tables (`{...}`) -> recursive dictionary parsing
+    3. Double-quoted strings (`"..."`) -> unescaped string
+    4. Single-quoted literal strings (`'...'`) -> literal string
+    5. Scalars (booleans, integers, floats, unquoted strings)
+
+    Args:
+        val_str: Raw TOML value representation.
+
+    Returns:
+        Parsed Python object (list, dict, str, int, float, or bool).
+    """
     val_str = val_str.strip()
     if not val_str:
         return ""
 
-    # 1. Parse array
+    # 1. Array
     if val_str.startswith('[') and val_str.endswith(']'):
         content = val_str[1:-1].strip()
         if not content:
@@ -224,127 +362,223 @@ def parse_toml_value(val_str: str) -> Any:
         elements = split_array_elements(content)
         return [parse_toml_value(elem) for elem in elements]
 
-    # 2. Parse double-quoted string
-    if val_str.startswith('"') and val_str.endswith('"'):
-        inner = val_str[1:-1]
-        inner = inner.replace('\\"', '"')
-        inner = inner.replace('\\n', '\n')
-        inner = inner.replace('\\r', '\r')
-        inner = inner.replace('\\t', '\t')
-        inner = inner.replace('\\b', '\b')
-        inner = inner.replace('\\f', '\f')
-        return inner.replace('\\\\', '\\')
+    # 2. Inline table
+    if val_str.startswith('{') and val_str.endswith('}'):
+        return _parse_inline_table(val_str)
 
-    # 3. Parse single-quoted string
+    # 3. Double-quoted string
+    if val_str.startswith('"') and val_str.endswith('"'):
+        return _unescape_string(val_str[1:-1])
+
+    # 4. Single-quoted literal string
     if val_str.startswith("'") and val_str.endswith("'"):
         inner = val_str[1:-1]
         inner = inner.replace("\\'", "'")
         return inner.replace('\\\\', '\\')
 
-    # 4. Parse boolean
-    val_lower = val_str.lower()
-    if val_lower == "true":
-        return True
-    if val_lower == "false":
-        return False
+    # 5. Scalars (bool, int, float, fallback string)
+    return _parse_scalar_value(val_str)
 
-    # 5. Parse integer
-    try:
-        if re.match(r'^[-+]?\d+$', val_str):
-            return int(val_str)
-    except ValueError:
-        pass
 
-    # 6. Parse float
-    try:
-        if re.match(r'^[-+]?\d+\.\d+$', val_str):
-            return float(val_str)
-    except ValueError:
-        pass
+# =============================================================================
+# Layer 2: Decomposed Fallback Document Ingestion Pipeline
+# =============================================================================
 
-    return val_str
+
+def _navigate_toml_table(data: dict, keys: List[str], is_array_entry: bool = False) -> dict:
+    """Navigates to or creates a TOML table dictionary from a dot-path of keys.
+
+    Handles standard nested tables (e.g., `[packages.enable]`), array of tables
+    (e.g., `[[package.dependencies]]`), and subtables within arrays (e.g., `[arr.subtab]`).
+
+    Args:
+        data: The root dictionary being populated.
+        keys: List of dotted key segments (e.g. `['package', 'dependencies']`).
+        is_array_entry: If True, indicates an array-of-tables header `[[...]]`.
+
+    Returns:
+        The target dictionary for subsequent key-value assignments.
+    """
+    current = data
+
+    # Traverse intermediate table path segments
+    for k in keys[:-1]:
+        # If intermediate key points to an array of tables, navigate into its most recent entry
+        if k in current and isinstance(current[k], list) and current[k] and isinstance(current[k][-1], dict):
+            current = current[k][-1]
+        elif k not in current or not isinstance(current[k], dict):
+            current[k] = {}
+            current = current[k]
+        else:
+            current = current[k]
+
+    leaf = keys[-1]
+
+    # Array of tables (`[[table]]`): append a new table entry and return it
+    if is_array_entry:
+        if leaf not in current or not isinstance(current[leaf], list):
+            current[leaf] = []
+        new_table: dict = {}
+        current[leaf].append(new_table)
+        return new_table
+
+    # Standard table (`[table]`): navigate into active table or create a new one
+    if leaf in current and isinstance(current[leaf], list) and current[leaf] and isinstance(current[leaf][-1], dict):
+        return current[leaf][-1]
+    elif leaf not in current or not isinstance(current[leaf], dict):
+        current[leaf] = {}
+        return current[leaf]
+    else:
+        return current[leaf]
+
+
+def _strip_line_comment(raw_line: str, state: _ParserState) -> str:
+    """Strips comments from a TOML line outside quoted strings while updating nesting state.
+
+    Iterates through characters in `raw_line`, respecting backslash escapes within double
+    quotes and tracking quote toggles. If an unquoted `#` is reached, character collection
+    terminates immediately. Non-string bracket delimiters update the parser state.
+
+    Args:
+        raw_line: A single raw line from the TOML document.
+        state: Shared `_ParserState` instance tracking multi-line delimiters.
+
+    Returns:
+        Line content with comments stripped and outer whitespace trimmed.
+    """
+    clean_chars: List[str] = []
+    escaped = False
+
+    for char in raw_line:
+        # Handle backslash escapes inside double-quoted strings
+        if escaped:
+            clean_chars.append(char)
+            escaped = False
+            continue
+
+        if char == "\\" and state.in_double_quote:
+            clean_chars.append(char)
+            escaped = True
+            continue
+
+        # Special characters: quotes toggle state and preserve character content
+        if state.toggle_quotes(char) or state.in_string:
+            clean_chars.append(char)
+            continue
+
+        # Comment delimiter outside strings: stop processing this line
+        if char == '#':
+            break
+
+        # Delimiter brackets/braces update state and append
+        state.track_bracket(char, raw_line)
+        clean_chars.append(char)
+
+    return "".join(clean_chars).strip()
+
+
+def _apply_logical_line(
+    logical_line: str,
+    root: dict,
+    cursor: Optional[dict],
+) -> Optional[dict]:
+    """Applies a complete logical TOML line (table header or key-value pair) to root.
+
+    Args:
+        logical_line: A fully assembled logical line (comments stripped, multi-line joined).
+        root: The root document dictionary.
+        cursor: The active dictionary table context for assignments, or None for top-level.
+
+    Returns:
+        The updated active table dictionary for subsequent assignments.
+    """
+    # 1. Array of tables header: `[[name]]`
+    if logical_line.startswith('[[') and logical_line.endswith(']]'):
+        table_name = logical_line[2:-2].strip()
+        keys = [k.strip() for k in table_name.split('.')]
+        return _navigate_toml_table(root, keys, is_array_entry=True)
+
+    # 2. Standard table header: `[name]`
+    if logical_line.startswith('[') and logical_line.endswith(']'):
+        table_name = logical_line[1:-1].strip()
+        keys = [k.strip() for k in table_name.split('.')]
+        return _navigate_toml_table(root, keys, is_array_entry=False)
+
+    # 3. Key-value assignment: `key = val`
+    if '=' in logical_line:
+        key_part, val_part = logical_line.split('=', 1)
+        key = key_part.strip()
+        val = parse_toml_value(val_part.strip())
+        target = root if cursor is None else cursor
+        target[key] = val
+        return cursor
+
+    return cursor
 
 
 def _parse_toml_fallback(content: str) -> dict:
-    """Hand-rolled TOML parser for older Python versions (< 3.11)."""
-    data = {}
-    current_table_keys = []
-    
-    in_double_quote = False
-    in_single_quote = False
-    open_brackets = 0
-    open_braces = 0
-    
-    def _is_clean() -> bool:
-        return not in_double_quote and not in_single_quote and open_brackets == 0 and open_braces == 0
-    
-    buffer = []
-    
+    """Hand-rolled lightweight TOML parser for older Python versions (< 3.11).
+
+    Parses single and multi-line TOML expressions, section headers (`[table]`),
+    and array-of-tables (`[[arr]]`). See the module header for full supported
+    features and explicit specification boundaries.
+
+    Args:
+        content: Raw TOML document string.
+
+    Returns:
+        Parsed configuration dictionary.
+
+    Raises:
+        ValueError: If unclosed brackets, braces, or quotes remain at end of content.
+    """
+    root: dict = {}
+    state = _ParserState()
+    buffer: List[str] = []
+    cursor: Optional[dict] = None
+
     for raw_line in content.splitlines():
-        clean_chars = []
-        for char in raw_line:
-            if char == '"' and not in_single_quote:
-                in_double_quote = not in_double_quote
-                clean_chars.append(char)
-            elif char == "'" and not in_double_quote:
-                in_single_quote = not in_single_quote
-                clean_chars.append(char)
-            elif char == '#' and not in_double_quote and not in_single_quote:
-                break
-            else:
-                if not in_double_quote and not in_single_quote:
-                    if char == '[':
-                        open_brackets += 1
-                    elif char == ']':
-                        open_brackets -= 1
-                    elif char == '{':
-                        open_braces += 1
-                    elif char == '}':
-                        open_braces -= 1
-                clean_chars.append(char)
-                
-        line_stripped = "".join(clean_chars).strip()
+        line_stripped = _strip_line_comment(raw_line, state)
         if not line_stripped and not buffer:
             continue
-            
+
         buffer.append(line_stripped)
-        
-        if _is_clean():
-            logical_line = " ".join(buffer).strip()
-            buffer = []
-            
-            if not logical_line:
-                continue
-                
-            if logical_line.startswith('[') and logical_line.endswith(']'):
-                table_name = logical_line[1:-1].strip()
-                current_table_keys = [k.strip() for k in table_name.split('.')]
-                current = data
-                for key in current_table_keys:
-                    if key not in current or not isinstance(current[key], dict):
-                        current[key] = {}
-                    current = current[key]
-            elif '=' in logical_line:
-                key_part, val_part = logical_line.split('=', 1)
-                key = key_part.strip()
-                val = parse_toml_value(val_part.strip())
-                
-                if not current_table_keys:
-                    data[key] = val
-                else:
-                    set_nested_val(data, current_table_keys + [key], val)
-                    
-    if not _is_clean():
+
+        # Wait until all multiline brackets/braces/quotes are closed before executing line
+        if not state.is_clean:
+            continue
+
+        # Join line buffer into a single logical line and apply it
+        logical_line = " ".join(buffer).strip()
+        buffer = []
+        if not logical_line:
+            continue
+
+        cursor = _apply_logical_line(logical_line, root, cursor)
+
+    # Invariant: file must not terminate with unclosed delimiters
+    if not state.is_clean:
         raise ValueError("Toml format error, unclosed brackets or quotes.")
 
-    return data
+    return root
+
+
+# =============================================================================
+# Layer 3: Public Ingestion & Serialization Boundaries
+# =============================================================================
 
 
 def parse_toml(content: str) -> dict:
     """Parses a TOML string into a dictionary.
 
-    Uses the native `tomllib` on Python 3.11+, and falls back to a custom,
-    fully compatible fallback parser on older Python versions.
+    Uses native `tomllib` on Python 3.11+, and falls back to a custom,
+    fully compatible fallback parser on older Python versions (< 3.11).
+
+    Args:
+        content: The raw TOML string to parse.
+
+    Returns:
+        Parsed configuration dictionary.
     """
     if HAS_TOMLLIB and tomllib is not None:
         return tomllib.loads(content)
@@ -352,7 +586,19 @@ def parse_toml(content: str) -> dict:
 
 
 def merge_toml(dict_a: dict, dict_b: dict) -> dict:
-    """Recursively merges dictionary dict_b into dict_a, returning a new dictionary."""
+    """Recursively merges dictionary dict_b into dict_a, returning a new dictionary.
+
+    Keys present only in `dict_a` or only in `dict_b` are preserved. When both dictionaries
+    contain the same key, nested dictionaries are merged recursively; all other values in
+    `dict_b` overwrite those in `dict_a`.
+
+    Args:
+        dict_a: Base dictionary.
+        dict_b: Overriding dictionary.
+
+    Returns:
+        A new merged dictionary without mutating the inputs.
+    """
     result = {}
     for key, value in dict_a.items():
         if key in dict_b:
@@ -362,9 +608,11 @@ def merge_toml(dict_a: dict, dict_b: dict) -> dict:
                 result[key] = dict_b[key]
         else:
             result[key] = value
+
     for key, value in dict_b.items():
         if key not in result:
             result[key] = value
+
     return result
 
 
@@ -396,36 +644,56 @@ def _format_toml_value(val: Any) -> Optional[str]:
     return f'"{_escape_toml_string(val)}"'
 
 
-def dump_toml(data: dict) -> str:
-    """Serializes a dictionary of basic package/workspace settings back to TOML format."""
-    lines = []
+def _dump_table(table_name: str, table_dict: dict) -> List[str]:
+    """Formats a TOML table and any 1-level nested subtables into lines."""
+    table_lines = [f"[{table_name}]"]
+    sub_table_blocks: List[str] = []
 
-    # 1. First, serialize any top-level key-values (outside tables)
+    for k, v in table_dict.items():
+        if isinstance(v, dict):
+            sub_lines = [f"[{table_name}.{k}]"]
+            for sk, sv in v.items():
+                formatted_sub = _format_toml_value(sv)
+                if formatted_sub is not None:
+                    sub_lines.append(f"{sk} = {formatted_sub}")
+            sub_table_blocks.append("\n".join(sub_lines))
+        else:
+            formatted = _format_toml_value(v)
+            if formatted is not None:
+                table_lines.append(f"{k} = {formatted}")
+
+    if sub_table_blocks:
+        table_lines.extend(sub_table_blocks)
+
+    return table_lines
+
+
+def dump_toml(data: dict) -> str:
+    """Serializes a dictionary of basic package/workspace settings back to TOML format.
+
+    Serializes any top-level scalar values first, followed by section tables (`[name]`)
+    and any 1-level nested subtables (`[name.sub]`).
+
+    Args:
+        data: Dictionary to serialize.
+
+    Returns:
+        Formatted TOML document string with a trailing newline.
+    """
+    lines: List[str] = []
+
+    # 1. Top-level key-values (outside tables)
     for k, v in data.items():
         if not isinstance(v, dict):
             formatted = _format_toml_value(v)
             if formatted is not None:
                 lines.append(f"{k} = {formatted}")
 
-    # 2. Then, serialize nested tables (like [package] or [workspace])
+    # 2. Section tables and nested tables
     for table_name, table_dict in data.items():
         if isinstance(table_dict, dict):
             if lines:
                 lines.append("")  # Empty line separator
-            lines.append(f"[{table_name}]")
-            for k, v in table_dict.items():
-                if isinstance(v, dict):
-                    # For nested tables (e.g. [packages.enable] or [render.envsubst])
-                    # We can support one level of nested sub-table simply
-                    sub_lines = [f"[{table_name}.{k}]"]
-                    for sk, sv in v.items():
-                        formatted_sub = _format_toml_value(sv)
-                        if formatted_sub is not None:
-                            sub_lines.append(f"{sk} = {formatted_sub}")
-                    lines.append("\n".join(sub_lines))
-                else:
-                    formatted = _format_toml_value(v)
-                    if formatted is not None:
-                        lines.append(f"{k} = {formatted}")
+            lines.extend(_dump_table(table_name, table_dict))
 
     return "\n".join(lines) + "\n"

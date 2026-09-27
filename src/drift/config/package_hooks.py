@@ -47,7 +47,7 @@ from ..core.constants import (
 from ..core.exceptions import ConfigError, HookMissingError
 from ..core.result_models import HookResult
 from ..utils.path_utils import is_relative_to
-from ..utils.toml_utils import get_first_from, validate_known_keys
+from ..utils.config_utils import get_first_from, validate_known_keys
 
 if TYPE_CHECKING:
     from ..hooks.lifecycle_hooks import HookExecFlags

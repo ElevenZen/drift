@@ -31,7 +31,7 @@ from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, 
 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
-from ..utils.toml_utils import validate_known_keys
+from ..utils.config_utils import validate_known_keys
 
 logger = logging.getLogger(__name__)
 

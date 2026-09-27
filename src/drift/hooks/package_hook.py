@@ -19,7 +19,7 @@ from ..core.constants import (
 from ..core.exceptions import ConfigError
 from ..utils.env_utils import update_env_dict
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
-from ..utils.toml_utils import get_nested_from
+from ..utils.config_utils import get_nested_from
 
 logger = logging.getLogger(__name__)
 

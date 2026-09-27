@@ -46,8 +46,11 @@ from .toml_utils import (
     parse_toml,
     dump_toml,
     merge_toml,
+)
+from .config_utils import (
     get_first_from,
     get_nested_from,
+    set_nested_val,
     validate_known_keys,
     parse_bool_value,
 )
@@ -155,6 +158,7 @@ __all__ = [
     "merge_toml",
     "get_first_from",
     "get_nested_from",
+    "set_nested_val",
     "validate_known_keys",
     "parse_bool_value",
     "EnvConfig",
