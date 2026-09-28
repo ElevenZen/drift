@@ -18,7 +18,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
 * 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
-* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
+* 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, define declarative host requirements (`[requirements]`), or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
 * 🔗 **Topological Package Dependencies**: Declare explicit inter-package dependencies (`dependencies = ["pkg_a", "pkg_b"]`) in `drift_package.toml`. Drift automatically constructs a dependency DAG, prevents cycles, orders compilation/deployment topologically, and uninstalls safely in reverse topological order.
@@ -222,6 +222,25 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     cuda_toolkit = true     # Enabled only on high-performance GPU compute nodes
     desktop_hyprland = false# Disabled on headless servers, enabled on laptops
     ```
+
+*   **Declarative Host Requirements & Platform Filtering (`[requirements]`)**:
+    Instead of writing defensive shell scripts to check operating systems or installed binaries, packages can declaratively define host platform prerequisites in `drift_package.toml` via `[requirements]` (or `[package.requirements]`):
+    ```toml
+    # src/sway/drift_package.toml
+    [package]
+    name = "sway"
+    install_method = "stow"
+
+    [requirements]
+    os = ["linux"]                     # Target OS: "linux", "darwin", "windows"
+    arch = ["x86_64", "aarch64"]        # CPU architectures
+    distro = ["arch", "fedora"]         # Linux distributions
+    binaries = ["sway", "waybar"]       # Executables required in host $PATH
+    env = ["WAYLAND_DISPLAY"]           # Required non-empty environment variables
+    ip = ["192.168.1.*", "10.0.0.0/8"]  # LAN IP match (exact, wildcard, or CIDR)
+    ```
+    *   **Executed Before Rendering (Zero-Cost Pre-Flight Skip)**: Requirement evaluation happens strictly **before template rendering begins** in Primitive 2. If any condition is not met, Drift **gracefully skips the package** (`status="SKIPPED"`) with an informative log message without executing template engines, compiling intermediate input files, writing to the `render/<pkg>/` sandbox, or interrupting the deployment of remaining packages.
+    *   **Dynamic Complement with `probe` Hook**: For custom requirements that cannot be expressed declaratively (e.g. checking GPU vendor or hardware features), pair `[requirements]` with a dynamic `probe` lifecycle hook (`[hooks] probe = "drift_hooks/check_gpu.sh"`).
 
 *   **Dynamic Python Workspace Hook (`config/drift_workspace.py`)**:
     For complete programmatic control, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). Automatically scaffolded during `drift init`, this hook executes dynamically during configuration pre-processing without requiring external wrapper scripts, providing direct access to detected system facts (`drift_os`, `drift_hostname`, `drift_distro`, `drift_arch`, `drift_user`), hardware attributes, and discovered packages:
@@ -612,8 +631,12 @@ Packages can declare automated hook scripts inside `drift_package.toml` to integ
 [package]
 install_method = "stow"
 
+[requirements]
+os = ["linux", "darwin"]
+binaries = ["curl", "systemctl"]
+
 [hooks]
-probe = "drift_hooks/check_deps.sh"
+probe = "drift_hooks/check_gpu.sh"
 pre_source = "drift_hooks/generate_dynamic_templates.sh"
 pre_install = "drift_hooks/bootstrap.sh"
 post_update = "drift_hooks/reload_plugins.sh"
@@ -621,6 +644,16 @@ pre_uninstall = "drift_hooks/stop_daemon.sh"
 health = "drift_hooks/health_check.sh"
 timeout = 60
 ```
+
+### 🛡️ Pre-Flight Gatekeeper: Declarative Requirements & Dynamic Probe (Evaluated Before Rendering)
+Requirement validation is performed strictly **before template rendering begins** (in Primitive 2). Drift evaluates a two-tier pre-flight gatekeeper:
+1. **Declarative Host Requirements (`[requirements]`)**: Validates host criteria (`os`, `arch`, `distro`, `binaries`, `env`, `ip`) against automatically probed system facts without spawning subprocesses.
+2. **Dynamic Probe Hook (`probe`)**: If declarative checks pass, executes the custom script defined in `probe = "drift_hooks/check_gpu.sh"`.
+
+Because this evaluation occurs **prior to template compilation**:
+* **Zero Unnecessary Rendering**: Template engines are never invoked, intermediate input files are not compiled, and no files are written to the `render/<pkg>/` sandbox for skipped packages.
+* **Graceful Skipping**: If either check fails, Drift **gracefully skips the package** (`status="SKIPPED"`) with an informative reason in logs and summary outputs.
+* **Uninterrupted Workflow**: Remaining active packages continue to compile, stage, and deploy without failure.
 
 ### Hook Reference & Unified Working Directory (`cwd`)
 Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 6-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.

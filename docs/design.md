@@ -154,7 +154,8 @@ Unconditionally pulls the current host configuration state into the `install/` s
     *   For directories configured under `fully_controlled_dirs` (FCD), comparisons are scoped strictly to those specific subdirectories (e.g. `~/.config/nvim`), reverse-syncing any wild/untracked files or deletions without traversing the rest of the host filesystem.
 
 ### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
-Processes files in `src/` (expanding templates via `envsubst`/`mustache` or custom configured engines) and places the results in `render/`. No live system files are altered:
+*   **Pre-Flight Requirements & Probe Check (Zero-Cost Skipping Before Render)**:
+    Before compiling any templates or intermediate input files, Drift evaluates declarative `[requirements]` (OS, CPU architecture, Linux distro, required binaries in `$PATH`, environment variables, and LAN IP/CIDR) and the dynamic `probe` hook. If host requirements are not met, the package is immediately and gracefully skipped (`status = "SKIPPED"`). No template engines are invoked, no intermediate input files are rendered, and no files are written to `render/<pkg>/`, allowing remaining active packages to proceed cleanly.
 *   **Lifecycle Hook Triggers**: Triggers `pre_source` before reading source templates and `post_render` hook upon successful compilation.
 *   **Intermediate Lifecycle Isolation**: Routes source scripts from `src/<pkg>/drift_hooks/` to internal sandbox directory `render/<pkg>/.drift/hooks/`, keeping them strictly isolated from host deployments.
 *   **Render Collision Detection (Strict Error)**:
@@ -716,6 +717,32 @@ fully_controlled_dirs = [
     "sub_dir1",
     "sub_dir2"
 ]
+
+# ---------------------------------------------------------------------
+# Declarative Host Requirements & Platform Filtering
+# ---------------------------------------------------------------------
+# Packages can declaratively define host platform prerequisites.
+# Evaluation occurs strictly before template rendering begins in Primitive 2.
+# If any condition is not met, the package is gracefully skipped (status = "SKIPPED")
+# without invoking template engines or writing to the render/ sandbox.
+[requirements]
+# Target operating system(s): "linux", "darwin", "windows"
+os = ["linux", "darwin"]
+
+# Allowed CPU architectures: "x86_64", "arm64", "aarch64", etc.
+# arch = ["x86_64", "arm64"]
+
+# Allowed Linux distributions: "ubuntu", "arch", "fedora", "debian", etc.
+# distro = ["arch", "fedora"]
+
+# Executables required in host $PATH (checked via shutil.which)
+binaries = ["curl", "git"]
+
+# Environment variables that must be set and non-empty
+# env = ["WAYLAND_DISPLAY"]
+
+# Allowed host LAN IP addresses, wildcard patterns, or CIDR subnets
+# ip = ["192.168.1.*", "10.0.0.0/8"]
 
 [hooks]
 # ---------------------------------------------------------------------
