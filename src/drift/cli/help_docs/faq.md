@@ -56,7 +56,7 @@ drift deploy <pkg>
 **Solution**:
 1.  Add PCRE ignore patterns into `src/<pkg>/.drift_ignore` (e.g., `\.swp$`, `\.bak$`, `/cache/`, `/logs/`).
 2.  For Fully-Controlled Directories (FCDs), run `drift adopt <pkg> --interactive` (`-i`) and choose **Option [2] Ignore** on the detected untracked file to automatically append the ignore rule.
-*   👉 Run `drift help ignore` for complete pattern syntax and GNU Stow matching rules.
+*   👉 Run `drift help ignore` for complete pattern syntax and matching rules.
 
 ---
 

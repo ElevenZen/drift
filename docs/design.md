@@ -906,8 +906,7 @@ Dependencies are declared inside `drift_package.toml` within the `[package]` sec
     [[package.dependencies]]
     name = "python"
     optional = true
-    ```
-*   **Syntax Combination**: Packages can freely combine inline lists and array of tables; Drift merges them into a single normalized dependency list during ingestion.
+*   **Syntax Selection**: Choose either inline list syntax or array-of-tables syntax. In compliance with the TOML specification, packages should not mix inline array and array-of-tables syntaxes within the same configuration file.
 *   **String Shorthand**: Specifying a bare string `"base"` is shorthand for `{ name = "base", optional = false }`.
 *   **Ingestion Validation**: During configuration loading, Drift rejects immediate self-dependencies (`pkg` depending on `pkg`), duplicate dependency declarations for the same package name, and unknown keys under dependency tables with a descriptive `ConfigError`.
 

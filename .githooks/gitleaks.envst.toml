@@ -5,8 +5,12 @@ title = "Gitleaks Configuration"
 useDefault = true
 
 [[allowlists]]
-description = "Allowlist for test files"
-paths = [ '''tests/.*''' ]
+description = "Sample github key"
+regexes = ['ghp_x{10,}']
+
+# [[allowlists]]
+# description = "Allowlist for test files"
+# paths = [ '''tests/.*''' ]
 
 [[allowlists]]
 description = "Allowlist for test ip"

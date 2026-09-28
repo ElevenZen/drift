@@ -1,162 +1,139 @@
 # 📁 drift Workspace & Configuration Overrides
 
-A **drift** workspace is a standard directory structure designed to cleanly, safely, and securely manage your dotfiles using a decoupled, two-stage rendering and staging database.
+A **Drift Workspace** is the root control plane and central repository designed to cleanly, 
+safely, and securely orchestrate your dotfiles across diverse host environments.
+
+Rather than managing dotfiles as isolated, machine-specific scripts, a Drift workspace provides 
+a unified, declarative topology. It combines a decoupled two-stage rendering and state database 
+(`render/` and `install/`), multi-engine template compilation, a hierarchical 6-tier environment 
+model, and git-ignored secret vaults—allowing you to maintain one single dotfiles repository that 
+powers everything from cloud Linux servers and macOS workstations to Windows development boxes.
 
 ---
 
-## 🏗️ 1. Workspace Directory Structure
+## 🏗️ Workspace Directory Layout & Anatomy
 
-A fully initialized workspace contains the following layout:
+A fully initialized Drift workspace contains the following directory layout:
 
 ```
 workspace/
-├── .gitignore               # Excludes sandbox, database, and local secrets
+├── .gitignore                      # Excludes sandbox, database, and local secrets
 ├── config/
-│   ├── drift_workspace.toml       # Shared, committed workspace configuration
-│   ├── drift_workspace.local.toml # (Gitignored) Machine-specific config overrides
-│   ├── drift_workspace.py         # (Optional) Dynamic Python workspace configuration hook
-│   ├── secrets.env          # (Gitignored) Private dotfiles secrets and tokens
-│   ├── envsubst.bash        # envsubst static variables initialization script
-│   └── ...                  # Other render engine input files
-├── src/                     # Source templates directory (with 'dot-' prefixes)
-├── render/                  # Sandbox rendering output path (untracked Git repo)
-└── install/                 # Target deployment tracking database (untracked Git repo)
+│   ├── drift_workspace.toml        # Shared, version-controlled workspace configuration
+│   ├── drift_workspace.local.toml  # Optional machine-specific overrides (gitignored)
+│   ├── drift_workspace.py          # Optional dynamic Python workspace configuration hook
+│   ├── secrets.env                 # Private dotfiles secrets and credentials (gitignored)
+│   ├── envsubst.bash               # envsubst static variables initialization script
+│   └── mustache.envst.json         # Mustache engine input data template
+├── src/                            # Declarative source packages (e.g. src/nvim/, src/zsh/)
+├── render/                         # Sandbox template compilation zone (isolated Git repo)
+├── install/                        # Local state tracking database (isolated Git repo)
+└── backup/                         # Automatic rollback and deletion backups
 ```
+
+* **`config/`**: Global control plane housing workspace configurations, dynamic hooks, engine input files, and private secret vaults.
+* **`src/`**: Declarative source packages. Each subdirectory in `src/<pkg>/` is an independent package with its own dotfiles, ignore rules, and settings.
+* **`render/`**: Sandbox directory where templates compile under active environment variables. Completely decoupled from host destination paths.
+* **`install/`**: Local state tracking database recording deployed file states, checksums, and package manifests.
+* **`backup/`**: Safety net directory where Drift archives existing host files before overwriting or pruning them during deployments.
+* **`.gitignore`**: Protects ephemeral state, sandbox builds, and private credentials (`render/`, `install/`, `backup/`, `*.local.toml`, `secrets.env`).
 
 ---
 
-## ⚙️ 2. Tri-Layered Configuration Merging & Python Hooks
+## 🧭 The Workspace Mental Framework: 10 Core Capabilities
 
-Drift supports a clean, hierarchical merge model that allows you to standardize packages and settings across all machines, while overriding values locally on specific hosts without polluting version control.
+Before exploring granular TOML settings, understanding workspace capabilities provides the architectural mental model:
 
-### Layer 1: Primary Configuration (`config/drift_workspace.toml`)
-Contains repository-wide, version-controlled settings such as render engine definitions, source directory mapping, and default installation registries.
+### 1. ⚙️ Tri-Layered Configuration Merging & Python Hooks
+Drift evaluates workspace configuration through a 3-layer merge hierarchy:
+*   **Layer 1 (Shared Baseline)**: `config/drift_workspace.toml` provides version-controlled global defaults.
+*   **Layer 2 (Machine Overrides)**: `config/drift_workspace.local.toml` applies git-ignored, host-specific overrides (e.g. custom paths, package filters).
+*   **Layer 3 (Dynamic Python Hook)**: `config/drift_workspace.py` provides programmatic preprocessor execution with access to host facts and discovered packages.
 
-### Layer 2: Machine Overrides (`config/drift_workspace.local.toml`)
-A local-only, git-ignored override file. If present at startup, drift recursively deep-merges its content over `drift_workspace.toml`:
-*   **Path Overrides**: Change the default deployment directory for a specific machine:
-    ```toml
-    [workspace]
-    default_target_directory = "/Users/specific_username"
-    ```
-*   **Package Selection Overrides**: Enable/disable specific package directories for specific environments:
-    ```toml
-    [packages.enable]
-    gui_apps = false  # Disabled on this headless server
-    ```
+### 2. 🐍 Dynamic Python Workspace Hook (`config/drift_workspace.py`)
+For programmatic fleet management and conditional orchestration:
+*   Executes `configure_workspace(context)` dynamically before variable stitching with **zero footprint on `os.environ`**.
+*   The recommended, canonical location to securely fetch global configurations or tokens from secret managers (1Password, Vault, Bitwarden) and inject them into `[env.secrets]` or `[env.default]`.
+*   Can dynamically toggle `[packages.enable]` based on detected CPU architecture, OS, or hostname.
 
-### Layer 3: Dynamic Python Workspace Hook (`config/drift_workspace.py`)
-For complete programmatic control across heterogeneous fleets, you can author a native Python hook (`config/drift_workspace.py` or configured via `[workspace] hook_file = "..."` relative to `config/`). The hook executes on-the-fly without external wrapper scripts, providing direct access to detected system facts, discovered packages, and configuration tables.
+### 3. 🔒 Environment Secret Vault (`config/secrets.env`) & 6-Tier Precedence
+Keep sensitive tokens, passwords, and private emails strictly out of git:
+*   **Dotenv Secret Vault**: `config/secrets.env` stores uncommitted key-value pairs (e.g. `GITHUB_TOKEN="ghp_xxx"`).
+*   **6-Tier Hierarchy**: Resolves CLI overrides (Tier 1) > Overrides (Tier 2) > System/Package Facts (Tier 3) > Secrets (Tier 4) > Defaults (Tier 5) > Fallbacks (Tier 6).
+*   **Transient Clean-Room Isolation (`package_envs`)**: Secrets are loaded in memory, masked in debug logs (`KEY=****`), and completely cleaned up after execution without leaking into parent shells.
 
-> [!TIP]
-> **Best Practice — Remote Secrets & Configs Fetching**:
-> `drift_workspace.py` is the **recommended place** to download workspace-wide configuration files or secret vaults from remote servers (such as 1Password CLI, HashiCorp Vault, Bitwarden, AWS Secrets Manager, or remote HTTP endpoints) and inject them dynamically into the workspace environment (`[env.secrets]` or `[env.default]`).
+### 4. 🧩 Native Variable Stitching & Topological Resolution (`[env]`)
+Resolve derived environment variables natively within TOML without external tools:
+*   **In-TOML Stitching**: Define derived values like `PROXY_URL = "http://${HOST}:${PORT}"` in `[env.default]`, `[env.secrets]`, or `[env.override]`.
+*   **Kahn's DAG Algorithm**: Automatically evaluates inter-variable dependencies and detects cyclic dependency loops.
+*   **Unidirectional Cross-Section Referencing**: Resolved variables can be referenced in non-env sections (e.g. `default_target_directory = "${HOME}/.config"`).
 
-```python
-# config/drift_workspace.py
-from __future__ import annotations
-import subprocess
-from typing import TYPE_CHECKING, Any, Dict
+### 5. 📦 Workspace-Wide Package Enablement & Fleet Targeting (`[packages.enable]`)
+Declaratively control which packages deploy on the active machine:
+*   **Explicit Toggles**: Enable or disable specific packages (e.g. `nvim = true`, `cuda = false`).
+*   **Default Policy**: Set `DEFAULT = true` (opt-out model) or `DEFAULT = false` (opt-in whitelist).
+*   **Local Machine Customization**: Override activation flags in `drift_workspace.local.toml` without touching shared git history.
 
-if TYPE_CHECKING:
-    from drift.hooks import WorkspaceHookContext
+### 6. 🎨 Multi-Level Template Render Engines (`[render.<name>]`)
+Compile dotfile templates using extensible, declarative engines:
+*   **Engine DAG Dependencies**: Declare input files (`input_file`) and shell render commands (`render_command`). If an input file is itself a template (e.g. `mustache.envst.json`), Drift compiles it first via topological dependency sorting.
+*   **Built-In Engines**: Native zero-dependency variable substitution (`var`), `envsubst`, and external CLI tools (`mustache`, `jinja2`).
+*   **Phase 1 Sandboxing**: Compiles workspace-level meta-templates and package configuration templates into `render/.drift/render/`.
 
+### 7. 🗄️ Decoupled 2-Stage Staging & State Tracking Database (`render/` and `install/`)
+Eliminate side-effects and deployment surprises:
+*   **Stage 1 (Render)**: Source templates compile into `render/<pkg>/` without touching host target files.
+*   **Stage 2 (State DB)**: Rendered files stage into `install/<pkg>/` with 1:1 structural fidelity and delta computation.
+*   **Inspectable Diff**: Run `drift diff` or `drift status` to inspect exactly what changed before touching a single host file.
 
-def configure_workspace(context: WorkspaceHookContext) -> Dict[str, Any]:
-    """Dynamically configure workspace packages, remote secrets, and environment on the fly."""
-    cfg = context.config
+### 8. 🛡️ Behavioral Runtime Settings & Non-Interactive Automation (`[settings]`)
+Tune workspace-wide execution behavior:
+*   **Non-Interactive Execution**: Automatically sets `PAGER=cat`, `CI=true`, and non-interactive flags during lifecycle hooks.
+*   **CI/CD Friendly**: Enables automated scripting, testing pipelines, and container dotfile provisioning without interactive prompts blocking execution.
 
-    # 1. Fetch remote secrets / global credentials and inject into [env.secrets] or [env.default]
-    # token = subprocess.check_output(["op", "read", "op://vault/global/github_token"], text=True).strip()
-    # env_secrets = cfg.setdefault("env", {}).setdefault("secrets", {})
-    # env_secrets["GLOBAL_GITHUB_TOKEN"] = token
-    env_default = cfg.setdefault("env", {}).setdefault("default", {})
-    if context.os == "darwin":
-        env_default["HOMEBREW_PREFIX"] = "/opt/homebrew"
+### 9. 💾 Automatic Backup & Rollback Safety (`backup/`)
+Protect against data loss during file deployments:
+*   When deploying with physical copy mode or unlinking conflicting files, Drift creates atomic backups inside `backup/`.
+*   Automatic rollback restores previous file states if a deployment pass or lifecycle hook fails mid-flight.
 
-    # 2. Dynamically compute enabled package roster based on host facts
-    enable = cfg.setdefault("packages", {}).setdefault("enable", {})
-    enable["shell"] = True
-    enable["nvim"] = True
-    enable["cuda_toolkit"] = (context.os == "linux" and "gpu" in context.hostname)
-    enable["desktop_hyprland"] = (context.os == "linux" and "laptop" in context.hostname)
-    enable["macos_settings"] = (context.os == "darwin")
-
-    return cfg
-```
-
-#### Hook Context Attributes (`WorkspaceHookContext`):
-*   **`context.config`**: The mutable configuration dictionary merged from `drift_workspace.toml` and `drift_workspace.local.toml`.
-*   **`context.drift_root`**: Resolved `Path` to the active Drift workspace root.
-*   **`context.env`**: In-memory dictionary snapshot of all environment variables, host facts, and secrets. The hook executes with zero mutation of ambient `os.environ`.
-*   **`context.facts`**: Accessor dictionary for auto-detected host facts (`drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`).
-*   **`context.discovered_packages`**: List of all package directory names found in `src/`.
-*   **Helper properties**: `context.os`, `context.arch`, `context.distro`, `context.hostname`, `context.user`.
+### 10. 🧹 Garbage Collection & Orphan Detection (`drift gc`)
+Maintain a clean, pristine environment over time:
+*   Audits the `install/` state database against active packages in `src/`.
+*   Cleans up ghost package records and uninstalls packages removed from version control.
+*   Prunes orphaned render artifacts and unreferenced temporary files.
 
 ---
 
-## 🔒 3. Environment Secret Vault (`config/secrets.env`)
+## 🔄 How the Workspace Orchestrates the Drift Pipeline
 
-Public dotfiles repositories present a severe credential-leak hazard. To keep sensitive tokens, API keys, and private emails out of git, Drift isolates them inside a secure, git-ignored Dotenv vault.
+The workspace coordinates the four core Drift primitives across all packages:
 
-### File Format (`config/secrets.env`)
-You declare secrets inside `config/secrets.env` using standard shell variable syntax:
-```env
-# config/secrets.env (Added to .gitignore)
-GITHUB_TOKEN="ghp_exampleToken12345"
-WORK_EMAIL="jane.doe@company.com"
+```
+[Host Edits]
+    │
+    ▼ (Primitive 1: Reverse-Sync / drift adopt)
+[Declarative Source: src/]
+    │
+    ▼ (Primitive 2: Render via [render.<name>] & [env])
+[Sandbox Render Zone: render/]
+    │
+    ▼ (Primitive 4: Stage with dependency DAG ordering)
+[Local State Database: install/]
+    │
+    ▼ (Primitive 5: Apply via stow symlinks or physical copy)
+[Active Host System: target directories]
 ```
 
-### Ingestion & Isolated Compilation Lifecycles
-Secrets are handled with maximum security and performance during workspace and package operations:
-1.  **Strict 6-Tier Variable Precedence**:
-    *   **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-    *   **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
-    *   **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
-    *   **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
-    *   **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
-    *   **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
-2.  **Topological Self-Referencing in `[env.secrets]`**:
-    *   Both workspace and package configurations support a dedicated `[env.secrets]` table (Tier 4).
-    *   Variables in `[env.secrets]` can reference each other, lower-tier variables, system facts, and host environment variables.
-    *   **Rendered Sandbox Metadata**: Fully stitched metadata (including resolved `[env.secrets]`) is stored in `render/<pkg>/.drift/drift_package.toml` and mirrored to `install/<pkg>/`. Because both directories are git-ignored by default, downstream lifecycle hooks (`post_install`, `health`) have seamless access to all environment tiers without re-parsing source files.
-3.  **Single Ingestion & Explicit Workspace Cache**:
-    *   `config/secrets.env` and workspace `[env.secrets]` are parsed during workspace loading and stored in memory on `WorkspaceConfig.env.secrets`.
-    *   Downstream Python hooks access secrets via `context.env` in $O(1)$ memory without repeated disk I/O.
-4.  **Transient Clean-Room Isolation (`package_envs`) & Log Masking**:
-    *   During package rendering and lifecycle hook execution, Drift enters `pkg_config.package_envs()`.
-    *   Secret values are automatically masked in debug logs as `KEY=****`.
-    *   **Strict Restoration**: Upon exiting the scope, Drift completely restores the original host environment state, ensuring zero credential leakages to parent shells or unrelated processes.
+1.  **Reverse-Sync (Primitive 1)**: Inspects live host modifications and imports untracked or edited files back into `src/` (`drift adopt`).
+2.  **Render (Primitive 2)**: Stitches 6-tier variables and compiles source templates into `render/`.
+3.  **Stage (Primitive 4)**: Calculates deltas, orders packages by dependency DAG, and commits changes into `install/`.
+4.  **Apply (Primitive 5)**: Projects symlinks (`stow`) or writes physical copies (`copy`) to target host directories with collision checks.
 
 ---
 
-## 🧩 4. Native Variable Stitching & Topological Resolution
+## 📚 Where to Go Next
 
-Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all workspace configuration files without spawning external subprocesses or template binaries:
-
-### 🔄 Topological Self-Referencing in `[env.default]` and `[env.secrets]`
-Variables declared in `[env.default]` and `[env.secrets]` can reference each other, host environment variables, and auto-detected system facts (`$drift_os`, `$drift_arch`, etc.):
-```toml
-[env.default]
-SOCKS_PROXY_HOST = "127.0.0.1"
-SOCKS_PROXY_PORT = "1080"
-# Stitches variables together dynamically
-DRIFT_SAMPLE_SOCKS_PROXY = "socks5h://${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}"
-DRIFT_SAMPLE_ALL_PROXY = "${DRIFT_SAMPLE_SOCKS_PROXY}"
-```
-Drift automatically computes a Directed Acyclic Graph (DAG) using Kahn's topological sort algorithm, guaranteeing correct evaluation order and instantly detecting circular dependency loops (`A -> B -> A`).
-
-### ➡️ Unidirectional Cross-Section Interpolation
-*   **Evaluation Order**: The `[env.default]` and `[env.secrets]` tables are stitched and evaluated first.
-*   **Field Interpolation**: Non-env workspace fields (`default_target_directory`, `source_directory`, `input_file`, etc.) can reference any resolved `[env.default]` or `[env.secrets]` variable (e.g. `default_target_directory = "${HOME}/.config"`).
-*   **Unidirectional Boundary**: Variables defined in non-env sections cannot be referenced inside `[env.default]` or `[env.secrets]`.
-
-### 📌 Values-Only Scope
-Variable stitching and interpolation apply **strictly to configuration field values** (strings, arrays, and numbers). Variable syntax (`$VAR`, `${VAR}`) is **never evaluated inside TOML keys, table names, or section headers** (such as `[packages.enable]` or `[render.${NAME}]`). To dynamically generate keys or table structures, use the Python workspace hook (`config/drift_workspace.py`) or dynamic meta-templates (`.envst.toml`).
-
-### 🛡️ Literal Escaping
-To prevent interpolation and preserve literal text containing `$VAR` or `${VAR}`, prefix with a backslash:
-```toml
-[env.default]
-SAMPLE_LITERAL = "\\${PRESERVE_ME}"
-```
+*   **Complete TOML Configuration Reference**: Run `drift help drift_workspace.toml` (or `drift help workspace_config`) for detailed syntax rules, table structures, and complete configuration options.
+*   **Package Architecture & Anatomy**: Run `drift help package` to explore package directory layout, 10 core capabilities, and mental framework.
+*   **Package TOML Reference**: Run `drift help drift_package.toml` (or `drift help package_config`) for package-level settings, lifecycle hooks, and requirements.
+*   **Health Checks & Hooks**: Run `drift help health` to learn about runtime verification probes.

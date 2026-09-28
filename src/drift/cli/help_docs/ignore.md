@@ -1,10 +1,16 @@
 # 🚫 Drift Ignore Engine: Syntax and Integration Reference
 
-Drift includes a robust, Perl-Compatible Regular Expression (PCRE) file ignore engine matching the exact matching logic of GNU Stow's `.stow-local-ignore`. It prevents transient files, backup dumps, system caches, build artifacts, and non-dotfile repository assets from being deployed or tracked.
+Drift includes a robust, Perl-Compatible Regular Expression (PCRE) file ignore engine matching the two-group relative path and basename matching logic of `.stow-local-ignore`. It prevents transient files, backup dumps, system caches, build artifacts, and non-dotfile repository assets from being deployed to host targets.
+
+> [!IMPORTANT]
+> **Stage-Specific Ignore Invariant: Installation Only, Not Rendering**:
+> In Drift's pipeline, **rendering is NOT skipped for ignored files**. All source files and templates under `src/<pkg>/` are fully compiled and rendered into `render/<pkg>/` and staged into `install/<pkg>/`.
+> 
+> File ignore evaluation happens **strictly at the installation stage** (when projecting or copying files from `install/<pkg>/` to the host target directory). Ignored files exist in the local state database but are **never symlinked or copied to your host system**.
 
 ---
 
-## 1. Syntax & Core Matching Rules (GNU Stow Algorithm)
+## 1. Syntax & Core Matching Rules (Two-Group PCRE Algorithm)
 
 Each package can have **exactly one** `.drift_ignore` file placed directly in its root (`src/<pkg>/.drift_ignore`).
 
@@ -85,26 +91,61 @@ In Drift source packages (`src/<pkg>/`), hidden files and directories can be rep
 
 ---
 
-## 3. Enforcement & Default Stow Ignore Compatibility
+## 3. Enforcement & Default Ignore Rules
 
 ### 🛡️ Default Ignore List (When No `.drift_ignore` is Provided)
-If a package does not contain a `.drift_ignore` file, Drift automatically applies GNU Stow's built-in default ignore list to ensure full backward compatibility:
+If a package does not contain a `.drift_ignore` file, Drift automatically applies the comprehensive built-in default ignore list (`DEFAULT_DRIFT_IGNORE_CONTENT`):
+
 ```pcre
-RCS
-\.+,v
-CVS
-\.\#.+=
-\.cvsignore
+# Python bytecode and cache files
+__pycache__
+/__pycache__/
+\.py[cod]$
+\$py\.class$
+\.pytest_cache
+/\.pytest_cache/
+\.mypy_cache
+/\.mypy_cache/
+\.ruff_cache
+/\.ruff_cache/
+\.venv
+/\.venv/
+^venv$
+/venv/
+
+# Version control systems & ignore metadata
+^/\.gitignore
+\.gitignore
+\.git
+\.hg
 \.svn
 _darcs
-\.hg
-\.git
-\.gitignore
+CVS
+\.cvsignore
+RCS
+\.+,v
+\.\#.+
+
+# Editor temporary and backup files
 .+~
 \#.*\#
+.*\.sw[a-p]$
+.*\.swp$
+.*\.swo$
+.*\.un~$
+
+# OS metadata
+^\.DS_Store$
+^Thumbs\.db$
+
+# Package documentation and licenses
 ^/README.*
 ^/LICENSE.*
 ^/COPYING.*
+
+# Drift internal control plane and sandbox
+^/\.drift/
+^/\.drift$
 ```
 
 ### 🔒 Single Source of Truth & Internal Metadata Isolation
@@ -114,18 +155,24 @@ Drift strictly enforces that **only one `.drift_ignore` file** exists per packag
 *   **Managed Config Files**: Root-level staging artifacts defined in `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are automatically protected and ignored from host linking.
 
 ### 📝 Automated `.stow-local-ignore` & Sub-Repo `.gitignore` Generation
-*   **`.stow-local-ignore`**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns (from `render/<pkg>/.drift/.drift_ignore` and default rules) together with `MANAGED_CONFIG_FILES` and internal `.drift/` control directories into `install/<pkg>/.stow-local-ignore`. This guarantees that GNU Stow respects both custom and default ignore rules without polluting host target directories.
+*   **`.stow-local-ignore` Generation**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns (from `render/<pkg>/.drift/.drift_ignore` or default rules) together with `MANAGED_CONFIG_FILES` and internal `.drift/` control directories into `install/<pkg>/.stow-local-ignore`. This guarantees that symlink deployment respects both custom and default ignore rules without polluting host target directories.
 *   **Sub-Repo `.gitignore`**: Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` databases to exclude synthetic files (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`: `*~`, `*#*#`, `*.swp`, `*.DS_Store`, etc.), keeping database Git repositories clean.
 
 ---
 
 ## 4. Lifecycle & Integration Behaviors
 
-### 📦 Compilation & Deployment Pipelines (`drift deploy` / `drift stage` / `drift apply`)
-*   Files matching `.drift_ignore` are **skipped during sandbox compilation** (`render/`).
-*   They are never copied or symlinked onto your active host system.
-*   Internal `.drift/` directories and staged hooks (`.drift/hooks/`) are compiled/staged for engine execution but filtered completely from physical target deployment across both `stow` and `copy` deployment methods.
-*   They are excluded from staging diffs and state database tracking.
+### 📦 Stage Separation: Render vs. Install
+
+#### 1. Rendering Stage (`src/` ➔ `render/`)
+* **Rendering is NOT skipped**: All source files and templates in `src/<pkg>/` are compiled and written into `render/<pkg>/`, even if they match ignore patterns.
+* This guarantees that documentation, licenses, build helper templates, and internal artifacts are rendered and staged consistently in the sandbox repository.
+
+#### 2. Installation Stage (`install/` ➔ Host Target)
+Ignore pattern filtering occurs **exclusively during the installation / deployment stage**:
+* **Stow Deployment (`install_method = "stow"`)**: Drift's symlink engine reads `install/<pkg>/.stow-local-ignore` and skips creating symlinks for any matching files on the host target.
+* **Copy Deployment (`install_method = "copy"`)**: Drift's copy engine evaluates the ignore patterns against each staged file and skips copying matching files to the host target.
+* Ignored files exist safely within the `install/<pkg>/` state database but **never reach or pollute the host system**.
 
 ### 🔄 Fully-Controlled Directory (FCD) Reverse-Sync
 Inside Fully-Controlled Directories (FCDs), Drift monitors for untracked host files:

@@ -1,40 +1,106 @@
 # 🧪 Sandbox Compilation & Render Directory: `render/`
 
-The `render/` folder is the "Layer 2" database in Drift's architecture, serving as an 
-isolated, sandbox-backed compilation zone.
+Drift decouples dotfile authoring from system deployment through a dedicated compilation stage: **Render**.
+This document introduces both the **Render Verb (`drift render`)** and the **Render Repository (`render/` zone)**.
 
-## 🛡️ Sandbox Isolation
-Template parsing and compiling should never put your active host paths or state database 
-at risk. During execution, Drift:
-1.  Copies all source files and compiles templates dynamically into `render/`.
-2.  Tracks compilation history by initializing `render/` as a dedicated local Git repository.
-3.  Commit-lock: If any template rendering or dependency parsing fails, **compilation halts instantly with zero impact on your system**, leaving your system completely pristine.
+---
 
-## 🔗 Directed Acyclic Graph (DAG) Template Pipelines
-Drift constructs a template dependency graph using engine configurations in `drift_workspace.toml` 
-(e.g., `envsubst` or `mustache`).
-*   **Template Dependencies**: The inputs to one engine can be templates compiled by another.
-*   **Cycle Detection**: Drift runs topological cycle-validation, throwing `CyclicDependencyError` 
-    to stop build loops.
-*   **Deferred Compilation**: Missing dependencies trigger warnings rather than failures 
-    unless a compiled file actually relies on them.
+## 🚀 Part 1: The Render Verb (`drift render`)
 
-## ⚡ Native TOML Variable Self-Referencing & External Render Engines
-*   **Built-in TOML Variable Self-Referencing**: Drift natively resolves inter-variable references (`$VAR`, `${VAR}`) across all standard `.toml` fields using Kahn's topological sort algorithm with cycle detection, requiring zero subprocesses or external dependencies.
-*   **External Render Engines**: Registered template engines (`[render.envsubst]`, `[render.mustache]`, `[render.jinja2]`) compile templated dotfiles (e.g., `.bashrc.envst`, `config.j2`) and can also compile dynamic TOML templates (e.g., `drift_workspace.local.envst.toml`, `drift_package.envst.toml`) when complex templating logic is desired.
+The `render` verb transforms raw templates, static configuration files, and lifecycle hooks from **Zone 1 (`src/`)** into concrete, deployment-ready files in the **Zone 2 sandbox (`render/`)**. It executes with strict **zero-impact safety**: no changes touch active host destinations during rendering.
 
-## 🎨 Package-Level Render Engines & 2-Phase Compilation Pipeline
-Drift executes rendering across two modular phases with dedicated `.drift/` internal sandboxes:
-1.  **Phase 1: Workspace Global Compilation Pipeline**:
-    *   Evaluates global `[render.*]` engines defined in `drift_workspace.toml`.
-    *   Compiles workspace-level input dependencies into `render/.drift/render/`.
-    *   Compiles templated package configurations (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). *(Note: Only global workspace engines can compile package configuration templates).*
-2.  **Phase 2: Package-Scoped Compilation Pipeline**:
-    *   Loads package configuration from `render/<pkg>/.drift/drift_package.toml`.
-    *   Overlays package `[render.*]` engines onto workspace engines with **field-level inheritance** (overriding `input_file` relative to `src/<pkg>/` while inheriting unspecified `suffix` and `render_command`).
-    *   Renders package-level input dependencies into `render/<pkg>/.drift/render/`.
-    *   Copies `.drift_ignore` to `render/<pkg>/.drift/.drift_ignore` and excludes it from payload rendering.
-    *   Compiles dedicated lifecycle hook scripts from `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` (with template compilation support), keeping hooks sandboxed away from deployable dotfiles.
-    *   Compiles package template files with the combined, effective render engines. *(Note: Engines defined in package config apply exclusively to package source files and templates).*
+### 1. Pre-Flight Requirement Verification (`[package.requirements]`)
+Before executing any template engine or allocating disk resources, Drift evaluates declarative platform requirements:
+* **Host Facts Auditing**: Evaluates operating system (`os`), CPU architecture (`arch`), Linux distribution (`distribution`), required executables in `$PATH` (`binaries`), and required environment variables (`env`).
+* **Dynamic Probe Hook**: Optionally executes `drift_hooks/probe` to run custom environment detection (e.g. verifying GPU drivers or GUI session types).
+* **Zero-Cost Skipping**: If requirements are unmet, the package is cleanly skipped with an informative log message without running template compilers.
 
+### 2. Template Engine Settings & Configuration
+Drift supports both global and package-level engine definitions:
+* **Workspace Engine Settings (`drift_workspace.toml`)**:
+  * Registered under `[render.<engine_name>]` (e.g. `[render.envsubst]`, `[render.mustache]`, `[render.jinja2]`).
+  * `suffix`: File extension pattern triggering the engine (e.g. `".drift.envst"`, `".drift.j2"`).
+  * `render_command`: Execution command string supporting dynamic placeholders (`%s` template source, `%o` rendered destination, `%i` input file).
+  * `input_file`: Optional external dependency file providing structured input data (e.g. `"config/theme.json"`).
+* **Package-Level Engine Configuration (`drift_package.toml`)**:
+  * Defined under `[render.<engine_name>]` within individual packages.
+  * **Field-Level Inheritance**: Overlays onto workspace engines, inheriting unspecified `suffix` or `render_command` while allowing package-specific customizations.
+  * **Scoped Input Files**: Resolves `input_file` relative to `src/<pkg>/` (or the workspace root), allowing packages to provide localized data sources.
+  * **Exclusive Package Scope**: Package-level engines apply strictly to that package's source templates and hooks.
+* **Selective Render Bypassing**:
+  * Setting `[package] enable_render = false` completely bypasses template compilation for packages containing purely static dotfiles.
 
+### 3. Multi-Engine Pipeline & 2-Phase Compilation
+Drift executes template compilation through an orchestrated two-phase pipeline:
+* **Built-in vs. External Engines**:
+  * **Built-in `python_envsubst`**: Native environment variable substitution requiring zero external subprocesses or external dependencies.
+  * **External Engines**: Executes third-party CLI tools (`envsubst`, `mustache`, `jinja2`, `tera-cli`) with automatic fallback to built-in `python_envsubst` if external `envsubst` command encounters issues.
+* **Phase 1: Workspace Global Compilation Pipeline**:
+  * Compiles workspace-level engine input dependencies into `render/.drift/render/`.
+  * Compiles templated package configuration files (`drift_package.*.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). Only global workspace engines can compile package configs.
+* **Phase 2: Package-Scoped Compilation Pipeline**:
+  * Loads the compiled package configuration from `render/<pkg>/.drift/drift_package.toml`.
+  * Evaluates package requirements and overlays package-level render engines.
+  * Compiles package-level input dependencies into `render/<pkg>/.drift/render/`.
+  * Triggers the `pre_source` lifecycle hook.
+  * Copies `.drift_ignore` into `render/<pkg>/.drift/.drift_ignore`.
+  * **Pass 1 (Payload Pass)**: Compiles deployable dotfiles from `src/<pkg>/` into `render/<pkg>/`, stripping engine suffixes (e.g. `dot-zshrc.drift.envst` $\rightarrow$ `dot-zshrc`). Skips hidden files not using the required `dot-` prefix and excludes `drift_hooks/`.
+  * **Pass 2 (Control Plane Hooks Pass)**: Compiles lifecycle hook scripts from `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` (with full template compilation support) and ensures POSIX executable permissions (`chmod 0o755`).
+  * Triggers the `post_render` lifecycle hook.
+
+### 4. Variable Stitching & Environment Resolution
+Template engines receive a rich, cohesive variable context stitched together across multiple layers. The help page `drift help package_config` provides detailed configuration.  
+
+* **Unified 6-Tier Environment Precedence**:
+  1. Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
+  2. Local Host Overrides (`config/drift_workspace.local.toml`)
+  3. Package Environment Overrides (`[env.override]` in `drift_package.toml`)
+  4. Workspace Environment Overrides (`[env.override]` in `drift_workspace.toml`)
+  5. Package Environment Defaults (`[env]` in `drift_package.toml`)
+  6. Workspace Environment Defaults (`[env]` in `drift_workspace.toml`)
+* **Secret Vault Isolation (`config/secrets.env`)**:
+  * Loads sensitive credentials into environment scope using transient clean-room isolation.
+  * Automatically masks secret values in debug logs (`KEY=****`).
+* **Dynamic Python Preprocessing (`drift_package.py`)**:
+  * Runs programmatic pre-render scripts to dynamically fetch tokens or compute host-specific settings.
+* **Native Variable Self-Referencing**:
+  * Resolves inter-variable references (`$VAR`, `${VAR}`) across all TOML tables using Kahn's topological sort algorithm with cycle detection.
+* **Execution Scoping**:
+  * Pre-resolved environment variables are automatically injected into `os.environ` during compilation via `with pkg_config.package_envs():`.
+
+### 5. Render Collision Guard & Safety Checks
+* **Render Collision Guard**: Detects when two different source templates would compile into the identical destination path (e.g. `config.j2` and `config.envst` both producing `config`) and halts with `RenderCollisionError` before writing.
+* **Static Ignore Guard**: Rejects attempts to dynamically generate `.drift_ignore` from templates or nested files, ensuring ignore filtering remains strictly deterministic.
+
+---
+
+## 🏛️ Part 2: The Render Repository (`render/` Zone)
+
+The `render/` directory is the **Zone 2 sandbox repository** in Drift's architecture. It serves as an isolated intermediate database tracking the output of all template compilation.
+
+### 1. Package Structure in `render/`
+Rendered packages cleanly separate deployable files from internal metadata:
+
+```
+render/
+├── <pkg>/
+│   ├── dot-config/             # Deployable dotfile payload (suffixes stripped, dot- prefix intact)
+│   │   └── nvim/
+│   │       └── init.lua
+│   ├── dot-zshrc
+│   └── .drift/                 # Internal control plane (NEVER deployed to host)
+│       ├── drift_package.toml  # Compiled package configuration
+│       ├── .drift_ignore       # Staged ignore rules
+│       ├── hooks/              # Compiled lifecycle hook scripts (chmod +x)
+│       └── render/             # Compiled engine input dependencies & assets
+└── .git/                       # Dedicated sandbox Git repository
+```
+
+* **Deployable Payload**: Located at the package root (`render/<pkg>/...`). Contains compiled dotfiles with template suffixes stripped, ready for staging and installation.
+* **Internal Control Plane (`.drift/`)**: Houses package configuration, lifecycle hooks, staged input dependencies, and ignore files. Hardcoded as ignored by deployment handlers so it is never copied or symlinked to host destinations.
+
+### 2. Render Sandbox Functionality
+* **Dedicated Git Repository**: The `render/` zone is initialized as an independent Git repository, recording every compilation pass in version control.
+* **Pure Sandbox Isolation**: Compilation occurs entirely within `render/`. If a template fails to compile, an engine encounters an error, or a dependency is missing, **compilation halts immediately with zero side effects on your live system**.
+* **Inspectability & Diffing**: Users can inspect compiled files directly or diff changes between compilation runs (`drift diff --zone render`) before staging them to the state database.
+* **Sandbox Commit Checkpointing (`drift render-commit`)**: Commits all compiled outputs into the `render/` Git repository history (automatically executed as step 2 of `drift deploy`).

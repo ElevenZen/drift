@@ -5,11 +5,12 @@ In Drift, each package under `src/<package_name>/` is governed by a `drift_packa
 
 This document provides a comprehensive reference for all configuration options available in a Drift package, including:
 1. **Core Package Settings (`[package]`)**: Target deployment directories, installation methods (`stow` symlinking vs. `copy` physical copy), Windows overrides, subfolder `source_directory` isolation, elevated privilege (`sudo = true`), and Fully Controlled Directories (`fully_controlled_dirs`).
-2. **Host Prerequisites & Requirements (`[package.requirements]`)**: Declarative pre-flight checks (OS, architecture, Linux distro, required binaries in `$PATH`, environment variables, LAN IP/subnets) that selectively enable or skip package deployment.
-3. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical package variable scopes across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
-4. **Lifecycle Command Hooks (`[hooks]`)**: Hook execution triggers across source rendering, installation, updates, uninstallation, and health checks, with `drift_hooks/` internal isolation and rollback management.
-5. **Dynamic Python Package Hooks (`drift_package.py`)**: Programmatic preprocessors executed before variable stitching—the best place to dynamically fetch remote configuration or secret vaults and inject them into `[env.default]`, `[env.secrets]`, or `[env.override]`.
-6. **Package-Level Render Engines (`[render.<name>]`)**: Per-package template engine overrides with field-level inheritance.
+2. **Inter-Package Dependencies (`[package] dependencies`)**: Declare prerequisite packages (`dependencies = ["pkg_a", "pkg_b"]` or array-of-tables `[[package.dependencies]]`) for topological DAG deployment ordering, reverse topological uninstallation, cycle detection, and missing dependency safeguards.
+3. **Host Prerequisites & Requirements (`[package.requirements]`)**: Declarative pre-flight checks (OS, architecture, Linux distro, required binaries in `$PATH`, environment variables, LAN IP/subnets) evaluated strictly before template rendering that selectively enable or skip package deployment.
+4. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical package variable scopes across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
+5. **Lifecycle Command Hooks (`[hooks]`)**: Hook execution triggers across source rendering, installation, updates, uninstallation, and health checks, with `drift_hooks/` internal isolation and rollback management.
+6. **Dynamic Python Package Hooks (`drift_package.py`)**: Programmatic preprocessors executed before variable stitching—the best place to dynamically fetch remote configuration or secret vaults and inject them into `[env.default]`, `[env.secrets]`, or `[env.override]`.
+7. **Package-Level Render Engines (`[render.<name>]`)**: Per-package template engine overrides with field-level inheritance.
 
 ---
 
@@ -18,7 +19,7 @@ Below is a complete, fully documented template for `drift_package.toml` (or `dri
 ```toml
 [package]
 # How files are deployed to the host.
-# Options: "stow" (symlinks, GNU Stow logic) or "copy" (physical copies)
+# Options: "stow" (symlinks) or "copy" (physical copies)
 # Falls back to "default_install_method" in drift_workspace.toml if unspecified.
 install_method = "stow"
 
@@ -32,6 +33,18 @@ target_directory = "~/.config/my_app"
 # Supports %USERPROFILE%, %APPDATA%, %LOCALAPPDATA%, ~, etc.
 # Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
 # target_directory_windows = "%LOCALAPPDATA%/my_app"
+
+# ---------------------------------------------------------------------
+# Inter-Package Dependencies (Topological Ordering & Prerequisite Guards)
+# ---------------------------------------------------------------------
+# Declare prerequisite packages required by this package.
+# Drift sequences staging and deployment in topological DAG order, and uninstalls in reverse order.
+# Inline list syntax (strings or inline tables):
+# dependencies = ["base", "git", { name = "starship", optional = true }]
+# Or array-of-tables syntax:
+# [[package.dependencies]]
+# name = "nodejs"
+# optional = true
 
 # Optional subfolder within src/<pkg>/ to render (defaults to ".").
 # If specified, only files in this subfolder are compiled and deployed to the host.
@@ -59,7 +72,7 @@ fully_controlled_dirs = [
     "plugins"
 ]
 
-# Host Requirements & Prerequisites (Declarative pre-flight checks; package is skipped if unmet)
+# Host Requirements & Prerequisites (Declarative pre-flight checks evaluated strictly before rendering; package is skipped if unmet)
 [package.requirements]
 # os = ["linux"]                     # Allowed OS: "linux", "darwin", "windows", "freebsd"
 # arch = ["x86_64", "aarch64"]        # Allowed Arch: "x86_64", "arm64", "aarch64", "x86"
@@ -369,5 +382,131 @@ Drift evaluates compilation pipelines across two distinct, isolated phases:
 ### 3. Reverse Sync, Add, & Adopt Integration
 All downstream primitives (`drift adopt`, `drift add`, `drift reverse-sync`) automatically respect package-level render engine definitions and suffix mappings when reconciling file modifications, renames, and imports.
 
+## 🔗 Inter-Package Dependencies & Topological Ordering
+
+Packages can declare explicit dependencies on other packages using the `dependencies` field within `drift_package.toml`. Drift uses a Directed Acyclic Graph (DAG) resolved via **Kahn's algorithm** to guarantee deterministic execution order across all workspace operations.
+
+### 1. Declaration Syntax
+
+Drift supports both inline list syntax and standard TOML array-of-tables syntax:
+
+#### Inline List Syntax
+For concise declarations, specify a list of package names as strings or inline tables:
+
+```toml
+[package]
+name = "zsh"
+install_method = "stow"
+target_directory = "~/.config/zsh"
+
+# List of required and optional prerequisite packages
+dependencies = [
+    "base_tools",
+    "git",
+    { name = "starship", optional = true },
+    { name = "fzf", optional = true }
+]
+```
+
+#### Array-of-Tables Syntax (`[[package.dependencies]]`)
+For multi-line clarity or automated tooling, use the array-of-tables representation:
+
+```toml
+[package]
+name = "neovim"
+target_directory = "~/.config/nvim"
+
+[[package.dependencies]]
+name = "base_tools"
+optional = false
+
+[[package.dependencies]]
+name = "nodejs"
+optional = true
+```
+
+> [!NOTE]
+> Choose either inline list syntax (`dependencies = [...]`) or array-of-tables syntax (`[[package.dependencies]]`). In compliance with standard TOML parsing specifications, do not mix both syntaxes within the same configuration file.
+
+### 2. Required vs. Optional Dependencies
+
+* **Required Dependencies (`optional = false`, default)**:
+  The target package must exist in the workspace and be enabled for deployment. If any required dependency is missing from the active package universe, Drift halts staging or deployment with a descriptive error before any files are modified.
+* **Optional Dependencies (`optional = true`)**:
+  If the prerequisite package is present in the workspace and enabled, Drift guarantees that it is compiled, staged, and deployed **before** this package. If the optional dependency is absent or disabled, Drift gracefully prunes the dependency edge without failing.
+
+### 3. Forward Topological Staging & Deployment
+During staging (`drift stage`) and deployment (`drift apply` or `drift deploy`):
+1. **DAG Graph Construction**: Drift collects dependencies across all targeted and already-installed packages in the workspace.
+2. **Cycle Detection**: Drift checks the graph for circular references (e.g. `A -> B -> A`). If a cycle is detected, execution halts immediately with a `ConfigError` detailing the cyclic path.
+3. **Kahn's Topological Sort**: Packages are ordered such that base prerequisite packages are always processed first. For example, if `zsh` depends on `base_tools`, `base_tools` is staged into `install/` and deployed to the host before `zsh` is processed.
+
+### 4. Reverse Topological Uninstallation & Rollback Recovery
+During uninstallation (`drift uninstall`) and rollback recovery:
+* **Reverse Ordering**: Packages are dismantled in **reverse topological order** (dependents before prerequisites). In the example above, `zsh` is uninstalled and unlinked from the host *before* `base_tools` is removed.
+* **Rollback Safety**: If a multi-package deployment fails mid-flight, Drift unrolls actions in reverse order to restore the host system cleanly.
+
+### 5. Dependency Safeguards & Guardrails
+
+Drift enforces strict guardrails to prevent broken environments:
+* **Missing Prerequisite Guard**: When staging or deploying, `assert_required_package_dependencies_exist` ensures all required dependencies exist in the package universe.
+* **Broken Reverse Dependency Guard**: When uninstalling, `assert_no_broken_dependencies_on_uninstall` scans the active state database (`install/`) to ensure no remaining installed packages still depend on the packages being uninstalled. If package `A` is scheduled for removal but installed package `B` requires `A`, uninstallation is blocked.
+* **Ghost Package Recovery**: If a package entry exists in the state database (`state.toml`) but its physical folder in `install/` is missing, Drift gracefully logs a warning, cleans the registry entry, and continues without raising an unhandled exception.
+
+### 6. CLI Bypass Flags & Overrides
+
+You can bypass dependency validation guards when needed:
+* **`--ignore-missing-dependencies`** (or **`--allow-missing-dependencies`**):
+  Available on `stage`, `apply`, `deploy`, and `uninstall` commands. Bypasses prerequisite existence checks and broken dependency guards.
+* **`--force` (`-f`)**:
+  Available on `uninstall`. Forcibly removes targeted packages even if remaining packages depend on them.
+* **`drift gc` (Garbage Collection)**:
+  Audits the state database, removes ghost package entries whose physical directories have been deleted, and uninstalls orphaned packages no longer present in `src/`.
 
 
+## 🛡️ Declarative Host Requirements ([package.requirements])
+
+Packages can define declarative pre-flight criteria in `[package.requirements]` that must be satisfied for the package to be deployed to the host machine.
+
+### 1. Zero-Cost Skipping (Evaluated Strictly Before Rendering)
+
+> [!IMPORTANT]
+> **Pre-Rendering Evaluation**: Host requirements are evaluated **strictly before template rendering begins** in Primitive 2. If any requirement is unmet:
+> * The package is marked as `SKIPPED` immediately.
+> * No template engines are invoked.
+> * No intermediate render sandbox files (`render/<pkg>/`) are compiled or written.
+> * Zero filesystem overhead is incurred, and the rest of the workspace proceeds normally.
+
+### 2. Supported Requirement Criteria
+
+| Field | Type | Description & Matching Rules |
+| :--- | :--- | :--- |
+| **`os`** | `list[str]` | Target OS family: `"linux"`, `"darwin"`, `"windows"`, `"freebsd"`. |
+| **`arch`** | `list[str]` | CPU architecture: `"x86_64"`, `"arm64"`, `"aarch64"`, `"x86"`. |
+| **`distro`** | `list[str]` | Linux distribution IDs from `/etc/os-release` (matches `ID` or `ID_LIKE`), e.g. `"arch"`, `"ubuntu"`, `"debian"`, `"fedora"`. On macOS/Windows, matches `"macos"` or `"windows"`. |
+| **`binaries`** | `list[str]` | Names of executable binaries that must exist in host `$PATH` (e.g. `["sway", "waybar"]`). |
+| **`env`** | `list[str]` | Environment variable names that must be present and non-empty in the ambient environment (e.g. `["WAYLAND_DISPLAY"]`). |
+| **`ip`** | `list[str]` | Host LAN IPv4 addresses or subnets. Supports exact IP (`"192.168.1.100"`), CIDR subnet (`"10.0.0.0/8"`, `"192.168.1.0/24"`), or wildcard (`"192.168.1.*"`). |
+
+### 3. Pre-Flight Dynamic Probe Hook (`probe`)
+In addition to static TOML fields, packages can configure a dynamic verification script via `[hooks] probe = "drift_hooks/check.sh"`.
+* Executed during pre-flight requirement validation before template rendering.
+* Runs in user space with `cwd = hook_path.parent`.
+* **Exit code `0`**: Requirements met; package proceeds to rendering.
+* **Exit code non-zero**: Requirements unmet; package is skipped cleanly.
+
+```toml
+[package]
+install_method = "stow"
+target_directory = "~/.config/sway"
+
+[package.requirements]
+os = ["linux"]
+arch = ["x86_64", "aarch64"]
+distro = ["arch", "fedora"]
+binaries = ["sway", "waybar"]
+env = ["WAYLAND_DISPLAY"]
+
+[hooks]
+probe = "drift_hooks/verify_display_server.sh"
+```
