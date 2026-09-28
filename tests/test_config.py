@@ -2767,15 +2767,14 @@ class TestPackageDependencies(unittest.TestCase):
         self.assertEqual(sec_2.dependencies.required_names, ["base"])
         self.assertEqual(sec_2.dependencies.optional_names, ["git"])
 
-        # Syntax 3: combination inline + [[package.dependencies]]
+        # Syntax 3: inline list with inline tables
         toml_3 = """
         [package]
         name = "pkg_a"
-        dependencies = ["base"]
-
-        [[package.dependencies]]
-        name = "git"
-        optional = true
+        dependencies = [
+            "base",
+            { name = "git", optional = true }
+        ]
         """
         data_3 = parse_toml(toml_3)
         sec_3 = PackageSectionConfig.from_dict(data_3["package"], package_name="pkg_a")

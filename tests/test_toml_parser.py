@@ -287,6 +287,27 @@ class TestFallbackTomlParser(unittest.TestCase):
             self.assertEqual(deps[0], {"name": "base", "optional": False})
             self.assertEqual(deps[1], {"name": "git", "optional": True})
 
+    def test_parse_toml_fallback_lenient_mixed_array_extension(self) -> None:
+        # Standard library tomllib (Python 3.11+) raises TOMLDecodeError if an inline array
+        # is extended via [[...]]. _parse_toml_fallback is lenient and allows appending
+        # array-of-tables dictionaries to an existing list.
+        toml_str = """
+        [package]
+        dependencies = ["base"]
+
+        [[package.dependencies]]
+        name = "git"
+        optional = true
+        """
+        data = _parse_toml_fallback(toml_str)
+        self.assertEqual(
+            data["package"]["dependencies"],
+            [
+                "base",
+                {"name": "git", "optional": True},
+            ],
+        )
+
     def test_parse_toml_array_subtables(self) -> None:
         # Array of tables with subtables (from toml-test array-subtables.toml)
         toml_str = """

@@ -27,6 +27,11 @@ Explicit Specification Boundaries & Unsupported Features:
     - Left-hand side dotted assignment keys (a.b = 1 within a table stores "a.b" flatly
       rather than creating a nested dictionary; section headers [a.b] work normally).
     - Duplicate key collision guarding (later definitions overwrite earlier keys rather than raising errors).
+    - Lenient Array-of-Tables Mutation: Unlike Python 3.11+ stdlib `tomllib` (which strictly
+      enforces TOML v1.0.0 namespace immutability and raises `TOMLDecodeError` if an inline array
+      is subsequently extended with `[[...]]`), `_parse_toml_fallback` permissively allows
+      appending array-of-tables dictionaries to existing lists. Drift configuration files and tests
+      should avoid relying on this mixed syntax to ensure cross-version TOML standard compatibility.
 
 ===============================================================================
 Architecture & Call Chain Overview
@@ -650,6 +655,12 @@ def _parse_toml_fallback(content: str) -> dict:
     and array-of-tables (`[[arr]]`). See the module header for full supported
     features and explicit specification boundaries.
 
+    Note on stdlib `tomllib` divergence:
+        Unlike Python 3.11+ `tomllib.loads` (which strictly raises `TOMLDecodeError`
+        if an inline array is extended via `[[...]]`), this fallback parser permissively
+        permits appending array-of-tables elements to an existing list. Standard Drift
+        configurations and tests must avoid this mixed syntax to ensure cross-version compatibility.
+
     Args:
         content: Raw TOML document string.
 
@@ -700,8 +711,14 @@ def _parse_toml_fallback(content: str) -> dict:
 def parse_toml(content: str) -> dict:
     """Parses a TOML string into a dictionary.
 
-    Uses native `tomllib` on Python 3.11+, and falls back to a custom,
-    fully compatible fallback parser on older Python versions (< 3.11).
+    Uses native `tomllib` on Python 3.11+, and falls back to a custom
+    fallback parser on older Python versions (< 3.11).
+
+    Note:
+        Standard library `tomllib` (Python 3.11+) strictly enforces namespace immutability
+        and rejects extending inline arrays with array-of-tables syntax (`[[...]]`), whereas
+        the fallback parser is lenient. TOML configuration files must avoid mixing these
+        syntaxes to guarantee parser parity across all Python versions.
 
     Args:
         content: The raw TOML string to parse.
