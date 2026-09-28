@@ -1,3 +1,4 @@
+import textwrap
 import unittest
 
 from drift.utils.toml_utils import (
@@ -17,6 +18,33 @@ class TestParseTomlValue(unittest.TestCase):
         self.assertEqual(parse_toml_value("'world'"), "world")
         self.assertEqual(parse_toml_value('"escaped \\" quote"'), 'escaped " quote')
         self.assertEqual(parse_toml_value('"new\\nline"'), "new\nline")
+
+    def test_parse_toml_value_multiline_basic(self) -> None:
+        # Multiline basic string with leading newline trimmed
+        self.assertEqual(parse_toml_value('"""\nline 1\nline 2\n"""'), "line 1\nline 2\n")
+        # Single-line triple quotes
+        self.assertEqual(parse_toml_value('"""single line"""'), "single line")
+        # Line continuation: backslash trims newline and following whitespace
+        self.assertEqual(
+            parse_toml_value('"""The quick brown \\\n  fox jumps over \\\n  the lazy dog."""'),
+            "The quick brown fox jumps over the lazy dog."
+        )
+        # Quotes inside multiline string
+        self.assertEqual(
+            parse_toml_value('"""Contains "quotes" and \\"escaped\\" inside"""'),
+            'Contains "quotes" and "escaped" inside'
+        )
+        # Empty multiline
+        self.assertEqual(parse_toml_value('""""""'), "")
+
+    def test_parse_toml_value_multiline_literal(self) -> None:
+        # Multiline literal string (no escape processing, verbatim content)
+        self.assertEqual(
+            parse_toml_value("'''\nline 1 \\not_escaped\nline 2\n'''"),
+            "line 1 \\not_escaped\nline 2\n"
+        )
+        self.assertEqual(parse_toml_value("'''single line'''"), "single line")
+        self.assertEqual(parse_toml_value("''''''"), "")
 
     def test_parse_toml_value_booleans(self) -> None:
         self.assertEqual(parse_toml_value('true'), True)
@@ -397,6 +425,69 @@ class TestFallbackTomlParser(unittest.TestCase):
             self.assertEqual(
                 data["package"]["metadata"],
                 {"author": {"name": "Alice", "team": "Dev"}, "version": 1}
+            )
+
+    def test_parse_toml_multiline_basic_doc(self) -> None:
+        toml_str = textwrap.dedent('''
+        [env.override]
+        SCRIPT = """
+        #!/usr/bin/env bash
+        # Internal comment preserved
+        echo "hello"
+        """ # Closing comment stripped
+        NUMBER = 42
+        ''')
+        for parser in self.parsers:
+            data = parser(toml_str)
+            self.assertEqual(data["env"]["override"]["NUMBER"], 42)
+            self.assertEqual(
+                data["env"]["override"]["SCRIPT"],
+                '#!/usr/bin/env bash\n# Internal comment preserved\necho "hello"\n'
+            )
+
+    def test_parse_toml_multiline_literal_doc(self) -> None:
+        toml_str = textwrap.dedent("""
+        [env.override]
+        REGEX = '''
+        ^[a-z]+\\s+\\d+$
+        '''
+        PATH = '''C:\\Users\\default\\bin'''
+        """)
+        for parser in self.parsers:
+            data = parser(toml_str)
+            self.assertEqual(
+                data["env"]["override"]["REGEX"],
+                "^[a-z]+\\s+\\d+$\n"
+            )
+            self.assertEqual(
+                data["env"]["override"]["PATH"],
+                "C:\\Users\\default\\bin"
+            )
+
+    def test_parse_toml_multiline_in_array(self) -> None:
+        toml_str = textwrap.dedent('''
+        [scripts]
+        commands = [
+            """
+echo 1
+""",
+            """
+echo 2
+""",
+            \'\'\'
+literal \\value
+\'\'\',
+        ]
+        ''')
+        for parser in self.parsers:
+            data = parser(toml_str)
+            self.assertEqual(
+                data["scripts"]["commands"],
+                [
+                    "echo 1\n",
+                    "echo 2\n",
+                    "literal \\value\n",
+                ]
             )
 
     def test_parse_toml_unclosed_quotes_or_brackets(self) -> None:
