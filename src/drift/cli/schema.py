@@ -344,6 +344,11 @@ def build_completion_schema() -> CompletionSchema:
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"
                     ),
+                    OptionSpec(
+                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        description="Bypass missing required package dependency errors and proceed with deployment",
+                        dest="ignore_missing_dependencies"
+                    ),
                 ]
             ),
             "health": CommandSpec(
@@ -409,6 +414,11 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"
+                    ),
+                    OptionSpec(
+                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        description="Bypass dependency checks and proceed with uninstallation even if remaining packages require this package",
+                        dest="ignore_missing_dependencies"
                     ),
                 ]
             ),
@@ -630,6 +640,11 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["-f", "--force"],
                         description="Force staging and bypass uncommitted modifications check"
                     ),
+                    OptionSpec(
+                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        description="Bypass missing required package dependency errors and proceed with staging",
+                        dest="ignore_missing_dependencies"
+                    ),
                 ]
             ),
             "apply": CommandSpec(
@@ -654,6 +669,11 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"
+                    ),
+                    OptionSpec(
+                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        description="Bypass missing required package dependency errors and proceed with deployment",
+                        dest="ignore_missing_dependencies"
                     ),
                 ]
             ),

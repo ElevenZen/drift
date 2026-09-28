@@ -463,6 +463,40 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     _, kwargs = mock_argparse_action.call_args
                     self.assertTrue(kwargs.get("no_hooks"), f"Argparse {cmd_name} with {flag} did not pass no_hooks=True")
 
+    def test_cli_ignore_missing_dependencies_flags_across_commands(self) -> None:
+        """Verifies that both --ignore-missing-dependencies and --allow-missing-dependencies flags pass ignore_missing_dependencies=True."""
+        from drift.cli import run_argparse_cli
+
+        commands_to_test = [
+            ("stage", "drift.cli.cli_handlers.execute_stage", ["stage"]),
+            ("apply", "drift.cli.cli_handlers.execute_apply", ["apply"]),
+            ("deploy", "drift.cli.cli_handlers.execute_deploy", ["deploy"]),
+            ("uninstall", "drift.cli.cli_handlers.execute_uninstall", ["uninstall", "pkg_a"]),
+        ]
+
+        for flag in ["--ignore-missing-dependencies", "--allow-missing-dependencies"]:
+            for cmd_name, target_action, cmd_args in commands_to_test:
+                with patch(target_action) as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        main(["-C", self.drift_root] + cmd_args + [flag])
+                    self.assertTrue(mock_action.called, f"Typer {cmd_name} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(
+                        kwargs.get("ignore_missing_dependencies"),
+                        f"Typer {cmd_name} with {flag} did not pass ignore_missing_dependencies=True",
+                    )
+
+                with patch(target_action) as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        run_argparse_cli(["-C", self.drift_root] + cmd_args + [flag])
+                    self.assertTrue(mock_action.called, f"Argparse {cmd_name} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(
+                        kwargs.get("ignore_missing_dependencies"),
+                        f"Argparse {cmd_name} with {flag} did not pass ignore_missing_dependencies=True",
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()
+

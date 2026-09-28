@@ -4,9 +4,10 @@ import shutil
 import tempfile
 import subprocess
 from pathlib import Path
+from drift.core.exceptions import ConfigError
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.core.state_registry import load_state_registry, save_state_registry, PackageState
-from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
+from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 
 class TestUninstall(unittest.TestCase):
@@ -186,7 +187,7 @@ class TestUninstall(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
         
         # Verify it proceeded
         updated_registry = load_state_registry(state_file)
@@ -239,7 +240,7 @@ class TestUninstall(unittest.TestCase):
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
         
         # 5. Run uninstall with detach=True
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], detach=True)
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(detach=True))
         
         # 6. Verify results
         # Target file is NO LONGER a symlink, but a physical copy of "pkg content"
@@ -317,7 +318,7 @@ fi
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
         self.assertEqual(res.status, "SUCCESS")
 
         # 1. Target file was removed
@@ -372,7 +373,7 @@ fi
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         with self.assertRaises(FileNotFoundError) as ctx:
-            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
 
         self.assertIn("pre_uninstall", str(ctx.exception))
         # System target was not touched
@@ -419,11 +420,147 @@ fi
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
 
         self.assertIn("pre_uninstall", str(ctx.exception))
         # System target was not removed
         self.assertTrue(system_target.exists())
+
+    def test_uninstall_blocked_when_remaining_package_requires_target(self):
+        """Verifies that uninstalling a package required by another remaining installed package raises ConfigError."""
+        self.workspace_config.packages_enable["pkg_a"] = False
+        self.workspace_config.packages_enable["pkg_b"] = False
+        # Setup pkg_a and pkg_b, where pkg_b requires pkg_a
+        for pkg, deps_text in [("pkg_a", ""), ("pkg_b", 'dependencies = ["pkg_a"]')]:
+            pkg_dir = self.install_dir / pkg
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{pkg}"
+            {deps_text}
+            """, encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed")
+        registry.set_package_state("pkg_b", "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Attempting to uninstall pkg_a while pkg_b remains installed should raise ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            run_primitive_7_uninstall_packages(self.workspace_config, ["pkg_a"])
+
+        self.assertIn("Remaining package 'pkg_b' requires uninstalled package(s): ['pkg_a']", str(ctx.exception))
+
+    def test_uninstall_dependency_blocked_bypassed_with_force_or_ignore_missing(self):
+        """Verifies that dependency check on uninstallation is bypassed with force=True or ignore_missing_dependencies=True."""
+        self.workspace_config.packages_enable["pkg_a"] = False
+        self.workspace_config.packages_enable["pkg_b"] = False
+        for pkg, deps_text in [("pkg_a", ""), ("pkg_b", 'dependencies = ["pkg_a"]')]:
+            pkg_dir = self.install_dir / pkg
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{pkg}"
+            {deps_text}
+            """, encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed")
+        registry.set_package_state("pkg_b", "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 1. With ignore_missing_dependencies=True (pkg_a is disabled in workspace_config, so safeguard passes)
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            ["pkg_a"],
+            config=UninstallConfig(ignore_missing_dependencies=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        updated_reg = load_state_registry(state_file)
+        self.assertNotIn("pkg_a", updated_reg.packages)
+        self.assertIn("pkg_b", updated_reg.packages)
+
+        # Re-install pkg_a and enable both to test force=True bypasses active check AND dependency check
+        updated_reg.set_package_state("pkg_a", "installed")
+        save_state_registry(updated_reg)
+        self.workspace_config.packages_enable["pkg_a"] = True
+        self.workspace_config.packages_enable["pkg_b"] = True
+        res_force = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            ["pkg_a"],
+            config=UninstallConfig(force=True),
+        )
+        self.assertEqual(res_force.status, "SUCCESS")
+        updated_reg2 = load_state_registry(state_file)
+        self.assertNotIn("pkg_a", updated_reg2.packages)
+        self.assertIn("pkg_b", updated_reg2.packages)
+
+    def test_uninstall_multiple_packages_reverse_topological_order(self):
+        """Verifies that multiple packages are uninstalled in reverse topological order (dependents first)."""
+        # pkg_c requires pkg_b, pkg_b requires pkg_a
+        for pkg, deps_text in [
+            ("pkg_a", ""),
+            ("pkg_b", 'dependencies = ["pkg_a"]'),
+            ("pkg_c", 'dependencies = ["pkg_b"]'),
+        ]:
+            pkg_dir = self.install_dir / pkg
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+            [package]
+            name = "{pkg}"
+            {deps_text}
+            """, encoding="utf-8")
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        for pkg in ["pkg_a", "pkg_b", "pkg_c"]:
+            registry.set_package_state(pkg, "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install all 3 packages"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Uninstall all three in random order in argument: ["pkg_a", "pkg_c", "pkg_b"]
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            ["pkg_a", "pkg_c", "pkg_b"],
+            config=UninstallConfig(force=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        uninstalled_order = [p.package for p in res.packages]
+        # Must be reverse dependency order: pkg_c first, then pkg_b, then pkg_a
+        self.assertEqual(uninstalled_order, ["pkg_c", "pkg_b", "pkg_a"])
+
+    def test_uninstall_graceful_missing_install_dir(self):
+        """Verifies that uninstalling a registered package whose directory is missing in install/ succeeds and cleans state."""
+        pkg = "ghost_pkg"
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Record ghost package"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # install_dir / pkg does NOT exist on disk
+        self.assertFalse((self.install_dir / pkg).exists())
+
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            [pkg],
+            config=UninstallConfig(force=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        updated_reg = load_state_registry(state_file)
+        self.assertNotIn(pkg, updated_reg.packages)
 
 
 if __name__ == "__main__":

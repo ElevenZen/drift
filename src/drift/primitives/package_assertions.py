@@ -40,18 +40,28 @@ Pre-flight Assertion Guards:
         * Aggregates all intra-batch and inter-package conflicts across the workspace.
         * Raises CrossPackageCollisionError(packages=[...], conflicts=...) if any collisions are detected.
 
-    - resolve_package_install_order(pkg_dependencies_map)
-        * Resolves topological install order from package dependency declarations.
-        * Validates required dependencies exist in universe and prunes absent optional dependencies.
-        * Returns package names in topological order using Kahn's algorithm.
+    - assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names)
+        * Validates that all required dependencies exist within the available package universe.
+        * Aggregates all missing dependencies across packages and raises ConfigError.
 
     - assert_no_cyclic_package_dependencies(pkg_dependencies_map)
-        * Validates that package dependencies form a valid DAG with no cycles or missing required deps.
-        * Delegates directly to resolve_package_install_order.
+        * Validates that package dependencies form a valid DAG with no cyclic dependencies.
+        * Prunes absent dependencies prior to cycle detection.
 
-    - resolve_ordered_packages(target_metadata, state_registry, workspace_config)
+    - assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)
+        * Validates that removing packages will not leave remaining installed packages with unsatisfied dependencies.
+        * Aggregates all broken dependencies across remaining packages and raises ConfigError.
+
+    - resolve_package_install_order(pkg_dependencies_map)
+        * Resolves topological install order from package dependency declarations.
+        * Prunes absent dependencies from DAG edges and detects cycles using Kahn's algorithm.
+
+    - resolve_package_uninstall_order(pkg_dependencies_map)
+        * Resolves reverse topological uninstallation order (dependents before prerequisites).
+
+    - resolve_ordered_packages(target_metadata, state_registry, workspace_config, ignore_missing_dependencies)
         * Assembles the full dependency universe combining targeted packages with installed packages in StateRegistry.
-        * Resolves global topological order and filters to return ordered targeted packages.
+        * Optionally validates required dependencies exist, resolves topological order, and filters targeted packages.
 
 -------------------------------------------------------------------------------
 Layers:
@@ -63,8 +73,11 @@ Layers:
         assert_packages_target_dirs_valid
         assert_packages_target_dirs_writable
         assert_no_cross_package_conflicts
-        resolve_package_install_order
+        assert_required_package_dependencies_exist
         assert_no_cyclic_package_dependencies
+        assert_no_broken_dependencies_on_uninstall
+        resolve_package_install_order
+        resolve_package_uninstall_order
         resolve_ordered_packages
 ==============================================================================="""
 
@@ -441,6 +454,83 @@ def assert_no_cross_package_conflicts(
     )
 
 
+def assert_required_package_dependencies_exist(
+    pkg_dependencies_map: Mapping[str, PackageDependencies],
+    universe_names: Optional[Iterable[str]] = None,
+) -> None:
+    """Validates that all required dependencies exist within the available package universe.
+
+    Collects all missing required dependencies across all packages before raising.
+
+    Args:
+        pkg_dependencies_map: Mapping of package name to PackageDependencies.
+        universe_names: Optional universe of valid package names. If None, defaults
+            to all package names in pkg_dependencies_map.
+
+    Raises:
+        ConfigError: If any required dependency is missing from the universe.
+    """
+    available = set(universe_names) if universe_names is not None else set(pkg_dependencies_map.keys())
+    missing_errors: List[str] = [
+        f"  • Package '{pkg_name}' requires: {sorted(set(deps.required_names) - available)}"
+        for pkg_name, deps in sorted(pkg_dependencies_map.items())
+        if set(deps.required_names) - available
+    ]
+    if missing_errors:
+        raise ConfigError(
+            f"Missing required package dependencies among installable packages {sorted(available)}:\n"
+            + "\n".join(missing_errors)
+        )
+
+
+def assert_no_cyclic_package_dependencies(
+    pkg_dependencies_map: Mapping[str, PackageDependencies],
+) -> None:
+    """Validates that package dependencies form a valid DAG with no cyclic dependencies.
+
+    Does NOT fail on missing dependencies (absent dependencies are pruned prior to cycle check).
+
+    Raises:
+        ConfigError: If a cyclic package dependency is detected.
+    """
+    available = set(pkg_dependencies_map.keys())
+    graph: Dict[str, Set[str]] = {
+        pkg_name: {dep.name for dep in deps if dep.name in available}
+        for pkg_name, deps in pkg_dependencies_map.items()
+    }
+    topological_sort(
+        graph,
+        error_cls=ConfigError,
+        cycle_msg_prefix="Cyclic package dependency detected",
+    )
+
+
+def assert_no_broken_dependencies_on_uninstall(
+    packages_to_uninstall: Iterable[str],
+    remaining_metadata: Mapping[str, PackageConfig],
+) -> None:
+    """Validates that uninstalling a set of packages will not break dependencies of remaining installed packages.
+
+    Args:
+        packages_to_uninstall: Iterable of package names scheduled for uninstallation.
+        remaining_metadata: Mapping of package name to PackageConfig for packages that will remain installed.
+
+    Raises:
+        ConfigError: If any remaining package has a required dependency on an uninstalled package.
+    """
+    uninstalling_set = set(packages_to_uninstall)
+    broken_deps: List[str] = [
+        f"  • Remaining package '{pkg}' requires uninstalled package(s): {sorted(set(meta.package.dependencies.required_names) & uninstalling_set)}"
+        for pkg, meta in sorted(remaining_metadata.items())
+        if set(meta.package.dependencies.required_names) & uninstalling_set
+    ]
+    if broken_deps:
+        raise ConfigError(
+            f"Cannot uninstall package(s) {sorted(uninstalling_set)} because remaining installed package(s) depend on them:\n"
+            + "\n".join(broken_deps)
+        )
+
+
 def resolve_package_install_order(
     pkg_dependencies_map: Mapping[str, PackageDependencies],
 ) -> List[str]:
@@ -450,43 +540,32 @@ def resolve_package_install_order(
     the universe of available installable packages (already installed + targeted with enable_install=True),
     builds a dependency DAG and returns a topologically sorted installation order.
 
-    Required dependencies must reference packages present in pkg_dependencies_map.
-    Optional dependencies on absent packages are silently pruned.
+    Absent dependencies (optional or uninstalled) are pruned from the DAG edges.
+    Cycles are detected and raise ConfigError.
 
     Args:
         pkg_dependencies_map: Mapping of package name to PackageDependencies
-            for the full installable package universe.
+            for the installable package universe.
 
     Returns:
         List of package names in valid topological order (prerequisites before dependents).
 
     Raises:
-        ConfigError: If a required dependency references a package not in the universe.
         ConfigError: If a cyclic package dependency is detected.
     """
     available = set(pkg_dependencies_map.keys())
 
-    # 1. Validate required dependencies exist in the available universe
-    for pkg_name, deps in pkg_dependencies_map.items():
-        for req_name in deps.required_names:
-            if req_name not in available:
-                raise ConfigError(
-                    f"Package '{pkg_name}' has a required dependency on '{req_name}', "
-                    f"but '{req_name}' is not among installable packages: "
-                    f"{sorted(available)}"
-                )
-
-    # 2. Build dependency graph: graph[pkg] = set of prerequisite package names
+    # Build dependency graph: graph[pkg] = set of prerequisite package names
     graph: Dict[str, Set[str]] = {
         pkg_name: {
             dep.name
             for dep in deps
-            if dep.name in available  # prune optional absent deps
+            if dep.name in available  # prune absent deps
         }
         for pkg_name, deps in pkg_dependencies_map.items()
     }
 
-    # 3. Kahn's algorithm via generic topological_sort
+    # Kahn's algorithm via generic topological_sort
     return topological_sort(
         graph,
         error_cls=ConfigError,
@@ -494,24 +573,32 @@ def resolve_package_install_order(
     )
 
 
-def assert_no_cyclic_package_dependencies(
+def resolve_package_uninstall_order(
     pkg_dependencies_map: Mapping[str, PackageDependencies],
-) -> None:
-    """Validates that package dependencies form a valid DAG with no cycles or missing required deps.
+) -> List[str]:
+    """Resolves topological uninstallation order (reverse of installation order).
 
-    Read-only validation guard that delegates directly to resolve_package_install_order
-    and discards the return value.
+    Packages that depend on other packages are uninstalled first; prerequisite packages
+    are uninstalled last. Missing external dependencies are pruned automatically.
+
+    Args:
+        pkg_dependencies_map: Mapping of package name to PackageDependencies.
+
+    Returns:
+        List of package names in reverse topological order (dependents before prerequisites).
 
     Raises:
-        ConfigError: If a required dependency is missing or a cycle is detected.
+        ConfigError: If a cyclic package dependency is detected.
     """
-    resolve_package_install_order(pkg_dependencies_map)
+    forward_order = resolve_package_install_order(pkg_dependencies_map)
+    return list(reversed(forward_order))
 
 
 def resolve_ordered_packages(
     target_metadata: Mapping[str, PackageConfig],
     state_registry: StateRegistry,
     workspace_config: WorkspaceConfig,
+    ignore_missing_dependencies: bool = False,
 ) -> List[str]:
     """Resolves topologically sorted package order for a targeted batch against the full package universe.
 
@@ -524,13 +611,15 @@ def resolve_ordered_packages(
         target_metadata: Mapping of package name to PackageConfig for targeted packages being staged or deployed.
         state_registry: Active StateRegistry for discovering already-installed packages.
         workspace_config: The workspace configuration instance.
+        ignore_missing_dependencies: If False, validates that all required dependencies exist in universe.
 
     Returns:
         List of package names in valid topological order (prerequisites before dependents),
         restricted to the targeted packages.
 
     Raises:
-        ConfigError: If a required dependency is missing from the universe or cyclic dependency detected.
+        ConfigError: If a required dependency is missing from the universe (when ignore_missing_dependencies is False)
+            or cyclic dependency detected.
     """
     if not target_metadata:
         return []
@@ -551,6 +640,10 @@ def resolve_ordered_packages(
 
     full_universe = {**installed_universe, **target_metadata}
     full_deps = {pkg: meta.package.dependencies for pkg, meta in full_universe.items()}
+
+    # Check missing required dependencies at the beginning before resolving DAG order
+    if not ignore_missing_dependencies:
+        assert_required_package_dependencies_exist(full_deps)
 
     sorted_universe = resolve_package_install_order(full_deps)
     return list(filter(will_installed_names.__contains__, sorted_universe))

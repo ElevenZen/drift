@@ -167,12 +167,15 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
 *   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with 1:1 fidelity. The only permitted differences are synthetic files generated dynamically during staging (`DRIFT_GENERATED_FILES`, such as `.stow-local-ignore`). All other files (payloads, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
+*   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_ordered_packages`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
 *   **Mechanism**: Computes exactly which files and packages require redeployment. Directly deletes removed files from `install/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
 
 ### Primitive 5: Install Repo Deployment [Low-level: `drift apply`]
-Applies changes to the physical active system:
+Applies changes to the physical active system across a two-phase architecture:
+*   **Pre-Flight Inspection (`prepare_install_deployment`)**: Validates readiness guards (`assert_packages_deployment_ready`), verifies hook file existence, checks escalation privileges, audits cross-package path collisions, and resolves prerequisite topological deploy order (`InstallPlan`).
+*   **Execution Phase (`execute_install_deployment`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, ignore_missing_dependencies)`.
 *   **Collision Guard**: Backs up colliding physical files to `backup/<package>/overwritten/`.
 *   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment.
 *   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
@@ -183,32 +186,43 @@ Applies changes to the physical active system:
 Locks the deployed configurations and `state.toml` into the local state database with an automated commit.
 
 ### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
-Removes or detaches a package from the system:
-1.  **Standard Uninstall Mode (Default)**:
+Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, ignore_missing_dependencies, flags)`:
+1.  **Dependency Safeguards & Reverse Topological Order**:
+    *   **Pre-Flight Broken Dependency Guard**: Invokes `assert_no_broken_dependencies_on_uninstall` to verify that remaining installed packages do not depend on any targeted packages (bypassed if `force=True` or `ignore_missing_dependencies=True`).
+    *   **Reverse Topological Order**: Resolves `resolve_package_uninstall_order` so dependent packages are uninstalled before prerequisites, guaranteeing cleanup hooks execute while prerequisite configurations remain intact.
+    *   **Graceful Missing Directory Handling**: If a package's directory is missing in `install/`, Drift emits a warning and gracefully removes the record from `state.toml` without crashing.
+2.  **Standard Uninstall Mode (Default)**:
     *   **De-stow or Delete**: Unlinks symlinks or deletes physical files.
     *   **Rollback Collision Guard**: Restores original host files backed up in `backup/<package>/overwritten/`.
     *   **Update Registry**: Removes the package from the state database (`install/state.toml`) and commits uninstallation.
-2.  **Detach/Eject Mode (`--detach`)**:
+3.  **Detach/Eject Mode (`--detach`)**:
     *   **Keep Configuration**: Stops managing this package via Drift, but preserves the current configuration files active on the system (e.g. freezing them as permanent configurations).
     *   **Symlink to Copy Conversion**: If the package was installed using `stow` (symlinking), the engine recursively iterates through the deployed files, removes the symlink, and copies the physical file counterpart from `install/<pkg>/` to the active host target path.
     *   **Backups Kept Intact**: Leaves the user's historical original backups inside `backup/<pkg>/overwritten/` completely untouched (does not restore them).
     *   **Clean Database Decouple**: Unregisters the package from `state.toml` and deletes the local `install/<pkg>` directory, fully decoupling the repository from the active host system without deleting configurations.
 
 ### Primitive 8: Rollback Recovery [High-level: `drift rollback`]
-Restores the system configuration and the local state database to the last known-clean, committed state after a midway failure. Resets `install/` to HEAD, purges untracked files via `git clean -fd`, and executes a Full Package Redeploy with `force=True`.
+Restores system configurations and the local state database to the last clean, committed state after an aborted or failed deployment:
+*   **Unified Reverse Topological Order**: Executes a single unified `resolve_package_uninstall_order` across all rollback candidate packages.
+*   **Dispatch by Classification**: Dispatches committed packages to redeployment (`rollback_redeploy_committed_package`) and uncommitted first-time packages to uninstallation (`rollback_uninstalled_first_time_package`) one-by-one in ordered sequence.
+*   **State Reset**: Resets `install/` to HEAD, purges untracked files via `git clean -fd`, and redeploys committed packages with `force=True`.
 
 ### Primitive 9: Workspace Garbage Collection [High-level: `drift gc`]
-Identifies and cleans up workspace anomalies, orphaned packages, and zombie database directories across 3 structured stages:
+Identifies and cleans up workspace anomalies, orphaned packages, zombie database directories, and ghost registry records across 3 structured stages:
 1.  **Orphan Package Uninstallation (Stage 1)**:
     *   Scans `install/state.toml` for packages marked as `"installed"`.
     *   Cross-references against `config/drift_workspace.toml` (`is_package_enabled(pkg)`). Packages present in state but disabled or removed from configuration declarations are identified as *orphans*.
-    *   Executes **Primitive 7 (Uninstall)** with `force=True`:
+    *   Executes **Primitive 7 (Uninstall)** with `UninstallConfig(force=True, dry_run=dry_run, flags=flags)`:
         *   Triggers package `pre_uninstall` and `post_uninstall` lifecycle hooks (unless `--no-hooks` is active).
         *   Unlinks symlinks or deletes physical files from active host targets.
         *   Restores original backed-up host files from `backup/<package>/overwritten/`.
         *   Removes `install/<pkg>/` and prunes empty `backup/<pkg>/` directories.
-        *   Deletes package records from `install/state.toml` and commits uninstallation to the `install/` Git repository.
-2.  **Database Folder Purge (Stage 2 - `render/` and `install/`)**:
+        *   Deletes package records from `install/state.toml`.
+2.  **Ghost Package Registry Purge (Stage 1b)**:
+    *   Scans `install/state.toml` for packages whose directories in `install/` are missing on disk.
+    *   Removes ghost records from `StateRegistry` and saves `state.toml`, committing the cleanup to Git.
+3.  **Database Folder Purge (Stage 2 - `render/` and `install/`)**:
+
     *   **`render/` Purge Rules (`purge_render_folders`)**:
         *   Scans visible subdirectories in `render/` (ignoring `.git`, `config/` via `CONFIG_DIR_NAME`, and `FORBIDDEN_PACKAGE_NAMES`).
         *   Purges a package directory if:
@@ -659,6 +673,17 @@ target_directory = "~/.config/example"
 # Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
 # target_directory_windows = "%LOCALAPPDATA%/example"
 
+# ---------------------------------------------------------------------
+# Inter-Package Dependencies (Topological Ordering & Prerequisite Guards)
+# ---------------------------------------------------------------------
+# Dependencies can be required (default, optional = false) or optional (ordering-only).
+# Inline list syntax (strings or inline tables):
+# dependencies = ["base", { name = "git" }, { name = "nodejs", optional = true }]
+# Or array-of-tables syntax:
+# [[package.dependencies]]
+# name = "python"
+# optional = true
+
 # Optional subfolder within src/<package_name>/ to render and deploy (defaults to ".").
 # If specified, only files in this subfolder are compiled and deployed to the host.
 # source_directory = "dotfiles"
@@ -835,6 +860,98 @@ These variables are active during:
 3.  **Physical Deployment Operations**.
 
 Upon completion of the scoped block, `env_resolve_scope` automatically unloads the variables and restores the original environment snapshot, guaranteeing clean-room environment isolation between packages.
+
+### D. Inter-Package Dependencies & Topological DAG Lifecycle Orchestration
+
+To maintain system integrity and predictable execution order across modular configurations, Drift allows packages to declare explicit inter-package dependencies. Dependencies govern the execution order across the entire lifecycle — staging (Primitive 4), physical deployment (Primitive 5), uninstallation (Primitive 7), and rollback recovery (Primitive 8) — while enforcing prerequisite presence guarantees.
+
+#### 1. Configuration Schema & Declarative Syntax
+Dependencies are declared inside `drift_package.toml` within the `[package]` section using either an inline list or an array of tables:
+
+*   **Syntax 1: Inline List (Strings or Inline Tables)**:
+    ```toml
+    [package]
+    name = "neovim"
+    dependencies = ["base", { name = "git" }, { name = "nodejs", optional = true }]
+    ```
+*   **Syntax 2: Array of Tables (`[[package.dependencies]]`)**:
+    ```toml
+    [[package.dependencies]]
+    name = "python"
+    optional = true
+    ```
+*   **Syntax Combination**: Packages can freely combine inline lists and array of tables; Drift merges them into a single normalized dependency list during ingestion.
+*   **String Shorthand**: Specifying a bare string `"base"` is shorthand for `{ name = "base", optional = false }`.
+*   **Ingestion Validation**: During configuration loading, Drift rejects immediate self-dependencies (`pkg` depending on `pkg`), duplicate dependency declarations for the same package name, and unknown keys under dependency tables with a descriptive `ConfigError`.
+
+#### 2. Dependency Semantics: Required vs. Optional
+Dependencies are categorized into two distinct operational semantics:
+
+*   **Required Dependencies (`optional = false`, Default)**:
+    *   The referenced package **must exist** in the active package universe (either already recorded as installed in `install/state.toml` or targeted for deployment in the current transaction with `enable_install = true`).
+    *   The prerequisite package must be staged and deployed **before** the declaring package.
+    *   If a required dependency is missing from the available universe, Drift immediately halts during pre-flight assertions before any physical file operations are executed.
+    *   **Bypass Option**: If a user needs to bypass missing prerequisite errors (e.g., during partial recovery or standalone testing), passing `--force` or setting `ignore_missing_dependencies = true` in `InstallConfig` / `UninstallConfig` bypasses the check.
+*   **Optional Dependencies (`optional = true`)**:
+    *   Acts strictly as an **ordering constraint**.
+    *   If the named prerequisite exists in the active package universe, Drift guarantees it is staged and installed prior to the declaring package.
+    *   If the named prerequisite is absent from the universe, the dependency edge is silently pruned without raising errors.
+
+#### 3. Domain Data Models
+*   [`PackageDependency`](../src/drift/config/package_config.py): Encapsulates a single dependency link (`name: str`, `optional: bool`).
+*   [`PackageDependencies`](../src/drift/config/package_config.py): Strongly-typed collection container wrapping `items: List[PackageDependency]`. Provides helper properties:
+    *   `required_names`: `Set[str]` of required package dependencies.
+    *   `optional_names`: `Set[str]` of optional package dependencies.
+    *   `all_names`: `Set[str]` of all declared package dependencies.
+
+#### 4. Decoupled Assertion Guards & Topological Sorting Primitives
+Drift enforces a strict separation between read-only validation guards and pure topological DAG sorting algorithms within [`package_assertions.py`](../src/drift/primitives/package_assertions.py):
+
+*   [`assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names=None)`](../src/drift/primitives/package_assertions.py):
+    *   Read-only pre-flight guard validating that all required dependencies exist within the available package universe.
+    *   Audits all packages in the batch and aggregates all missing dependencies into a single, multi-line diagnostic error before raising `ConfigError`.
+*   [`assert_no_cyclic_package_dependencies(pkg_dependencies_map)`](../src/drift/primitives/package_assertions.py):
+    *   Read-only DAG assertion guard verifying the dependency graph contains no circular dependencies.
+    *   Prunes absent dependency edges before sorting, testing strictly for cycles without failing on missing dependencies.
+*   [`resolve_package_install_order(pkg_dependencies_map) -> List[str]`](../src/drift/primitives/package_assertions.py):
+    *   Pure topological sorter using Kahn's algorithm via generic [`topological_sort[T]`](../src/drift/utils/env_utils.py).
+    *   Prunes absent dependencies and returns package names in valid forward prerequisite order (prerequisites before dependents).
+*   [`resolve_package_uninstall_order(pkg_dependencies_map) -> List[str]`](../src/drift/primitives/package_assertions.py):
+    *   Pure reverse topological sorter returning package names in reverse dependency order (dependents before prerequisites).
+*   [`assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)`](../src/drift/primitives/package_assertions.py):
+    *   Read-only guard for uninstallation. Evaluates packages that will remain installed on the system to verify none of them require any of the packages targeted for uninstallation.
+    *   Aggregates all broken dependency relationships and raises `ConfigError` unless bypassed via `--force` or `ignore_missing_dependencies = true`.
+*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config, ignore_missing_dependencies=False) -> List[str]`](../src/drift/primitives/package_assertions.py):
+    *   Centralized resolution helper that constructs the full package universe (already-installed packages from `state.toml` + target batch).
+    *   Runs `assert_required_package_dependencies_exist` upfront when `not ignore_missing_dependencies`.
+    *   Computes and returns the topologically sorted package sequence. If a package directory is missing from `install/`, it gracefully falls back to a default `PackageConfig(PackageSectionConfig(name=pkg))` representation.
+
+#### 5. Multi-Phase Lifecycle Pipeline Integration
+Inter-package dependencies are orchestrated across every stage of the Drift lifecycle:
+
+*   **Primitive 4: Stage Render to Install**:
+    *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_ordered_packages`, and records the sequence in `StagePlan.ordered_packages`.
+    *   `execute_stage_packages` stages packages in this exact topological order, preserving update sequence for shared install methods (e.g. `STOW`).
+*   **Primitive 5: Install Repo Deployment**:
+    *   `prepare_install_deployment` validates deployment readiness (`assert_packages_deployment_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
+    *   `execute_install_deployment` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy.
+    *   Controlled by strongly-typed `InstallConfig(force, dry_run, flags, ignore_missing_dependencies)`.
+*   **Primitive 7: Uninstall Repo Package**:
+    *   Operates using `UninstallConfig(force, dry_run, detach, ignore_missing_dependencies, flags)`.
+    *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `ignore_missing_dependencies`).
+    *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
+    *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
+*   **Primitive 8: Rollback Recovery**:
+    *   Executes a single unified reverse topological sort (`resolve_package_uninstall_order`) across all candidate packages requiring recovery.
+    *   Iterates through the ordered list one-by-one, dispatching committed packages to redeployment (`rollback_redeploy_committed_package`) and uncommitted first-time packages to uninstallation (`rollback_uninstalled_first_time_package`) with `UninstallConfig(force=True)`.
+*   **Primitive 9: Workspace Garbage Collection**:
+    *   Orphan uninstallation is invoked with `UninstallConfig(force=True)`.
+    *   Stage 1b scans `install/state.toml` for ghost packages (records whose directories in `install/` are missing on disk), removes them from `StateRegistry`, and commits the cleanup to Git.
+
+#### 6. Orthogonality to Template Imports (`[[imports]]`)
+Inter-package dependencies are architecturally orthogonal to the planned template import system (`[[imports]]`):
+*   **Template Imports (`[[imports]]`)**: Operates purely during **render input preparation** (Primitive 2), layering template source files from one package into another before sandbox compilation.
+*   **Package Dependencies (`dependencies`)**: Operates during **staging, deployment, uninstallation, and rollback execution** (Primitives 4, 5, 7, 8), governing topological execution order and prerequisite availability guarantees across distinct packages.
 
 ---
 

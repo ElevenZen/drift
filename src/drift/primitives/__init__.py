@@ -11,8 +11,11 @@ from .package_assertions import (
     assert_packages_target_dirs_valid,
     assert_packages_target_dirs_writable,
     assert_no_cross_package_conflicts,
-    resolve_package_install_order,
+    assert_required_package_dependencies_exist,
     assert_no_cyclic_package_dependencies,
+    assert_no_broken_dependencies_on_uninstall,
+    resolve_package_install_order,
+    resolve_package_uninstall_order,
     resolve_ordered_packages,
 )
 from .stage_repo import (
@@ -38,6 +41,7 @@ from .install_repo import (
 )
 from .uninstall_repo import (
     run_primitive_7_uninstall_packages,
+    UninstallConfig,
 )
 from .rollback_repo import (
     run_primitive_8_rollback_recovery,
@@ -102,8 +106,11 @@ __all__ = [
     "assert_packages_target_dirs_valid",
     "assert_packages_target_dirs_writable",
     "assert_no_cross_package_conflicts",
-    "resolve_package_install_order",
+    "assert_required_package_dependencies_exist",
     "assert_no_cyclic_package_dependencies",
+    "assert_no_broken_dependencies_on_uninstall",
+    "resolve_package_install_order",
+    "resolve_package_uninstall_order",
     "resolve_ordered_packages",
     "assert_packages_stage_ready",
     "assert_packages_deployment_ready",
@@ -117,6 +124,7 @@ __all__ = [
     "deploy_one_package",
     "deploy_one_package_impl",
     "run_primitive_7_uninstall_packages",
+    "UninstallConfig",
     "run_primitive_8_rollback_recovery",
     "run_primitive_9_purge_workspace_garbage",
     "run_primitive_10_create_new_package",

@@ -237,7 +237,13 @@ def execute_render(drift_root: Path, package_names: Sequence[str] = (), json_mod
         raise RuntimeError(res.error_message or "Template rendering failed.")
 
 
-def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False) -> None:
+def execute_stage(
+    drift_root: Path,
+    package_names: Sequence[str] = (),
+    force: bool = False,
+    json_mode: bool = False,
+    ignore_missing_dependencies: bool = False,
+) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
     from ..core.result_models import StageResult
@@ -245,7 +251,12 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="stage")
     workspace_config = load_workspace_config_default(drift_root)
-    changes = run_primitive_4_stage_render_to_install(workspace_config, target_pkgs=package_names, force=force)
+    changes = run_primitive_4_stage_render_to_install(
+        workspace_config,
+        target_pkgs=package_names,
+        force=force,
+        ignore_missing_dependencies=ignore_missing_dependencies,
+    )
     if json_mode:
         pkg_names = list(changes.keys())
         print(StageResult(packages_changed=pkg_names).to_json())
@@ -270,7 +281,14 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
                 logger.info(f"  [-] {file.as_posix()} (metadata/hook)")
 
 
-def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
+def execute_apply(
+    drift_root: Path,
+    package_names: Sequence[str] = (),
+    force: bool = False,
+    json_mode: bool = False,
+    no_hooks: bool = False,
+    ignore_missing_dependencies: bool = False,
+) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
@@ -286,6 +304,7 @@ def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bo
             resolve_symlinks=True,
             force=force,
             flags=flags,
+            ignore_missing_dependencies=ignore_missing_dependencies,
         ),
     )
     if json_mode:
@@ -360,23 +379,28 @@ def execute_uninstall(
     dry_run: bool = False,
     detach: bool = False,
     json_mode: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """Core function to uninstall or detach packages, shared by both CLI backends."""
-    from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages
+    from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="uninstall")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    res = run_primitive_7_uninstall_packages(
-        workspace_config,
-        package_names=package_names,
+    config = UninstallConfig(
         force=force,
         dry_run=dry_run,
         detach=detach,
         flags=flags,
+        ignore_missing_dependencies=ignore_missing_dependencies,
+    )
+    res = run_primitive_7_uninstall_packages(
+        workspace_config,
+        package_names=package_names,
+        config=config,
     )
     if json_mode:
         print(res.to_json())
@@ -541,7 +565,8 @@ def execute_deploy(
     force: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
-    redeploy: bool = False
+    redeploy: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..primitives.deploy_repo import run_primitive_deploy_pipeline_with_error_handling
@@ -557,6 +582,7 @@ def execute_deploy(
         force=force,
         flags=flags,
         redeploy=redeploy,
+        ignore_missing_dependencies=ignore_missing_dependencies,
     )
     if json_mode:
         print(res.to_json())

@@ -176,6 +176,63 @@ class TestWorkspaceGc(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
+    def test_gc_purges_ghost_packages_from_state_registry(self) -> None:
+        """Verifies that ghost packages (in state.toml but missing directory in install/) are purged from state."""
+        from drift.core.state_registry import StateRegistry, PackageState, load_state_registry
+
+        # Setup active package with valid directory
+        normal_pkg = "pkg_normal"
+        (self.source_dir / normal_pkg).mkdir(parents=True, exist_ok=True)
+        (self.source_dir / normal_pkg / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.render_dir / normal_pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / normal_pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        (self.install_dir / normal_pkg / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.install_dir / normal_pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\n", encoding="utf-8")
+        self.workspace_config.packages_enable[normal_pkg] = True
+
+        # Ghost package: registered in state.toml, but has NO directory in install/
+        ghost_pkg = "pkg_ghost"
+        self.workspace_config.packages_enable[ghost_pkg] = True
+
+        state_file = self.install_dir / "state.toml"
+        registry = StateRegistry(
+            packages={
+                normal_pkg: PackageState(state="installed"),
+                ghost_pkg: PackageState(state="installed"),
+            },
+            state_file=state_file,
+        )
+        registry.save()
+
+        result = run_primitive_9_purge_workspace_garbage(self.workspace_config)
+        self.assertEqual(result.status, "SUCCESS")
+
+        reloaded = load_state_registry(state_file)
+        self.assertIn(normal_pkg, reloaded.packages)
+        self.assertNotIn(ghost_pkg, reloaded.packages)
+
+    def test_gc_dry_run_preserves_ghost_packages_in_state_registry(self) -> None:
+        """Verifies that dry-run mode does not purge ghost packages from state.toml."""
+        from drift.core.state_registry import StateRegistry, PackageState, load_state_registry
+
+        ghost_pkg = "pkg_ghost_dry"
+        self.workspace_config.packages_enable[ghost_pkg] = True
+
+        state_file = self.install_dir / "state.toml"
+        registry = StateRegistry(
+            packages={
+                ghost_pkg: PackageState(state="installed"),
+            },
+            state_file=state_file,
+        )
+        registry.save()
+
+        result = run_primitive_9_purge_workspace_garbage(self.workspace_config, dry_run=True)
+        self.assertEqual(result.status, "SUCCESS")
+
+        reloaded = load_state_registry(state_file)
+        self.assertIn(ghost_pkg, reloaded.packages)
+
 
 if __name__ == "__main__":
     unittest.main()

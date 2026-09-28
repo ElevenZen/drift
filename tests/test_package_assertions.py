@@ -32,8 +32,11 @@ from drift.primitives.package_assertions import (
     assert_packages_target_dirs_valid,
     assert_packages_target_dirs_writable,
     assert_no_cross_package_conflicts,
-    resolve_package_install_order,
+    assert_required_package_dependencies_exist,
     assert_no_cyclic_package_dependencies,
+    assert_no_broken_dependencies_on_uninstall,
+    resolve_package_install_order,
+    resolve_package_uninstall_order,
     resolve_ordered_packages,
 )
 
@@ -403,13 +406,31 @@ class TestPackageAssertions(unittest.TestCase):
         order = resolve_package_install_order(deps_map)
         self.assertEqual(order, ["pkg_a", "pkg_b", "pkg_c"])
 
-    def test_resolve_package_install_order_missing_required(self) -> None:
+    def test_assert_required_package_dependencies_exist_success(self) -> None:
         deps_map = {
-            "pkg_b": PackageDependencies(items=[PackageDependency(name="missing")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+            "pkg_a": PackageDependencies(items=[]),
+        }
+        # Should not raise
+        assert_required_package_dependencies_exist(deps_map)
+
+    def test_assert_required_package_dependencies_exist_missing(self) -> None:
+        deps_map = {
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="missing_pkg")]),
+            "pkg_c": PackageDependencies(items=[PackageDependency(name="missing_pkg2")]),
         }
         with self.assertRaises(ConfigError) as ctx:
-            resolve_package_install_order(deps_map)
-        self.assertIn("missing", str(ctx.exception))
+            assert_required_package_dependencies_exist(deps_map)
+        self.assertIn("missing_pkg", str(ctx.exception))
+        self.assertIn("missing_pkg2", str(ctx.exception))
+
+    def test_resolve_package_install_order_prunes_absent_deps(self) -> None:
+        # resolve_package_install_order is a pure sorter and prunes absent dependencies
+        deps_map = {
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="absent_dep")]),
+        }
+        order = resolve_package_install_order(deps_map)
+        self.assertEqual(order, ["pkg_b"])
 
     def test_resolve_package_install_order_prune_optional(self) -> None:
         deps_map = {
@@ -427,12 +448,26 @@ class TestPackageAssertions(unittest.TestCase):
             resolve_package_install_order(deps_map)
         self.assertIn("Cyclic package dependency detected", str(ctx.exception))
 
+    def test_resolve_package_uninstall_order(self) -> None:
+        # If pkg_c depends on pkg_b, and pkg_b depends on pkg_a:
+        # Forward install order is: pkg_a -> pkg_b -> pkg_c
+        # Reverse uninstall order must be: pkg_c -> pkg_b -> pkg_a
+        deps_map = {
+            "pkg_c": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+            "pkg_a": PackageDependencies(items=[]),
+        }
+        uninstall_order = resolve_package_uninstall_order(deps_map)
+        self.assertEqual(uninstall_order, ["pkg_c", "pkg_b", "pkg_a"])
+
     def test_assert_no_cyclic_package_dependencies(self) -> None:
         valid_deps = {
             "pkg_a": PackageDependencies(items=[]),
             "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+            # Missing dependency should NOT cause cycle assertion to fail
+            "pkg_c": PackageDependencies(items=[PackageDependency(name="missing_external")]),
         }
-        # Should not raise
+        # Should not raise on valid DAG or missing dependencies
         assert_no_cyclic_package_dependencies(valid_deps)
 
         cyclic_deps = {
@@ -440,6 +475,29 @@ class TestPackageAssertions(unittest.TestCase):
         }
         with self.assertRaises(ConfigError):
             assert_no_cyclic_package_dependencies(cyclic_deps)
+
+    def test_assert_no_broken_dependencies_on_uninstall(self) -> None:
+        meta_b = PackageConfig(
+            PackageSectionConfig(
+                name="pkg_b",
+                dependencies=PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+            )
+        )
+        remaining = {"pkg_b": meta_b}
+
+        # Attempting to uninstall pkg_a while pkg_b remains raises ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            assert_no_broken_dependencies_on_uninstall(
+                packages_to_uninstall=["pkg_a"],
+                remaining_metadata=remaining,
+            )
+        self.assertIn("Remaining package 'pkg_b' requires uninstalled package(s): ['pkg_a']", str(ctx.exception))
+
+        # Uninstalling an unrelated package passes without error
+        assert_no_broken_dependencies_on_uninstall(
+            packages_to_uninstall=["pkg_c"],
+            remaining_metadata=remaining,
+        )
 
     def test_resolve_ordered_packages_empty(self) -> None:
         registry = StateRegistry()
@@ -474,6 +532,36 @@ class TestPackageAssertions(unittest.TestCase):
             target_metadata={"pkg_app": meta_target},
             state_registry=registry,
             workspace_config=self.workspace_config,
+        )
+        self.assertEqual(res, ["pkg_app"])
+
+    def test_resolve_ordered_packages_missing_deps_guard_and_bypass(self) -> None:
+        registry = StateRegistry()
+        meta_target = PackageConfig(
+            PackageSectionConfig(
+                name="pkg_app",
+                dependencies=PackageDependencies(items=[
+                    PackageDependency(name="non_existent_dep"),
+                ]),
+            )
+        )
+
+        # By default (ignore_missing_dependencies=False), raises ConfigError
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_ordered_packages(
+                target_metadata={"pkg_app": meta_target},
+                state_registry=registry,
+                workspace_config=self.workspace_config,
+                ignore_missing_dependencies=False,
+            )
+        self.assertIn("non_existent_dep", str(ctx.exception))
+
+        # With ignore_missing_dependencies=True, bypasses missing check and prunes
+        res = resolve_ordered_packages(
+            target_metadata={"pkg_app": meta_target},
+            state_registry=registry,
+            workspace_config=self.workspace_config,
+            ignore_missing_dependencies=True,
         )
         self.assertEqual(res, ["pkg_app"])
 

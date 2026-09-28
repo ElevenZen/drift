@@ -12,11 +12,12 @@ Layer 3: Primitive Entry Point
         2. Classify Packages & Reset Git State:
             is_package_committed_in_install_head [Layer 1]
             reset_install_package_to_head [Layer 1] (git checkout & clean for committed packages)
-        3. Redeploy Committed Packages:
-            rollback_redeploy_committed_package [Layer 2]
+        3. Unified Dependency Resolution:
+            resolve_package_uninstall_order (reverse topological order across all rollback targets)
+        4. Execute Rollback One-by-One in Reverse Order:
+            If committed package: rollback_redeploy_committed_package [Layer 2]
                 run_primitive_5_install_deployment (force=True, resolve_symlinks=True)
-        4. Uninstall First-Time Packages:
-            rollback_uninstalled_first_time_package [Layer 2]
+            If first-time package: rollback_uninstalled_first_time_package [Layer 2]
                 run_primitive_7_uninstall_packages (force=True)
                 git clean -fd -- <pkg>
         5. Restore State Database:
@@ -45,10 +46,12 @@ from pathlib import Path
 from typing import List, Optional, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
+from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.result_models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
 from .install_repo import run_primitive_5_install_deployment, InstallConfig
-from .uninstall_repo import run_primitive_7_uninstall_packages
+from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
+from .package_assertions import resolve_package_uninstall_order
 from ..hooks.lifecycle_hooks import HookExecFlags
 
 logger = logging.getLogger(__name__)
@@ -132,8 +135,7 @@ def rollback_uninstalled_first_time_package(
     uninst_res = run_primitive_7_uninstall_packages(
         workspace_config=workspace_config,
         package_names=[pkg],
-        force=True,
-        flags=flags,
+        config=UninstallConfig(force=True, flags=flags),
     )
     if uninst_res.status != "SUCCESS":
         raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")
@@ -207,16 +209,26 @@ def run_primitive_8_rollback_recovery(
         else:
             packages_to_uninstall.append(pkg)
 
-    # 4. Trigger full redeploy fallback for packages that were committed in HEAD (isolated per package)
-    if packages_to_redeploy:
-        logger.info(f"Executing Full Package Redeploy to restore system files for: {packages_to_redeploy}")
-        for pkg in packages_to_redeploy:
-            rollback_redeploy_committed_package(workspace_config, pkg, flags=flags)
+    # 4. Resolve unified reverse topological order across all packages being rolled back
+    rollback_metadata = {
+        pkg: (
+            PackageConfig.from_install_dir(install_base / pkg, workspace_config)
+            if (install_base / pkg).is_dir()
+            else PackageConfig(PackageSectionConfig(name=pkg))
+        )
+        for pkg in packages_to_rollback
+    }
+    rollback_deps = {pkg: meta.package.dependencies for pkg, meta in rollback_metadata.items()}
+    ordered_rollback = resolve_package_uninstall_order(rollback_deps)
 
-    # 5. Clean up host system files and directories for first-time packages that failed (isolated per package)
-    if packages_to_uninstall:
-        logger.info(f"Executing uninstallation rollback for first-time package(s): {packages_to_uninstall}")
-        for pkg in packages_to_uninstall:
+    # 5. Dispatch rollback actions one-by-one in reverse topological order
+    redeploy_set = set(packages_to_redeploy)
+    for pkg in ordered_rollback:
+        if pkg in redeploy_set:
+            logger.info(f"Executing Full Package Redeploy to restore system files for: {pkg}")
+            rollback_redeploy_committed_package(workspace_config, pkg, flags=flags)
+        else:
+            logger.info(f"Executing uninstallation rollback for first-time package: {pkg}")
             rollback_uninstalled_first_time_package(workspace_config, pkg, flags=flags)
 
     # 6. Restore the state registry entries

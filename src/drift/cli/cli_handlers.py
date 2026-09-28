@@ -187,14 +187,23 @@ def handle_deploy(
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False,
-    redeploy: bool = False
+    redeploy: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_deploy(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, redeploy=redeploy)
+        execute_deploy(
+            drift_root,
+            pkgs,
+            force=force,
+            json_mode=cli_ctx.json_mode,
+            no_hooks=no_hooks,
+            redeploy=redeploy,
+            ignore_missing_dependencies=ignore_missing_dependencies,
+        )
 
 
 def handle_health(
@@ -218,14 +227,24 @@ def handle_uninstall(
     force: bool = False,
     dry_run: bool = False,
     detach: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_uninstall(drift_root, pkgs, force=force, dry_run=dry_run, detach=detach, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_uninstall(
+            drift_root,
+            pkgs,
+            force=force,
+            dry_run=dry_run,
+            detach=detach,
+            json_mode=cli_ctx.json_mode,
+            no_hooks=no_hooks,
+            ignore_missing_dependencies=ignore_missing_dependencies,
+        )
 
 
 def handle_rollback(
@@ -373,28 +392,43 @@ def handle_render_commit(
 def handle_stage(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
-    force: bool = False
+    force: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_stage(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode)
+        execute_stage(
+            drift_root,
+            pkgs,
+            force=force,
+            json_mode=cli_ctx.json_mode,
+            ignore_missing_dependencies=ignore_missing_dependencies,
+        )
 
 
 def handle_apply(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> None:
     """(Low-Level) Apply configurations from state database to active host system."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_apply(drift_root, pkgs, force=force, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_apply(
+            drift_root,
+            pkgs,
+            force=force,
+            json_mode=cli_ctx.json_mode,
+            no_hooks=no_hooks,
+            ignore_missing_dependencies=ignore_missing_dependencies,
+        )
 
 
 def handle_install_commit(

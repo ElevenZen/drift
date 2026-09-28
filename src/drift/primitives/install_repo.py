@@ -170,6 +170,7 @@ class InstallConfig:
     resolve_symlinks: bool = True
     force: bool = False
     redeploy: bool = True
+    ignore_missing_dependencies: bool = False
     package_changes: Optional[Mapping[str, PackageStageChanges]] = None
     flags: Optional[HookExecFlags] = None
 
@@ -1170,6 +1171,7 @@ def prepare_install_deployment(
         target_metadata=pkg_metadata_map,
         state_registry=state_registry,
         workspace_config=workspace_config,
+        ignore_missing_dependencies=(cfg.force or cfg.ignore_missing_dependencies),
     )
 
     return InstallPlan(

@@ -5,6 +5,7 @@ import unittest
 import subprocess
 from pathlib import Path
 
+from unittest.mock import patch
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.core.state_registry import load_state_registry, save_state_registry
@@ -342,6 +343,60 @@ class TestRollback(unittest.TestCase):
         self.assertEqual((self.pkg_a_install / "file.txt").read_text(encoding="utf-8"), "clean content")
         reloaded = load_state_registry(state_file)
         self.assertEqual(reloaded.get_package_state("pkg_a"), "installed")
+
+    @patch("drift.primitives.rollback_repo.rollback_uninstalled_first_time_package")
+    @patch("drift.primitives.rollback_repo.rollback_redeploy_committed_package")
+    def test_rollback_unified_reverse_topological_order(self, mock_redeploy, mock_uninstall) -> None:
+        """Verifies rollback executes in unified reverse topological order across mixed committed and first-time packages."""
+        # Setup:
+        # pkg_a is committed in HEAD (setUp already committed pkg_a)
+        # pkg_b is a first-time package that depends on pkg_a
+        # pkg_c is a first-time package that depends on pkg_b
+        # All three failed midway in 'installing' state
+        pkg_b_install = self.install_dir / "pkg_b"
+        (pkg_b_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_b_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+            '[package]\nname = "pkg_b"\ndependencies = ["pkg_a"]\n',
+            encoding="utf-8",
+        )
+
+        pkg_c_install = self.install_dir / "pkg_c"
+        (pkg_c_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_c_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+            '[package]\nname = "pkg_c"\ndependencies = ["pkg_b"]\n',
+            encoding="utf-8",
+        )
+
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installing")
+        registry.set_package_state("pkg_b", "installing")
+        registry.set_package_state("pkg_c", "installing")
+        save_state_registry(registry)
+
+        call_order = []
+        mock_redeploy.side_effect = lambda ws, pkg, flags=None: call_order.append(("redeploy", pkg))
+        mock_uninstall.side_effect = lambda ws, pkg, flags=None: call_order.append(("uninstall", pkg))
+
+        ws_cfg = WorkspaceConfig(
+            drift_root=self.drift_root,
+            workspace=WorkspaceSectionConfig(default_target_directory=self.system_target_dir),
+            packages_enable={"pkg_a": True, "pkg_b": True, "pkg_c": True},
+            packages_enable_default=False,
+        )
+
+        # Call rollback with random order in arguments: ["pkg_a", "pkg_c", "pkg_b"]
+        res = run_primitive_8_rollback_recovery(ws_cfg, ["pkg_a", "pkg_c", "pkg_b"], force=False)
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Dependency chain: pkg_c -> pkg_b -> pkg_a
+        # Unified reverse topological rollback order must be: pkg_c (uninstall) -> pkg_b (uninstall) -> pkg_a (redeploy)
+        expected_calls = [
+            ("uninstall", "pkg_c"),
+            ("uninstall", "pkg_b"),
+            ("redeploy", "pkg_a"),
+        ]
+        self.assertEqual(call_order, expected_calls)
 
 
 if __name__ == "__main__":

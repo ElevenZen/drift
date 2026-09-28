@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-831%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-961%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -21,6 +21,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
 * 💥 **Mid-Fail Rollback**: If a deployment crashes midway, `drift rollback` safely restores your state database and host files to the last clean committed state.
+* 🔗 **Topological Package Dependencies**: Declare explicit inter-package dependencies (`dependencies = ["pkg_a", "pkg_b"]`) in `drift_package.toml`. Drift automatically constructs a dependency DAG, prevents cycles, orders compilation/deployment topologically, and uninstalls safely in reverse topological order.
 * 🐚 **Interactive Tab-Completions**: Zero-latency native tab-completion for **Bash, Zsh, Fish, and Nushell** with rich inline documentation hints and dynamic workspace package discovery.
 * 📦 **Modular & Pluggable**: Pure standard-library core, customizable render engines with DAG dependency piping, structured machine-readable `--json` output, and zero mandatory external Python dependencies.
 
@@ -456,6 +457,19 @@ Sometimes, you want to stop managing a configuration through a dotfile manager b
 *   **Symlink to Copy Conversion**: If the package was stowed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
 *   **Backups Untouched**: Your historical original system backups inside `backup/<package>/overwritten/` are kept completely intact (not restored or deleted).
 *   **Decoupled Registry**: Cleanly deletes database directories and unregisters the package from `state.toml`, safely letting you "eject" a package on demand.
+
+### 🔗 10. Inter-Package Dependencies & Topological Lifecycle Ordering
+Packages can declare explicit runtime and staging dependencies on other packages using the `dependencies` array in `drift_package.toml`:
+```toml
+# src/zsh/drift_package.toml
+[package]
+name = "zsh"
+dependencies = ["git", "starship", "fzf"]
+```
+*   **Automatic Topological Staging & Deployment**: Drift constructs a directed acyclic graph (DAG) across all enabled packages and sorts them topologically using Kahn's algorithm. Base dependencies are guaranteed to be compiled, staged, and deployed *before* dependent configurations.
+*   **Cycle Detection & Missing Safeguards**: Circular dependencies (`CyclicDependencyError`) and missing prerequisite packages are caught upfront before any filesystem state is altered. When deploying, staging, or applying packages with missing dependencies, pass `--ignore-missing-dependencies` (or `--allow-missing-dependencies`) to bypass the check.
+*   **Reverse Topological Uninstallation**: During package uninstallation (`drift uninstall`), packages are safely decoupled and removed in **reverse topological order**, ensuring dependent packages are dismantled before their underlying requirements.
+*   **Downstream Protection**: Drift verifies that uninstalling a package will not break other installed packages that still depend on it, halting with an actionable error unless `--force` or `--ignore-missing-dependencies` is explicitly provided.
 
 ---
 

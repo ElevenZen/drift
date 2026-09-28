@@ -77,8 +77,41 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **Pure In-Memory Loading**: `load_workspace_config` does not mutate `os.environ` or execute side-effects during config construction; CLI initialization centralized in `prepare_cli_environment`.
 - **Zero Backward Compatibility Burden**: Removed obsolete property wrappers (`packages`, `render_engine_config`, `drift_root_path`, `env_default`, `secrets`) and table parser shims across config classes.
 
-### 8. Test Suite Expansion & Cleanliness
-- Total passing tests expanded to **814/814 tests OK** with zero warnings, zero aliased imports, and comprehensive coverage across all new modules, secret resolution, and environment tiers.
+### 7. Modular Package Assertion Guards & Batch Error Aggregation
+- **Dedicated Assertion Module**: Extracted domain validation predicates and invariant guards into [`package_assertions.py`](../src/drift/primitives/package_assertions.py) (`assert_packages_hooks_exist`, `assert_packages_not_in_midway_state`, `assert_packages_install_dirs_exist`, `assert_packages_target_dirs_valid`, `assert_packages_target_dirs_writable`, `assert_no_cross_package_conflicts`, `assert_packages_stage_ready`, `assert_packages_deployment_ready`).
+- **Standardized `packages` Attribute on Exceptions**: All assertion exceptions now carry a typed `packages: Sequence[str]` field (`HookMissingError`, `MidwayTransactionError`, `PackageInstallDirMissingError`, `TargetPermissionError`, `ConfigError`, `InstallCollisionError`, `CrossPackageCollisionError`).
+- **Streamlined Collision Hierarchy**: Refactored `CrossPackageCollisionError` to inherit directly from `InstallCollisionError` with unified `packages` reporting and eliminated legacy aliases.
+- **Batch Error Collection**: Assertion guards audit the entire package batch, aggregating all conflicting or failing package entries before raising a single unified exception.
+
+### 8. Two-Phase Primitive 5 Decomposition & Generic Topological Sorting
+- **Primitive 5 Decomposition**: Deconstructed monolithic `run_primitive_5_install_deployment` into two discrete, inspectable sub-stages:
+  - `prepare_install_deployment(workspace_config, packages_to_redeploy, config) -> InstallPlan`: Read-only pre-flight audit validating hook readiness, directory permissions, and cross-package path collisions.
+  - `execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`: State-mutating execution phase handling backups, physical deployment, hooks, and state registry tracking.
+- **Strongly Typed Deployment Plans**: Introduced `InstallPlan` and `PackageInstallContext` dataclass models.
+- **Redundant Loading Elimination**: Refactored `deploy_one_package_with_error_wrapping` and `deploy_one_package` to accept `PackageConfig` instances directly instead of repeatedly parsing from `install/`.
+- **Generic Kahn's Algorithm Topological Sort**: Extracted pure, generic `topological_sort[T](graph: Mapping[T, Set[T]], ...)` into [`env_utils.py`](../src/drift/utils/env_utils.py) and streamlined `resolve_env_references` to accept `Mapping[str, str]` without redundant allocations.
+
+### 9. Full-Staged Rollback Scope & Rollback-Eligible State Hygiene
+- **Full Staged Batch Rollback Guarantee**: When Step 4a (`prepare_install_deployment`) fails, all packages staged in Step 3b (`pkgs_to_install`) are designated for rollback. Rolling back all staged packages cleans the uncommitted `install/` Git working tree for both `STOW` and `COPY` packages, permanently preventing subsequent false `🛡️ System drift detected` aborts.
+- **Crash Locks vs. Rollback-Eligible State Separation**:
+  - `MIDWAY_TRANSACTION_STATES` (`{"staging", "installing"}`): Represents in-flight crashing states where disk mutations were interrupted.
+  - `ROLLBACK_ELIGIBLE_STATES` (`{"staging", "staged", "installing"}`): Defines uncommitted transaction states eligible for `drift rollback` without requiring `--force`.
+- **Early Midway Detection in Stage 1 Sentinel Check**: `deploy_repo.py` checks `get_rollback_eligible_packages` before reverse-sync, immediately detecting if a previous deployment left uncommitted `"staged"` packages.
+
+### 10. Error Message Stacking Elimination
+- **Targeted Exception Logging**: Deduplicated nested error propagation using custom exception tagging (`logged: bool`), logging details at the origin site and suppressing redundant outer repetition across command boundaries.
+
+### 11. Fallback TOML Parser Enhancements
+- **Extended TOML Support on Python < 3.11**: Enhanced standard-library fallback parser to support multiline basic (`"""`) and literal (`'''`) strings, inline tables (`{...}`), and array of tables (`[[...]]`) with zero external dependencies.
+
+### 12. Inter-Package Dependency DAG & Lifecycle Ordering
+- **Declarative Dependencies**: Added `dependencies` inline list and `[[package.dependencies]]` array-of-tables syntax with required (default) and optional semantics.
+- **Topological Sorting Across Lifecycle**: Forward prerequisite ordering for staging (Primitive 4) and installation (Primitive 5); reverse topological ordering for multi-package uninstallation (Primitive 7) and unified rollback recovery (Primitive 8).
+- **Pre-Flight Guards & Bypass Flags**: Added `assert_required_package_dependencies_exist`, `assert_no_cyclic_package_dependencies`, and `assert_no_broken_dependencies_on_uninstall`, bypassable via `ignore_missing_dependencies` and `--force`.
+- **`UninstallConfig` & Ghost Package Purge**: Introduced typed `UninstallConfig`, graceful handling for missing install directories, and automatic ghost package purging from `state.toml` in `drift gc` (Primitive 9).
+
+### 13. Test Suite Expansion & Cleanliness
+- Total passing tests expanded to **961/961 tests OK** with zero warnings, comprehensive coverage across dependency DAG ordering, multiline TOML parsing, error boundaries, reverse uninstallation, and ghost package hygiene.
 
 ---
 
@@ -94,6 +127,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 * **Unified Layered Import System (`[[imports]]`)**: Layered overlay mounting for package inheritance, file remounting, and external assets.
 
 ### 🚀 Tier A: High Value & Ergonomic Wins
+* **Package Dependency Declaration & Topological Install Ordering**: Packages declare explicit `dependencies` in `drift_package.toml` with required/optional semantics, enabling install-order guarantees and pre-flight validation.
 * **Command Hooks & Arguments (`shlex`)**: Inline shell commands in hooks without creating wrapper files.
 * **Passive File Triggers (Pacman-style Hooks)**: Directory-watching triggers executed once in a consolidated batch after deployment.
 * **Audit `check=False` & Error Stacking**: Eliminates error masking and redundant multi-line error boxes.
@@ -133,7 +167,9 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **Smarter rollback with WAL.** Current `drift rollback` does `git checkout` + reinstall, but doesn't rollback backup process or other filesystem side effects. Needs a Write-Ahead Log (WAL) that records each filesystem mutation during deployment, enabling precise reversal. This is prerequisite for reliable auto-rollback. (from old roadmap)
 
-- [ ] **Auto-rollback option for critical services.** Add a `auto_rollback = true` option in package config for packages managing services that should not stop for long. If deployment fails midway, automatically revert. Depends on WAL-based rollback. (from old roadmap)
+- [ ] **Auto-rollback option for critical services.** Add a `auto_rollback = true` option in package config for packages managing services that should not stop for long. If deployment fails midway, automatically revert. Depends on WAL-based rollback. (from old roadmap)  
+
+- [ ] **Enhance TOML fallback parser** Use a lexer to parse tokens from toml string instead of scan and split.
 
 - [ ] **Windows file-lock probing.** On Windows, probe file accessibility (can append/open) before installation because of file locks. Needs careful placement relative to `pre_update` hook — if user writes stop-service commands there, probing must happen after the hook. Design the failure semantics: does a failed probe count as deployment failure? How does the user restore service state? (from old roadmap)
 
@@ -160,6 +196,8 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 - [ ] **`drift revert` command.** Quickly revert installed version to a previous Git commit in the install repo, without full rollback semantics. A lighter-weight "undo last deploy." (from old roadmap)
 
 ### Category 3: Config & Rendering Enhancements
+
+- [x] **Package dependency declaration & topological install ordering.** Declarative inter-package dependencies (`dependencies` inline list and `[[package.dependencies]]`) with topological staging/installation, reverse-order uninstallation, and lifecycle guards.
 
 - [ ] **Globbing in `packages.enable` match.** Support glob patterns in workspace config package enablement (e.g., `desktop_* = false`). (from old roadmap)
 

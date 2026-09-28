@@ -371,6 +371,7 @@ def prepare_stage_packages(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
     force: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> StagePlan:
     """Discovers, validates, and prepares packages for staging from render/ to install/.
 
@@ -382,6 +383,7 @@ def prepare_stage_packages(
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to stage, or empty sequence for all active packages.
         force: If True, bypasses checks for midway failed package states and uncommitted install modifications.
+        ignore_missing_dependencies: If True, bypasses missing required package dependency checks.
 
     Returns:
         StagePlan containing validated package metadata map, state registry, and ordered packages.
@@ -431,6 +433,7 @@ def prepare_stage_packages(
         target_metadata=pkg_metadata,
         state_registry=state_registry,
         workspace_config=workspace_config,
+        ignore_missing_dependencies=(force or ignore_missing_dependencies),
     )
 
     return StagePlan(
@@ -526,6 +529,7 @@ def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
     force: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> Dict[str, PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
 
@@ -535,11 +539,17 @@ def run_primitive_4_stage_render_to_install(
         force: If True, bypasses checks for midway failed package states ('staging' or 'installing')
             and ignores uncommitted local modifications in the install/ directory.
             Note: Does NOT bypass 'enable_install = false' package configurations.
+        ignore_missing_dependencies: If True, bypasses missing required package dependency checks.
 
     Returns:
         A dictionary mapping package name to PackageStageChanges objects for all packages with changes.
     """
-    plan = prepare_stage_packages(workspace_config, target_pkgs=target_pkgs, force=force)
+    plan = prepare_stage_packages(
+        workspace_config,
+        target_pkgs=target_pkgs,
+        force=force,
+        ignore_missing_dependencies=ignore_missing_dependencies,
+    )
     if not plan.pkg_metadata:
         return {}
     return execute_stage_packages(

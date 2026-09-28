@@ -54,7 +54,7 @@ class TestIntegration(unittest.TestCase):
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install_deployment
-        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
+        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
         
         pkg = "pkg_stow"
         # Manually enable the package in the loaded config object
@@ -87,7 +87,7 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(install_file.read_text(encoding="utf-8"), "drifted content")
         
         # 5. Uninstall
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
         self.assertFalse(target_file.exists())
         self.assertFalse((self.install_dir / pkg).exists())
 
@@ -97,7 +97,7 @@ class TestIntegration(unittest.TestCase):
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install_deployment
-        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages
+        from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
         
         pkg = "pkg_copy"
         self.workspace_config.packages_enable[pkg] = True
@@ -122,7 +122,7 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(backup_file.read_text(encoding="utf-8"), "original config")
         
         # 4. Uninstall
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], force=True)
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
         
         # Verify restoration
         self.assertTrue(target_file.exists())

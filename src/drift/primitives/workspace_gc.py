@@ -45,7 +45,7 @@ from typing import List, Optional, Sequence, Iterator, Iterable
 
 from ..config.workspace_config import WorkspaceConfig
 from ..core.state_registry import load_state_registry
-from .uninstall_repo import run_primitive_7_uninstall_packages
+from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
 from ..utils.git_utils import commit_repo_changes
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -185,12 +185,29 @@ def run_primitive_9_purge_workspace_garbage(
     uninstalled_orphans = run_primitive_7_uninstall_packages(
         workspace_config, 
         package_names=(), 
-        force=True, 
-        dry_run=dry_run,
-        flags=flags,
+        config=UninstallConfig(force=True, dry_run=dry_run, flags=flags),
     )
     if uninstalled_orphans.status != "SUCCESS":
         raise RuntimeError(uninstalled_orphans.error_message or "Garbage collection orphan uninstallation failed.")
+
+    # --- Part 1b: Purge Ghost Packages from State Registry ---
+    # Registered packages whose directory in install/ is missing
+    state_file = workspace_config.install_path / "state.toml"
+    state_registry = load_state_registry(state_file)
+    ghost_packages = [
+        pkg for pkg in state_registry.packages
+        if not (workspace_config.install_path / pkg).is_dir()
+    ]
+    if ghost_packages:
+        for pkg in ghost_packages:
+            logger.warning(
+                f"⚠️  [GC] Package directory missing in install repo for '{pkg}'. "
+                f"Removing ghost entry from state registry."
+            )
+            if not dry_run:
+                state_registry.remove_package(pkg)
+        if not dry_run:
+            state_registry.save()
 
     # --- Part 2: Database Folder Purge (Disabled packages & zombie folders) ---
     # Purge render/
@@ -218,16 +235,22 @@ def run_primitive_9_purge_workspace_garbage(
                 target_pkgs=render_zombies,
                 repo_name="render repo"
             )
-        if install_zombies:
-            install_commit_msg = f"GC Purge: Removed folder(s) {', '.join(install_zombies)}"
+        if install_zombies or ghost_packages:
+            purge_descs = []
+            if install_zombies:
+                purge_descs.append(f"folder(s) {', '.join(install_zombies)}")
+            if ghost_packages:
+                purge_descs.append(f"ghost package(s) {', '.join(ghost_packages)}")
+            install_commit_msg = f"GC Purge: Removed {'; '.join(purge_descs)}"
+            targets = list(install_zombies)
             commit_repo_changes(
                 workspace_config.install_path,
                 install_commit_msg,
-                target_pkgs=install_zombies,
+                target_pkgs=targets,
                 repo_name="install repo"
             )
     
-    if not uninstalled_orphans and not render_zombies and not install_zombies:
+    if not uninstalled_orphans and not render_zombies and not install_zombies and not ghost_packages:
         logger.info("✨ Workspace is clean. No garbage detected.")
 
     return GcResult(

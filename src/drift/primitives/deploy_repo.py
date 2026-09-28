@@ -169,6 +169,7 @@ def execute_sequential_compile_and_apply(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
     redeploy: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
     logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
@@ -221,6 +222,7 @@ def execute_sequential_compile_and_apply(
             workspace_config,
             target_pkgs=target_pkgs,
             force=force,
+            ignore_missing_dependencies=ignore_missing_dependencies,
         )
     except Exception as e:
         if is_drift_error(e) or is_logged(e):
@@ -270,6 +272,7 @@ def execute_sequential_compile_and_apply(
         redeploy=redeploy,
         package_changes=package_changes,
         flags=hook_flags,
+        ignore_missing_dependencies=ignore_missing_dependencies,
     )
 
     # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
@@ -347,6 +350,7 @@ def run_primitive_deploy_pipeline(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
     redeploy: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply.
 
@@ -359,6 +363,7 @@ def run_primitive_deploy_pipeline(
             Note: Does NOT bypass 'enable_install = false' package configurations.
         flags: Optional HookExecFlags controlling hook execution options.
         redeploy: If True, forces full redeployment of all requested packages regardless of staging delta.
+        ignore_missing_dependencies: If True, bypasses missing required package dependency checks.
 
     Returns:
         DeployResult containing detailed status and deployed packages.
@@ -385,7 +390,12 @@ def run_primitive_deploy_pipeline(
 
     # Stage 2: Deploy Pipeline Execution
     deployed_packages, completed_steps = execute_sequential_compile_and_apply(
-        workspace_config, target_pkgs, force=force, flags=flags, redeploy=redeploy
+        workspace_config,
+        target_pkgs,
+        force=force,
+        flags=flags,
+        redeploy=redeploy,
+        ignore_missing_dependencies=ignore_missing_dependencies,
     )
 
     # Stage 3: Call garbage collection on global deploy
@@ -418,6 +428,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
     redeploy: bool = False,
+    ignore_missing_dependencies: bool = False,
 ) -> DeployResult:
     """Executes the deployment pipeline, catching exceptions and returning a structured DeployResult.
 
@@ -426,6 +437,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
         packages_to_deploy: Specific package name(s) to deploy, or None for all active packages.
         force: If True, bypasses safeguards and proceeds with deployment.
         flags: Optional HookExecFlags controlling hook execution options.
+        ignore_missing_dependencies: If True, bypasses missing required package dependency checks.
 
     Returns:
         DeployResult containing detailed status, deployed packages, or failure details.
@@ -437,6 +449,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             force=force,
             flags=flags,
             redeploy=redeploy,
+            ignore_missing_dependencies=ignore_missing_dependencies,
         )
     except Exception as e:
         err_str = str(e)
