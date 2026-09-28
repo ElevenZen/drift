@@ -59,6 +59,14 @@ When multiple interdependent packages are updated within the same install method
   ...before any dependent package begins its deployment lifecycle.
 * **Reliable Dependency Invariant**: Dependent packages are guaranteed that all prerequisite binaries, libraries, and configuration files are fully updated, linked, and verified on the host system before their own `pre_update` or `post_update` hooks execute.
 
+### 6. Why `drift install` Is Not a Command
+New users frequently expect a `drift install` command due to the `install/` directory name and habits from traditional package managers (`brew install`, `apt install`). However, Drift intentionally does **not** provide a `drift install` command:
+* **The "Stale Pipeline" Ambiguity**: In traditional package managers, `install` is an end-to-end operation (compile source $\rightarrow$ deploy to system). If `drift install` were an alias for `drift apply`, executing `drift install` after modifying templates in `src/` would **not** re-render or stage those changes—it would silently deploy stale files already residing in `install/`.
+* **Explicit Mental Model**:
+  * **Use `drift deploy [pkgs]`** for end-to-end deployment: Compiles templates (`render`), stages deltas (`stage`), and applies configurations to your host system. (This is almost always what you want).
+  * **Use `drift apply [pkgs]`** for low-level primitive control: Applies the files that are already staged in the `install/` state database directly to your host without re-compiling templates.
+If you accidentally run `drift install`, Drift intercepts the call with a helpful guidance stub explaining this distinction.
+
 ---
 
 ## 🏛️ Part 2: The Install Repository (`install/` Zone)

@@ -25,6 +25,7 @@ from .actions import (
     execute_help,
     execute_hook,
     execute_complete,
+    execute_install_stub,
 )
 from ..core.result_models import DiffType
 from ..utils.git_utils import get_drift_root
@@ -457,6 +458,18 @@ def handle_hook(
         execute_hook(drift_root, package, hook_name, json_mode=cli_ctx.json_mode, from_stage=from_stage)
 
 
+def handle_install(
+    ctx: Any,
+    packages: Optional[Sequence[str]] = None,
+    force: bool = False,
+) -> None:
+    """(Didactic Stub) Intercepts 'drift install' and provides guidance."""
+    cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        execute_install_stub(packages=pkgs, json_mode=cli_ctx.json_mode)
+
+
 CLI_HANDLERS: Dict[str, Callable[..., Any]] = {
     "clone": handle_clone,
     "init": handle_init,
@@ -480,4 +493,5 @@ CLI_HANDLERS: Dict[str, Callable[..., Any]] = {
     "apply": handle_apply,
     "install-commit": handle_install_commit,
     "hook": handle_hook,
+    "install": handle_install,
 }

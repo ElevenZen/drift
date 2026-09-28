@@ -41,6 +41,7 @@ Does NOT require a healthy workspace (bypasses assert_workspace_healthy):
   execute_hook            ->     run_primitive_trigger_hook  (operates on install/)
   execute_help            ->     print_help_document        (static docs, no workspace)
   execute_complete        ->     generate_completion_script (static output, no workspace)
+  execute_install_stub    ->     didactic 404 guidance stub (no workspace)
 
 -------------------------------------------------------------------------------
 Workspace Guard Helpers
@@ -815,5 +816,36 @@ def execute_complete(
             print(json.dumps(data, indent=2))
         else:
             print(script)
+
+
+def execute_install_stub(packages: Sequence[str] = (), json_mode: bool = False) -> None:
+    """Provides didactic guidance explaining that 'drift install' does not exist and suggests deploy vs. apply."""
+    import json
+    if json_mode:
+        data = {
+            "status": "ERROR",
+            "error": "'drift install' is not a Drift command.",
+            "hint": "Use 'drift deploy' for end-to-end deployment from source, or 'drift apply' to deploy already-staged files from install/.",
+            "alternatives": {
+                "deploy": "Compiles templates (render), stages deltas (stage), and deploys configurations to your host system.",
+                "apply": "Deploys files that are already staged in the install/ state database to your host system without re-rendering.",
+            },
+        }
+        print(json.dumps(data, indent=2), file=sys.stderr)
+        sys.exit(1)
+
+    message = (
+        "\n"
+        "ℹ️  'drift install' is not a Drift command.\n\n"
+        "Depending on what you want to achieve, you probably want one of the following:\n\n"
+        "  • drift deploy [pkgs]\n"
+        "    End-to-end deployment: Compiles templates (render), stages deltas (stage),\n"
+        "    and applies configurations to your host system. (This is usually what you want).\n\n"
+        "  • drift apply [pkgs]\n"
+        "    Low-level primitive: Deploys files that are already staged in the install/\n"
+        "    state database to your host system without re-rendering.\n"
+    )
+    sys.stderr.write(message)
+    sys.exit(1)
 
 

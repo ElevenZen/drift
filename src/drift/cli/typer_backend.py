@@ -101,8 +101,8 @@ def generate_typer_app(
             continue
         handler_func = handlers[cmd_name]
         command_wrapper = _create_typer_command_wrapper(cmd, handler_func, schema.global_options)
-        # Register on Typer app with explicit command name and help docstring
-        app.command(cmd.name, help=cmd.description)(command_wrapper)
+        # Register on Typer app with explicit command name, help docstring, and hidden flag
+        app.command(cmd.name, help=cmd.description, hidden=cmd.hidden)(command_wrapper)
 
     return app
 

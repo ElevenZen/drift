@@ -48,7 +48,8 @@ def generate_argparse_parser(schema: CompletionSchema) -> argparse.ArgumentParse
     subparsers = parser.add_subparsers(dest="command", help="Subcommands")
 
     for cmd_name, cmd in schema.commands.items():
-        cmd_parser = subparsers.add_parser(cmd.name, help=cmd.description)
+        help_text = argparse.SUPPRESS if cmd.hidden else cmd.description
+        cmd_parser = subparsers.add_parser(cmd.name, help=help_text)
 
         # Positional arguments
         for pos in cmd.positionals:

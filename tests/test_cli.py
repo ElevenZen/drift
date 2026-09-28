@@ -496,6 +496,48 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                         f"Argparse {cmd_name} with {flag} did not pass ignore_missing_dependencies=True",
                     )
 
+    def test_install_command_stub_guidance(self) -> None:
+        """Verifies that 'drift install' prints didactic guidance and exits with code 1."""
+        from drift.cli.argparse_backend import run_argparse_cli
+        from drift.cli.schema import build_completion_schema
+
+        # 1. Schema verifies install is hidden
+        schema = build_completion_schema()
+        self.assertIn("install", schema.commands)
+        self.assertTrue(schema.commands["install"].hidden)
+
+        # 2. Argparse execution prints guidance to stderr and exits 1
+        stderr_capture = StringIO()
+        with patch("sys.stderr", stderr_capture):
+            with self.assertRaises(SystemExit) as ctx:
+                run_argparse_cli(["install", "pkg_a"])
+            self.assertEqual(ctx.exception.code, 1)
+        output = stderr_capture.getvalue()
+        self.assertIn("'drift install' is not a Drift command", output)
+        self.assertIn("drift deploy [pkgs]", output)
+        self.assertIn("drift apply [pkgs]", output)
+
+        # 3. Typer execution prints guidance and exits 1
+        stderr_capture = StringIO()
+        with patch("sys.stderr", stderr_capture):
+            with self.assertRaises(SystemExit) as ctx:
+                main(["install", "pkg_a"])
+            self.assertEqual(ctx.exception.code, 1)
+        output = stderr_capture.getvalue()
+        self.assertIn("'drift install' is not a Drift command", output)
+        self.assertIn("drift deploy [pkgs]", output)
+        self.assertIn("drift apply [pkgs]", output)
+
+        # 4. JSON mode output
+        stderr_capture = StringIO()
+        with patch("sys.stderr", stderr_capture):
+            with self.assertRaises(SystemExit) as ctx:
+                run_argparse_cli(["--json", "install"])
+            self.assertEqual(ctx.exception.code, 1)
+        output = stderr_capture.getvalue()
+        self.assertIn('"status": "ERROR"', output)
+        self.assertIn("'drift install' is not a Drift command.", output)
+
 
 if __name__ == "__main__":
     unittest.main()

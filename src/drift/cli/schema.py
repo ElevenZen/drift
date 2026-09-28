@@ -57,6 +57,7 @@ class CommandSpec:
     description: str
     positionals: List[PositionalSpec] = field(default_factory=list)
     options: List[OptionSpec] = field(default_factory=list)
+    hidden: bool = False
 
 
 @dataclass
@@ -728,6 +729,27 @@ def build_completion_schema() -> CompletionSchema:
                         default=None
                     ),
                 ]
+            ),
+            "install": CommandSpec(
+                name="install",
+                description="(Didactic Guidance) 'drift install' is not a command; use 'drift deploy' or 'drift apply'",
+                hidden=True,
+                positionals=[
+                    PositionalSpec(
+                        name="packages",
+                        description="Optional package name(s)",
+                        source_type=SourceType.DYNAMIC_PACKAGES,
+                        nargs="*",
+                        repeatable=True,
+                        required=False,
+                    )
+                ],
+                options=[
+                    OptionSpec(
+                        flags=["-f", "--force"],
+                        description="Ignored flag for command stub",
+                    ),
+                ],
             ),
         }
     )
