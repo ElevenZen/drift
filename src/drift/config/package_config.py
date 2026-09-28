@@ -14,8 +14,14 @@ Layer 2: Top-Level Package Model Container
         - get_drift_package_facts(): Injected package context variables
 
 Layer 1: Package Metadata & Section Specifications
+    PackageDependency (Dataclass)
+        - Declares a single package dependency with optionality flag
+    PackageDependencies (Dataclass Container)
+        - Encapsulates dependency declarations with validation and inspection helpers
+        - from_list(): Factory constructor from raw TOML lists
+        - required_names, optional_names, all_names: Querying properties
     PackageSectionConfig (Dataclass)
-        - [package] section options (name, target_dir, install_method, etc.)
+        - [package] section options (name, target_dir, install_method, dependencies, etc.)
         - from_dict(): Factory constructor and platform target resolver
 ===============================================================================
 """
@@ -36,6 +42,7 @@ from typing import (
     Mapping,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
     TYPE_CHECKING,
@@ -68,6 +75,86 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PackageDependency:
+    """Declares a dependency on another package for install ordering and prerequisite validation."""
+    name: str
+    optional: bool = False
+
+
+@dataclass
+class PackageDependencies:
+    """Encapsulates package dependency declarations with inspection helpers."""
+    items: List[PackageDependency] = field(default_factory=list)
+
+    @property
+    def required_names(self) -> List[str]:
+        """Names of all non-optional (required) dependencies."""
+        return [dep.name for dep in self.items if not dep.optional]
+
+    @property
+    def optional_names(self) -> List[str]:
+        """Names of all optional dependencies."""
+        return [dep.name for dep in self.items if dep.optional]
+
+    @property
+    def all_names(self) -> List[str]:
+        """Names of all declared dependencies."""
+        return [dep.name for dep in self.items]
+
+    def __iter__(self) -> Iterator[PackageDependency]:
+        return iter(self.items)
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __bool__(self) -> bool:
+        return bool(self.items)
+
+    @classmethod
+    def from_list(cls, raw_deps: Any, package_name: str) -> "PackageDependencies":
+        """Parses and validates a TOML list of dependency strings or tables."""
+        if not isinstance(raw_deps, list):
+            raise ConfigError(f"dependencies must be a list for package '{package_name}'.")
+
+        seen_names: Set[str] = set()
+        parsed: List[PackageDependency] = []
+
+        for i, item in enumerate(raw_deps):
+            if isinstance(item, str):
+                dep_name, dep_optional = item.strip(), False
+                if not dep_name:
+                    raise ConfigError(f"dependencies[{i}] cannot be empty for package '{package_name}'.")
+            elif isinstance(item, dict):
+                dep_name = str(item.get("name") or "").strip()
+                if not dep_name:
+                    raise ConfigError(
+                        f"dependencies[{i}] must have a non-empty string 'name' key for package '{package_name}'."
+                    )
+                dep_optional = parse_bool_value(item.get("optional", False), default=False)
+                known_dep_keys = {"name", "optional"}
+                unknown = set(item.keys()) - known_dep_keys
+                if unknown:
+                    raise ConfigError(
+                        f"Unknown key(s) {unknown} in dependencies[{i}] for package '{package_name}'. "
+                        f"Known keys: {sorted(known_dep_keys)}"
+                    )
+            else:
+                raise ConfigError(
+                    f"dependencies[{i}] must be a string or table for package '{package_name}'."
+                )
+
+            if dep_name == package_name:
+                raise ConfigError(f"Package '{package_name}' cannot depend on itself.")
+            if dep_name in seen_names:
+                raise ConfigError(f"Duplicate dependency '{dep_name}' in package '{package_name}'.")
+
+            seen_names.add(dep_name)
+            parsed.append(PackageDependency(name=dep_name, optional=dep_optional))
+
+        return cls(items=parsed)
+
+
 @dataclass
 class PackageSectionConfig:
     """Represents package-level metadata and behaviors configured inside the [package] section of drift_package.toml."""
@@ -82,6 +169,7 @@ class PackageSectionConfig:
         "fully_controlled_dirs",
         "requirements",
         "hook_file",
+        "dependencies",
         *(f"target_directory_{alias}" for alias in WINDOWS_PLATFORM_ALIASES),
     )
 
@@ -94,6 +182,7 @@ class PackageSectionConfig:
     sudo: bool = False
     fully_controlled_dirs: List[Path] = field(default_factory=list)
     hook_file: Optional[Path] = None
+    dependencies: PackageDependencies = field(default_factory=PackageDependencies)
 
     def __init__(
         self,
@@ -106,6 +195,7 @@ class PackageSectionConfig:
         sudo: bool = False,
         fully_controlled_dirs: Iterable[Path] = (),
         hook_file: Optional[Union[Path, str]] = None,
+        dependencies: Optional[PackageDependencies] = None,
     ) -> None:
         if not isinstance(name, str):
             raise ConfigError(f"Package name must be a string, got {type(name).__name__}")
@@ -123,6 +213,8 @@ class PackageSectionConfig:
             raise ConfigError(f"sudo must be a boolean, got {type(sudo).__name__}")
         if hook_file is not None and not isinstance(hook_file, (str, Path)):
             raise ConfigError(f"hook_file must be a Path or str, got {type(hook_file).__name__}")
+        if dependencies is not None and not isinstance(dependencies, PackageDependencies):
+            raise ConfigError(f"dependencies must be a PackageDependencies instance, got {type(dependencies).__name__}")
 
         self.name = name
         self.source_directory = Path(source_directory) if source_directory else Path(".")
@@ -133,6 +225,7 @@ class PackageSectionConfig:
         self.sudo = sudo
         self.fully_controlled_dirs = list(fully_controlled_dirs) if fully_controlled_dirs else []
         self.hook_file = Path(hook_file) if hook_file is not None else None
+        self.dependencies = dependencies if dependencies is not None else PackageDependencies()
 
     def validate(self) -> None:
         """Validates [package] section configuration values."""
@@ -158,6 +251,8 @@ class PackageSectionConfig:
             raise ConfigError(f"sudo must be a boolean for package '{self.name}'.")
         if not isinstance(self.fully_controlled_dirs, list):
             raise ConfigError(f"fully_controlled_dirs must be a list for package '{self.name}'.")
+        if not isinstance(self.dependencies, PackageDependencies):
+            raise ConfigError(f"dependencies must be a PackageDependencies instance for package '{self.name}'.")
         for d in self.fully_controlled_dirs:
             if not isinstance(d, Path):
                 raise ConfigError(f"fully_controlled_dirs entries must be Path objects for package '{self.name}'.")
@@ -187,6 +282,9 @@ class PackageSectionConfig:
         )
 
         name = str(data.get("name") or package_name)
+
+        raw_deps = data.get("dependencies", [])
+        deps = PackageDependencies.from_list(raw_deps, package_name=name)
 
         fcd = data.get("fully_controlled_dirs", [])
         if isinstance(fcd, str):
@@ -237,6 +335,7 @@ class PackageSectionConfig:
             sudo=parse_bool_value(data.get("sudo", False), default=False),
             fully_controlled_dirs=fcd_list,
             hook_file=resolved_hook_file,
+            dependencies=deps,
         )
         sec.validate()
         return sec

@@ -20,9 +20,9 @@ from .install_repo import (
     run_primitive_5_install_deployment,
     prepare_install_deployment,
     execute_install_deployment,
-    DeployPlan,
+    InstallPlan,
     run_primitive_6_commit_install_repo,
-    DeployOptions,
+    InstallConfig,
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -248,6 +248,7 @@ def execute_sequential_compile_and_apply(
             workspace_config,
             pkg_metadata=stage_plan.pkg_metadata,
             state_registry=stage_plan.state_registry,
+            ordered_packages=stage_plan.ordered_packages,
         )
         completed_steps.append(CompletedStep(3, "sandbox_staging"))
     except Exception as e:
@@ -263,7 +264,7 @@ def execute_sequential_compile_and_apply(
         logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
         return [], completed_steps
 
-    deploy_options = DeployOptions(
+    install_config = InstallConfig(
         resolve_symlinks=True,
         force=force,
         redeploy=redeploy,
@@ -274,10 +275,10 @@ def execute_sequential_compile_and_apply(
     # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
     failed_step = "Step 4 (Deployment Pre-flight)"
     try:
-        deploy_plan = prepare_install_deployment(
+        install_plan = prepare_install_deployment(
             workspace_config,
             packages_to_redeploy=pkgs_to_install,
-            options=deploy_options,
+            config=install_config,
         )
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), pkgs_to_install)
@@ -291,7 +292,7 @@ def execute_sequential_compile_and_apply(
         logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
         install_res = execute_install_deployment(
             workspace_config,
-            plan=deploy_plan,
+            plan=install_plan,
         )
         completed_steps.append(CompletedStep(4, "physical_install"))
     except HookExecutionError as e:

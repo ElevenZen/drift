@@ -40,6 +40,19 @@ Pre-flight Assertion Guards:
         * Aggregates all intra-batch and inter-package conflicts across the workspace.
         * Raises CrossPackageCollisionError(packages=[...], conflicts=...) if any collisions are detected.
 
+    - resolve_package_install_order(pkg_dependencies_map)
+        * Resolves topological install order from package dependency declarations.
+        * Validates required dependencies exist in universe and prunes absent optional dependencies.
+        * Returns package names in topological order using Kahn's algorithm.
+
+    - assert_no_cyclic_package_dependencies(pkg_dependencies_map)
+        * Validates that package dependencies form a valid DAG with no cycles or missing required deps.
+        * Delegates directly to resolve_package_install_order.
+
+    - resolve_ordered_packages(target_metadata, state_registry, workspace_config)
+        * Assembles the full dependency universe combining targeted packages with installed packages in StateRegistry.
+        * Resolves global topological order and filters to return ordered targeted packages.
+
 -------------------------------------------------------------------------------
 Layers:
     Layer 1: Package-level Pre-flight Assertion Primitives
@@ -50,15 +63,32 @@ Layers:
         assert_packages_target_dirs_valid
         assert_packages_target_dirs_writable
         assert_no_cross_package_conflicts
+        resolve_package_install_order
+        assert_no_cyclic_package_dependencies
+        resolve_ordered_packages
 ==============================================================================="""
 
 import shlex
 import collections
 import itertools
 from pathlib import Path
-from typing import Union, Iterable, Sequence, Mapping, Dict, List, Tuple, Optional
+from typing import (
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Sequence,
+    Set,
+    Tuple,
+    Union,
+)
 
-from ..config.package_config import PackageConfig
+from ..config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageSectionConfig,
+)
 from ..config.workspace_config import WorkspaceConfig
 from ..core.ignore import DriftIgnore
 from ..core.state_registry import StateRegistry
@@ -75,6 +105,7 @@ from ..core.exceptions import (
 from ..utils.git_utils import has_uncommitted_modifications
 from ..utils.path_utils import is_relative_to, resolve_target_path
 from ..utils.file_ops import assert_writable
+from ..utils.env_utils import topological_sort
 
 
 def assert_packages_hooks_exist(
@@ -408,3 +439,119 @@ def assert_no_cross_package_conflicts(
         packages=conflicting_packages,
         conflicts=conflicts,
     )
+
+
+def resolve_package_install_order(
+    pkg_dependencies_map: Mapping[str, PackageDependencies],
+) -> List[str]:
+    """Resolves topological install order from package dependency declarations.
+
+    Given a mapping of {package_name: PackageDependencies} representing
+    the universe of available installable packages (already installed + targeted with enable_install=True),
+    builds a dependency DAG and returns a topologically sorted installation order.
+
+    Required dependencies must reference packages present in pkg_dependencies_map.
+    Optional dependencies on absent packages are silently pruned.
+
+    Args:
+        pkg_dependencies_map: Mapping of package name to PackageDependencies
+            for the full installable package universe.
+
+    Returns:
+        List of package names in valid topological order (prerequisites before dependents).
+
+    Raises:
+        ConfigError: If a required dependency references a package not in the universe.
+        ConfigError: If a cyclic package dependency is detected.
+    """
+    available = set(pkg_dependencies_map.keys())
+
+    # 1. Validate required dependencies exist in the available universe
+    for pkg_name, deps in pkg_dependencies_map.items():
+        for req_name in deps.required_names:
+            if req_name not in available:
+                raise ConfigError(
+                    f"Package '{pkg_name}' has a required dependency on '{req_name}', "
+                    f"but '{req_name}' is not among installable packages: "
+                    f"{sorted(available)}"
+                )
+
+    # 2. Build dependency graph: graph[pkg] = set of prerequisite package names
+    graph: Dict[str, Set[str]] = {
+        pkg_name: {
+            dep.name
+            for dep in deps
+            if dep.name in available  # prune optional absent deps
+        }
+        for pkg_name, deps in pkg_dependencies_map.items()
+    }
+
+    # 3. Kahn's algorithm via generic topological_sort
+    return topological_sort(
+        graph,
+        error_cls=ConfigError,
+        cycle_msg_prefix="Cyclic package dependency detected",
+    )
+
+
+def assert_no_cyclic_package_dependencies(
+    pkg_dependencies_map: Mapping[str, PackageDependencies],
+) -> None:
+    """Validates that package dependencies form a valid DAG with no cycles or missing required deps.
+
+    Read-only validation guard that delegates directly to resolve_package_install_order
+    and discards the return value.
+
+    Raises:
+        ConfigError: If a required dependency is missing or a cycle is detected.
+    """
+    resolve_package_install_order(pkg_dependencies_map)
+
+
+def resolve_ordered_packages(
+    target_metadata: Mapping[str, PackageConfig],
+    state_registry: StateRegistry,
+    workspace_config: WorkspaceConfig,
+) -> List[str]:
+    """Resolves topologically sorted package order for a targeted batch against the full package universe.
+
+    Builds the complete dependency universe by combining the targeted packages with all already-installed
+    packages recorded in the StateRegistry. Loads metadata from the install/ base for installed packages
+    not present in target_metadata, runs topological dependency sort over the universe, and filters
+    the resulting sequence to return ordered targeted packages.
+
+    Args:
+        target_metadata: Mapping of package name to PackageConfig for targeted packages being staged or deployed.
+        state_registry: Active StateRegistry for discovering already-installed packages.
+        workspace_config: The workspace configuration instance.
+
+    Returns:
+        List of package names in valid topological order (prerequisites before dependents),
+        restricted to the targeted packages.
+
+    Raises:
+        ConfigError: If a required dependency is missing from the universe or cyclic dependency detected.
+    """
+    if not target_metadata:
+        return []
+
+    install_base = workspace_config.install_path
+    will_installed_names = set(target_metadata.keys())
+    already_installed_names = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
+
+    installed_universe = {
+        pkg: (
+            PackageConfig.from_install_dir(install_base / pkg, workspace_config)
+            if (install_base / pkg).is_dir()
+            else PackageConfig(PackageSectionConfig(name=pkg))
+        )
+        for pkg in already_installed_names
+        if pkg not in will_installed_names
+    }
+
+    full_universe = {**installed_universe, **target_metadata}
+    full_deps = {pkg: meta.package.dependencies for pkg, meta in full_universe.items()}
+
+    sorted_universe = resolve_package_install_order(full_deps)
+    return list(filter(will_installed_names.__contains__, sorted_universe))
+

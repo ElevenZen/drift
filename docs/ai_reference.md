@@ -104,11 +104,14 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/utils/git_utils.py): Scoped `git add` and `git commit`.
 *   [`has_uncommitted_modifications(repo_path, subpath=None) -> bool`](../src/drift/utils/git_utils.py): Checks porcelain status.
 
-### [`primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) & [`primitives/install_repo.py`](../src/drift/primitives/install_repo.py)
-*   [`prepare_stage_packages(workspace_config, target_pkgs, force) -> StagePlan`](../src/drift/primitives/stage_repo.py): Read-only pre-flight assertion and staging plan preparation.
-*   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry) -> Dict[str, PackageStageChanges]`](../src/drift/primitives/stage_repo.py): State-mutating physical file staging from `render/` to `install/`.
-*   [`prepare_install_deployment(workspace_config, packages_to_redeploy, options) -> DeployPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, and cross-package conflict validation.
+### [`primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py), [`primitives/install_repo.py`](../src/drift/primitives/install_repo.py) & [`primitives/package_assertions.py`](../src/drift/primitives/package_assertions.py)
+*   [`prepare_stage_packages(workspace_config, target_pkgs, force) -> StagePlan`](../src/drift/primitives/stage_repo.py): Read-only pre-flight assertion and staging plan preparation with topological dependency ordering.
+*   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry, ordered_packages) -> Dict[str, PackageStageChanges]`](../src/drift/primitives/stage_repo.py): State-mutating physical file staging from `render/` to `install/`.
+*   [`prepare_install_deployment(workspace_config, packages_to_redeploy, config) -> InstallPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, cross-package conflict validation, and topological dependency ordering.
 *   [`execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`](../src/drift/primitives/install_repo.py): State-mutating physical deployment of configurations to host system target paths.
+*   [`resolve_package_install_order(pkg_dependencies_map) -> List[str]`](../src/drift/primitives/package_assertions.py): Pure topological sort resolving prerequisite installation order over the package universe with optional pruning and missing dependency validation.
+*   [`assert_no_cyclic_package_dependencies(pkg_dependencies_map)`](../src/drift/primitives/package_assertions.py): Read-only DAG assertion guard raising `ConfigError` on cycles or missing required dependencies.
+*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config) -> List[str]`](../src/drift/primitives/package_assertions.py): Assembles full package universe (installed packages from `state.toml` + targeted batch) and resolves topologically sorted action order for staging and installation.
 
 ### [`primitives/adopt_repo.py`](../src/drift/primitives/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
 *   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Entry point reconciling drifts across packages.

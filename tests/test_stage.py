@@ -10,8 +10,13 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
-from drift.core.exceptions import HookMissingError
+from drift.core.exceptions import HookMissingError, ConfigError
 from drift.config.workspace_config import WorkspaceConfig
+from drift.config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageDependency,
+)
 from drift.primitives.package_assertions import assert_install_pkg_dirs_clean
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
@@ -1309,6 +1314,173 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(sorted(ctx_multi.exception.packages), ["pkg_a", "pkg_b"])
         self.assertIn("'pkg_a'", str(ctx_multi.exception))
         self.assertIn("'pkg_b'", str(ctx_multi.exception))
+
+
+class TestStageDependencies(unittest.TestCase):
+    """Targeted tests for dependency assertion guards and topological stage ordering."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.drift_root = Path(self.temp_dir.name).resolve()
+
+        self.source_dir = self.drift_root / "src"
+        self.render_dir = self.drift_root / "render"
+        self.install_dir = self.drift_root / "install"
+
+        self.source_dir.mkdir(parents=True, exist_ok=True)
+        self.render_dir.mkdir(parents=True, exist_ok=True)
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+
+        self.workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            packages_enable={"pkg_a": True, "pkg_b": True, "pkg_c": True},
+            packages_enable_default=False,
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _create_render_package(self, pkg_name: str, dependencies: list = None) -> None:
+        pkg_dir = self.render_dir / pkg_name
+        dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        deps_list = dependencies or []
+        lines = [
+            "[package]",
+            f'name = "{pkg_name}"',
+            "enable_install = true",
+        ]
+        if deps_list:
+            import json
+            formatted_deps = []
+            for item in deps_list:
+                if isinstance(item, str):
+                    formatted_deps.append(f'"{item}"')
+                elif isinstance(item, dict):
+                    inner = ", ".join(f'{k} = {json.dumps(v)}' for k, v in item.items())
+                    formatted_deps.append(f"{{ {inner} }}")
+            lines.append(f"dependencies = [{', '.join(formatted_deps)}]")
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (pkg_dir / "file.txt").write_text(f"content for {pkg_name}", encoding="utf-8")
+
+    def test_assert_packages_stage_ready_with_full_universe_deps(self) -> None:
+        self._create_render_package("pkg_a")
+        self._create_render_package("pkg_b")
+        metadata = {
+            "pkg_a": PackageConfig.from_render_dir(self.render_dir / "pkg_a", self.workspace_config),
+            "pkg_b": PackageConfig.from_render_dir(self.render_dir / "pkg_b", self.workspace_config),
+        }
+        from drift.core.state_registry import load_state_registry
+        state_registry = load_state_registry(self.install_dir / "state.toml")
+
+        # 1. full_universe_deps=None skips dependency DAG validation
+        assert_packages_stage_ready(
+            pkg_metadata=metadata,
+            render_base=self.render_dir,
+            install_base=self.install_dir,
+            state_registry=state_registry,
+            full_universe_deps=None,
+        )
+
+        # 2. Valid full_universe_deps passes
+        valid_deps = {
+            "pkg_a": PackageDependencies(items=[]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        assert_packages_stage_ready(
+            pkg_metadata=metadata,
+            render_base=self.render_dir,
+            install_base=self.install_dir,
+            state_registry=state_registry,
+            full_universe_deps=valid_deps,
+        )
+
+        # 3. Cyclic dependency raises ConfigError
+        cyclic_deps = {
+            "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            assert_packages_stage_ready(
+                pkg_metadata=metadata,
+                render_base=self.render_dir,
+                install_base=self.install_dir,
+                state_registry=state_registry,
+                full_universe_deps=cyclic_deps,
+            )
+        self.assertIn("Cyclic package dependency detected", str(ctx.exception))
+
+    def test_prepare_stage_packages_topological_ordering(self) -> None:
+        # pkg_c depends on pkg_b, pkg_b depends on pkg_a
+        self._create_render_package("pkg_c", dependencies=["pkg_b"])
+        self._create_render_package("pkg_b", dependencies=["pkg_a"])
+        self._create_render_package("pkg_a", dependencies=[])
+
+        plan = prepare_stage_packages(self.workspace_config)
+        self.assertEqual(plan.ordered_packages, ["pkg_a", "pkg_b", "pkg_c"])
+
+    def test_prepare_stage_packages_with_installed_prerequisite(self) -> None:
+        # pkg_a is already in install/ (not in render/)
+        installed_a = self.install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME
+        installed_a.mkdir(parents=True, exist_ok=True)
+        (installed_a / PACKAGE_CONFIG_FILE_NAME).write_text(
+            '[package]\nname = "pkg_a"\nenable_install = true\n',
+            encoding="utf-8"
+        )
+        from drift.core.state_registry import load_state_registry
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_a", "installed")
+        registry.save()
+
+        # pkg_b is in render/ and depends on installed pkg_a
+        self._create_render_package("pkg_b", dependencies=["pkg_a"])
+
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        # pkg_a satisfies dependency, but only pkg_b was targeted for staging
+        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+
+    def test_prepare_stage_packages_with_disabled_installed_prerequisite(self) -> None:
+        # pkg_a is installed on machine, but has enable_install = false in its config
+        installed_a = self.install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME
+        installed_a.mkdir(parents=True, exist_ok=True)
+        (installed_a / PACKAGE_CONFIG_FILE_NAME).write_text(
+            '[package]\nname = "pkg_a"\nenable_install = false\n',
+            encoding="utf-8"
+        )
+        from drift.core.state_registry import load_state_registry
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_a", "installed")
+        registry.save()
+
+        # pkg_b is in render/ and depends on installed pkg_a
+        self._create_render_package("pkg_b", dependencies=["pkg_a"])
+
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+
+    def test_prepare_stage_packages_with_missing_installed_dir(self) -> None:
+        # pkg_a is recorded in state.toml as installed, but its directory is missing from install/
+        from drift.core.state_registry import load_state_registry
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_a", "installed")
+        registry.save()
+
+        # pkg_b is in render/ and depends on installed pkg_a
+        self._create_render_package("pkg_b", dependencies=["pkg_a"])
+
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+
+    def test_prepare_stage_packages_missing_required_dependency(self) -> None:
+        self._create_render_package("pkg_b", dependencies=["missing_pkg"])
+        with self.assertRaises(ConfigError) as ctx:
+            prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        self.assertIn("missing_pkg", str(ctx.exception))
+
+    def test_prepare_stage_packages_optional_dependency_pruned(self) -> None:
+        self._create_render_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        self.assertEqual(plan.ordered_packages, ["pkg_b"])
 
 
 if __name__ == "__main__":

@@ -272,7 +272,7 @@ def execute_stage(drift_root: Path, package_names: Sequence[str] = (), force: bo
 
 def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bool = False, json_mode: bool = False, no_hooks: bool = False) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
-    from ..primitives.install_repo import run_primitive_5_install_deployment, DeployOptions
+    from ..primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
@@ -282,7 +282,7 @@ def execute_apply(drift_root: Path, package_names: Sequence[str] = (), force: bo
     res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=package_names,
-        options=DeployOptions(
+        config=InstallConfig(
             resolve_symlinks=True,
             force=force,
             flags=flags,

@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_install_deployment(workspace_config, packages_to_redeploy, options) [Layer 4]
+        prepare_install_deployment(workspace_config, packages_to_redeploy, config) [Layer 4]
             - Package Discovery & Selection (filter_install_packages_by_target)
             - Metadata Resolution (PackageConfig.from_install_dir)
             - Pre-flight Readiness (assert_packages_deployment_ready [Layer 4])
@@ -17,10 +17,12 @@ Pipeline Architecture:
                 * assert_packages_target_dirs_writable
                 * assert_packages_hooks_exist (lifecycle hooks)
                 * assert_no_cross_package_conflicts [from package_assertions]
-            -> Returns DeployPlan(pkg_metadata_map, state_registry, discovered_packages, options)
+                * assert_no_cyclic_package_dependencies [from package_assertions]
+            - Universe Construction & Topological Ordering (resolve_package_install_order)
+            -> Returns InstallPlan(pkg_metadata_map, state_registry, discovered_packages, config)
 
     2. Single-Package Deployment Execution (State-Mutating):
-        execute_install_deployment(workspace_config, plan: DeployPlan) [Layer 4]
+        execute_install_deployment(workspace_config, plan: InstallPlan) [Layer 4]
             - Iterates over plan.discovered_packages:
                 deploy_one_package_with_error_wrapping [Layer 4]
                     deploy_one_package [Layer 4]
@@ -100,7 +102,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Sequence, Mapping, Iterable
 
 from ..config.workspace_config import WorkspaceConfig
-from ..config.package_config import PackageConfig
+from ..config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageSectionConfig,
+)
 from ..core.constants import (
     LineEnding,
     InstallMethod,
@@ -128,6 +134,9 @@ from .package_assertions import (
     assert_packages_target_dirs_valid,
     assert_packages_target_dirs_writable,
     assert_no_cross_package_conflicts,
+    assert_no_cyclic_package_dependencies,
+    resolve_package_install_order,
+    resolve_ordered_packages,
 )
 from ..utils.path_utils import (
     resolve_target_path,
@@ -156,7 +165,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @dataclass
-class DeployOptions:
+class InstallConfig:
     """Options controlling package deployment behavior."""
     resolve_symlinks: bool = True
     force: bool = False
@@ -172,12 +181,12 @@ class DeployOptions:
 
 
 @dataclass(frozen=True)
-class DeployPlan:
-    """Pre-flight validated deployment plan containing package configurations, options, and state registry."""
+class InstallPlan:
+    """Pre-flight validated installation plan containing package configurations, config, and state registry."""
     pkg_metadata_map: Dict[str, PackageConfig]
     state_registry: StateRegistry
     discovered_packages: List[str]
-    options: DeployOptions
+    config: InstallConfig
 
 
 @dataclass(frozen=True)
@@ -762,7 +771,7 @@ def check_package_deployment_skip(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
-    options: DeployOptions,
+    config: InstallConfig,
 ) -> Optional[PackageInstallResult]:
     """Inspects package deployment conditions to determine if physical deployment should be skipped.
 
@@ -793,9 +802,9 @@ def check_package_deployment_skip(
         )
 
     target_dir = metadata.get_target_directory(workspace_config)
-    pkg_change = options.get_package_changes(pkg)
+    pkg_change = config.get_package_changes(pkg)
     if (
-        options.redeploy is False
+        config.redeploy is False
         and (pkg_change is None or not pkg_change.has_changes)
         and (state_registry.get_target_migrated_from(pkg, target_dir) is None)
     ):
@@ -815,7 +824,7 @@ def deploy_one_package_impl(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
-    options: DeployOptions,
+    config: InstallConfig,
 ) -> PackageInstallResult:
     """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
     context = PackageInstallContext.from_package(
@@ -828,7 +837,7 @@ def deploy_one_package_impl(
     # 1. Collision Guard
     run_collision_guard(
         context=context,
-        resolve_symlinks=options.resolve_symlinks,
+        resolve_symlinks=config.resolve_symlinks,
         ops=ops,
     )
 
@@ -838,7 +847,7 @@ def deploy_one_package_impl(
 
     target_dir = context.target_dir
     target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)
-    redeploy = options.redeploy
+    redeploy = config.redeploy
 
     if target_migrated_from is not None:
         logger.info(
@@ -857,7 +866,7 @@ def deploy_one_package_impl(
         # Force redeploy to populate new target_dir completely
         redeploy = True
 
-    package_changes = options.get_package_changes(context.pkg_name)
+    package_changes = config.get_package_changes(context.pkg_name)
     
     # Calculate current desired files list
     deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
@@ -868,12 +877,12 @@ def deploy_one_package_impl(
             context=context,
             deployable_files=deployable_files,
             deployed_files=deployed_files,
-            resolve_symlinks=options.resolve_symlinks,
+            resolve_symlinks=config.resolve_symlinks,
             ops=ops,
         )
 
     # 2. Lifecycle Hooks & State registry update
-    hook_flags = HookExecFlags.resolve(options.flags, settings=workspace_config.settings)
+    hook_flags = HookExecFlags.resolve(config.flags, settings=workspace_config.settings)
     try:
         if context.is_first_time:
             metadata.hooks.trigger_pre_install(flags=hook_flags)
@@ -965,22 +974,22 @@ def deploy_one_package(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
-    options: Optional[DeployOptions] = None,
+    config: Optional[InstallConfig] = None,
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration."""
-    opts = options if options is not None else DeployOptions()
+    cfg = config if config is not None else InstallConfig()
     pkg = metadata.name
 
     skip_res = check_package_deployment_skip(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
-        options=opts,
+        config=cfg,
     )
     if skip_res is not None:
         return skip_res
     
-    if not opts.force and state_registry.is_package_in_midway_state(pkg):
+    if not cfg.force and state_registry.is_package_in_midway_state(pkg):
         assert_packages_not_in_midway_state([pkg], state_registry)
 
     logger.info(f"🚀 Deploying package: {pkg}")
@@ -993,7 +1002,7 @@ def deploy_one_package(
             workspace_config=workspace_config,
             state_registry=state_registry,
             metadata=metadata,
-            options=opts,
+            config=cfg,
         )
 
 
@@ -1001,7 +1010,7 @@ def deploy_one_package_with_error_wrapping(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
-    options: Optional[DeployOptions] = None,
+    config: Optional[InstallConfig] = None,
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration with subcommand error output reporting."""
     pkg = metadata.name
@@ -1010,7 +1019,7 @@ def deploy_one_package_with_error_wrapping(
             workspace_config=workspace_config,
             state_registry=state_registry,
             metadata=metadata,
-            options=options,
+            config=config,
         )
     except subprocess.CalledProcessError as e:
         stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
@@ -1035,6 +1044,7 @@ def assert_packages_deployment_ready(
     hook_flags: HookExecFlags,
     state_registry: StateRegistry,
     force: bool = False,
+    full_universe_deps: Optional[Mapping[str, PackageDependencies]] = None,
 ) -> None:
     """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package file conflicts before deployment.
 
@@ -1043,7 +1053,7 @@ def assert_packages_deployment_ready(
         CrossPackageCollisionError: If two or more packages claim colliding destination host paths.
         MidwayTransactionError: If one or more packages are in a midway transaction state and force is False.
         PackageInstallDirMissingError: If a package install directory does not exist on disk.
-        ConfigError: If a target directory is not an absolute path.
+        ConfigError: If a target directory is not an absolute path or dependency cycle detected.
         InstallCollisionError: If a target directory resolves inside or equal to drift_root.
         TargetPermissionError: If any target directory is not writable.
     """
@@ -1087,12 +1097,16 @@ def assert_packages_deployment_ready(
         state_registry=state_registry,
     )
 
+    # 7. Package dependency DAG validation (skipped if None)
+    if full_universe_deps is not None:
+        assert_no_cyclic_package_dependencies(full_universe_deps)
+
 
 def prepare_install_deployment(
     workspace_config: WorkspaceConfig,
     packages_to_redeploy: Sequence[str] = (),
-    options: Optional[DeployOptions] = None,
-) -> DeployPlan:
+    config: Optional[InstallConfig] = None,
+) -> InstallPlan:
     """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package conflicts before deployment.
 
     Runs pre-flight assertion guards (sudo escalation, install dirs exist, midway transaction state,
@@ -1102,54 +1116,80 @@ def prepare_install_deployment(
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_redeploy: Specific package name(s) to deploy, or empty sequence for all installed packages.
-        options: Optional DeployOptions controlling deployment behavior.
+        config: Optional InstallConfig controlling installation behavior.
 
     Returns:
-        DeployPlan containing validated package metadata mapping, state registry, discovered packages, and options.
+        InstallPlan containing validated package metadata mapping, state registry, discovered packages in
+        topological order, and config.
     """
-    opts = options if options is not None else DeployOptions()
+    cfg = config if config is not None else InstallConfig()
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
-    hook_flags = HookExecFlags.resolve(opts.flags, settings=workspace_config.settings)
+    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
 
     state_registry = load_state_registry(state_file)
 
+    # Targeted packages for this deployment
     discovered_packages = workspace_config.filter_install_packages_by_target(
         target_packages=packages_to_redeploy or None,
     )
 
-    pkg_metadata_map = {
+    # 1. Collect: Load metadata for targeted packages from INSTALL directory
+    all_metadata: Dict[str, PackageConfig] = {
         pkg: PackageConfig.from_install_dir(install_base / pkg, workspace_config)
         for pkg in discovered_packages
     }
 
+    # 2. Filter: Retain only packages enabled for installation/deployment
+    pkg_metadata_map = {
+        pkg: meta for pkg, meta in all_metadata.items()
+        if meta.package.enable_install
+    }
+    if not pkg_metadata_map:
+        logger.info("No active packages are enabled for installation/deployment. Skipping.")
+        return InstallPlan(
+            pkg_metadata_map={},
+            state_registry=state_registry,
+            discovered_packages=[],
+            config=cfg,
+        )
+
+    # Pre-flight assertions on targeted packages (full_universe_deps=None skips redundant DAG sort)
     assert_packages_deployment_ready(
         workspace_config=workspace_config,
-        discovered_packages=discovered_packages,
+        discovered_packages=list(pkg_metadata_map.keys()),
         pkg_metadata_map=pkg_metadata_map,
         hook_flags=hook_flags,
         state_registry=state_registry,
-        force=opts.force,
+        force=cfg.force,
+        full_universe_deps=None,
     )
 
-    return DeployPlan(
+    # Construct full installable universe and resolve topological action order
+    action_order = resolve_ordered_packages(
+        target_metadata=pkg_metadata_map,
+        state_registry=state_registry,
+        workspace_config=workspace_config,
+    )
+
+    return InstallPlan(
         pkg_metadata_map=pkg_metadata_map,
         state_registry=state_registry,
-        discovered_packages=discovered_packages,
-        options=opts,
+        discovered_packages=action_order,
+        config=cfg,
     )
 
 
 def execute_install_deployment(
     workspace_config: WorkspaceConfig,
-    plan: DeployPlan,
+    plan: InstallPlan,
 ) -> InstallDeploymentResult:
     """Applies validated configuration changes to host system and updates state registry.
 
     Args:
         workspace_config: The workspace configuration instance.
-        plan: Pre-flight validated DeployPlan containing package metadata, state registry,
-              discovered packages, and deploy options.
+        plan: Pre-flight validated InstallPlan containing package metadata, state registry,
+              discovered packages, and install config.
 
     Returns:
         InstallDeploymentResult with detailed per-package deployment results.
@@ -1159,7 +1199,7 @@ def execute_install_deployment(
             workspace_config=workspace_config,
             state_registry=plan.state_registry,
             metadata=plan.pkg_metadata_map[pkg],
-            options=plan.options,
+            config=plan.config,
         )
         for pkg in plan.discovered_packages
     ]
@@ -1177,14 +1217,14 @@ def execute_install_deployment(
 def run_primitive_5_install_deployment(
     workspace_config: WorkspaceConfig,
     packages_to_redeploy: Sequence[str] = (),
-    options: Optional[DeployOptions] = None,
+    config: Optional[InstallConfig] = None,
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
         packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
-        options: Optional DeployOptions controlling deployment behavior (resolve_symlinks, force, redeploy, package_changes, flags).
+        config: Optional InstallConfig controlling deployment behavior (resolve_symlinks, force, redeploy, package_changes, flags).
 
     Returns:
         InstallDeploymentResult with detailed per-package deployment results.
@@ -1192,7 +1232,7 @@ def run_primitive_5_install_deployment(
     plan = prepare_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=packages_to_redeploy,
-        options=options,
+        config=config,
     )
     return execute_install_deployment(workspace_config, plan=plan)
 

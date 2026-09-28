@@ -23,6 +23,8 @@ from .workspace_loader import (
 from .package_config import (
     PackageConfig,
     PackageSectionConfig,
+    PackageDependency,
+    PackageDependencies,
 )
 from .package_requirements import (
     PackageRequirements,
@@ -63,6 +65,8 @@ __all__ = [
     "load_workspace_config_files_layered",
     "PackageConfig",
     "PackageSectionConfig",
+    "PackageDependency",
+    "PackageDependencies",
     "PackageHooks",
     "normalize_hook_value",
     "PackageRequirements",

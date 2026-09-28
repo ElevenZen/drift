@@ -44,6 +44,8 @@ from drift.utils.env_utils import EnvConfig, EnvResolve
 from drift.config.package_config import (
     PackageConfig,
     PackageSectionConfig,
+    PackageDependency,
+    PackageDependencies,
 )
 from drift.config.package_requirements import (
     PackageRequirements,
@@ -2630,6 +2632,155 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
         cfg2 = PackageConfig.from_install_dir(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg2.env_resolve.effective.fallback["PKG_FB"], "pkg_fallback")
         self.assertEqual(cfg2.env_resolve.effective.default["WS_VAR"], "ws_val")
+
+
+class TestPackageDependencies(unittest.TestCase):
+    """Targeted tests for PackageDependency and PackageDependencies parsing, validation, and container properties."""
+
+    def test_package_dependencies_properties(self) -> None:
+        deps = PackageDependencies(
+            items=[
+                PackageDependency(name="pkg_a", optional=False),
+                PackageDependency(name="pkg_b", optional=True),
+                PackageDependency(name="pkg_c", optional=False),
+            ]
+        )
+        self.assertEqual(deps.required_names, ["pkg_a", "pkg_c"])
+        self.assertEqual(deps.optional_names, ["pkg_b"])
+        self.assertEqual(deps.all_names, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertEqual(len(deps), 3)
+        self.assertTrue(bool(deps))
+        self.assertFalse(bool(PackageDependencies()))
+        self.assertEqual([d.name for d in deps], ["pkg_a", "pkg_b", "pkg_c"])
+
+    def test_from_list_inline_strings(self) -> None:
+        raw = ["base", "git"]
+        deps = PackageDependencies.from_list(raw, package_name="neovim")
+        self.assertEqual(len(deps), 2)
+        self.assertEqual(deps.required_names, ["base", "git"])
+        self.assertEqual(deps.optional_names, [])
+
+    def test_from_list_inline_tables(self) -> None:
+        raw = [
+            {"name": "base"},
+            {"name": "git", "optional": True},
+        ]
+        deps = PackageDependencies.from_list(raw, package_name="neovim")
+        self.assertEqual(deps.required_names, ["base"])
+        self.assertEqual(deps.optional_names, ["git"])
+
+    def test_from_list_mixed_strings_and_tables(self) -> None:
+        raw = [
+            "base",
+            {"name": "zsh", "optional": False},
+            {"name": "tmux", "optional": True},
+        ]
+        deps = PackageDependencies.from_list(raw, package_name="neovim")
+        self.assertEqual(deps.required_names, ["base", "zsh"])
+        self.assertEqual(deps.optional_names, ["tmux"])
+
+    def test_from_list_error_cases(self) -> None:
+        # Not a list
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list("not_a_list", package_name="pkg_a")
+        self.assertIn("must be a list", str(ctx.exception))
+
+        # Empty string
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list(["   "], package_name="pkg_a")
+        self.assertIn("cannot be empty", str(ctx.exception))
+
+        # Empty name in dict
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list([{"name": ""}], package_name="pkg_a")
+        self.assertIn("must have a non-empty string 'name'", str(ctx.exception))
+
+        # Missing name in dict
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list([{"optional": True}], package_name="pkg_a")
+        self.assertIn("must have a non-empty string 'name'", str(ctx.exception))
+
+        # Unknown key in table
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list([{"name": "b", "extra": 1}], package_name="pkg_a")
+        self.assertIn("Unknown key(s)", str(ctx.exception))
+
+        # Self dependency
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list(["pkg_a"], package_name="pkg_a")
+        self.assertIn("cannot depend on itself", str(ctx.exception))
+
+        # Duplicate dependency
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list(["base", {"name": "base"}], package_name="pkg_a")
+        self.assertIn("Duplicate dependency 'base'", str(ctx.exception))
+
+        # Invalid item type
+        with self.assertRaises(ConfigError) as ctx:
+            PackageDependencies.from_list([123], package_name="pkg_a")
+        self.assertIn("must be a string or table", str(ctx.exception))
+
+    def test_package_section_config_dependencies_from_dict(self) -> None:
+        # Shorthand strings
+        sec = PackageSectionConfig.from_dict({"name": "pkg_a", "dependencies": ["base"]}, package_name="pkg_a")
+        self.assertEqual(sec.dependencies.required_names, ["base"])
+
+        # Tables
+        sec2 = PackageSectionConfig.from_dict({
+            "name": "pkg_a",
+            "dependencies": [{"name": "base"}, {"name": "optional_tool", "optional": True}],
+        }, package_name="pkg_a")
+        self.assertEqual(sec2.dependencies.required_names, ["base"])
+        self.assertEqual(sec2.dependencies.optional_names, ["optional_tool"])
+
+        # Invalid dependencies instance in validate()
+        with self.assertRaises(ConfigError):
+            sec_invalid = PackageSectionConfig(name="pkg_a")
+            sec_invalid.dependencies = "invalid"  # type: ignore
+            sec_invalid.validate()
+
+    def test_toml_syntaxes_for_dependencies(self) -> None:
+        # Syntax 1: inline strings
+        toml_1 = """
+        [package]
+        name = "pkg_a"
+        dependencies = ["base", "git"]
+        """
+        data_1 = parse_toml(toml_1)
+        sec_1 = PackageSectionConfig.from_dict(data_1["package"], package_name="pkg_a")
+        self.assertEqual(sec_1.dependencies.required_names, ["base", "git"])
+
+        # Syntax 2: array of tables [[package.dependencies]]
+        toml_2 = """
+        [package]
+        name = "pkg_a"
+
+        [[package.dependencies]]
+        name = "base"
+
+        [[package.dependencies]]
+        name = "git"
+        optional = true
+        """
+        data_2 = parse_toml(toml_2)
+        sec_2 = PackageSectionConfig.from_dict(data_2["package"], package_name="pkg_a")
+        self.assertEqual(sec_2.dependencies.required_names, ["base"])
+        self.assertEqual(sec_2.dependencies.optional_names, ["git"])
+
+        # Syntax 3: combination inline + [[package.dependencies]]
+        toml_3 = """
+        [package]
+        name = "pkg_a"
+        dependencies = ["base"]
+
+        [[package.dependencies]]
+        name = "git"
+        optional = true
+        """
+        data_3 = parse_toml(toml_3)
+        sec_3 = PackageSectionConfig.from_dict(data_3["package"], package_name="pkg_a")
+        self.assertEqual(sec_3.dependencies.required_names, ["base"])
+        self.assertEqual(sec_3.dependencies.optional_names, ["git"])
 
 
 if __name__ == "__main__":

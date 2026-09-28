@@ -338,14 +338,14 @@ target_directory = "{self.system_target_dir}"
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
         from drift.config.package_config import PackageConfig
-        from drift.primitives.install_repo import deploy_one_package_with_error_wrapping, DeployOptions
+        from drift.primitives.install_repo import deploy_one_package_with_error_wrapping, InstallConfig
         meta_a = PackageConfig.from_install_dir(self.install_dir / "pkg_a", self.workspace_config)
         with self.assertRaises(RuntimeError) as ctx2:
             deploy_one_package_with_error_wrapping(
                 workspace_config=self.workspace_config,
                 state_registry=state_registry,
                 metadata=meta_a,
-                options=DeployOptions(resolve_symlinks=True, force=False),
+                config=InstallConfig(resolve_symlinks=True, force=False),
             )
         self.assertIn("Safety Abort", str(ctx2.exception))
         self.assertIn("drift rollback pkg_a", str(ctx2.exception))

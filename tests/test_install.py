@@ -6,6 +6,7 @@ import unittest
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
+from typing import Optional, List, Dict, Set, Sequence
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -18,6 +19,7 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.package_config import PackageConfig, PackageSectionConfig
 from drift.config.package_hooks import PackageHooks
+from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.folder_diff import FolderDiff
 from drift.core.state_registry import (
         load_state_registry,
@@ -30,6 +32,12 @@ from drift.core.exceptions import (
     CrossPackageCollisionError,
     HookMissingError,
     PackageInstallDirMissingError,
+    ConfigError,
+)
+from drift.config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageDependency,
 )
 from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
@@ -37,18 +45,21 @@ from drift.primitives.install_repo import (
         run_primitive_5_install_deployment,
         prepare_install_deployment,
         execute_install_deployment,
-        DeployPlan,
+        InstallPlan,
         get_stow_version,
         is_stow_version_sufficient,
         find_internal_symlink_conflicts,
         resolve_single_internal_symlink_conflict,
         deploy_single_stow_file,
         deploy_one_package,
-        DeployOptions,
+        InstallConfig,
         PackageInstallContext,
+        assert_packages_deployment_ready,
 )
 from drift.primitives.package_assertions import (
         assert_no_cross_package_conflicts,
+        assert_no_cyclic_package_dependencies,
+        resolve_package_install_order,
 )
 from drift.utils.file_ops import (
         ensure_dir,
@@ -223,7 +234,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(
+            config=InstallConfig(
                 package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
             ),
         )
@@ -268,7 +279,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(
+            config=InstallConfig(
                 package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
             ),
         )
@@ -327,7 +338,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(
+            config=InstallConfig(
                 package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("test.txt")]))}
             ),
         )
@@ -365,7 +376,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(
+            config=InstallConfig(
                 package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("test.txt")]))}
             ),
         )
@@ -619,7 +630,7 @@ class TestInstallRepo(unittest.TestCase):
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=meta,
-                options=DeployOptions(resolve_symlinks=False, force=True)
+                config=InstallConfig(resolve_symlinks=False, force=True)
             )
 
         # Verifies workspace_config default target directory was properly passed and not clobbered
@@ -706,7 +717,7 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(
                 self.workspace_config,
                 [pkg],
-                options=DeployOptions(package_changes={}),
+                config=InstallConfig(package_changes={}),
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
@@ -744,7 +755,7 @@ class TestInstallRepo(unittest.TestCase):
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(
+            config=InstallConfig(
                 package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("nested_app/config.json")]))}
             ),
         )
@@ -1207,7 +1218,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(ctx.exception.packages, [pkg])
 
         # Attempt with force=True - should proceed (and succeed here)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(force=True))
+        run_primitive_5_install_deployment(self.workspace_config, [pkg], config=InstallConfig(force=True))
         
         # Verify success after force
         registry = load_state_registry(Path(state_file))
@@ -1273,7 +1284,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace_config=self.workspace_config,
             state_registry=registry,
             metadata=meta_disabled,
-            options=DeployOptions(resolve_symlinks=True, force=False)
+            config=InstallConfig(resolve_symlinks=True, force=False)
         )
         self.assertEqual(res_disabled.status, "SKIPPED")
         # Check that state.toml did not transition this package into 'installing'
@@ -1285,7 +1296,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace_config=self.workspace_config,
             state_registry=registry,
             metadata=meta_disabled,
-            options=DeployOptions(resolve_symlinks=True, force=True)
+            config=InstallConfig(resolve_symlinks=True, force=True)
         )
         self.assertEqual(res_forced.status, "SKIPPED")
         self.assertEqual(res_forced.error, "enable_install is False")
@@ -1314,7 +1325,7 @@ class TestInstallRepo(unittest.TestCase):
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=metadata,
-                options=DeployOptions(resolve_symlinks=True, force=False)
+                config=InstallConfig(resolve_symlinks=True, force=False)
             )
         self.assertIn("does not exist", str(cm.exception))
         reloaded2 = load_state_registry(state_file)
@@ -1495,7 +1506,7 @@ class TestInstallRepo(unittest.TestCase):
         # Execute partial deployment modifying file_a.txt
         from drift.primitives.stage_repo import PackageStageChanges
         changes = {pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("file_a.txt")]))}
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], options=DeployOptions(package_changes=changes))
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], config=InstallConfig(package_changes=changes))
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -2151,7 +2162,7 @@ class TestInstallRepo(unittest.TestCase):
         res_mig = run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            options=DeployOptions(redeploy=False)
+            config=InstallConfig(redeploy=False)
         )
         self.assertEqual(res_mig.status, "SUCCESS")
 
@@ -2297,7 +2308,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(registry.get_file_owner(target_b / "main.py"), "pkg_b")
 
     def test_prepare_and_execute_install_deployment_pipeline(self) -> None:
-        """Verifies prepare_install_deployment returns DeployPlan and execute_install_deployment deploys it."""
+        """Verifies prepare_install_deployment returns InstallPlan and execute_install_deployment deploys it."""
         pkg = "pkg_copy"
         install_pkg_dir = self.install_dir / pkg
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -2311,12 +2322,12 @@ class TestInstallRepo(unittest.TestCase):
 
         # 1. Prepare phase
         plan = prepare_install_deployment(self.workspace_config, [pkg])
-        self.assertIsInstance(plan, DeployPlan)
+        self.assertIsInstance(plan, InstallPlan)
         self.assertEqual(plan.discovered_packages, [pkg])
         self.assertIn(pkg, plan.pkg_metadata_map)
         self.assertEqual(plan.pkg_metadata_map[pkg].name, pkg)
         self.assertIsInstance(plan.state_registry, StateRegistry)
-        self.assertIsInstance(plan.options, DeployOptions)
+        self.assertIsInstance(plan.config, InstallConfig)
 
         # Host system not yet modified
         self.assertFalse((self.system_target_dir / "app.conf").exists())
@@ -2361,6 +2372,176 @@ class TestInstallRepo(unittest.TestCase):
         # State was never set to installing
         registry = load_state_registry(self.install_dir / "state.toml")
         self.assertIsNone(registry.get_package_state(pkg))
+
+
+class TestInstallDependencies(unittest.TestCase):
+    """Tests for package dependency ordering, validation, and DAG resolution during install deployment."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        temp_root = Path(self.temp_dir.name).resolve()
+        self.drift_root = temp_root / "drift_workspace"
+        self.system_target_dir = temp_root / "system_home"
+
+        self.install_dir = self.drift_root / "install"
+        self.backup_dir = self.drift_root / "backup"
+
+        self.install_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
+        self.system_target_dir.mkdir(parents=True, exist_ok=True)
+
+        self.workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            workspace=WorkspaceSectionConfig(
+                default_target_directory=self.system_target_dir
+            ),
+            packages_enable={},
+            packages_enable_default=False,
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _create_install_package(self, pkg_name: str, dependencies: Optional[list] = None) -> None:
+        pkg_dir = self.install_dir / pkg_name
+        dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        lines = [
+            "[package]",
+            f'name = "{pkg_name}"',
+            'install_method = "copy"',
+            f'target_directory = "{self.system_target_dir}"',
+            "enable_install = true",
+        ]
+        if dependencies:
+            import json
+            formatted = []
+            for item in dependencies:
+                if isinstance(item, str):
+                    formatted.append(f'"{item}"')
+                elif isinstance(item, dict):
+                    inner = ", ".join(f'{k} = {json.dumps(v)}' for k, v in item.items())
+                    formatted.append(f"{{ {inner} }}")
+            lines.append(f"dependencies = [{', '.join(formatted)}]")
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        (pkg_dir / f"file_{pkg_name}.txt").write_text(f"content for {pkg_name}", encoding="utf-8")
+        self.workspace_config.packages_enable[pkg_name] = True
+
+    def test_assert_packages_deployment_ready_with_full_universe_deps(self) -> None:
+        self._create_install_package("pkg_a")
+        self._create_install_package("pkg_b")
+        metadata = {
+            "pkg_a": PackageConfig.from_install_dir(self.install_dir / "pkg_a", self.workspace_config),
+            "pkg_b": PackageConfig.from_install_dir(self.install_dir / "pkg_b", self.workspace_config),
+        }
+        state_registry = load_state_registry(self.install_dir / "state.toml")
+        hook_flags = HookExecFlags.resolve(None, settings=self.workspace_config.settings)
+
+        # 1. full_universe_deps=None skips dependency DAG validation
+        assert_packages_deployment_ready(
+            workspace_config=self.workspace_config,
+            discovered_packages=["pkg_a", "pkg_b"],
+            pkg_metadata_map=metadata,
+            hook_flags=hook_flags,
+            state_registry=state_registry,
+            full_universe_deps=None,
+        )
+
+        # 2. Valid full_universe_deps passes
+        valid_deps = {
+            "pkg_a": PackageDependencies(items=[]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        assert_packages_deployment_ready(
+            workspace_config=self.workspace_config,
+            discovered_packages=["pkg_a", "pkg_b"],
+            pkg_metadata_map=metadata,
+            hook_flags=hook_flags,
+            state_registry=state_registry,
+            full_universe_deps=valid_deps,
+        )
+
+        # 3. Cyclic dependency raises ConfigError
+        cyclic_deps = {
+            "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            assert_packages_deployment_ready(
+                workspace_config=self.workspace_config,
+                discovered_packages=["pkg_a", "pkg_b"],
+                pkg_metadata_map=metadata,
+                hook_flags=hook_flags,
+                state_registry=state_registry,
+                full_universe_deps=cyclic_deps,
+            )
+        self.assertIn("Cyclic package dependency detected", str(ctx.exception))
+
+    def test_prepare_install_deployment_topological_ordering(self) -> None:
+        self._create_install_package("pkg_c", dependencies=["pkg_b"])
+        self._create_install_package("pkg_b", dependencies=["pkg_a"])
+        self._create_install_package("pkg_a", dependencies=[])
+
+        plan = prepare_install_deployment(self.workspace_config)
+        self.assertEqual(plan.discovered_packages, ["pkg_a", "pkg_b", "pkg_c"])
+
+        result = execute_install_deployment(self.workspace_config, plan=plan)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual([p.package for p in result.packages], ["pkg_a", "pkg_b", "pkg_c"])
+
+    def test_prepare_install_deployment_targeted_prerequisite_subset(self) -> None:
+        self._create_install_package("pkg_c", dependencies=["pkg_b"])
+        self._create_install_package("pkg_b", dependencies=["pkg_a"])
+        self._create_install_package("pkg_a", dependencies=[])
+
+        # pkg_b is already installed on the machine
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_b", "installed")
+        registry.save()
+
+        # Target only pkg_c and pkg_a, while pkg_b is already installed
+        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_c", "pkg_a"])
+        self.assertEqual(plan.discovered_packages, ["pkg_a", "pkg_c"])
+
+    def test_prepare_install_deployment_with_disabled_installed_prerequisite(self) -> None:
+        # pkg_a is installed on machine, but has enable_install = false in its config
+        self._create_install_package("pkg_a")
+        (self.install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "pkg_a"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir}"\nenable_install = false\n',
+            encoding="utf-8"
+        )
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_a", "installed")
+        registry.save()
+
+        # pkg_b depends on pkg_a and is enabled
+        self._create_install_package("pkg_b", dependencies=["pkg_a"])
+
+        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        self.assertEqual(plan.discovered_packages, ["pkg_b"])
+
+    def test_prepare_install_deployment_with_missing_installed_dir(self) -> None:
+        # pkg_a is recorded in state.toml as installed, but its directory is missing from install/
+        registry = load_state_registry(self.install_dir / "state.toml")
+        registry.set_package_state("pkg_a", "installed")
+        registry.save()
+
+        # pkg_b depends on pkg_a
+        self._create_install_package("pkg_b", dependencies=["pkg_a"])
+
+        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        self.assertEqual(plan.discovered_packages, ["pkg_b"])
+
+    def test_prepare_install_deployment_missing_required_dependency(self) -> None:
+        self._create_install_package("pkg_b", dependencies=["missing_pkg"])
+        with self.assertRaises(ConfigError) as ctx:
+            prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        self.assertIn("missing_pkg", str(ctx.exception))
+
+    def test_prepare_install_deployment_optional_dependency_pruned(self) -> None:
+        self._create_install_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
+        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        self.assertEqual(plan.discovered_packages, ["pkg_b"])
 
 
 class TestStowVersionDetection(unittest.TestCase):

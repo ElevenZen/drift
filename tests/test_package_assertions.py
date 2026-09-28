@@ -4,7 +4,12 @@ import unittest
 import subprocess
 from pathlib import Path
 
-from drift.config.package_config import PackageConfig
+from drift.config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageDependency,
+    PackageSectionConfig,
+)
 from drift.config.workspace_config import WorkspaceConfig
 from drift.core.constants import ExitCode
 from drift.core.state_registry import StateRegistry
@@ -27,6 +32,9 @@ from drift.primitives.package_assertions import (
     assert_packages_target_dirs_valid,
     assert_packages_target_dirs_writable,
     assert_no_cross_package_conflicts,
+    resolve_package_install_order,
+    assert_no_cyclic_package_dependencies,
+    resolve_ordered_packages,
 )
 
 
@@ -385,6 +393,89 @@ class TestPackageAssertions(unittest.TestCase):
         self.assertIn("file_a.txt", str(ctx.exception))
         self.assertIn("pkg_a", str(ctx.exception))
         self.assertIn("pkg_b", str(ctx.exception))
+
+    def test_resolve_package_install_order_dag(self) -> None:
+        deps_map = {
+            "pkg_c": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+            "pkg_a": PackageDependencies(items=[]),
+        }
+        order = resolve_package_install_order(deps_map)
+        self.assertEqual(order, ["pkg_a", "pkg_b", "pkg_c"])
+
+    def test_resolve_package_install_order_missing_required(self) -> None:
+        deps_map = {
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="missing")]),
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_package_install_order(deps_map)
+        self.assertIn("missing", str(ctx.exception))
+
+    def test_resolve_package_install_order_prune_optional(self) -> None:
+        deps_map = {
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="missing", optional=True)]),
+        }
+        order = resolve_package_install_order(deps_map)
+        self.assertEqual(order, ["pkg_b"])
+
+    def test_resolve_package_install_order_cycle(self) -> None:
+        deps_map = {
+            "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        with self.assertRaises(ConfigError) as ctx:
+            resolve_package_install_order(deps_map)
+        self.assertIn("Cyclic package dependency detected", str(ctx.exception))
+
+    def test_assert_no_cyclic_package_dependencies(self) -> None:
+        valid_deps = {
+            "pkg_a": PackageDependencies(items=[]),
+            "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        # Should not raise
+        assert_no_cyclic_package_dependencies(valid_deps)
+
+        cyclic_deps = {
+            "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
+        }
+        with self.assertRaises(ConfigError):
+            assert_no_cyclic_package_dependencies(cyclic_deps)
+
+    def test_resolve_ordered_packages_empty(self) -> None:
+        registry = StateRegistry()
+        res = resolve_ordered_packages({}, registry, self.workspace_config)
+        self.assertEqual(res, [])
+
+    def test_resolve_ordered_packages_with_installed_and_pruning(self) -> None:
+        # Create an installed package recorded in state registry
+        meta_installed = PackageConfig(
+            PackageSectionConfig(name="pkg_base")
+        )
+        pkg_base_dir = self.install_dir / "pkg_base"
+        dot_drift = pkg_base_dir / ".drift"
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / "drift_package.toml").write_text('[package]\nname = "pkg_base"\n', encoding="utf-8")
+
+        registry = StateRegistry()
+        registry.set_package_state("pkg_base", "installed")
+
+        # Target package depends on pkg_base and an optional missing package
+        meta_target = PackageConfig(
+            PackageSectionConfig(
+                name="pkg_app",
+                dependencies=PackageDependencies(items=[
+                    PackageDependency(name="pkg_base"),
+                    PackageDependency(name="opt_missing", optional=True),
+                ]),
+            )
+        )
+
+        res = resolve_ordered_packages(
+            target_metadata={"pkg_app": meta_target},
+            state_registry=registry,
+            workspace_config=self.workspace_config,
+        )
+        self.assertEqual(res, ["pkg_app"])
 
 
 if __name__ == "__main__":

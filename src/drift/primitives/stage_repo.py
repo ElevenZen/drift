@@ -61,7 +61,11 @@ from dataclasses import dataclass, field
 
 from ..core.constants import DRIFT_GENERATED_FILES
 from ..config.workspace_config import WorkspaceConfig
-from ..config.package_config import PackageConfig
+from ..config.package_config import (
+    PackageConfig,
+    PackageDependencies,
+    PackageSectionConfig,
+)
 from ..utils.file_ops import (
     remove_with_parents,
     remove,
@@ -77,6 +81,9 @@ from .package_assertions import (
     assert_packages_hooks_exist,
     assert_install_pkg_dirs_clean,
     assert_packages_not_in_midway_state,
+    assert_no_cyclic_package_dependencies,
+    resolve_package_install_order,
+    resolve_ordered_packages,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +94,7 @@ class StagePlan:
     """Pre-flight validated staging plan containing package configurations and state registry."""
     pkg_metadata: Dict[str, PackageConfig]
     state_registry: StateRegistry
+    ordered_packages: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -154,31 +162,38 @@ def assert_packages_stage_ready(
     install_base: Path,
     state_registry: StateRegistry,
     force: bool = False,
+    full_universe_deps: Optional[Mapping[str, PackageDependencies]] = None,
 ) -> None:
     """Validates that packages in render/ are ready for staging into install/.
 
     Pre-flight safety assertions:
     1. Hook file existence in render/ sandbox for each enabled package.
-    2. When force is False, validates that no package is in a midway transaction state
+    2. Package dependency DAG validation on full universe (if full_universe_deps is provided).
+    3. When force is False, validates that no package is in a midway transaction state
        ('staging' or 'installing') in the state registry.
-    3. When force is False, validates that no package directory in install/ has uncommitted
+    4. When force is False, validates that no package directory in install/ has uncommitted
        local git modifications.
 
     Raises:
         HookMissingError: If configured hook files do not exist or are invalid.
+        ConfigError: If a dependency cycle is detected.
         MidwayTransactionError: If any package is in a midway transaction state.
         DriftDetectedError: If install package directories have uncommitted modifications.
     """
     # 1. Collect all package hook assertion errors before raising
     assert_packages_hooks_exist(pkg_metadata, render_base, is_source=False)
 
+    # 2. Package dependency DAG validation on full universe (skipped if None)
+    if full_universe_deps is not None:
+        assert_no_cyclic_package_dependencies(full_universe_deps)
+
     if force:
         return
 
-    # 2. Collect all midway transaction state packages before raising
+    # 3. Collect all midway transaction state packages before raising
     assert_packages_not_in_midway_state(pkg_metadata.keys(), state_registry)
 
-    # 3. Collect all unclean package directories before raising
+    # 4. Collect all unclean package directories before raising
     assert_install_pkg_dirs_clean(install_base, pkg_metadata.keys())
 
 
@@ -354,12 +369,13 @@ def stage_modified_packages(
 
 def prepare_stage_packages(
     workspace_config: WorkspaceConfig,
-    target_pkgs: Union[str, Sequence[str]] = (),
+    target_pkgs: Sequence[str] = (),
     force: bool = False,
 ) -> StagePlan:
     """Discovers, validates, and prepares packages for staging from render/ to install/.
 
-    Runs pre-flight assertion guards (hook existence, midway transaction state, install repo cleanliness).
+    Runs pre-flight assertion guards (hook existence, midway transaction state, install repo cleanliness)
+    and computes topologically sorted staging order.
     Does NOT modify the filesystem or mutate state registry.
 
     Args:
@@ -368,12 +384,10 @@ def prepare_stage_packages(
         force: If True, bypasses checks for midway failed package states and uncommitted install modifications.
 
     Returns:
-        StagePlan containing validated package metadata map and state registry.
+        StagePlan containing validated package metadata map, state registry, and ordered packages.
     """
     if isinstance(target_pkgs, str):
-        target_pkgs_seq: Sequence[str] = [target_pkgs]
-    else:
-        target_pkgs_seq = target_pkgs if target_pkgs else ()
+        target_pkgs = [target_pkgs]
 
     render_base = workspace_config.render_path
     install_base = workspace_config.install_path
@@ -381,10 +395,10 @@ def prepare_stage_packages(
     state_registry = load_state_registry(state_file)
 
     # Load active packages from render directory
-    active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs_seq or None)
+    active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs or None)
     if not active_packages:
         logger.info("No active packages selected for staging. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry)
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, ordered_packages=[])
 
     # 1. Collect: Load metadata for active packages from RENDER directory
     all_metadata: Dict[str, PackageConfig] = {
@@ -399,24 +413,38 @@ def prepare_stage_packages(
     }
     if not pkg_metadata:
         logger.info("No active packages are enabled for installation/deployment. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry)
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, ordered_packages=[])
 
     # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
+    # (full_universe_deps=None skips redundant DAG sort here as resolve_package_install_order validates it below)
     assert_packages_stage_ready(
         pkg_metadata=pkg_metadata,
         render_base=render_base,
         install_base=install_base,
         state_registry=state_registry,
         force=force,
+        full_universe_deps=None,
     )
 
-    return StagePlan(pkg_metadata=pkg_metadata, state_registry=state_registry)
+    # 4. Resolve topological order over universe, filtered to targeted packages
+    ordered_packages = resolve_ordered_packages(
+        target_metadata=pkg_metadata,
+        state_registry=state_registry,
+        workspace_config=workspace_config,
+    )
+
+    return StagePlan(
+        pkg_metadata=pkg_metadata,
+        state_registry=state_registry,
+        ordered_packages=ordered_packages,
+    )
 
 
 def execute_stage_packages(
     workspace_config: WorkspaceConfig,
     pkg_metadata: Mapping[str, PackageConfig],
     state_registry: StateRegistry,
+    ordered_packages: Optional[Sequence[str]] = None,
 ) -> Dict[str, PackageStageChanges]:
     """Computes stage diffs and applies physical file changes and state transitions from render/ to install/.
 
@@ -424,6 +452,7 @@ def execute_stage_packages(
         workspace_config: The workspace configuration instance.
         pkg_metadata: Pre-flight validated package metadata mapping.
         state_registry: Active state registry for tracking staging state transitions.
+        ordered_packages: Optional topologically sorted package order. If omitted, uses pkg_metadata keys.
 
     Returns:
         A dictionary mapping package name to PackageStageChanges objects for all packages with changes.
@@ -434,16 +463,18 @@ def execute_stage_packages(
     render_base = workspace_config.render_path
     install_base = workspace_config.install_path
 
-    logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(pkg_metadata.keys())}")
+    package_order = list(ordered_packages) if ordered_packages is not None else list(pkg_metadata.keys())
 
-    # 1. Compute stage diffs and deployable changes for all packages
+    logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(package_order)}")
+
+    # 1. Compute stage diffs and deployable changes for all packages in order
     computed_diffs = {
         pkg: compute_package_stage_diff(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
         )
-        for pkg in pkg_metadata.keys()
+        for pkg in package_order
     }
 
     # Identify packages that have physical stage changes
@@ -453,7 +484,7 @@ def execute_stage_packages(
         if changes.has_changes
     }
 
-    # 2. Apply physical changes and state transitions for modified packages
+    # 2. Apply physical changes and state transitions for modified packages in order
     if packages_to_stage:
         stage_modified_packages(
             packages_to_stage=packages_to_stage,
@@ -493,7 +524,7 @@ def execute_stage_packages(
 
 def run_primitive_4_stage_render_to_install(
     workspace_config: WorkspaceConfig,
-    target_pkgs: Union[str, Sequence[str]] = (),
+    target_pkgs: Sequence[str] = (),
     force: bool = False,
 ) -> Dict[str, PackageStageChanges]:
     """Reconciles the sandbox render/ folder into the install/ database (Primitive 4).
@@ -515,5 +546,6 @@ def run_primitive_4_stage_render_to_install(
         workspace_config,
         pkg_metadata=plan.pkg_metadata,
         state_registry=plan.state_registry,
+        ordered_packages=plan.ordered_packages,
     )
 

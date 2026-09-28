@@ -47,7 +47,7 @@ from typing import List, Optional, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..core.result_models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install_deployment, DeployOptions
+from .install_repo import run_primitive_5_install_deployment, InstallConfig
 from .uninstall_repo import run_primitive_7_uninstall_packages
 from ..hooks.lifecycle_hooks import HookExecFlags
 
@@ -112,7 +112,7 @@ def rollback_redeploy_committed_package(
     install_res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
         packages_to_redeploy=[pkg],
-        options=DeployOptions(
+        config=InstallConfig(
             resolve_symlinks=True,
             force=True,
             flags=flags,

@@ -20,7 +20,7 @@ from drift.config.package_hooks import PackageHooks
 from drift.core.ignore import DriftIgnore
 from drift.render.render_package import render_package
 from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-from drift.primitives.install_repo import run_primitive_5_install_deployment, DeployOptions
+from drift.primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
 from drift.core.exceptions import ConfigError
 from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
@@ -224,7 +224,7 @@ post_install = "drift_hooks/post_install.sh"
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
             packages_to_redeploy=["my_app"],
-            options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
 
@@ -283,7 +283,7 @@ post_install = "drift_hooks/post_install.sh"
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
             packages_to_redeploy=["cli_tool"],
-            options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
 
@@ -360,7 +360,7 @@ post_install = "drift_hooks/post_install.sh"
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
             packages_to_redeploy=["custom_subfolder_pkg"],
-            options=DeployOptions(flags=HookExecFlags(streaming=False)),
+            config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
 
