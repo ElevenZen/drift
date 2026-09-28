@@ -138,7 +138,7 @@ def parse_git_status_porcelain(
 
 def _is_pkg_stageable(repo_path: Path, pkg: str) -> bool:
     """Checks if a package folder exists on disk or has files tracked in git."""
-    if (repo_path / pkg).exists():
+    if (repo_path / pkg).is_dir():
         return True
     res = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
@@ -190,7 +190,12 @@ def commit_repo_changes(
 
     # 2. Check if there are uncommitted modifications to commit
     if target_pkgs:
-        has_changes = any(has_uncommitted_modifications(repo_path, f"{pkg}/") for pkg in target_pkgs)
+        has_changes = any(
+            has_uncommitted_modifications(repo_path, f"{pkg}/") for pkg in target_pkgs
+        ) or (
+            (repo_path / "state.toml").exists()
+            and has_uncommitted_modifications(repo_path, "state.toml")
+        )
     else:
         has_changes = has_uncommitted_modifications(repo_path)
 
