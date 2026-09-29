@@ -63,9 +63,11 @@ logger = logging.getLogger(__name__)
 
 def is_package_committed_in_install_head(install_base: Path, pkg: str) -> bool:
     """Checks if the package exists in the HEAD commit of the install repository."""
+    # check=False is intentional: git cat-file returns exit code 1 if the path is absent in HEAD.
     res = subprocess.run(
         ["git", "-C", str(install_base), "cat-file", "-e", f"HEAD:{pkg}"],
-        capture_output=True
+        capture_output=True,
+        check=False,
     )
     return res.returncode == 0
 
@@ -73,9 +75,24 @@ def is_package_committed_in_install_head(install_base: Path, pkg: str) -> bool:
 def reset_install_package_to_head(install_base: Path, pkg: str) -> None:
     """Resets a package directory inside the install state repository to the HEAD commit."""
     # Revert modifications & deletions in the package directory
-    subprocess.run(["git", "-C", str(install_base), "checkout", "HEAD", "--", pkg], capture_output=True)
+    res_checkout = subprocess.run(
+        ["git", "-C", str(install_base), "checkout", "HEAD", "--", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_checkout.returncode != 0:
+        logger.warning(f"git checkout HEAD failed for '{pkg}': {res_checkout.stderr.strip()}")
+
     # Clean untracked files & directories inside the package directory
-    subprocess.run(["git", "-C", str(install_base), "clean", "-fd", "--", pkg], capture_output=True)
+    res_clean = subprocess.run(
+        ["git", "-C", str(install_base), "clean", "-fd", "--", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_clean.returncode != 0:
+        logger.warning(f"git clean failed for '{pkg}': {res_clean.stderr.strip()}")
 
 
 def validate_rollback_packages(
@@ -141,7 +158,14 @@ def rollback_uninstalled_first_time_package(
         raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")
 
     # Clean untracked leftover directories in install/ if any remain
-    subprocess.run(["git", "-C", str(workspace_config.install_path), "clean", "-fd", "--", pkg], capture_output=True)
+    res_clean = subprocess.run(
+        ["git", "-C", str(workspace_config.install_path), "clean", "-fd", "--", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_clean.returncode != 0:
+        logger.debug(f"git clean for package '{pkg}' exited with code {res_clean.returncode}: {res_clean.stderr.strip()}")
 
 
 # =====================================================================
@@ -233,7 +257,14 @@ def run_primitive_8_rollback_recovery(
 
     # 6. Restore the state registry entries
     # Revert state.toml file to HEAD commit
-    subprocess.run(["git", "-C", str(install_base), "checkout", "HEAD", "--", "state.toml"], capture_output=True)
+    res_st = subprocess.run(
+        ["git", "-C", str(install_base), "checkout", "HEAD", "--", "state.toml"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_st.returncode != 0:
+        logger.warning(f"Failed to revert state.toml to HEAD: {res_st.stderr.strip()}")
 
     # Reload registry after checkout to prevent dirty override
     reloaded_registry = load_state_registry(state_file)

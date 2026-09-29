@@ -125,7 +125,11 @@ def collect_repo_diff_pairs(
             f"{pkg}/",
             *(f":!{pkg}/{f}" for f in ignored_files),
         ]
+        # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode not in (0, 1):
+            logger.warning(f"git diff failed for package '{pkg}' with exit code {res.returncode}: {res.stderr.strip()}")
+            continue
         for line in res.stdout.splitlines():
             parts = line.strip().split(maxsplit=1)
             if len(parts) != 2:
@@ -146,6 +150,7 @@ def collect_repo_diff_pairs(
                 head_target = temp_dir / "head" / rel_path
                 head_target.parent.mkdir(parents=True, exist_ok=True)
 
+                # check=False is intentional: new/uncommitted files are absent from HEAD, handled via fallback.
                 show_res = subprocess.run(
                     ["git", "-C", str(repo_path), "show", f"HEAD:{rel_path_str}"],
                     capture_output=True,
@@ -302,7 +307,10 @@ def run_repo_diff(
             "--", f"{pkg}/",
             *(f":!{pkg}/{f}" for f in ignored_files),
         ]
+        # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if res.returncode not in (0, 1):
+            logger.warning(f"git diff failed for package '{pkg}' with code {res.returncode}: {res.stderr.strip()}")
         if res.stdout:
             sys.stdout.write(res.stdout)
             had_output = True
@@ -332,7 +340,10 @@ def run_pending_delta_diff(
             for pkg in new_pkgs:
                 logger.info(f"✨ Package '{pkg}' is NEW (exists in render but not install).")
                 cmd = [*base_cmd, str(empty_dir), str(workspace_config.render_path / pkg), "--", *exclude_patterns]
+                # check=False is intentional: git diff returns exit code 1 when differences exist.
                 res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.returncode not in (0, 1):
+                    logger.warning(f"git diff --no-index failed for '{pkg}' with code {res.returncode}: {res.stderr.strip()}")
                 if res.stdout:
                     sys.stdout.write(res.stdout)
                     had_output = True
@@ -341,7 +352,10 @@ def run_pending_delta_diff(
             for pkg in orphan_pkgs:
                 logger.info(f"⚠️  Package '{pkg}' is ORPHAN (exists in install but not render).")
                 cmd = [*base_cmd, str(workspace_config.install_path / pkg), str(empty_dir), "--", *exclude_patterns]
+                # check=False is intentional: git diff returns exit code 1 when differences exist.
                 res = subprocess.run(cmd, capture_output=True, text=True, check=False)
+                if res.returncode not in (0, 1):
+                    logger.warning(f"git diff --no-index failed for '{pkg}' with code {res.returncode}: {res.stderr.strip()}")
                 if res.stdout:
                     sys.stdout.write(res.stdout)
                     had_output = True
@@ -350,6 +364,7 @@ def run_pending_delta_diff(
 
     for _, rel_install, rel_render in to_diff:
         cmd = [*base_cmd, str(rel_install), str(rel_render), "--", *exclude_patterns]
+        # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(
             cmd,
             cwd=str(workspace_config.drift_root),
@@ -357,6 +372,8 @@ def run_pending_delta_diff(
             text=True,
             check=False,
         )
+        if res.returncode not in (0, 1):
+            logger.warning(f"git diff --no-index failed with code {res.returncode}: {res.stderr.strip()}")
         if res.stdout:
             sys.stdout.write(res.stdout)
             had_output = True

@@ -320,7 +320,15 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
             
     install_base = install_pkg_dir.parent
     rel_install_base = Path(install_pkg_dir.name) / rel_path
-    subprocess.run(["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)], capture_output=True)
+    # check=False is intentional: file may not be tracked in the git index yet.
+    res_rm = subprocess.run(
+        ["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_rm.returncode != 0:
+        logger.debug(f"git rm --cached exited with code {res_rm.returncode} for '{rel_install_base}': {res_rm.stderr.strip()}")
 
     # Append pattern to .drift_ignore
     ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
@@ -970,13 +978,27 @@ def adopt_one_package_drifts(
     File-level Git cleanliness safeguards are enforced for each target source file before modification.
     """
     # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
-    subprocess.run(["git", "-C", str(workspace_config.install_path), "add", "--all", pkg], capture_output=True)
+    res_add = subprocess.run(
+        ["git", "-C", str(workspace_config.install_path), "add", "--all", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_add.returncode != 0:
+        logger.warning(f"Pre-staging install changes for '{pkg}' exited with code {res_add.returncode}: {res_add.stderr.strip()}")
 
     additions, deletions, modifications, renames = get_package_drifts(workspace_config.install_path, pkg)
     
     if not additions and not deletions and not modifications and not renames:
         logger.info(f"✨ Package '{pkg}' has no drifts.")
-        subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
+        res_rst = subprocess.run(
+            ["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_rst.returncode != 0:
+            logger.debug(f"Unstaging install changes for clean package '{pkg}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}")
         return PackageAdoptResult(package=pkg, status="SUCCESS")
 
     src_pkg_dir = workspace_config.source_path / pkg
@@ -990,7 +1012,14 @@ def adopt_one_package_drifts(
 
     if dry_run:
         # In dry-run mode, unstage the index changes so that the install repository working index remains untouched.
-        subprocess.run(["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg], capture_output=True)
+        res_dry = subprocess.run(
+            ["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_dry.returncode != 0:
+            logger.debug(f"Dry-run unstage for '{pkg}' exited with code {res_dry.returncode}: {res_dry.stderr.strip()}")
         dry_run_adopt(render_engines, src_dir_to_render, workspace_config.install_path, pkg, additions, deletions, modifications, renames)
         return PackageAdoptResult(
             package=pkg,
@@ -1061,10 +1090,12 @@ def adopt_one_package_drifts(
     if skipped_files:
         for rel_path_str in skipped_files:
             rel_spec = (Path(pkg) / rel_path_str).as_posix()
-            subprocess.run([
+            res_rst = subprocess.run([
                 "git", "-C", str(workspace_config.install_path),
                 "restore", "--staged", "--", rel_spec
-            ], capture_output=True)
+            ], capture_output=True, text=True, check=False)
+            if res_rst.returncode != 0:
+                logger.debug(f"Unstaging skipped file '{rel_spec}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}")
 
     return PackageAdoptResult(
         package=pkg,

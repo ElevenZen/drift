@@ -1,7 +1,6 @@
 """Package runtime health check and probe execution engine."""
 
 import logging
-import subprocess
 import time
 from pathlib import Path
 from typing import List, Optional, Tuple, Union, Sequence

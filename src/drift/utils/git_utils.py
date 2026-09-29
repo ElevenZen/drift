@@ -51,6 +51,7 @@ def get_git_status_porcelain(
     cmd = ["git", "-C", str(repo_path), "status", "--porcelain"]
     if pkg_path:
         cmd.append(str(pkg_path))
+    # check=False is intentional: non-zero returncode indicates error/clean/untracked, handled explicitly below.
     res = run_command(cmd, text=True, check=False, suppress_output=True)
     if res.returncode != 0 or not res.stdout or not res.stdout.strip():
         return []
@@ -140,13 +141,14 @@ def _is_pkg_stageable(repo_path: Path, pkg: str) -> bool:
     """Checks if a package folder exists on disk or has files tracked in git."""
     if (repo_path / pkg).is_dir():
         return True
+    # check=False is intentional: exit code indicates untracked folder/missing files.
     res = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
         text=True,
         check=False,
         suppress_output=True,
     )
-    return bool(res.stdout and res.stdout.strip())
+    return bool(res.returncode == 0 and res.stdout and res.stdout.strip())
 
 
 def _resolve_pkg_stage_targets(repo_path: Path, target_pkgs: Sequence[str]) -> List[str]:
@@ -216,6 +218,7 @@ def commit_repo_changes(
 
 def is_git_tracked(dir_path: Path) -> bool:
     """Checks if a directory is inside a Git repository."""
+    # check=False is intentional: returncode == 0 directly determines git repository presence.
     res = run_command(
         ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
         text=True,
@@ -249,6 +252,7 @@ def get_drift_root(dir_path: Path, force: bool = False) -> Path:
 
 def is_bare_repository(dir_path: Path) -> bool:
     """Checks if the Git repository is a bare repository."""
+    # check=False is intentional: inspect returncode and stdout to identify bare repo state.
     res = run_command(
         ["git", "-C", str(dir_path), "rev-parse", "--is-bare-repository"],
         text=True,
@@ -260,6 +264,7 @@ def is_bare_repository(dir_path: Path) -> bool:
 
 def is_detached_head(dir_path: Path) -> bool:
     """Checks if the Git repository is in a detached HEAD state."""
+    # check=False is intentional: symbolic-ref exits with non-zero when HEAD is detached.
     res = run_command(
         ["git", "-C", str(dir_path), "symbolic-ref", "-q", "HEAD"],
         text=True,
@@ -271,6 +276,7 @@ def is_detached_head(dir_path: Path) -> bool:
 
 def is_merge_or_rebase_in_progress(dir_path: Path) -> bool:
     """Checks if a merge or rebase operation is currently in progress."""
+    # check=False is intentional: non-zero returncode indicates git-dir resolution failed.
     res = run_command(
         ["git", "-C", str(dir_path), "rev-parse", "--git-dir"],
         text=True,
@@ -337,6 +343,7 @@ def check_repo_can_commit(repo_path: Path) -> Optional[str]:
     # Check user.name
     has_env_name = bool(os.environ.get("GIT_AUTHOR_NAME") or os.environ.get("GIT_COMMITTER_NAME"))
     if not has_env_name:
+        # check=False is intentional: missing git config returns exit code 1.
         res = run_command(
             ["git", "-C", str(repo_path), "config", "user.name"],
             text=True,
@@ -354,6 +361,7 @@ def check_repo_can_commit(repo_path: Path) -> Optional[str]:
     # Check user.email
     has_env_email = bool(os.environ.get("GIT_AUTHOR_EMAIL") or os.environ.get("GIT_COMMITTER_EMAIL"))
     if not has_env_email:
+        # check=False is intentional: missing git config returns exit code 1.
         res = run_command(
             ["git", "-C", str(repo_path), "config", "user.email"],
             text=True,
@@ -390,6 +398,7 @@ def check_repo_git_user_synced(
     Returns an error message if out of sync, or None if synchronized (or when expected values are None).
     """
     if expected_name:
+        # check=False is intentional: unconfigured key returns exit code 1.
         res = run_command(
             ["git", "-C", str(repo_path), "config", "--local", "user.name"],
             text=True,
@@ -400,6 +409,7 @@ def check_repo_git_user_synced(
             return f"Git user.name does not match workspace settings ('{expected_name}')"
 
     if expected_email:
+        # check=False is intentional: unconfigured key returns exit code 1.
         res = run_command(
             ["git", "-C", str(repo_path), "config", "--local", "user.email"],
             text=True,

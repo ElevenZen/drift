@@ -31,13 +31,14 @@ def audit_repo_package_status(
     if not pkg_dir.exists():
         return "EMPTY", None
 
+    # check=False is intentional: exit code indicates untracked directory or missing files.
     res_tracked = run_command(
         ["git", "-C", str(repo_path), "ls-files", f"{pkg}/"],
         text=True,
         check=False,
         suppress_output=True,
     )
-    if not res_tracked.stdout or not res_tracked.stdout.strip():
+    if res_tracked.returncode != 0 or not res_tracked.stdout or not res_tracked.stdout.strip():
         return "NEW", None
 
     git_status = parse_git_status_porcelain(repo_path, pkg)

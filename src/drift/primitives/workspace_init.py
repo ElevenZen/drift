@@ -3,7 +3,6 @@
 import json
 import logging
 import sys
-import subprocess
 from pathlib import Path
 
 from ..core.constants import (
