@@ -8,25 +8,52 @@ useDefault = true
 description = "Sample github key"
 regexes = ['ghp_x{10,}']
 
-# [[allowlists]]
-# description = "Allowlist for test files"
-# paths = [ '''tests/.*''' ]
-
 [[allowlists]]
 description = "Allowlist for test ip"
 regexes = [
-'''192\.168\.1\.[0-9]''',
-'''192\.168\.255\.[0-9]''',
-'''10\.0\.0\.[0-9]''',
-'''10\.255\.255\.[0-9]''',
+# 10/8 = 10.0 ~ 10.255 for internal networking.
+'''10\.[01]\.[01]\.[0-9]''',
+'''10\.50\.[01]\.[0-9]''',
+'''10\.25[45]\.25[45]\.[0-9]''',
+# 172.16/12 = 172.16 ~ 172.31 for internal networking.
 '''172\.16\.0\.[0-9]''',
-'''172\.31\.255\.[0-9]'''
+'''172\.16\.50\.[0-9]''',
+'''172\.31\.255\.[0-9]''',
+# 192.168/16 = 192.168.0 ~ 192.168.255 for internal networking.
+'''192\.168\.1\.[0-9]''',
+'''192\.168\.2\.[0-9]''',
+'''192\.168\.5\.[0-9]''',
+'''192\.168\.100\.[0-9]''',
+'''192\.168\.255\.[0-9]''',
+# 127.0.0.1
+'127.0.0.1',
+'127.0.1.1',
+'1.[0-9].0.0',
+'8.8.8.8',
 ]
 
 [[rules]]
 id = "internal-ip-address"
-description = "Private IPv4 address leak"
+description = "Private IPv4 address leak (RFC 1918)"
+# 10/8 = 10.0 ~ 10.255 for internal networking.
+# 172.16/12 = 172.16 ~ 172.31 for internal networking.
+# 192.168/16 = 192.168.0 ~ 192.168.255 for internal networking.
 regex = '''\b(?:10\.\d{1,3}|172\.(?:1[6-9]|2[0-9]|3[0-1])|192\.168)\.\d{1,3}\.\d{1,3}\b'''
+keywords = ["."]
+tags = ["network", "ip"]
+
+[[rules]]
+id = "loopback-ip-address"
+description = "Private Loopback address"
+regex = '''\b127.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?).(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?).(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?)'''
+keywords = ["127."]
+tags = ["network", "ip"]
+
+[[rules]]
+id = "public-ipv4"
+description = "Public IPv4 address leak"
+regex = '''\b(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?)\.(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[0-9][0-9]?)\b'''
+keywords = ["."]
 tags = ["network", "ip"]
 
 [[rules]]
