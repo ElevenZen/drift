@@ -59,7 +59,7 @@ Each packaging ecosystem developed a distinct paradigm to address these needs:
 * $\rightarrow$ Trigger `post_render` hook
 * $\rightarrow$ Stage to `install/` (Git commit snapshot)
 * $\rightarrow$ Trigger `pre_install` / `pre_update`
-* $\rightarrow$ Deploy target (Stow symlink / copy)
+* $\rightarrow$ Deploy target (Native symlink / copy)
 * $\rightarrow$ Trigger `post_install` / `post_update`
 * $\rightarrow$ Continuous `health` diagnostics
 
@@ -706,7 +706,7 @@ Hooks in Drift reside strictly within [`drift_hooks/`](docs/ai_reference.md) and
    * **`post_render`**: Validation and transformation hook executed in `render/<pkg>/` after template compilation, prior to touching host targets.
 
 2. **Category 2: Deployment & Upgrade Lifecycle**
-   * **`pre_install` / `post_install`**: Initial deployment boundary hooks (around GNU Stow symlinking or copy).
+   * **`pre_install` / `post_install`**: Initial deployment boundary hooks (around native relative symlinking or copy).
    * **`pre_update` / `post_update`**: Upgrade boundary hooks executed around Staged Git delta synchronization.
    * **`pre_uninstall` / `post_uninstall`**: Decommissioning and resource cleanup hooks.
 
@@ -746,7 +746,7 @@ systemctl --user restart {{ service_name | default("my_service") }}
 Every Drift hook executes with typed domain facts and scoped environment variables:
 * `$drift_package_name`: The active package name.
 * `$drift_package_target_dir`: The destination root path.
-* `$drift_package_install_method`: `stow` or `copy`.
+* `$drift_package_install_method`: `symlink` or `copy`.
 * `$drift_os`, `$drift_arch`, `$drift_hostname`, `$drift_username`: Standardized host facts.
 * `[env.override]` and `[env.fallback]`: Scoped package environment dictionaries.
 

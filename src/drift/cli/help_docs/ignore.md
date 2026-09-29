@@ -1,6 +1,6 @@
 # 🚫 Drift Ignore Engine: Syntax and Integration Reference
 
-Drift includes a robust, Perl-Compatible Regular Expression (PCRE) file ignore engine matching the two-group relative path and basename matching logic of `.stow-local-ignore`. It prevents transient files, backup dumps, system caches, build artifacts, and non-dotfile repository assets from being deployed to host targets.
+Drift includes a robust, Perl-Compatible Regular Expression (PCRE) file ignore engine whose syntax is derived from GNU Stow's ignore file specification (matching both relative path prefixes and basenames), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host. It prevents transient files, backup dumps, system caches, build artifacts, and non-dotfile repository assets from being deployed to host targets.
 
 > [!IMPORTANT]
 > **Stage-Specific Ignore Invariant: Installation Only, Not Rendering**:
@@ -152,11 +152,10 @@ RCS
 Drift strictly enforces that **only one `.drift_ignore` file** exists per package root:
 *   Nested ignore files in subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore`) are prohibited to maintain a clear, single source of ignore truth.
 *   **Internal `.drift/` Directory**: The internal Drift directory (`.drift/`, containing package configuration `.drift/drift_package.toml`, ignore rules `.drift/.drift_ignore`, staged render engine inputs `.drift/render/`, and compiled lifecycle hooks in `.drift/hooks/`) is hardcoded as permanently ignored and never deployed to the active host target.
-*   **Managed Config Files**: Root-level staging artifacts defined in `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are automatically protected and ignored from host linking.
 
-### 📝 Automated `.stow-local-ignore` & Sub-Repo `.gitignore` Generation
-*   **`.stow-local-ignore` Generation**: During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns (from `render/<pkg>/.drift/.drift_ignore` or default rules) together with `MANAGED_CONFIG_FILES` and internal `.drift/` control directories into `install/<pkg>/.stow-local-ignore`. This guarantees that symlink deployment respects both custom and default ignore rules without polluting host target directories.
-*   **Sub-Repo `.gitignore`**: Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` databases to exclude synthetic files (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`: `*~`, `*#*#`, `*.swp`, `*.DS_Store`, etc.), keeping database Git repositories clean.
+### 📝 Native Linker Evaluation & Sub-Repo `.gitignore` Generation
+*   **Native Linker Evaluation**: During deployment (`drift deploy` or `drift apply`), Drift's native linker directly evaluates active `DriftIgnore` patterns (from `install/<pkg>/.drift/.drift_ignore` or default rules) when gathering deployable files. No synthetic `.stow-local-ignore` files are generated, maintaining 100% 1:1 structural fidelity between `render/` and `install/`.
+*   **Sub-Repo `.gitignore`**: Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` databases to exclude synthetic files (`.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`: `*~`, `*#*#`, `*.swp`, `*.DS_Store`, etc.), keeping database Git repositories clean.
 
 ---
 
@@ -170,7 +169,7 @@ Drift strictly enforces that **only one `.drift_ignore` file** exists per packag
 
 #### 2. Installation Stage (`install/` ➔ Host Target)
 Ignore pattern filtering occurs **exclusively during the installation / deployment stage**:
-* **Stow Deployment (`install_method = "stow"`)**: Drift's symlink engine reads `install/<pkg>/.stow-local-ignore` and skips creating symlinks for any matching files on the host target.
+* **Symlink Deployment (`install_method = "symlink"`)**: Drift's native symlink engine evaluates `DriftIgnore` patterns and skips creating symlinks for any matching files on the host target.
 * **Copy Deployment (`install_method = "copy"`)**: Drift's copy engine evaluates the ignore patterns against each staged file and skips copying matching files to the host target.
 * Ignored files exist safely within the `install/<pkg>/` state database but **never reach or pollute the host system**.
 

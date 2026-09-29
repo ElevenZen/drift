@@ -34,7 +34,7 @@ Define the `health` hook inside your package's `drift_package.toml`:
 
 ```toml
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/tmux"
 
 [hooks]

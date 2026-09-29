@@ -34,7 +34,6 @@ from drift.primitives.workspace_check import (
     check_root_gitignore,
     check_render_gitignore,
     check_install_gitignore,
-    check_install_stow_ignore,
     check_core_dirs,
     check_engine_inputs,
     check_package_metadata_structure,
@@ -258,18 +257,15 @@ class TestWorkspaceRepair(unittest.TestCase):
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())
 
-    def test_repair_recovers_missing_state_toml_and_stow_ignore(self) -> None:
-        """Repair restores install/state.toml and install/.stow-local-ignore."""
+    def test_repair_recovers_missing_state_toml(self) -> None:
+        """Repair restores install/state.toml."""
         init_drift_workspace(self.drift_root)
         (self.drift_root / "install" / "state.toml").unlink()
-        (self.drift_root / "install" / ".stow-local-ignore").unlink()
 
         actions = repair_drift_workspace(self.drift_root)
         self.assertTrue(any("state.toml" in a for a in actions))
-        self.assertTrue(any(".stow-local-ignore" in a for a in actions))
 
         self.assertTrue((self.drift_root / "install" / "state.toml").is_file())
-        self.assertTrue((self.drift_root / "install" / ".stow-local-ignore").is_file())
 
         report = check_existing_workspace_status(self.drift_root)
         self.assertTrue(report.is_healthy())

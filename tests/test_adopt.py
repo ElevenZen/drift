@@ -127,9 +127,8 @@ class TestAdopt(unittest.TestCase):
         # Now get_drifted_packages should detect pkg_a
         self.assertEqual(get_drifted_packages(self.workspace_config), [pkg])
 
-        # Create modifications to root metadata files in install/ (state.toml, .gitignore, .stow-local-ignore)
+        # Create modifications to root metadata files in install/ (state.toml, .gitignore)
         (self.install_dir / ".gitignore").write_text("*.swp\n", encoding="utf-8")
-        (self.install_dir / ".stow-local-ignore").write_text("ignore\n", encoding="utf-8")
         (self.install_dir / "state.toml").write_text("# modified\n", encoding="utf-8")
 
         # Root metadata files must not appear in drifted packages

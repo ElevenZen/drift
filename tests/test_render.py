@@ -742,7 +742,7 @@ class TestRenderPackage(unittest.TestCase):
         with open(pkg_dir / "drift_package.toml", "w", encoding="utf-8") as f:
             f.write("""
             [package]
-            install_method = "stow"
+            install_method = "symlink"
             """)
 
         with open(pkg_dir / "regular_file.txt", "w", encoding="utf-8") as f:

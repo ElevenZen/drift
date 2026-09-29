@@ -17,8 +17,6 @@ from drift.utils.git_utils import (
 )
 from drift.core.constants import (
     STATE_REGISTRY_FILE_NAME,
-    INSTALL_STOW_IGNORE_PATTERN,
-    STOW_LOCAL_IGNORE_FILE_NAME,
 )
 from drift.primitives.workspace_init import (
     init_drift_workspace,
@@ -85,15 +83,6 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         res_install_pyc = subprocess.run(["git", "check-ignore", "__pycache__/foo.pyc"], cwd=str(self.drift_root / "install"), capture_output=True, text=True)
         self.assertEqual(res_install_pyc.returncode, 0)
 
-        # Check `.stow-local-ignore` inside install/
-        stow_ignore = os.path.join(self.drift_root, "install", STOW_LOCAL_IGNORE_FILE_NAME)
-        self.assertTrue(os.path.isfile(stow_ignore))
-        with open(stow_ignore, "r", encoding="utf-8") as f:
-            stow_content = f.read()
-        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, stow_content)
-        self.assertIn(r"\.git", stow_content)
-        self.assertIn(r"^/\.drift/", stow_content)
-
         # Check config/drift_workspace.toml template was created
         config_file = os.path.join(self.drift_root, "config", "drift_workspace.toml")
         self.assertTrue(os.path.isfile(config_file))
@@ -101,7 +90,7 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
             drift_toml = f.read()
         self.assertIn("[workspace]", drift_toml)
         self.assertIn("source_directory = \"src\"", drift_toml)
-        self.assertIn("default_install_method = \"stow\"", drift_toml)
+        self.assertIn("default_install_method = \"symlink\"", drift_toml)
 
         # Check config/drift_workspace.local.toml template was created
         local_config_file = os.path.join(self.drift_root, "config", "drift_workspace.local.toml")

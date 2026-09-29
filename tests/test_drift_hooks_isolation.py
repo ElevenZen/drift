@@ -56,7 +56,7 @@ class TestDriftHooksIsolation(unittest.TestCase):
         workspace_toml.write_text(
             f"""[workspace]
 default_target_directory = "{self.target_dir}"
-default_install_method = "stow"
+default_install_method = "symlink"
 
 [packages.enable]
 DEFAULT = true

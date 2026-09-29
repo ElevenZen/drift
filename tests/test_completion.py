@@ -76,7 +76,7 @@ class TestCompletionGenerators(unittest.TestCase):
         # Check that fixed choices with descriptions are present
         self.assertIn("pre_source", script)
         self.assertIn("post_render", script)
-        self.assertIn("stow", script)
+        self.assertIn("symlink", script)
         self.assertIn("copy", script)
 
     def test_nushell_generator_output(self):

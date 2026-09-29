@@ -11,7 +11,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | Command | Command Signature | Purpose |
 | :--- | :--- | :--- |
 | **`init`** | `drift init [-f] [--no-git-root] [--json]` | Initialize a new Drift workspace repository. |
-| **`new`** | `drift new <pkg> [-t <dir>] [-m <stow\|copy>] [-f] [--json]` | Scaffold a new package directory and `drift_package.toml`. |
+| **`new`** | `drift new <pkg> [-t <dir>] [-m <symlink\|copy>] [-f] [--json]` | Scaffold a new package directory and `drift_package.toml`. |
 | **`add`** | `drift add <pkg> <paths...> [--dry-run] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
@@ -72,13 +72,13 @@ Initializes the active directory as a drift workspace.
 
 ---
 
-### B. Package Creation: `drift new <package> [--force] [--target <dir>] [--method <stow|copy>] [--json]`
+### B. Package Creation: `drift new <package> [--force] [--target <dir>] [--method <symlink|copy>] [--json]`
 Create a new package directory with the default `drift_package.toml` configuration file.
 *   **Command Signature**: `drift new <package> [--force / -f] [--target / -t <target_directory>] [--method / -m <install_method>] [--json]`
 *   **Optional Arguments & Flags**:
     - `--force / -f`: Forcefully overwrites any existing `drift_package.toml` config file inside the package source directory.
     - `--target / -t <target_directory>`: Explicitly configures the deployment target directory inside `drift_package.toml`. Defaults to `default_target_directory` in `drift_workspace.toml`.
-    - `--method / -m <install_method>`: Explicitly configures the installation method (`stow` or `copy`) inside `drift_package.toml`. Defaults to `default_install_method` in `drift_workspace.toml`.
+    - `--method / -m <install_method>`: Explicitly configures the installation method (`symlink` or `copy`) inside `drift_package.toml`. Defaults to `default_install_method` in `drift_workspace.toml`.
     - `--json`: Outputs a `NewPackageResult` object in JSON format.
 *   **Probing Guard**: Halts if a configuration file already exists inside `src/<package>/` unless `--force` is provided.
 
@@ -120,7 +120,7 @@ Provides deep comparisons between configuration layers:
 *   **`drift diff [packages...] --system` (or `-s`, Diff B)**: Visualizes Active System Drift (`System` vs `install/`).
 *   **`drift diff [packages...] --stat`**: Shows a concise diffstat summary of file change counts.
 *   **`drift diff [packages...] --side-by-side` (or `-y`)**: Launches an interactive visual diff session in your configured editor (`$VISUAL`, `$EDITOR`, Neovim `nvim -p -d`, Vim `vim -p -d`, VS Code `code --wait --diff`, or GNU Emacs `ediff`) comparing changed file pairs across multiple tabs/windows.
-*   **Diff Filtering**: Excludes internal synthetic artifacts (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`) while cleanly displaying user modifications to package metadata (`drift_package.toml`, `.drift_ignore`).
+*   **Diff Filtering**: Excludes internal synthetic artifacts (`.gitignore*`) and editor/OS temporary files (`TEMPORARY_FILE_PATTERNS`) while cleanly displaying user modifications to package metadata (`drift_package.toml`, `.drift_ignore`).
 *   **`--json`**: Returns a typed `DiffResult` containing per-package added, modified, and deleted files.
 
 ---
@@ -148,7 +148,7 @@ Verifies Git committability on `render/` and `install/` and discovers target pac
 1.  **Render**: Sandbox-compiles `src/` templates into `render/` (`Primitive 2`).
 2.  **Commit Render**: Commits compiled sandbox history (`Primitive 3`).
 3.  **Stage Render to Install**: Staged delta-sync from `render/` to `install/` (`Primitive 4`).
-4.  **Install Deployment**: Delivers files via atomic stow/copy with collision checking (`Primitive 5`).
+4.  **Install Deployment**: Delivers files via atomic symlink/copy with collision checking (`Primitive 5`).
 5.  **Commit Install**: Scope-commits deployed configurations in `install/` (`Primitive 6`).
 
 #### Stage 3: Post-deploy Garbage Collection
@@ -247,7 +247,7 @@ Clones a remote or local Git repository and immediately reconstructs and heals t
 *   **Real-Time Output Streaming**: Progress from `git clone` is streamed in real time to the terminal. When `--json` is active, streaming output is cleanly suppressed to guarantee pure, machine-readable JSON output.
 *   **Autonomous Bootstrap Healing**:
     - **Existing Drift Workspace**: Reconstructs untracked runtime databases (`render/` and `install/` Git repos, `state.toml`, `.gitignore`, `config/secrets.env`).
-    - **Legacy Dotfiles Repository**: Migrates root dotfiles into `src/<pkg>/`, generates `drift_package.toml` with `stow` install method, and registers in `drift_workspace.toml`.
+    - **Legacy Dotfiles Repository**: Migrates root dotfiles into `src/<pkg>/`, generates `drift_package.toml` with `symlink` install method, and registers in `drift_workspace.toml`.
 
 ---
 

@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from datetime import datetime
-from .constants import InstallMethod
+from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
 
@@ -256,7 +256,7 @@ class NewPackageResult(SerializableModel):
     package_dir: str = ""
     config_file: str = ""
     target_directory: str = ""
-    install_method: InstallMethod = InstallMethod.STOW
+    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
     error_message: Optional[str] = None
 
 

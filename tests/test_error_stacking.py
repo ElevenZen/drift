@@ -76,7 +76,7 @@ class TestErrorStacking(unittest.TestCase):
 
         err_str = str(ctx.exception)
         # Should contain the direct reason
-        self.assertIn("Must be 'stow' or 'copy'", err_str)
+        self.assertIn("Must be 'symlink' or 'copy'", err_str)
         # Should NOT contain double-wrapping of "Invalid package configuration...: Invalid package configuration"
         count = err_str.count("Invalid")
         self.assertEqual(count, 1)

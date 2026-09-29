@@ -1,6 +1,6 @@
 # src/{package_name}/{config_filename}
 [package]
-install_method = "{install_method}"  # Options: "stow" (symlink) or "copy" (physical)
+install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (physical)
 {target_directory_line}
 # target_directory_windows = "~"  # Windows-specific destination override
 # source_directory = "."          # Package root relative to package directory

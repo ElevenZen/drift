@@ -96,8 +96,8 @@ render_command = "jinja2 %s %i"
 default_target_directory = "~"
 
 # Global default installation method
-# Options: "stow" (symlinks) or "copy" (physical copies). Default is "stow".
-default_install_method = "stow"
+# Options: "symlink" (symlinks) or "copy" (physical copies). Default is "symlink".
+default_install_method = "symlink"
 
 # Source directory for packages, default value is "src"
 source_directory = "src"

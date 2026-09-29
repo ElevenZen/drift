@@ -64,6 +64,6 @@ def configure_package(context: PackageHookContext) -> Dict[str, Any]:
     # if context.os == "darwin":
     #     pkg["target_directory"] = "~/Library/Application Support/{package_name}"
     # elif context.os == "linux" and context.distro == "arch":
-    #     pkg["install_method"] = "stow"
+    #     pkg["install_method"] = "symlink"
 
     return config

@@ -31,7 +31,7 @@ src/nvim/
         └── options.lua.envst <-- Templated dotfile compiled by envsubst
 ```
 
-* **`drift_package.toml`**: Declarative settings defining destination target paths, install method (`stow` vs. `copy`), requirements, dependencies, and environment defaults.
+* **`drift_package.toml`**: Declarative settings defining destination target paths, install method (`symlink` vs. `copy`), requirements, dependencies, and environment defaults.
 * **`drift_package.local.toml`**: Local-only, uncommitted overrides merged over `drift_package.toml` for host-specific tuning.
 * **`drift_package.py`**: Dynamic Python preprocessor hook for programmatic settings and remote vault secret injection.
 * **`.drift_ignore`**: Perl-Compatible Regular Expressions (PCRE) to filter unwanted files before rendering or staging.
@@ -44,9 +44,9 @@ src/nvim/
 
 Understanding what a package can do establishes the mental model before diving into TOML syntax:
 
-### 1. 🎯 Target Mapping & Deployment Strategies (`stow` vs. `copy`)
+### 1. 🎯 Target Mapping & Deployment Strategies (`symlink` vs. `copy`)
 Every package declares where and how its files should be mapped to the host system:
-*   **Symlink Projection (`install_method = "stow"`)**: Projects symlinks from the local state database (`install/`) to your host destination (e.g. `~/.config/nvim`). Edits on the host are reflected immediately via symlinks. Ideal for user dotfiles.
+*   **Symlink Projection (`install_method = "symlink"`)**: Projects relative symlinks from the local state database (`install/`) to your host destination (e.g. `~/.config/nvim`). Edits on the host are reflected immediately via symlinks. Ideal for user dotfiles.
 *   **Discrete Physical Copies (`install_method = "copy"`)**: Physically delivers discrete files to host targets. Host files remain unchanged until explicitly updated during deploy passes. Strongly recommended for system services and background daemons (e.g. `systemd`).
 *   **Subfolder Payload Isolation (`source_directory`)**: Compile only a subfolder (e.g. `src/<pkg>/dotfiles/`) to the host, keeping package-level documentation, build scripts, or tests isolated.
 *   **Cross-Platform Paths**: Supports OS-specific destinations like `target_directory_windows` (`%APPDATA%`).
@@ -102,7 +102,7 @@ Designate directories under `target_directory` (e.g. `plugins/`, `themes/`) that
 
 ### 9. 🚫 PCRE Ignore Rules (`.drift_ignore`)
 Filter out unwanted files before compilation and staging:
-*   Single `.drift_ignore` per package root using standard Perl-Compatible Regular Expressions (PCRE), compatible with `.stow-local-ignore`.
+*   Single `.drift_ignore` per package root using standard Perl-Compatible Regular Expressions (PCRE), derived from GNU Stow ignore rules.
 *   Patterns match repository paths before dot-prefix translation, preventing temporary files, caches, or private keys from leaking into the sandbox or host.
 
 ### 10. 🩺 Runtime Health Probes (`drift health`)
@@ -129,7 +129,7 @@ A package traverses four decoupled architectural layers:
 [3. Local State Database]    install/<pkg>/ (Git database + state.toml tracking)
   │ ▲
   │ │  Primitive 1: Reverse-Sync (drift adopt backports live host edits to src/)
-  ▼ │  Primitive 5: Apply (stow symlink projection or atomic physical copy)
+  ▼ │  Primitive 5: Apply (relative symlink projection or atomic physical copy)
 [4. Active Host System]      Target destination (e.g. ~/.config/nvim)
 ```
 
@@ -137,7 +137,7 @@ A package traverses four decoupled architectural layers:
 2.  **Pre-Flight Verification**: Drift evaluates `[requirements]` and `probe` hook before rendering. Unmet packages are skipped gracefully.
 3.  **Rendering (Sandbox)**: Templates compile into `render/<pkg>/` under active environment scope without touching host files.
 4.  **Staging (State DB)**: File changes are staged into `install/<pkg>/` and ordered by topological dependency.
-5.  **Deployment (Host)**: Files are symlinked (`stow`) or copied (`copy`) to the target host directory with collision detection.
+5.  **Deployment (Host)**: Files are symlinked (`symlink`) or copied (`copy`) to the target host directory with collision detection.
 6.  **Audit & Adoption**: Any runtime tweaks made on the host can be inspected (`drift diff -s`) and safely adopted into templates (`drift adopt`).
 
 ---

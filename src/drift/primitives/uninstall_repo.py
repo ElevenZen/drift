@@ -78,7 +78,7 @@ from ..utils.file_ops import (
 )
 from ..utils.file_inspect import tree_files
 from ..utils.path_utils import resolve_target_path
-from ..core.constants import UNINSTALL_HOOK_NAMES, BackupSubfolder, InstallMethod
+from ..core.constants import DEFAULT_INSTALL_METHOD, UNINSTALL_HOOK_NAMES, BackupSubfolder, InstallMethod
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.result_models import PackageUninstallResult, UninstallResult, RestoredBackup
 
@@ -278,7 +278,7 @@ def detach_one_package(
 
     return PackageUninstallResult(
         package=pkg,
-        install_method=pkg_state.install_method or InstallMethod.STOW,
+        install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
         target_directory=str(target_dir),
         detach_mode=True,
         removed_files=[],
@@ -344,7 +344,7 @@ def uninstall_one_package(
 
         return PackageUninstallResult(
             package=pkg,
-            install_method=pkg_state.install_method or InstallMethod.STOW,
+            install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
             target_directory=str(target_dir),
             detach_mode=False,
             removed_files=[str(rel) for rel, _ in removed],
@@ -382,7 +382,7 @@ def uninstall_missing_package(
 
     return PackageUninstallResult(
         package=pkg,
-        install_method=pkg_state.install_method or InstallMethod.STOW,
+        install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
         target_directory=str(pkg_state.target_directory or ""),
         detach_mode=detach,
         removed_files=[],

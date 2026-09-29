@@ -120,14 +120,14 @@ The workspace coordinates the four core Drift primitives across all packages:
     ▼ (Primitive 4: Stage with dependency DAG ordering)
 [Local State Database: install/]
     │
-    ▼ (Primitive 5: Apply via stow symlinks or physical copy)
+    ▼ (Primitive 5: Apply via relative symlinks or physical copy)
 [Active Host System: target directories]
 ```
 
 1.  **Reverse-Sync (Primitive 1)**: Inspects live host modifications and imports untracked or edited files back into `src/` (`drift adopt`).
 2.  **Render (Primitive 2)**: Stitches 6-tier variables and compiles source templates into `render/`.
 3.  **Stage (Primitive 4)**: Calculates deltas, orders packages by dependency DAG, and commits changes into `install/`.
-4.  **Apply (Primitive 5)**: Projects symlinks (`stow`) or writes physical copies (`copy`) to target host directories with collision checks.
+4.  **Apply (Primitive 5)**: Projects relative symlinks (`symlink`) or writes physical copies (`copy`) to target host directories with collision checks.
 
 ---
 

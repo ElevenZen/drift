@@ -15,6 +15,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_HOOK_TIMEOUT,
     InstallMethod,
+    DEFAULT_INSTALL_METHOD,
     set_test_mode,
     set_initial_env,
     update_initial_env,
@@ -379,7 +380,7 @@ class TestConfigClasses(unittest.TestCase):
         base_dir = Path("/mock/src/my_pkg")
         data = {
             "package": {
-                "install_method": "stow"
+                "install_method": "symlink"
             },
             "hooks": {
                 "pre_source": "drift_hooks/gen.sh",
@@ -394,7 +395,7 @@ class TestConfigClasses(unittest.TestCase):
         # Test string casting for timeout
         data_str_timeout = {
             "package": {
-                "install_method": "stow"
+                "install_method": "symlink"
             },
             "hooks": {
                 "timeout": "45"
@@ -405,7 +406,7 @@ class TestConfigClasses(unittest.TestCase):
 
         data_no_name = {
             "package": {
-                "install_method": "stow"
+                "install_method": "symlink"
             }
         }
         config = PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir=base_dir)
@@ -612,7 +613,7 @@ class TestConfigClasses(unittest.TestCase):
         base = Path("/workspace/my_pkg")
 
         # 1. Default (omitted) defaults to Path(".")
-        cfg_default = PackageConfig.from_dict({"package": {"install_method": "stow"}}, base_dir=base, package_name="my_pkg")
+        cfg_default = PackageConfig.from_dict({"package": {"install_method": "symlink"}}, base_dir=base, package_name="my_pkg")
         self.assertEqual(cfg_default.package.source_directory, Path("."))
         self.assertEqual(cfg_default.get_source_directory_to_render(base), base)
 
@@ -1046,17 +1047,36 @@ class TestConfigClasses(unittest.TestCase):
     def test_package_config_get_install_method(self) -> None:
         ws_config = WorkspaceConfig(
             drift_root=Path("/test"),
-            workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.STOW),
+            workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.SYMLINK),
         )
-        pkg_config = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=InstallMethod.STOW))
+        pkg_config = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=InstallMethod.SYMLINK))
 
-        # On non-Windows, returns stow
+        # On non-Windows, returns symlink
         with patch("sys.platform", "linux"):
-            self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.STOW)
+            self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.SYMLINK)
 
         # On Windows (win32), always forces copy
         with patch("sys.platform", "win32"):
             self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.COPY)
+
+    def test_install_method_default_and_parsing(self) -> None:
+        """Verifies InstallMethod.DEFAULT, InstallMethod.default(), DEFAULT_INSTALL_METHOD, and from_str defaults."""
+        self.assertEqual(InstallMethod.DEFAULT, InstallMethod.SYMLINK)
+        self.assertEqual(InstallMethod.default(), InstallMethod.SYMLINK)
+        self.assertEqual(DEFAULT_INSTALL_METHOD, InstallMethod.SYMLINK)
+        self.assertEqual(InstallMethod.DEFAULT, DEFAULT_INSTALL_METHOD)
+
+        # from_str without argument or None returns DEFAULT
+        self.assertEqual(InstallMethod.from_str(), InstallMethod.DEFAULT)
+        self.assertEqual(InstallMethod.from_str(None), InstallMethod.DEFAULT)
+        self.assertEqual(InstallMethod.from_str("default"), InstallMethod.DEFAULT)
+        self.assertEqual(InstallMethod.from_str("symlink"), InstallMethod.SYMLINK)
+        self.assertEqual(InstallMethod.from_str("stow"), InstallMethod.SYMLINK)
+        self.assertEqual(InstallMethod.from_str("copy"), InstallMethod.COPY)
+
+        # enum constructor fallback
+        self.assertEqual(InstallMethod(None), InstallMethod.DEFAULT)
+        self.assertEqual(InstallMethod("default"), InstallMethod.DEFAULT)
 
     def test_package_config_target_directory_windows_and_aliases(self) -> None:
         ws_config = WorkspaceConfig(
@@ -1383,14 +1403,14 @@ class TestConfigLoaders(unittest.TestCase):
         local_config_path = pkg_dir / "drift_package.local.toml"
         local_config_path.write_text("""
             [package]
-            install_method = "stow"
+            install_method = "symlink"
             sudo = true
             """, encoding="utf-8")
 
         # Passing workspace_config=None triggers static loading path
         pkg_config = PackageConfig.from_source_dir(pkg_dir)
         self.assertEqual(pkg_config.name, "my_pkg_merge")
-        self.assertEqual(pkg_config.package.install_method, "stow")
+        self.assertEqual(pkg_config.package.install_method, "symlink")
         self.assertEqual(pkg_config.package.sudo, True)
 
     def test_package_local_config_merge_with_workspace(self) -> None:
@@ -1421,13 +1441,13 @@ class TestConfigLoaders(unittest.TestCase):
         local_config_path = pkg_dir / "drift_package.local.toml"
         local_config_path.write_text("""
             [package]
-            install_method = "stow"
+            install_method = "symlink"
             sudo = true
             """, encoding="utf-8")
 
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
         self.assertEqual(pkg_config.name, "my_pkg_merge_ws")
-        self.assertEqual(pkg_config.package.install_method, "stow")
+        self.assertEqual(pkg_config.package.install_method, "symlink")
         self.assertEqual(pkg_config.package.sudo, True)
 
         # Ensure the combined file gets rendered correctly in render/ sandbox
@@ -1947,7 +1967,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             PackageSectionConfig(
                 name="pkg_overridden",
                 target_directory=Path("/etc/custom_pkg_target"),
-                install_method=InstallMethod.STOW,
+                install_method=InstallMethod.SYMLINK,
             )
         ).compute_effective_envs(workspace_config)
         with pkg_overridden.package_envs():
@@ -1956,7 +1976,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             self.assertEqual(os.environ.get("drift_package_source_dir"), "/dummy/root/src/pkg_overridden")
             self.assertEqual(os.environ.get("drift_package_render_dir"), "/dummy/root/render/pkg_overridden")
             self.assertEqual(os.environ.get("drift_package_install_dir"), "/dummy/root/install/pkg_overridden")
-            self.assertEqual(os.environ.get("drift_package_install_method"), "stow")
+            self.assertEqual(os.environ.get("drift_package_install_method"), "symlink")
 
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
@@ -2116,7 +2136,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
                 # Tier 3: Package facts are loaded
                 self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
-                self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "stow")
+                self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "symlink")
 
                 # Tier 3: System facts are preserved
                 self.assertEqual(os.environ.get("drift_os"), "linux")
@@ -2192,7 +2212,7 @@ class TestSettingsConfig(unittest.TestCase):
         install_directory = "install"
         backup_directory = "backup"
         default_target_directory = "~"
-        default_install_method = "stow"
+        default_install_method = "symlink"
 
         [packages.enable]
         DEFAULT = true
@@ -2333,7 +2353,7 @@ class TestWorkspaceSectionConfig(unittest.TestCase):
         self.assertEqual(ws_sec.install_directory, Path("install"))
         self.assertEqual(ws_sec.backup_directory, Path("backup"))
         self.assertEqual(ws_sec.default_target_directory, Path("~").expanduser())
-        self.assertEqual(ws_sec.default_install_method, "stow")
+        self.assertEqual(ws_sec.default_install_method, InstallMethod.SYMLINK)
         self.assertIsNone(ws_sec.hook_file)
 
     def test_workspace_section_from_dict(self) -> None:

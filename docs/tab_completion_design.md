@@ -25,7 +25,7 @@ Drift commands are categorized into **8 distinct positional argument patterns**:
 | **C. One or More Packages** | `<packages...>` | `uninstall` | At least one package required; complete package names repeatedly. |
 | **D. Package + Hook Name** | `<package> <hook>` | `hook` | **Arg 1**: Existing package name from `src/`.<br>**Arg 2**: Lifecycle hook name with full descriptions. |
 | **E. Package + File Paths** | `<package> <paths...>` | `add` | **Arg 1**: Existing package name from `src/`.<br>**Arg 2+**: Host system file or directory paths. |
-| **F. New or Existing Package** | `<package_name>` | `new` | **Arg 1**: Free-text string (brand-new package) **or** an existing folder name in `src/` (to scaffold missing configuration in an existing folder).<br>Flags: `-m/--method` (`stow` / `copy`), `-t/--target` (directories). |
+| **F. New or Existing Package** | `<package_name>` | `new` | **Arg 1**: Free-text string (brand-new package) **or** an existing folder name in `src/` (to scaffold missing configuration in an existing folder).<br>Flags: `-m/--method` (`symlink` / `copy`), `-t/--target` (directories). |
 | **G. Fixed Topic / Shell Choices** | `[topic]` / `[shell]` | `help`, `complete` | **`help`**: Complete built-in manual topics with descriptions.<br>**`complete`**: Complete supported shell targets (`bash`, `zsh`, `fish`). |
 | **H. Git URL + Destination** | `<git_url> [destination]` | `clone` | **Arg 1**: URL/path (free-text).<br>**Arg 2**: Destination directory path. |
 
@@ -143,7 +143,7 @@ HELP_TOPICS: List[Choice] = [
 ]
 
 INSTALL_METHODS: List[Choice] = [
-    Choice("stow", "Symlink-based deployment (ideal for user dotfiles)"),
+    Choice("symlink", "Symlink-based deployment (ideal for user dotfiles)"),
     Choice("copy", "Direct physical copy deployment (ideal for system configs)"),
 ]
 

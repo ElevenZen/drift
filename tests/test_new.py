@@ -37,7 +37,7 @@ class TestNewPackage(unittest.TestCase):
             
             content = config_file.read_text(encoding="utf-8")
             self.assertIn(f'# src/{pkg_name}/drift_package.toml', content)
-            self.assertIn('install_method = "stow"', content)
+            self.assertIn('install_method = "symlink"', content)
             self.assertIn('# target_directory = "~"', content)
             self.assertIn('# target_directory_windows = "~"', content)
             self.assertIn('# source_directory = "."', content)
@@ -124,7 +124,7 @@ class TestNewPackage(unittest.TestCase):
         """Directly verifies get_default_package_config_content with default and custom arguments."""
         content_default = get_default_package_config_content("my_app")
         self.assertIn("# src/my_app/drift_package.toml", content_default)
-        self.assertIn('install_method = "stow"', content_default)
+        self.assertIn('install_method = "symlink"', content_default)
         self.assertIn('# target_directory = "~"', content_default)
 
         content_custom = get_default_package_config_content(

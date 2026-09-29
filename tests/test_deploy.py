@@ -611,25 +611,25 @@ target_directory = "{self.system_target_dir}"
         rollback_res = run_primitive_8_rollback_recovery(self.workspace_config, ["pkg_a"], force=False)
         self.assertEqual(rollback_res.status, "SUCCESS")
 
-    def test_deploy_step4a_prepare_failure_for_stow_package_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails for STOW packages, rollback IS triggered."""
-        # 1. Set pkg_a to stow in source config and deploy initially
+    def test_deploy_step4a_prepare_failure_for_symlink_package_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails for SYMLINK packages, rollback IS triggered."""
+        # 1. Set pkg_a to symlink in source config and deploy initially
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "pkg_a"
-        install_method = "stow"
+        install_method = "symlink"
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         reg = load_state_registry(self.state_file)
-        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.STOW)
+        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.SYMLINK)
 
         # 2. Modify package file so staging detects changes and proceeds to Step 4
-        (pkg_dir / "file.txt").write_text("stow modified content", encoding="utf-8")
+        (pkg_dir / "file.txt").write_text("symlink modified content", encoding="utf-8")
 
-        # 3. Deploy update with prepare_install_deployment failing on pre-flight: should trigger rollback due to stow symlinks
+        # 3. Deploy update with prepare_install_deployment failing on pre-flight: should trigger rollback due to symlinks
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
@@ -654,14 +654,14 @@ target_directory = "{self.system_target_dir}"
         # Verify emergency recovery card WAS printed
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
-    def test_deploy_step4a_prepare_failure_for_stow_with_generic_error_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails with a generic error (no packages attribute) and package is STOW, rollback is triggered."""
-        # 1. Configure pkg_a as STOW and initial deploy
+    def test_deploy_step4a_prepare_failure_for_symlink_with_generic_error_triggers_rollback(self) -> None:
+        """When prepare_install_deployment fails with a generic error (no packages attribute) and package is SYMLINK, rollback is triggered."""
+        # 1. Configure pkg_a as SYMLINK and initial deploy
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "pkg_a"
-        install_method = "stow"
+        install_method = "symlink"
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -723,8 +723,8 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
-    def test_deploy_step4a_prepare_failure_with_stow_and_copy_packages_rolls_back_all_staged(self) -> None:
-        """When deploying both STOW and COPY packages and Step 4a fails, rollback targets ALL staged packages."""
+    def test_deploy_step4a_prepare_failure_with_symlink_and_copy_packages_rolls_back_all_staged(self) -> None:
+        """When deploying both SYMLINK and COPY packages and Step 4a fails, rollback targets ALL staged packages."""
         pkg_b_dir = self.source_dir / "pkg_b"
         pkg_b_dir.mkdir(parents=True, exist_ok=True)
         (pkg_b_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -739,18 +739,18 @@ target_directory = "{self.system_target_dir}"
         (pkg_a_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "pkg_a"
-        install_method = "stow"
+        install_method = "symlink"
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
         # Initial deployment of both
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
         reg = load_state_registry(self.state_file)
-        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.STOW)
+        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.SYMLINK)
         self.assertEqual(reg.get_package_install_method("pkg_b"), InstallMethod.COPY)
 
         # Modify both packages
-        (pkg_a_dir / "file.txt").write_text("stow modified", encoding="utf-8")
+        (pkg_a_dir / "file.txt").write_text("symlink modified", encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("copy modified", encoding="utf-8")
 
         # Deploy both, but prepare_install_deployment fails on pkg_b (the COPY package!)

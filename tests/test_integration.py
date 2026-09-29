@@ -48,15 +48,15 @@ class TestIntegration(unittest.TestCase):
         os.environ.update(self.original_environ)
         set_initial_env(self.original_initial_env)
 
-    def test_lifecycle_stow_basic(self):
-        """Scenario: Basic stow deployment, drift detection, and uninstallation."""
+    def test_lifecycle_symlink_basic(self):
+        """Scenario: Basic symlink deployment, drift detection, and uninstallation."""
         from drift.primitives.new_package import run_primitive_10_create_new_package
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
         from drift.primitives.install_repo import run_primitive_5_install_deployment
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
         
-        pkg = "pkg_stow"
+        pkg = "pkg_symlink"
         # Manually enable the package in the loaded config object
         self.workspace_config.packages_enable[pkg] = True
         

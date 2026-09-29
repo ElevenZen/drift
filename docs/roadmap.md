@@ -31,8 +31,8 @@ The mental model required — 4 directory tiers, 16 primitives, 6-tier variable 
 **Git subprocess dependency is deep and implicit.**
 Despite "zero dependencies," the project fundamentally depends on Git being installed and functioning correctly. Every primitive touches `subprocess.run(["git", ...])`. There's no abstraction layer — Git commands are scattered across `git_utils.py`, `workspace_diff.py`, `render_package.py`, etc. If Git behaves unexpectedly (version differences, partial installs, Windows Git quirks), debugging is hard.
 
-**The `stow` vs `copy` duality adds cognitive load.**
-Two deployment methods with different event ordering semantics — symlink content visible before `pre_update` vs. not — is a footgun. Users will hit subtle bugs where a hook script works with `copy` but breaks with `stow` because file contents changed earlier than expected.
+**The `symlink` vs `copy` duality adds cognitive load.**
+Two deployment methods with different event ordering semantics — symlink content visible before `pre_update` vs. not — is a footgun. Users will hit subtle bugs where a hook script works with `copy` but breaks with `symlink` because file contents changed earlier than expected.
 
 ---
 
@@ -92,7 +92,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **Generic Kahn's Algorithm Topological Sort**: Extracted pure, generic `topological_sort[T](graph: Mapping[T, Set[T]], ...)` into [`env_utils.py`](../src/drift/utils/env_utils.py) and streamlined `resolve_env_references` to accept `Mapping[str, str]` without redundant allocations.
 
 ### 9. Full-Staged Rollback Scope & Rollback-Eligible State Hygiene
-- **Full Staged Batch Rollback Guarantee**: When Step 4a (`prepare_install_deployment`) fails, all packages staged in Step 3b (`pkgs_to_install`) are designated for rollback. Rolling back all staged packages cleans the uncommitted `install/` Git working tree for both `STOW` and `COPY` packages, permanently preventing subsequent false `🛡️ System drift detected` aborts.
+- **Full Staged Batch Rollback Guarantee**: When Step 4a (`prepare_install_deployment`) fails, all packages staged in Step 3b (`pkgs_to_install`) are designated for rollback. Rolling back all staged packages cleans the uncommitted `install/` Git working tree for both `SYMLINK` and `COPY` packages, permanently preventing subsequent false `🛡️ System drift detected` aborts.
 - **Crash Locks vs. Rollback-Eligible State Separation**:
   - `MIDWAY_TRANSACTION_STATES` (`{"staging", "installing"}`): Represents in-flight crashing states where disk mutations were interrupted.
   - `ROLLBACK_ELIGIBLE_STATES` (`{"staging", "staged", "installing"}`): Defines uncommitted transaction states eligible for `drift rollback` without requiring `--force`.

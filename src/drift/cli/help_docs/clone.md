@@ -33,7 +33,7 @@ When cloning an existing Drift repository:
 2. Drift automatically executes a non-destructive repair (`repair_drift_workspace`) to reconstruct runtime state databases that are intentionally omitted from version control:
    - Initializes the isolated `render/` sandbox Git repository and `.gitignore`.
    - Initializes the `install/` local state Git repository, `install/.gitignore`, and `install/state.toml`.
-   - Restores `install/.stow-local-ignore` and root `.gitignore` isolation rules.
+   - Restores root `.gitignore` isolation rules.
    - Generates local configuration templates (`config/drift_workspace.local.toml`, `config/secrets.env`).
 3. Drift outputs next-step guidance for configuring machine-specific overrides before deploying.
 
@@ -42,7 +42,7 @@ When cloning an old-style plain dotfiles repository (where dotfiles like `.bashr
 1. Drift clones the repository.
 2. Drift isolates the existing dotfiles into a package source directory `src/<pkg_name>/`.
 3. Drift initializes the Drift workspace infrastructure (`config/drift_workspace.toml`, `render/`, `install/`, `.gitignore`).
-4. Drift generates `src/<pkg_name>/drift_package.toml` (defaulting to `install_method = "stow"` and `target_directory = "~"`) and `src/<pkg_name>/.drift_ignore`.
+4. Drift generates `src/<pkg_name>/drift_package.toml` (defaulting to `install_method = "symlink"` and `target_directory = "~"`) and `src/<pkg_name>/.drift_ignore`.
 5. Drift enables the converted package in `config/drift_workspace.toml`.
 
 ---
@@ -51,7 +51,7 @@ When cloning an old-style plain dotfiles repository (where dotfiles like `.bashr
 
 After running `drift clone`:
 1. `cd <directory>`
-2. **Review Package Settings**: Inspect `src/<pkg>/drift_package.toml` (choose between `stow` or `copy`; see `drift help drift_package.toml`) and `src/<pkg>/.drift_ignore` (see `drift help ignore`).
+2. **Review Package Settings**: Inspect `src/<pkg>/drift_package.toml` (choose between `symlink` or `copy`; see `drift help drift_package.toml`) and `src/<pkg>/.drift_ignore` (see `drift help ignore`).
 3. **Configure Local Overrides**: Adjust machine-specific overrides in `config/drift_workspace.local.toml` (this overrides `config/drift_workspace.toml`; see `drift help drift_workspace.toml`).
 4. **Configure Secrets**: Set tokens and environment variables in `config/secrets.env` (see `drift help workspace`).
 5. **Deploy**: Run `drift diff` or `drift status` to preview, then run `drift deploy` to apply configurations to your host.

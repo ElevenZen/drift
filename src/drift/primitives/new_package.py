@@ -33,7 +33,7 @@ def run_primitive_10_create_new_package(
         force: If True, overwrites any existing package configuration file in the package
             source directory without raising a FileExistsError.
         target_directory: Optional custom target directory override.
-        install_method: Optional install method override ('stow' or 'copy').
+        install_method: Optional install method override ('symlink' or 'copy').
 
     Returns:
         NewPackageResult containing details of the created package.
@@ -56,7 +56,7 @@ def run_primitive_10_create_new_package(
         try:
             final_install_method: InstallMethod = InstallMethod.from_str(install_method)
         except ValueError as e:
-            raise ValueError(f"install_method must be 'stow' or 'copy', got '{install_method}'") from e
+            raise ValueError(f"install_method must be 'symlink' or 'copy', got '{install_method}'") from e
     else:
         final_install_method = workspace_config.workspace.default_install_method
 

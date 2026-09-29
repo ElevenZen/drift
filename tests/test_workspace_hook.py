@@ -30,7 +30,7 @@ class TestWorkspaceHook(unittest.TestCase):
         self.config_file.write_text("""
 [workspace]
 default_target_directory = "~"
-default_install_method = "stow"
+default_install_method = "symlink"
 
 [packages.enable]
 pkg1 = true

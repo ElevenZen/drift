@@ -154,7 +154,7 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(clean_res[0].pending_status, "CLEAN")
 
         # Modify drift_package.toml
-        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="stow"\n')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="symlink"\n')
 
         # Status check
         modified_res = run_primitive_status(self.workspace_config)

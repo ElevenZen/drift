@@ -55,8 +55,6 @@ HELP_TOPIC_ALIASES = {
     ".drift_ignore": "ignore",
     "driftignore": "ignore",
     ".driftignore": "ignore",
-    "stow_ignore": "ignore",
-    ".stow-local-ignore": "ignore",
 
     # drift_package.toml configuration reference
     "drift_package.toml": "drift_package_toml",

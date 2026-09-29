@@ -4,7 +4,7 @@
 In Drift, each package under `src/<package_name>/` is governed by a `drift_package.toml` configuration file (with optional local overrides via `drift_package.local.toml` and programmatic extensions via `drift_package.py`).
 
 This document provides a comprehensive reference for all configuration options available in a Drift package, including:
-1. **Core Package Settings (`[package]`)**: Target deployment directories, installation methods (`stow` symlinking vs. `copy` physical copy), Windows overrides, subfolder `source_directory` isolation, elevated privilege (`sudo = true`), and Fully Controlled Directories (`fully_controlled_dirs`).
+1. **Core Package Settings (`[package]`)**: Target deployment directories, installation methods (`symlink` symlinking vs. `copy` physical copy), Windows overrides, subfolder `source_directory` isolation, elevated privilege (`sudo = true`), and Fully Controlled Directories (`fully_controlled_dirs`).
 2. **Inter-Package Dependencies (`[package] dependencies`)**: Declare prerequisite packages (`dependencies = ["pkg_a", "pkg_b"]` or array-of-tables `[[package.dependencies]]`) for topological DAG deployment ordering, reverse topological uninstallation, cycle detection, and missing dependency safeguards.
 3. **Host Prerequisites & Requirements (`[package.requirements]`)**: Declarative pre-flight checks (OS, architecture, Linux distro, required binaries in `$PATH`, environment variables, LAN IP/subnets) evaluated strictly before template rendering that selectively enable or skip package deployment.
 4. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical package variable scopes across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) with Kahn's topological sort DAG resolution, variable self-referencing (`$VAR`, `${VAR}`), and system/package fact injection.
@@ -19,9 +19,9 @@ Below is a complete, fully documented template for `drift_package.toml` (or `dri
 ```toml
 [package]
 # How files are deployed to the host.
-# Options: "stow" (symlinks) or "copy" (physical copies)
+# Options: "symlink" (symlinks) or "copy" (physical copies)
 # Falls back to "default_install_method" in drift_workspace.toml if unspecified.
-install_method = "stow"
+install_method = "symlink"
 
 # The target folder path on the host where files should be mapped.
 # Supports home expansion (~).
@@ -55,7 +55,7 @@ target_directory = "~/.config/my_app"
 # Optional dynamic Python package hook file path (relative to src/<pkg>/, defaults to "drift_package.py" if present)
 # hook_file = "drift_package.py"
 
-# Execute physical file deployments (copy, stow, deletions, permissions) with root privileges (sudo).
+# Execute physical file deployments (copy, symlink, deletions, permissions) with root privileges (sudo).
 # Note: All lifecycle hooks always execute in user space without sudo to preserve all injected environment variables.
 sudo = false
 
@@ -279,7 +279,7 @@ When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_instal
 *   **`$drift_package_source_dir`** / **`$drift_package_src_dir`**: Absolute path to the package's source directory (`<drift_root>/src/<pkg>`).
 *   **`$drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`$drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
-*   **`$drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
+*   **`$drift_package_install_method`**: Resolved deployment method (`symlink` or `copy`).
  
 ### ⚡ Six-Tier Variable Preemption Order:
 When rendering package templates and running hook scripts, variables resolve in the following strict order (Package > Workspace within each macro tier, highest priority wins):
@@ -347,7 +347,7 @@ def configure_package(context: PackageHookContext) -> Dict[str, Any]:
     if context.os == "darwin":
         pkg["target_directory"] = "~/Library/Application Support/my_app"
     elif context.os == "linux" and context.distro == "arch":
-        pkg["install_method"] = "stow"
+        pkg["install_method"] = "symlink"
 
     # 3. Dynamically set host requirements
     reqs = pkg.setdefault("requirements", {})
@@ -396,7 +396,7 @@ For concise declarations, specify a list of package names as strings or inline t
 ```toml
 [package]
 name = "zsh"
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/zsh"
 
 # List of required and optional prerequisite packages
@@ -497,7 +497,7 @@ In addition to static TOML fields, packages can configure a dynamic verification
 
 ```toml
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/sway"
 
 [package.requirements]

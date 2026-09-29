@@ -122,7 +122,7 @@ class StateRegistry:
         Args:
             pkg: Name of the package.
             target_directory: Target directory on host system.
-            install_method: Method used to install package ('copy', 'stow').
+            install_method: Method used to install package ('copy', 'symlink').
             redeploy: If True (or if package_changes is None), overwrites the manifest with deployable_files.
             deployable_files: Full iterable of deployable files in the package (used during redeploy/full deploy).
             package_changes: Incremental stage changes containing added and deleted file lists.

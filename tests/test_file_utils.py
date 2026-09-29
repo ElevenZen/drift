@@ -772,7 +772,6 @@ class TestFileUtils(unittest.TestCase):
         from drift.utils.file_inspect import is_temp_file
 
         # Temporary / editor / OS files
-        self.assertTrue(is_temp_file(".stow-local-ignore"))
         self.assertTrue(is_temp_file(".gitignore"))
         self.assertTrue(is_temp_file("#file.txt#"))
         self.assertTrue(is_temp_file(".#file.txt"))

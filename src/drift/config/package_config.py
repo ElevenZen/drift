@@ -323,7 +323,7 @@ class PackageSectionConfig:
             try:
                 parsed_install_method = InstallMethod.from_str(raw_install_method)
             except ValueError as e:
-                raise ConfigError(f"Invalid install_method '{raw_install_method}' for package '{name}'. Must be 'stow' or 'copy'.") from e
+                raise ConfigError(f"Invalid install_method '{raw_install_method}' for package '{name}'. Must be 'symlink' or 'copy'.") from e
 
         sec = cls(
             name=name,

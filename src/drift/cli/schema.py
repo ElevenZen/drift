@@ -103,7 +103,7 @@ HELP_TOPICS: List[Choice] = [
 ]
 
 INSTALL_METHODS: List[Choice] = [
-    Choice("stow", "Symlink-based deployment (ideal for user dotfiles)"),
+    Choice("symlink", "Symlink-based deployment (ideal for user dotfiles)"),
     Choice("copy", "Direct physical copy deployment (ideal for system configs)"),
 ]
 
@@ -249,7 +249,7 @@ def build_completion_schema() -> CompletionSchema:
                     ),
                     OptionSpec(
                         flags=["-m", "--method"],
-                        description="Explicitly configure the installation method ('stow' or 'copy') inside drift_package.toml",
+                        description="Explicitly configure the installation method ('symlink' or 'copy') inside drift_package.toml",
                         dest="method",
                         takes_value=True,
                         choices=INSTALL_METHODS

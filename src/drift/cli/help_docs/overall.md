@@ -67,11 +67,11 @@ Drift's architecture is powered by four primary operational primitives:
 ### 3. 📦 Stage (Primitive 4: `drift stage`)
 * **Inter-Package Dependency DAG**: Sequences packages in topological order using Kahn's algorithm so prerequisites stage before dependents.
 * **Delta Computation**: Compares `render/` against `install/`, identifying added, modified, and deleted files.
-* **Database Commit**: Commits changes into `install/` and writes staging manifests and `.stow-local-ignore` rules.
+* **Database Commit**: Commits changes into `install/` with 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`) and writes staging manifests.
 
 ### 4. 🚀 Apply & Commit (Primitive 5 & 6: `drift apply` & `drift install-commit`)
 * **Collision Audit & Backups**: Proactively checks for host collisions and archives untracked blocking files into `backup/`.
-* **Deployment Execution (`drift apply`)**: Deploys staged files using **symlink projection** (`stow`) or **discrete physical copies** (`copy`).
+* **Deployment Execution (`drift apply`)**: Deploys staged files using **native relative symlinks** (`symlink`) or **discrete physical copies** (`copy`).
 * **Lifecycle Hooks**: Triggers `pre_install`, `post_install`, `pre_update`, or `post_update` scripts in user space.
 * **State Database Commit (`drift install-commit`)**: Commits deployed file changes into the `install/` Git repository (automatically invoked during `drift deploy`).
 * **Rollback Safety**: Automatically reverts changes if an installation hook or file operation fails mid-flight.
@@ -83,7 +83,7 @@ Drift's architecture is powered by four primary operational primitives:
 Understanding these core concepts establishes the mental model:
 
 * **Modular Packages (`src/<pkg>/`)**: Self-contained units of configuration for individual tools or services (`nvim`, `zsh`, `sway`), each declaring target mapping, prerequisites, variables, and hooks.
-* **Deployment Strategies (`stow` vs. `copy`)**: Choose symlink projection (`stow`) for instant reflection of dotfile edits, or physical copying (`copy`) for system daemons and services requiring strict pre-update stop triggers.
+* **Deployment Strategies (`symlink` vs. `copy`)**: Choose relative symlink projection (`symlink`) for instant reflection of dotfile edits, or physical copying (`copy`) for system daemons and services requiring strict pre-update stop triggers.
 * **Inter-Package Dependencies**: Declare prerequisite packages (`dependencies = ["base", "git"]`). Drift sequences staging and deploy forward, and uninstallation in reverse topological order, with safety guards preventing broken dependencies.
 * **Declarative Host Requirements (`[package.requirements]`)**: Pre-flight platform gates evaluated strictly *before* rendering. Incompatible packages are skipped with zero compile or disk overhead.
 * **Unified 6-Tier Environment & Native Variable Stitching**: Symmetrical `[env.*]` tables supporting derived self-referencing (`$VAR`, `${VAR}`) resolved via Kahn's DAG algorithm.

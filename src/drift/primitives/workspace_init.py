@@ -13,7 +13,6 @@ from ..core.constants import (
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     DEFAULT_WORKSPACE_HOOK_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
-    STOW_LOCAL_IGNORE_FILE_NAME,
     get_default_drift_workspace_toml_content,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
     get_default_workspace_hook_content,
@@ -24,7 +23,6 @@ from ..core.constants import (
     get_default_internal_gitignore_content,
     DEFAULT_ROOT_GITIGNORE_ENTRIES,
 )
-from ..core.ignore import get_default_install_stow_ignore_content
 from .workspace_check import check_existing_workspace_status, ComponentStatus
 from ..utils.git_utils import (
     is_git_tracked,
@@ -99,10 +97,6 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     install_gitignore = install_dir / ".gitignore"
     if not install_gitignore.exists() or force:
         install_gitignore.write_text(get_default_internal_gitignore_content(), encoding="utf-8")
-
-    # Generate extra .stow-local-ignore at root of install/
-    stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
-    stow_ignore_path.write_text(get_default_install_stow_ignore_content(), encoding="utf-8")
 
     # 6. Creates default directory templates (src/, config/drift_workspace.toml, config/drift_workspace.local.toml, install/state.toml)
     (drift_root / "src").mkdir(parents=True, exist_ok=True)

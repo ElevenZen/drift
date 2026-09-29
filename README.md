@@ -229,7 +229,7 @@ A **single, unified dotfiles repository** can effortlessly power everything from
     # src/sway/drift_package.toml
     [package]
     name = "sway"
-    install_method = "stow"
+    install_method = "symlink"
 
     [requirements]
     os = ["linux"]                     # Target OS: "linux", "darwin", "windows"
@@ -457,8 +457,8 @@ Drift values your data integrity. Before any physical stage or deployment execut
 > [!IMPORTANT]
 > **Transient `backup/` Policy & User Responsibility**: The `backup/` folder stores displaced original files and pruned artifacts created during deployment collisions. **`backup/` is a local, unversioned directory that is neither tracked nor saved in Git by Drift.** Users are responsible for inspecting `backup/`, preserving critical historical assets, or committing them to private archival storage as needed.
 
-### 🕵️ 7. PCRE-Based Ignorance & Stow Compatibility
-Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`), matching the exact parsing rules of GNU Stow's `.stow-local-ignore`.
+### 🕵️ 7. PCRE-Based Ignorance Rules
+Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`). Its pattern matching syntax is derived from GNU Stow's ignore file specification (matching both relative path prefixes and basenames), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
@@ -473,7 +473,7 @@ When you toggle packages to `false` in `drift_workspace.toml` or delete package 
 ### 🔌 9. Decouple & Eject Packages on Demand (Detach Mode)
 Sometimes, you want to stop managing a configuration through a dotfile manager but keep the configurations permanently active on your host system. 
 *   **Keep Active Configurations**: Drift supports a dedicated **Detach Mode (`drift uninstall <pkg> --detach`)** that unregisters the package without deleting any files on your system.
-*   **Symlink to Copy Conversion**: If the package was stowed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
+*   **Symlink to Copy Conversion**: If the package was installed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
 *   **Backups Untouched**: Your historical original system backups inside `backup/<package>/overwritten/` are kept completely intact (not restored or deleted).
 *   **Decoupled Registry**: Cleanly deletes database directories and unregisters the package from `state.toml`, safely letting you "eject" a package on demand.
 
@@ -506,7 +506,7 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 [3. Local State Database]    install/ (tracking Git repo)
   │ ▲
   │ │  Reverse-sync (Diff B) / drift adopt
-  ▼ │  Apply (stow / copy)
+  ▼ │  Apply (symlink / copy)
 [4. Active Host System]      ~/* or /etc/*
 ```
 
@@ -575,7 +575,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
 | `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `--redeploy`, `--no-hooks`). |
 | `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
-| `drift uninstall <pkgs>` | Removes stowed/copied mappings on host target paths, reverting backups (or `--detach`). |
+| `drift uninstall <pkgs>` | Removes symlinked/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
 | `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |
 | `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers (supports `-y` / `--side-by-side` editor diffing). |
@@ -598,13 +598,13 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 
 ---
 
-## 📦 Deployment Methods (`stow` vs. `copy`) & Event Ordering
+## 📦 Deployment Methods (`symlink` vs. `copy`) & Event Ordering
 
 Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift_workspace.toml`):
 
-| Feature | `install_method = "stow"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
+| Feature | `install_method = "symlink"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
 | :--- | :--- | :--- |
-| **Mechanism** | Symlinks host files to `install/<pkg>/` | Pure atomic physical file copy |
+| **Mechanism** | Relative symlinks from host files to `install/<pkg>/` via Drift's native linker | Pure atomic physical file copy |
 | **Dot-Prefix Translation** | Automated `dot-` $\rightarrow$ `.` translation | Automated `dot-` $\rightarrow$ `.` translation |
 | **Storage Overhead** | Zero extra disk usage (symlink pointers) | Duplicate physical file on disk |
 | **Hot-Edits & Inotify** | Edits reflected instantly through symlink | Managed strictly via deploy passes |
@@ -615,7 +615,7 @@ Drift supports two deployment mechanisms declared in `drift_package.toml` (or de
 
 Because Drift decouples template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file updates relative to hook scripts differs:
 
-*   **`stow` (Symlink Pointers)**:
+*   **`symlink` (Symlink Pointers)**:
     Since the host file is a symlink directly targeting `install/<pkg>/`, updating file contents in `install/` during Staging (Primitive 4) makes those modifications immediately visible to the host **before** `pre_update` executes in Primitive 5. New file symlinks and deleted symlinks are still processed after `pre_update`.
 *   **`copy` (Discrete Physical Files — Recommended for Daemons)**:
     Host files remain completely untouched at their previous version until Primitive 5 copies them over. This guarantees that `pre_update` runs while host files are **strictly in their old state**, followed by atomic physical file delivery, and finally `post_update`.
@@ -629,7 +629,7 @@ Because Drift decouples template staging (Primitive 4: `render/` $\rightarrow$ `
 Packages can declare automated hook scripts inside `drift_package.toml` to integrate with external packages:
 ```toml
 [package]
-install_method = "stow"
+install_method = "symlink"
 
 [requirements]
 os = ["linux", "darwin"]

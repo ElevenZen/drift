@@ -282,7 +282,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [package.requirements]
         os = ["darwin"]
@@ -312,7 +312,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [hooks]
         probe = "drift_hooks/probe.sh"
@@ -338,7 +338,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [hooks]
         probe = "drift_hooks/probe.sh"
@@ -370,7 +370,7 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [hooks]
         probe = "drift_hooks/probe.sh"
@@ -409,7 +409,7 @@ fi
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [env.override]
         PROBE_EXPECTED = "allow"
@@ -435,7 +435,7 @@ fi
 
         (pkg_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [package.requirements]
         ip = ["192.168.1.0/24"]

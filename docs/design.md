@@ -35,7 +35,7 @@ Comparing **drift** to popular dotfiles managers listed on `dotfiles.github.io/u
 
 This design introduces a **sandbox rendering folder (`render/`)** and a **deployment folder (`install/`)**, both managed as **local-only, untracked Git repositories**. 
 
-By separating rendering from deployment and turning both folders into Git databases, we gain absolute, safe visibility over configurations without automated, dangerous, or unintended merges on the live system. It natively supports both **`stow` (symlink-based)** and **`copy` (copy-based)** deployment methods, with built-in privileges management (`sudo`), granular package-level overrides, and strongly-typed machine-readable outputs (`--json`).
+By separating rendering from deployment and turning both folders into Git databases, we gain absolute, safe visibility over configurations without automated, dangerous, or unintended merges on the live system. It natively supports both **`symlink` (symlink-based)** and **`copy` (copy-based)** deployment methods, with built-in privileges management (`sudo`), granular package-level overrides, and strongly-typed machine-readable outputs (`--json`).
 
 ---
 
@@ -53,7 +53,7 @@ The architecture separates configurations into four distinct physical and logica
 [3. Local State Database]    install/ (live tracking Git repo)
   │ ▲
   │ │  Stage 1: Reverse-sync (Diff B) / drift adopt
-  ▼ │  Stage 2: Apply (stow symlinks or physical copy)
+  ▼ │  Stage 2: Apply (relative symlinks or physical copy)
 [4. Active Host System]      ~/* or /etc/*
 ```
 
@@ -73,7 +73,7 @@ The architecture separates configurations into four distinct physical and logica
     *   Tracks the exact "applied and committed" state of configurations.
 4.  **System Active State (`$HOME`, `/etc`, etc.)**:
     *   The active system directories where software loads configurations.
-    *   Files here are either symlinks pointing to `install/<package>/...` (`stow` method) or physical file copies (`copy` method).
+    *   Files here are either relative symlinks pointing to `install/<package>/...` (`symlink` method) or physical file copies (`copy` method).
 
 ---
 
@@ -135,7 +135,7 @@ All high-level workflows in drift are composed of fourteen atomic, sequential pr
     * Primitive 2: Render Packages (`src/` $\rightarrow$ `render/`).
     * Primitive 3: Render Repo Commit (`git -C render commit`).
     * Primitive 4: Stage Render to Install (`render/` $\rightarrow$ `install/`).
-    * Primitive 5: Install Repo Deployment (Deploy to host system targets via Stow symlinks or physical copy).
+    * Primitive 5: Install Repo Deployment (Deploy to host system targets via native relative symlinks or physical copy).
     * Primitive 6: Install Repo Commit (`git -C install commit`).
   * **Stage 3: Post-Deployment Maintenance**:
     * Primitive 9: Workspace GC (Bulk unused repo cleanup).
@@ -167,7 +167,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
-*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with 1:1 fidelity. The only permitted differences are synthetic files generated dynamically during staging (`DRIFT_GENERATED_FILES`, such as `.stow-local-ignore`). All other files (payloads, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
+*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
 *   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_ordered_packages`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
 *   **Mechanism**: Computes exactly which files and packages require redeployment. Directly deletes removed files from `install/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
@@ -180,7 +180,7 @@ Applies changes to the physical active system across a two-phase architecture:
 *   **Collision Guard**: Backs up colliding physical files to `backup/<package>/overwritten/`.
 *   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment.
 *   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
-*   **Stow Mode**: Executes individual manual symlinks (Incremental) or runs GNU Stow (Full Deploy).
+*   **Symlink Mode**: Deploys relative symlinks from host target paths to `install/<pkg>/` via Drift's native linker (`run_full_symlink_deployment`).
 *   **Copy Mode**: Copies files to `target_directory` (prefixed with `sudo` if configured).
 
 ### Primitive 6: Install Repo Commit [Low-level: `drift install-commit`]
@@ -193,12 +193,12 @@ Removes or detaches packages from the system using strongly-typed `UninstallConf
     *   **Reverse Topological Order**: Resolves `resolve_package_uninstall_order` so dependent packages are uninstalled before prerequisites, guaranteeing cleanup hooks execute while prerequisite configurations remain intact.
     *   **Graceful Missing Directory Handling**: If a package's directory is missing in `install/`, Drift emits a warning and gracefully removes the record from `state.toml` without crashing.
 2.  **Standard Uninstall Mode (Default)**:
-    *   **De-stow or Delete**: Unlinks symlinks or deletes physical files.
+    *   **Unlink or Delete**: Unlinks symlinks or deletes physical files.
     *   **Rollback Collision Guard**: Restores original host files backed up in `backup/<package>/overwritten/`.
     *   **Update Registry**: Removes the package from the state database (`install/state.toml`) and commits uninstallation.
 3.  **Detach/Eject Mode (`--detach`)**:
     *   **Keep Configuration**: Stops managing this package via Drift, but preserves the current configuration files active on the system (e.g. freezing them as permanent configurations).
-    *   **Symlink to Copy Conversion**: If the package was installed using `stow` (symlinking), the engine recursively iterates through the deployed files, removes the symlink, and copies the physical file counterpart from `install/<pkg>/` to the active host target path.
+    *   **Symlink to Copy Conversion**: If the package was installed using `symlink` (symlinking), the engine recursively iterates through the deployed files, removes the symlink, and copies the physical file counterpart from `install/<pkg>/` to the active host target path.
     *   **Backups Kept Intact**: Leaves the user's historical original backups inside `backup/<pkg>/overwritten/` completely untouched (does not restore them).
     *   **Clean Database Decouple**: Unregisters the package from `state.toml` and deletes the local `install/<pkg>` directory, fully decoupling the repository from the active host system without deleting configurations.
 
@@ -249,7 +249,7 @@ Identifies and cleans up workspace anomalies, orphaned packages, zombie database
 ### Primitive 10: Package Creation [High-level: `drift new`]
 Scaffolds a new declarative package inside the `src/` directory:
 1.  Creates the `src/<package_name>` directory.
-2.  Generates a default `drift_package.toml` with standard safe defaults (e.g. `install_method = "stow"`).
+2.  Generates a default `drift_package.toml` with standard safe defaults (e.g. `install_method = "symlink"`).
 3.  Features built-in probing guards to prevent accidental overwriting of existing package configurations unless `--force` is used.
 
 ### Primitive 11: Resource Import [High-level: `drift add`]
@@ -272,7 +272,7 @@ Clones a remote Git repository and automatically bootstraps the workspace:
 ### Primitive 14: Workspace Diagnostics & Self-Healing [High-level: `drift repair`]
 Audits and self-heals workspace structure, repositories, configuration templates, and secrets:
 1.  Reconstructs missing Git state databases (`render/.git`, `install/.git`) and `install/state.toml`.
-2.  Rebuilds `.gitignore` and `install/.stow-local-ignore` isolation rules.
+2.  Rebuilds `.gitignore` isolation rules.
 3.  Generates default templates for `config/drift_workspace.local.toml` and `config/secrets.env` if missing.
 
 ### Primitive 15: Change Visualization & Differential Inspection [High-level: `drift diff`]
@@ -291,7 +291,7 @@ Compares configuration layers across templates, sandbox compilations, state data
     *   Automatically probes user environment (`$VISUAL`, `$EDITOR`, Neovim, Vim, VS Code, GNU Emacs).
     *   Formulates editor-specific invocation flags (e.g. `nvim -p -d fileA fileB`, `vim -p -d fileA fileB`, `code --wait --diff fileA fileB`, `emacs -nw --eval '(ediff-files ...)'`) across multi-tab split viewports.
 4.  **Pathspec Exclusion Rules**:
-    *   Uses `DEFAULT_DIFF_EXCLUDE_PATTERNS` (`:(exclude)*<pattern>*`) to filter internal synthetic artifacts (`.stow-local-ignore*`, `.gitignore*`) and editor/OS temp files (`TEMPORARY_FILE_PATTERNS`), while preserving user-authored package configuration modifications (`drift_package.toml`, `.drift_ignore`).
+    *   Uses `DEFAULT_DIFF_EXCLUDE_PATTERNS` (`:(exclude)*<pattern>*`) to filter internal synthetic artifacts (`.gitignore*`) and editor/OS temp files (`TEMPORARY_FILE_PATTERNS`), while preserving user-authored package configuration modifications (`drift_package.toml`, `.drift_ignore`).
 
 ### Primitive 16: Workspace Status Inspection [High-level: `drift status`]
 Aggregates and audits current workspace alignment across three distinct dimensions (Template Evolution `[A]`, Active System Drift `[B]`, and Staged Pending Delta `[Δ]`), providing instant health and drift visibility.
@@ -305,7 +305,7 @@ The `drift` Python command provides a unified interface for all primitives and h
 ### High-Level Commands (Ordered by Lifecycle)
 *   **`drift clone <repository> [destination] [-b/--branch <branch>] [--depth <N>] [--no-repair] [--json]`**: Clones a Git repo and auto-bootstraps/repairs the Drift workspace (Primitive 13).
 *   **`drift init [-f/--force] [--no-git-root] [--json]`**: Initializes a new drift workspace.
-*   **`drift new <package> [-f/--force] [-t/--target <dir>] [-m/--method <stow|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
+*   **`drift new <package> [-f/--force] [-t/--target <dir>] [-m/--method <symlink|copy>] [--json]`**: Scaffolds a new dotfiles package (Primitive 10).
 *   **`drift add <package> <paths...> [--dry-run] [--no-hooks] [--json]`**: Imports active system files into a declarative package (Primitive 11).
 *   **`drift adopt [packages...] [-i/--interactive] [--accept-conflicts] [-f/--force] [--dry-run] [--no-hooks] [--json]`**: Reconciles system drift into templates.
 *   **`drift deploy [packages...] [-f/--force] [--no-hooks] [--json]`**: Atomic Two-Stage deployment with Sentinel drift safety guards.
@@ -368,8 +368,8 @@ backup_directory = "backup"
 # Supports home expansion (~ at the beginning).
 default_target_directory = "~"
 
-# Default deployment method: "stow" (symlink) or "copy" (physical)
-default_install_method = "stow"
+# Default deployment method: "symlink" (symlink) or "copy" (physical)
+default_install_method = "symlink"
 
 [render.envsubst]
 # Shell script providing env variables for envsubst
@@ -658,10 +658,10 @@ enable_install = true
 # Installation Options
 # ---------------------------------------------------------------------
 # Deployment method. Options: 
-#   - "stow" : Creates symbolic links from target_directory to install/ folder. (Standard for user dotfiles)
+#   - "symlink" : Creates symbolic links from target_directory to install/ folder. (Standard for user dotfiles)
 #   - "copy" : Physically copies files from install/ to target_directory. (Standard for system/etc configs)
 # Falls back to "default_install_method" in drift_workspace.toml if unspecified.
-install_method = "stow"
+install_method = "symlink"
 
 # The physical path where this package should be deployed on Unix/Linux/macOS hosts.
 # Supports home expansion (~ at the beginning).
@@ -844,7 +844,7 @@ All lifecycle hooks execute in user space without `sudo`, with their working dir
 > - **Subprocess Lifecycle Hook Scripts** (`probe`, `pre_source`, `post_render`, `pre_install`, `post_install`, `pre_update`, `post_update`, `pre_uninstall`, `post_uninstall`, `health`): Automatically inherit `secrets.env` variables in `os.environ` via Tier 4 precedence.
 > The execution working directory defaults to `hook_path.parent` (the directory containing the executed script), and `$drift_package_src_dir` is an alias for `$drift_package_source_dir`. If elevated root privileges are required for a command, write `sudo` explicitly within the hook script.
 
-#### Event Ordering & Install Method Semantics (`stow` vs. `copy`)
+#### Event Ordering & Install Method Semantics (`symlink` vs. `copy`)
 Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `install/`) from host delivery (Primitive 5: `install/` $\rightarrow$ host), the timing of file content updates relative to lifecycle hooks depends on the package's `install_method`:
 
 *   **`install_method = "copy"` (Strict Event Ordering & Dot-Prefix Translation)**:
@@ -854,7 +854,7 @@ Because Drift separates template staging (Primitive 4: `render/` $\rightarrow$ `
     *   `post_update` executes after host files have received the new state.
     *   👉 **Recommendation**: If your package configuration is watched by active system services or daemons (e.g. `systemd` user units with inotify watchers) that must be cleanly stopped in `pre_update` before configuration files change, use **`install_method = "copy"`**.
 
-*   **`install_method = "stow"` (Symlink Pointers)**:
+*   **`install_method = "symlink"` (Symlink Pointers)**:
     *   Because active host paths are symbolic links pointing into `install/<pkg>/`, modifying file contents in `install/` during Staging (Primitive 4) makes content modifications immediately visible on the host **before** `pre_update` runs in Primitive 5.
     *   Structural changes (creating symlinks for new files or pruning deleted symlinks) are applied during Primitive 5 after `pre_update`.
     *   👉 **Recommendation**: Ideal for standard user dotfiles (e.g. `.zshrc`, `.tmux.conf`, Neovim configs) where instant reflection and symlink transparency are preferred.
@@ -867,7 +867,7 @@ At runtime, the drift engine dynamically scopes the pre-resolved package environ
 *   **`drift_package_source_dir`** / **`drift_package_src_dir`**: Absolute path to the package's source directory in the workspace (`<drift_root>/src/<pkg>`).
 *   **`drift_package_render_dir`**: Absolute path to the package's compiled sandbox directory (`<drift_root>/render/<pkg>`).
 *   **`drift_package_install_dir`**: Absolute path to the package's state database directory (`<drift_root>/install/<pkg>`).
-*   **`drift_package_install_method`**: Resolved deployment method (`stow` or `copy`).
+*   **`drift_package_install_method`**: Resolved deployment method (`symlink` or `copy`).
 
 > [!IMPORTANT]
 > **Environment Variable Precedence & Overrides**:
@@ -957,7 +957,7 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
 
 *   **Primitive 4: Stage Render to Install**:
     *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_ordered_packages`, and records the sequence in `StagePlan.ordered_packages`.
-    *   `execute_stage_packages` stages packages in this exact topological order, preserving update sequence for shared install methods (e.g. `STOW`).
+    *   `execute_stage_packages` stages packages in this exact topological order, preserving update sequence for shared install methods (e.g. `SYMLINK`).
 *   **Primitive 5: Install Repo Deployment**:
     *   `prepare_install_deployment` validates deployment readiness (`assert_packages_deployment_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
     *   `execute_install_deployment` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy.
@@ -986,7 +986,7 @@ Inter-package dependencies are architecturally orthogonal to the planned templat
 This section defines the core architectural policies, safeguards, and customization guidelines required to maintain technical integrity.
 
 ### A. Ignored Files and Name Conversion Rules
-Both `stow` and `copy` deployment strategies natively respect ignore files, prefix transformations, and metadata isolation rules:
+Both `symlink` and `copy` deployment strategies natively respect ignore files, prefix transformations, and metadata isolation rules:
 
 1.  **Ignore Filter (`.drift_ignore`) Syntax & Matching Rules**:
     *   **Single Source of Truth & Nested Ignore Rejection**:
@@ -994,8 +994,8 @@ Both `stow` and `copy` deployment strategies natively respect ignore files, pref
         *   Nested ignore files inside subdirectories (e.g., `src/<pkg>/subfolder/.drift_ignore` or `src/<pkg>/subfolder/.driftignore`) are **strictly prohibited** and immediately raise a `ValueError` during parsing to guarantee a single authoritative ignore configuration per package.
     *   **Legacy Alias & Auto-Migration**:
         *   `.driftignore` is recognized as a legacy alias of `.drift_ignore`. If `.driftignore` is detected at the package root without a `.drift_ignore`, the render engine logs a warning and automatically copies it to `.drift_ignore`.
-    *   **Default Stow Ignore List**:
-        If no `.drift_ignore` file is provided in a package, Drift automatically applies a comprehensive default ignore ruleset (`DEFAULT_STOW_IGNORE_PATTERNS` / `DEFAULT_DRIFT_IGNORE_CONTENT`) matching GNU Stow standards, development toolchains, and editor caches:
+    *   **Default Ignore Ruleset**:
+        If no `.drift_ignore` file is provided in a package, Drift automatically applies a comprehensive default ignore ruleset (`DEFAULT_IGNORE_PATTERNS` / `DEFAULT_DRIFT_IGNORE_CONTENT`) matching GNU Stow standards, development toolchains, and editor caches:
         - **Python Bytecode, Virtual Environments & Caches**: `__pycache__`, `/__pycache__/`, `\.py[cod]$`, `\$py\.class$`, `\.pytest_cache`, `/\.pytest_cache/`, `\.mypy_cache`, `/\.mypy_cache/`, `\.ruff_cache`, `/\.ruff_cache/`, `\.venv`, `/\.venv/`, `^venv$`, `/venv/`
         - **Version Control & Metadata**: `^/\.gitignore`, `\.gitignore`, `\.git`, `\.hg`, `\.svn`, `_darcs`, `CVS`, `\.cvsignore`, `RCS`, `\.+,v`, `\.\#.+`
         - **Editor Backups & Temporary Files**: `.+~`, `\#.*\#`, `.*\.sw[a-p]$`, `.*\.swp$`, `.*\.swo$`, `.*\.un~$`
@@ -1003,7 +1003,7 @@ Both `stow` and `copy` deployment strategies natively respect ignore files, pref
         - **Package Documentation & Licenses**: `^/README.*`, `^/LICENSE.*`, `^/COPYING.*`
         - **Drift Internal Control Plane**: `^/\.drift/`, `^/\.drift$`
     *   **PCRE Regular Expressions (No Globbing)**:
-        *   The ignore engine **does NOT use globbing syntax**. Instead, all patterns are parsed and evaluated as **Perl-Compatible Regular Expressions (PCRE)** using Python's `re` module.
+        *   The ignore engine **does NOT use globbing syntax**. Instead, all patterns are parsed and evaluated as **Perl-Compatible Regular Expressions (PCRE)** using Python's `re` module. The matching specification is derived from GNU Stow's ignore rules.
         *   Lines beginning with `#` are treated as comments (unless escaped with a backslash `\#`), and whitespace/blank lines are skipped.
     *   **Two-Group Matching Algorithm**:
         Drift divides loaded regex patterns into two groups based on whether a forward slash `/` is present:
@@ -1018,10 +1018,8 @@ Both `stow` and `copy` deployment strategies natively respect ignore files, pref
         *   *Rule*: To ignore a template named `dot-bashrc.envst.sh`, the ignore pattern must match `dot-bashrc.envst.sh` (or `dot-bashrc.*`), not `.bashrc`.
     *   **Hardcoded Implicit Exclusions**:
         *   **Internal `.drift` Directory**: The internal control plane directory (`.drift/`, containing package configuration `.drift/drift_package.toml`, ignore rules `.drift/.drift_ignore`, staged compilation inputs `.drift/render/`, and hooks `.drift/hooks/`) is hardcoded as permanently ignored and is never deployed or symlinked onto active host systems.
-        *   **Managed Config Files**: Root-level staging artifacts defined in `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are permanently ignored by `match_path` and never linked to the host target.
-    *   **Automated `.stow-local-ignore` Generation**:
-        *   During staging (`drift stage`) and deployment (`drift deploy`), Drift exports all active `DriftIgnore` patterns (from `render/<package>/.drift/.drift_ignore` and default patterns) plus `MANAGED_CONFIG_FILES` (e.g. `^/\.stow-local-ignore$`) and internal control directories (`^/\.drift/.*$`) into `install/<package>/.stow-local-ignore`. This ensures GNU Stow fully respects all custom and default ignore rules without polluting host targets.
-        *   **Install Root Stow Guard**: An extra `.stow-local-ignore` is generated at the root of `install/` via `DriftIgnore.for_install_root()` (containing `INSTALL_STOW_IGNORE_PATTERN = "^/state\\.toml"`), preventing GNU Stow from erroneously treating `state.toml` as an active package directory.
+    *   **Native Symlink Linker Integration**:
+        *   Drift's native relative symlink linker directly inspects `.drift_ignore` (or `DEFAULT_IGNORE_PATTERNS`) from the package's internal control plane (`install/<pkg>/.drift/.drift_ignore`) when computing deployable files via `filter_deployable_files`. 1:1 structural fidelity between `render/` and `install/` is 100% maintained.
     *   **FCD Reverse-Sync & Adoption Integration**:
         *   Untracked host files in Fully-Controlled Directories (FCD) matching `.drift_ignore` are automatically skipped during `reverse-sync`.
         *   During interactive adoption (`drift adopt -i`), selecting option `[2] Ignore` automatically appends the file's relative path pattern to the package's `.drift_ignore` file.
@@ -1057,12 +1055,12 @@ Both `stow` and `copy` deployment strategies natively respect ignore files, pref
     *   **Mandatory 'dot-' Prefix Rule in Source Templates**: All files and directories inside source packages under `src/` that should be rendered and installed as hidden files/directories (starting with `.`) **must** be named with a `dot-` prefix (e.g., `dot-bashrc`, `dot-config/`). Raw hidden files starting with a dot `.` (such as `.bashrc` or `.env`) are **strictly prohibited** in source packages. The rendering process (`render_package`) will skip any `.*` files (except the special `.drift_ignore` file) in the rendering process and print an information log about them.
     *   *Example*: `install/shell/dot-bashrc` translates to `~/.bashrc`.
     *   *Example*: `install/nvim/dot-config/nvim/` translates to `~/.config/nvim/`.
-    *   This translation is enforced symmetrically across both `stow` and `copy` installation methods.
+    *   This translation is enforced symmetrically across both `symlink` and `copy` installation methods.
 
 3.  **Sub-Repository Isolation & Internal `.gitignore` Automation**:
     *   To prevent internal synthetic artifacts and transient editor files from dirtying the database Git trees, Drift automatically generates and maintains `.gitignore` files inside `render/` and `install/` sub-repositories (`DEFAULT_SUBREPO_GITIGNORE_CONTENT`).
     *   **Ignored Patterns**:
-        - Synthetic files: `.stow-local-ignore*`, `.gitignore*`
+        - Synthetic files: `.gitignore*`
         - Editor & OS temporary artifacts (`TEMPORARY_FILE_PATTERNS`): `*~`, `*#*#`, `*.#*`, `*.sw[a-p]`, `*.swp`, `*.swo`, `*.un~`, `*.DS_Store*`, `*Thumbs.db*`
     *   This ensures that running `git status` inside `render/` or `install/` reports pure package deltas without clutter from editor swap files or Drift's internal lockfiles.
 
@@ -1083,15 +1081,14 @@ To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax 
 To minimize system disruption and application reloads, deployment is executed under two distinct strategies:
 1.  **Incremental Deployment (Surgical File-by-File)**:
     *   When executing a deployment sequence, Primitive 4 outputs a granular `PackageStageChanges` object of added, modified, or deleted files.
-    *   In both `stow` and `copy` modes, the deployment engine **avoids invoking external command-line tools** (like the `stow` binary or heavy shell directories copiers).
-    *   Instead, it surgically iterates through the computed file list, creating individual symlinks (or copying individual files) manually. This maintains a minimal interruption footprint and prevents bulk reload signals to running processes.
-    *   **Infinite Loop Protection**: In `stow` mode, before creating any symlink `~/<path>`, the incremental deployer traverses up the directory path from the parent. If it discovers any parent directory (e.g. `~/.config/nvim/`) is **already a symlink** pointing into `install/`, it **must immediately and safely skip** creating individual symlinks inside that directory. This prevents creating self-referencing circular symlink loops inside the local database.
-2.  **Full Deployment (Heavy-Duty Fallback)**:
-    *   When triggering a standalone deployment, running `drift rollback`, or performing a first-time setup, the system defaults to a robust **Full Package Redeploy**.
-    *   It utilizes high-level automated commands:
-        *   *Stow Packages*: Invokes GNU Stow with flags **always set to**: `stow --no-folding --dotfiles -t <target_directory> <package>`, prefixed with `sudo` if configured.  
-            If stow >= 2.4.1 (which fixes `--dotfiles` problems with stow ignore) is not found, the external `stow` command will be replaced by incremental deployment for all files in the install folder.
-        *   *Copy Packages*: Executes an atomic file copy delivery loop across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+    *   In both `symlink` and `copy` modes, the deployment engine uses a pure-Python execution pipeline without invoking external shell tools.
+    *   Instead, it surgically iterates through the computed file list, creating individual relative symlinks (or copying individual files) manually. This maintains a minimal interruption footprint and prevents bulk reload signals to running processes.
+    *   **Infinite Loop Protection**: In `symlink` mode, before creating any symlink `~/<path>`, the incremental deployer traverses up the directory path from the parent. If it discovers any parent directory (e.g. `~/.config/nvim/`) is **already a symlink** pointing into `install/`, it **must immediately and safely skip** creating individual symlinks inside that directory. This prevents creating self-referencing circular symlink loops inside the local database.
+2.  **Full Deployment (Native Symlink & Copy Linker)**:
+    *   When triggering a standalone deployment, running `drift rollback`, or performing a first-time setup, the system executes a clean **Full Package Redeploy**.
+    *   Drift utilizes a fully native, self-contained linker pipeline without external binaries:
+        *   *Symlink Packages (`install_method = "symlink"`, default on POSIX)*: Deploys relative symlinks via `run_full_symlink_deployment`. For each deployable file, it computes relative symlink targets from the host target path to `install/<pkg>/` (`compute_relative_symlink_target`), applies `dot-` prefix translation, creates intermediate directories, and safely skips or overwrites targets according to collision guard rules.
+        *   *Copy Packages (`install_method = "copy"`, default on Windows)*: Executes an atomic file copy delivery loop across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
 
 The program ensures compatibility between these two modes. In either mode, the program verifies the package config has `enable_install=true` and loads the install method, install location, and sudo flag from it.
 
@@ -1115,10 +1112,10 @@ If all safety checks pass, the system invokes `compare_folders` with parameters 
 For regular host file conflicts, Drift does **not** abort. Instead, files are categorized and safely backed up to `backup/<package>/overwritten/<path>` to protect pre-existing data:
 *   *Type Mismatches (`diff.deleted`)*: If the type of a target path on the host differs from the repository (e.g. a physical file exists where the repo expects a folder), the host item is backed up to `backup/<package>/overwritten/<path>` and cleared.
 *   *Modified Paths (`diff.modified`)*:
-    *   *Stow Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
+    *   *Symlink Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
     *   *Copy Mode Exemption*: If deployed via `copy` and already registered in `state.toml`, target files are updated with new content.
     *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and replaced.
-*   *Content Matches (`diff.matches` under Stow mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the Stow symlink.
+*   *Content Matches (`diff.matches` under Symlink mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the relative symlink.
 
 #### 4. Planned Feature: Cross-Package Ownership Collision
 *(Future Capability)*: In future releases, Drift will detect when multiple active packages claim the exact same target path on the host system in `install/state.toml`, halting deployment with an `InstallCollisionError` before applying changes to prevent inter-package race conditions.
@@ -1207,7 +1204,7 @@ To safely determine whether a package should execute its `pre/post_install` or `
     [packages.nvim]
     state = "installed"
     last_deployed = "2026-08-16T21:10:50.123456"
-    install_method = "stow"
+    install_method = "symlink"
     deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
 
     [packages.qbittorrent]
@@ -1217,7 +1214,7 @@ To safely determine whether a package should execute its `pre/post_install` or `
 
     [packages.wezterm]
     state = "installing"
-    install_method = "stow"
+    install_method = "symlink"
     deployed_files = []
     ```
 *   **Lifecycle States**:
@@ -1320,14 +1317,14 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
-    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 1:1 fidelity. The only files present in `install/` that do not originate from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
+    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 100% 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`.
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
         1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
         2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/`, `.drift/hooks/`, `.drift/render/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications).
-        3. *Ignore & Metadata Synchronization*: Synchronizes `.drift/` directory control plane metadata (`.drift/.drift_ignore` and `.drift/drift_package.toml`). Automatically generates `.stow-local-ignore` inside `install/<package>`, appending exclusions for the `.drift` internal directory and `.stow-local-ignore` so GNU Stow and copy deployments never deploy internal hooks, render templates, or metadata to the active host.
+        3. *Ignore & Metadata Synchronization*: Synchronizes `.drift/` directory control plane metadata (`.drift/.drift_ignore` and `.drift/drift_package.toml`). With Drift's native relative symlink linker, no extra `.stow-local-ignore` is needed, maintaining strict 1:1 structural fidelity.
     - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
@@ -1341,7 +1338,7 @@ For each redeployable package:
 *   **File Delivery Phase**:
     - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
         1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
-        2.  *High-Level Delivery*: Delivers physical files via an atomic single-file copy pipeline applying dot-prefix translation (`translate_dot_prefixes`), or links packages via GNU Stow (stow version must be >= 2.4.1; falls back to manual file-by-file linking on older versions). Internal `.drift` directories and hook scripts are strictly filtered from deployment.
+        2.  *High-Level Delivery*: Delivers physical files via an atomic single-file copy pipeline applying dot-prefix translation (`translate_dot_prefixes`), or links packages via Drift's native relative symlink linker (`run_full_symlink_deployment`). Internal `.drift` directories and hook scripts are strictly filtered from deployment.
     - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
         1.  Deletes files listed in `package_changes.deployable_changes.deleted`.
         2.  Deploys individual files manually using precise symlink creation or copy operations with dot-prefix translation.

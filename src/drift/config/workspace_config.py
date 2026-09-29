@@ -39,6 +39,7 @@ from typing import (
 
 from ..core.constants import (
     CONFIG_DIR_NAME,
+    DEFAULT_INSTALL_METHOD,
     DRIFT_INTERNAL_DIR_NAME,
     FORBIDDEN_PACKAGE_NAMES,
     InstallMethod,
@@ -152,7 +153,7 @@ class WorkspaceSectionConfig:
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
     default_target_directory: Path = expand_path(Path("~"))
-    default_install_method: InstallMethod = InstallMethod.STOW
+    default_install_method: InstallMethod = DEFAULT_INSTALL_METHOD
     hook_file: Optional[Path] = None
 
     def __init__(
@@ -162,7 +163,7 @@ class WorkspaceSectionConfig:
         install_directory: Union[Path, str] = Path("install"),
         backup_directory: Union[Path, str] = Path("backup"),
         default_target_directory: Union[Path, str] = Path("~"),
-        default_install_method: InstallMethod = InstallMethod.STOW,
+        default_install_method: InstallMethod = DEFAULT_INSTALL_METHOD,
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
         if not isinstance(source_directory, (str, Path)):
@@ -202,7 +203,7 @@ class WorkspaceSectionConfig:
         if not self.default_target_directory.is_absolute():
             raise ConfigError(f"default_target_directory must be an absolute path, got: '{self.default_target_directory}'")
         if not isinstance(self.default_install_method, InstallMethod):
-            raise ConfigError(f"default_install_method must be 'stow' or 'copy', got '{self.default_install_method}'")
+            raise ConfigError(f"default_install_method must be 'symlink' or 'copy', got '{self.default_install_method}'")
 
     @classmethod
     def from_dict(cls, data: Any) -> "WorkspaceSectionConfig":
@@ -215,11 +216,11 @@ class WorkspaceSectionConfig:
             message_prefix="Unknown workspace option",
         )
 
-        raw_install_method = data.get("default_install_method", InstallMethod.STOW)
+        raw_install_method = data.get("default_install_method", DEFAULT_INSTALL_METHOD)
         try:
             default_install_method = InstallMethod.from_str(raw_install_method)
         except ValueError as e:
-            raise ConfigError(f"default_install_method must be 'stow' or 'copy', got '{raw_install_method}'") from e
+            raise ConfigError(f"default_install_method must be 'symlink' or 'copy', got '{raw_install_method}'") from e
 
         return cls(
             source_directory=data.get("source_directory", "src"),

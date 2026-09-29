@@ -57,9 +57,9 @@ class TestUninstall(unittest.TestCase):
         os.environ.clear()
         os.environ.update(self.original_environ)
 
-    def test_uninstall_basic_stow(self):
-        """Verifies basic uninstallation of a stowed package."""
-        pkg = "pkg_stow"
+    def test_uninstall_basic_symlink(self):
+        """Verifies basic uninstallation of a symlinked package."""
+        pkg = "pkg_symlink"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         
@@ -69,7 +69,7 @@ class TestUninstall(unittest.TestCase):
             f.write(f"""
             [package]
             name = "{pkg}"
-            install_method = "stow"
+            install_method = "symlink"
             target_directory = "{self.system_target_dir}"
             """)
             
@@ -87,7 +87,7 @@ class TestUninstall(unittest.TestCase):
         registry.sync_deployed_files(
             pkg,
             target_directory=self.system_target_dir,
-            install_method=InstallMethod.STOW,
+            install_method=InstallMethod.SYMLINK,
             redeploy=True,
             deployable_files=[Path("dot-bashrc")],
         )
@@ -201,9 +201,9 @@ class TestUninstall(unittest.TestCase):
         updated_registry = load_state_registry(state_file)
         self.assertNotIn(pkg, updated_registry.packages)
 
-    def test_uninstall_detach_stow(self):
-        """Verifies that detaching a stowed package replaces the symlink with a copy, and keeps backup folders intact."""
-        pkg = "pkg_stow"
+    def test_uninstall_detach_symlink(self):
+        """Verifies that detaching a symlinked package replaces the symlink with a copy, and keeps backup folders intact."""
+        pkg = "pkg_symlink"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -213,7 +213,7 @@ class TestUninstall(unittest.TestCase):
             f.write(f"""
             [package]
             name = "{pkg}"
-            install_method = "stow"
+            install_method = "symlink"
             target_directory = "{self.system_target_dir}"
             """)
             
@@ -237,7 +237,7 @@ class TestUninstall(unittest.TestCase):
         registry.sync_deployed_files(
             pkg,
             target_directory=self.system_target_dir,
-            install_method=InstallMethod.STOW,
+            install_method=InstallMethod.SYMLINK,
             redeploy=True,
             deployable_files=[Path("dot-bashrc")],
         )
@@ -662,7 +662,7 @@ fi
         pkg_state = PackageState(
             state="installed",
             target_directory=self.system_target_dir,
-            install_method=InstallMethod.STOW,
+            install_method=InstallMethod.SYMLINK,
         )
         # Setup empty backup directory for pkg
         pkg_backup = self.backup_dir / "pkg_ghost"

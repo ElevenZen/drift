@@ -42,7 +42,7 @@ class TestResultModels(unittest.TestCase):
         )
         pkg_res = PackageInstallResult(
             package="zsh",
-            install_method=InstallMethod.STOW,
+            install_method=InstallMethod.SYMLINK,
             target_directory="/home/user",
             operations=ops,
             is_first_time=True
@@ -82,7 +82,7 @@ class TestResultModels(unittest.TestCase):
     def test_uninstall_result_iteration(self) -> None:
         un = UninstallResult(
             packages=[
-                PackageUninstallResult(package="pkg_a", install_method=InstallMethod.STOW, target_directory="/home/test"),
+                PackageUninstallResult(package="pkg_a", install_method=InstallMethod.SYMLINK, target_directory="/home/test"),
                 PackageUninstallResult(package="pkg_b", install_method=InstallMethod.COPY, target_directory="/home/test", status="FAILED"),
             ]
         )

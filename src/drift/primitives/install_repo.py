@@ -32,15 +32,14 @@ Pipeline Architecture:
                         deploy_one_package_impl [Layer 4]
                             Target Directory Migration Detection -> cleanup old target & force redeploy
                             run_collision_guard [Layer 3]
-                            ignore_handler.create_stow_ignore_file (if stow method)
                             reconcile_orphaned_files [Layer 2] (if redeploy)
                             trigger pre_install / pre_update hook
                             state_registry.sync_deployed_files & save
                             Physical Delivery:
                                 run_full_file_delivery [Layer 3] (redeploy)
-                                    run_full_copy_deployment [Layer 3] / run_stow_deployment [Layer 3]
+                                    run_full_copy_deployment [Layer 3] / run_full_symlink_deployment [Layer 3]
                                 run_incremental_file_delivery [Layer 3] (incremental redeploy)
-                                    deploy_single_stow_file [Layer 2] / deploy_single_copy_file [Layer 2]
+                                    deploy_single_symlink_file [Layer 2] / deploy_single_copy_file [Layer 2]
                                     delete_single_system_file_or_dir [Layer 1]
                             trigger post_install / post_update hook
                             update_state_registry_post_deployment [Layer 3]
@@ -53,24 +52,64 @@ Pipeline Architecture:
         run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 5]
             commit_repo_changes (commits state repository changes in install/)
 
+    4. Collision Guard Architecture & Logic (run_collision_guard):
+        Pre-deployment audit protecting active host configurations from silent loss
+        and preventing circular loops through a multi-stage audit pipeline:
+
+        Stage 0: Target Ancestor Symlink Guard (find_symlink_ancestor)
+            - Safety Abort: Detects if any ancestor directory at or above target_dir is a symlink
+              pointing into drift_root. Aborts with InstallCollisionError to prevent loops and corruption.
+
+        Stage 1: Internal Symlink Conflict Resolution (handle_internal_symlink_conflicts)
+            - Identifies symlinks in target_dir pointing into drift_root that conflict with package items.
+            - Symlink Link Exemption: Preserves valid relative symlinks pointing into the same install_pkg_dir.
+            - Conflict Resolution: Conflicting symlinks are backed up to backup/<pkg>/overwritten/<path>,
+              removed from target_dir, and recorded in processed_paths (including all sub-paths).
+            - Physical Directory Recreation: Recreates real physical directories where the package
+              expects a directory, preventing symlink directory cycles.
+            - Target Canonical Boundary Check: Aborts with InstallCollisionError if target_dir.resolve()
+              resolves to or inside drift_root.
+
+        Stage 2: Recursive Filesystem Audit (compare_folders)
+            - Recursively compares install_pkg_dir against target_dir (src_only=True, translate_mode="forward").
+            - Categorizes discrepancies into deleted, modified, and matching paths.
+
+        Stage 3: Type Mismatches & Ignored Files (diff.deleted)
+            - Ignored Files Cleanup: Files now matching ignore rules are backed up to
+              backup/<pkg>/deleted_files/<path> and cleared.
+            - Type Mismatches: Host items blocking repo directories (e.g. system file blocking a directory)
+              are backed up to backup/<pkg>/overwritten/<path> and cleared.
+
+        Stage 4: Modified Content & Collisions (diff.modified)
+            - Invariant Assertion: Asserts no symlinks pointing into drift_root (outside install_pkg_dir)
+              reach this stage (guaranteed handled in Stage 1).
+            - Symlink Exemption: Skips backup if the system target is a valid symlink to another file in the
+              same install_pkg_dir.
+            - Copy Update Exemption: Skips backup if deploying via copy method and the file is an update
+              to an already-installed file (not first-time installation).
+            - Overwritten Backup: All other colliding host files are backed up to backup/<pkg>/overwritten/<path>
+              and removed before deployment.
+
+        Stage 5: Symlink Content-Match Physical Collisions (diff.matches)
+            - Under symlink method, if host has a physical file matching repo content instead of a symlink,
+              it is backed up to backup/<pkg>/overwritten/<path> and cleared so the linker can create the symlink.
+
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
-    Layer 1: Version Probing & Atomic Host Actions
-        get_stow_version
-        is_stow_version_sufficient
+    Layer 1: Atomic Host Actions
         handle_collision_error
         delete_single_system_file_or_dir
     Layer 2: Single-File Delivery & Conflict Resolution Helpers
         find_internal_symlink_conflicts
         resolve_single_internal_symlink_conflict
         handle_internal_symlink_conflicts
-        deploy_single_stow_file
+        deploy_single_symlink_file
         deploy_single_copy_file
         reconcile_orphaned_files
     Layer 3: Batch Delivery & Collision Audit
         run_collision_guard
         run_full_copy_deployment
-        run_stow_deployment
+        run_full_symlink_deployment
         run_full_file_delivery
         run_incremental_file_delivery
         update_state_registry_post_deployment
@@ -143,6 +182,7 @@ from ..utils.path_utils import (
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,
+    compute_relative_symlink_target,
     is_relative_to,
 )
 from ..utils.file_inspect import find_symlink_ancestor
@@ -232,35 +272,8 @@ class PackageInstallContext:
 
 
 # =============================================================================
-# Layer 1: Version Probing & Atomic Host Actions
+# Layer 1: Atomic Host Actions
 # =============================================================================
-
-def get_stow_version() -> Optional[str]:
-    """Retrieves the installed GNU Stow version string if available."""
-    try:
-        res = run_command(["stow", "--version"], text=True)
-        stdout_str = res.stdout if isinstance(res.stdout, str) else res.stdout.decode("utf-8", errors="replace")
-        lines = stdout_str.splitlines()
-        if not lines:
-            return None
-        first_line = lines[0]
-        match = re.search(r"(\d+(\.\d+)+)", first_line)
-        if match:
-            return match.group(1)
-        return first_line.strip() or None
-    except Exception as e:
-        logger.debug(f"GNU Stow is not found or failed to return version: {e}")
-        return None
-
-
-def is_stow_version_sufficient(version: str) -> bool:
-    """Checks if the stow version is >= 2.4.1."""
-    try:
-        parts = [int(p) for p in version.split(".")]
-        return parts >= [2, 4, 1]
-    except Exception:
-        return False
-
 
 def handle_collision_error(
     context: PackageInstallContext,
@@ -300,13 +313,9 @@ def delete_single_system_file_or_dir(
 # Layer 2: Single-File Delivery & Conflict Resolution Helpers
 # =============================================================================
 
-def _is_valid_stow_link(system_target: Path, abs_install_pkg: Path) -> bool:
+def _is_valid_symlink_link(system_target: Path, abs_install_pkg: Path) -> bool:
     """Checks if system_target is a relative symlink pointing into abs_install_pkg."""
     try:
-        # stow command can only handle relative paths,
-        # so only relative links pointing to the file in the same install_pkg_dir are valid stow links.
-        # And we restrict the result to not contain linked dir as parent dir.
-        # so linked dirs are considered invalid, and trigger backup and removal.
         raw_link = os.readlink(system_target)
         link_content = Path(raw_link)
         if link_content.is_absolute() or system_target.is_dir():
@@ -367,14 +376,14 @@ def resolve_single_internal_symlink_conflict(
     processed_paths: set,
     ops: Optional[FileOperations] = None,
 ) -> None:
-    """Processes a single detected internal symlink conflict: validates stow compatibility,
+    """Processes a single detected internal symlink conflict: validates symlink compatibility,
     marks paths as processed, backs up & removes conflicting symlinks, and recreates physical directories.
     """
     install_file_path = context.install_pkg_dir / install_rel_path
     abs_install_pkg = context.install_pkg_dir.resolve()
 
-    # If install method is stow and link points into our pkg install dir, it's valid for this package
-    if context.install_method == InstallMethod.STOW and _is_valid_stow_link(system_target, abs_install_pkg):
+    # If install method is symlink and link points into our pkg install dir, it's valid for this package
+    if context.install_method == InstallMethod.SYMLINK and _is_valid_symlink_link(system_target, abs_install_pkg):
         return
 
     # Otherwise, it is a link conflict and must be backed up & removed
@@ -436,16 +445,16 @@ def handle_internal_symlink_conflicts(
         )
 
 
-def deploy_single_stow_file(
+def deploy_single_symlink_file(
     rel_file: Path,
     install_pkg_dir: Path,
     target_dir: Path,
     sudo: bool
 ) -> None:
-    """Helper to deploy a single file using Stow method."""
+    """Helper to deploy a single file as a relative symlink on host system."""
     src_file = install_pkg_dir / rel_file
     system_target = resolve_target_path(rel_file, target_dir)
-    relative_target = relative_path_between(system_target.parent, src_file)
+    relative_target = compute_relative_symlink_target(src_file, system_target.parent)
 
     # If the target already points into the source, do not create the symlink again
     if system_target.is_symlink():
@@ -583,17 +592,25 @@ def run_collision_guard(
 
         system_target = resolve_target_path(rel, context.target_dir)
 
-        # If the file is modified, then it cannot pointing to the same file.
-        # If the symlink points to anywhere inside install_pkg_dir but not the same pkg_install_dir,
-        # it is handled earlier in internal symlink conflicts.
-        # So if it's symlink:
+        # Any internal symlink pointing into drift_root (outside this package's install directory)
+        # must have already been handled earlier in handle_internal_symlink_conflicts.
+        if system_target.is_symlink() and system_target.exists():
+            if not is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve()):
+                assert not is_relative_to(system_target.resolve(), context.drift_root.resolve()), (
+                    "Internal symlink conflicts should have been handled earlier."
+                )
+
+        # If the file is marked modified and is a symlink, then it cannot pointing to the same file.
+        # If the symlink points to anywhere inside drift_root but not the same pkg_install_dir,
+        # then it is handled earlier in internal symlink conflicts.
+        # So if a symlink gets here:
         #   1. it is a broken symlink
-        #   2. it is a symlink pointing outside install_pkg_dir 
+        #   2. it is a symlink pointing outside drift_root
         #   3. it is pointing inside the same pkg_install_dir, but not the same file.
         # We can skip if the system target is a symlink pointing to another file in same install_pkg_dir.
         # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
-        if (context.install_method == InstallMethod.STOW
-                and system_target.is_symlink() and system_target.exists()
+        if (context.install_method == InstallMethod.SYMLINK
+                and system_target.is_symlink() and system_target.exists()  # exists() ensures it is not a broken link
                 and is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve())):
             continue
 
@@ -603,7 +620,7 @@ def run_collision_guard(
             continue
 
         # conditions include:
-        # stow mode: system target file is not a symlink, or is broken link, or pointing outside install_pkg_dir
+        # symlink mode: system target file is not a symlink, or is broken link, or pointing outside install_pkg_dir
         # copy mode: first installation, or system target is a symlink (broken or not)
         handle_collision_error(
             context=context,
@@ -615,8 +632,8 @@ def run_collision_guard(
             ops=ops,
         )
 
-    # 5. Handle Content Match items (Stow specific: physical file matching repo content is STILL a collision)
-    if context.install_method == InstallMethod.STOW:
+    # 5. Handle Content Match items (Symlink specific: physical file matching repo content is STILL a collision)
+    if context.install_method == InstallMethod.SYMLINK:
         for rel in diff.matches:
             if rel in processed_paths:
                 continue
@@ -629,7 +646,7 @@ def run_collision_guard(
                     system_target=system_target,
                     backup_subfolder=BackupSubfolder.OVERWRITTEN,
                     backup_rel_path=rel,
-                    reason="Stow physical collision",
+                    reason="Symlink physical collision",
                     resolve_symlinks=resolve_symlinks,
                     ops=ops,
                 )
@@ -650,20 +667,20 @@ def run_full_copy_deployment(
         deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
 
 
-def run_stow_deployment(install_base: Path, target_dir: Path, pkg: str, sudo: bool) -> None:
-    """Invokes GNU Stow for package deployment."""
+def run_full_symlink_deployment(
+    src_pkg_dir: Path,
+    target_dir: Path,
+    sudo: bool,
+    deployable_files: List[Path]
+) -> None:
+    """Executes native symlink deployment of deployable_files to target_dir."""
     ensure_dir(target_dir, sudo)
-    stow_cmd = [
-        "stow",
-        "--no-folding",
-        "--dotfiles",
-        "-d", str(install_base),
-        "-t", str(target_dir),
-        pkg
-    ]
-    logger.info(f"🔗 Linking files: {pkg} (stow)")
-    logger.debug(f"   Command: {shlex.join(stow_cmd)}")
-    run_command(stow_cmd, sudo=sudo, cwd=str(install_base))
+    pkg = src_pkg_dir.name
+    logger.info(f"🔗 Linking files: {pkg} (symlink)")
+
+    for rel_file in deployable_files:
+        deploy_single_symlink_file(rel_file, src_pkg_dir, target_dir, sudo)
+
 
 
 def run_full_file_delivery(
@@ -671,27 +688,18 @@ def run_full_file_delivery(
     deployable_files: List[Path]
 ) -> None:
     """Handles full file delivery during initial or clean redeployment."""
-    install_base = context.install_pkg_dir.parent
     if context.install_method == InstallMethod.COPY:
         run_full_copy_deployment(
             context.install_pkg_dir, context.target_dir, context.sudo,
             deployable_files=deployable_files
         )
         return
-    if context.install_method == InstallMethod.STOW:
-        stow_version = get_stow_version()
-        stow_sufficient = is_stow_version_sufficient(stow_version) if stow_version else False
-        if stow_sufficient:
-            run_stow_deployment(install_base, context.target_dir, context.pkg_name, context.sudo)
-            return
-        logger.warning("GNU Stow version is insufficient (< 2.4.1) or not installed. Falling back to manual symlinking.")
-        for rel_file in deployable_files:
-            deploy_single_stow_file(
-                rel_file=rel_file,
-                install_pkg_dir=context.install_pkg_dir,
-                target_dir=context.target_dir,
-                sudo=context.sudo
-            )
+    if context.install_method == InstallMethod.SYMLINK:
+        run_full_symlink_deployment(
+            context.install_pkg_dir, context.target_dir, context.sudo,
+            deployable_files=deployable_files
+        )
+        return
 
 
 def run_incremental_file_delivery(
@@ -721,8 +729,8 @@ def run_incremental_file_delivery(
             )
             continue
 
-        if context.install_method == InstallMethod.STOW:
-            deploy_single_stow_file(
+        if context.install_method == InstallMethod.SYMLINK:
+            deploy_single_symlink_file(
                 rel_file=rel_file,
                 install_pkg_dir=context.install_pkg_dir,
                 target_dir=context.target_dir,
@@ -844,10 +852,6 @@ def deploy_one_package_impl(
         resolve_symlinks=config.resolve_symlinks,
         ops=ops,
     )
-
-    # Generate or update .stow-local-ignore file if using stow method
-    if context.install_method == InstallMethod.STOW:
-        context.ignore_handler.create_stow_ignore_file(context.install_pkg_dir)
 
     target_dir = context.target_dir
     target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)

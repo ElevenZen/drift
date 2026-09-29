@@ -84,7 +84,6 @@ class TestWorkspaceClone(unittest.TestCase):
         self.assertTrue((dest_path / "render" / ".git").exists())
         self.assertTrue((dest_path / "install" / ".git").exists())
         self.assertTrue((dest_path / "install" / "state.toml").exists())
-        self.assertTrue((dest_path / "install" / ".stow-local-ignore").exists())
         self.assertTrue((dest_path / "config" / "drift_workspace.local.toml").exists())
         self.assertTrue((dest_path / "config" / "secrets.env").exists())
         self.assertTrue((dest_path / ".gitignore").exists())

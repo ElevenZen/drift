@@ -13,6 +13,7 @@ for tilde expansion). They operate on path representations only.
     encode_dot_prefix(relative_path) — Converts 'dot-config' → '.config' in path segments.
     decode_dot_prefix(relative_path) — Converts '.config' → 'dot-config' in path segments.
     relative_path_between(from_dir, to_path) — Computes relative path between two absolute paths.
+    compute_relative_symlink_target(source_path, link_parent_dir) — Robust symlink target with cross-drive fallback.
 
 ===============================================================================
 """
@@ -137,3 +138,28 @@ def relative_path_between(from_dir: Path, to_path: Path) -> Path:
     downs = list(to_parts[common_idx:])
 
     return Path(*ups).joinpath(*downs)
+
+
+def compute_relative_symlink_target(source_path: Path, link_parent_dir: Path) -> Path:
+    """Computes the relative symlink target path pointing from link_parent_dir to source_path.
+
+    Resolves link_parent_dir to its physical path to handle external directory symlinks safely.
+    If source and destination reside on distinct drives/roots where a relative path
+    cannot be constructed (e.g. cross-drive on Windows), gracefully falls back to an
+    absolute canonical path.
+    """
+    resolved_parent = link_parent_dir.resolve()
+    resolved_source = source_path.resolve()
+
+    # Cross-drive on Windows (e.g. C: vs D:) cannot be expressed relatively
+    if resolved_parent.drive != resolved_source.drive:
+        return resolved_source
+
+    try:
+        rel = relative_path_between(resolved_parent, resolved_source)
+        if rel == Path():
+            return resolved_source
+        return rel
+    except Exception:
+        return resolved_source
+

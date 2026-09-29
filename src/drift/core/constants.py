@@ -65,9 +65,7 @@ SECRETS_ENV_FILE_NAME = "secrets.env"
 DRIFT_IGNORE_FILE_NAME = ".drift_ignore"
 DRIFT_IGNORE_LEGACY_FILE_NAME = ".driftignore"
 DRIFT_IGNORE_FILE_NAME_LIST = (DRIFT_IGNORE_FILE_NAME, DRIFT_IGNORE_LEGACY_FILE_NAME)
-STOW_LOCAL_IGNORE_FILE_NAME = ".stow-local-ignore"
 STATE_REGISTRY_FILE_NAME = "state.toml"
-INSTALL_STOW_IGNORE_PATTERN = r"^/state\.toml"
 DRIFT_INTERNAL_DIR_NAME = ".drift"
 DRIFT_HOOKS_DIR_NAME = "drift_hooks"
 DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
@@ -81,7 +79,7 @@ FORBIDDEN_RENDER_ENGINE_SUFFIXES: frozenset = frozenset({
     "drift",
 })
 INTERNAL_RENDER_COMMAND = "internal"
-DRIFT_GENERATED_FILES = (STOW_LOCAL_IGNORE_FILE_NAME,)
+DRIFT_GENERATED_FILES: Tuple[str, ...] = ()
 DEFAULT_PACKAGE_HOOK_FILE_NAME = "drift_package.py"
 PACKAGE_HOOK_FUNCTION_NAME = "configure_package"
 
@@ -93,7 +91,6 @@ FORBIDDEN_PACKAGE_NAMES: frozenset = frozenset({
     "src",
     "backup",
     STATE_REGISTRY_FILE_NAME,
-    STOW_LOCAL_IGNORE_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
@@ -157,23 +154,46 @@ class LineEnding(str, Enum):
 
 class InstallMethod(str, Enum):
     """Supported package installation methods for deploying configuration files."""
-    STOW = "stow"
+    SYMLINK = "symlink"
     COPY = "copy"
 
     def __str__(self) -> str:
         return self.value
 
     @classmethod
-    def from_str(cls, val: Union[str, "InstallMethod"]) -> "InstallMethod":
-        """Parses a string or InstallMethod instance into an InstallMethod enum member."""
+    def default(cls) -> "InstallMethod":
+        """Returns the default installation method (SYMLINK)."""
+        return cls.DEFAULT
+
+    @classmethod
+    def _missing_(cls, value):
+        if value is None:
+            return cls.DEFAULT
+        if isinstance(value, str) and value.strip().lower() in ("stow", "link", "default"):
+            return cls.DEFAULT
+        return super()._missing_(value)
+
+    @classmethod
+    def from_str(cls, val: Optional[Union[str, "InstallMethod"]] = None) -> "InstallMethod":
+        """Parses a string or InstallMethod instance into an InstallMethod enum member.
+
+        If val is None, returns the default installation method (DEFAULT / SYMLINK).
+        """
+        if val is None:
+            return cls.DEFAULT
         if isinstance(val, cls):
             return val
         s = str(val).strip().lower()
-        if s == "stow":
-            return cls.STOW
+        if s in ("symlink", "stow", "link", "default"):
+            return cls.SYMLINK
         if s == "copy":
             return cls.COPY
-        raise ValueError(f"Unknown install method '{val}'. Valid choices: 'stow', 'copy'.")
+        raise ValueError(f"Unknown install method '{val}'. Valid choices: 'symlink', 'copy'.")
+
+
+# Global default package installation method (SYMLINK)
+DEFAULT_INSTALL_METHOD: InstallMethod = InstallMethod.SYMLINK
+InstallMethod.DEFAULT = DEFAULT_INSTALL_METHOD
 
 
 class BackupSubfolder(str, Enum):
@@ -216,7 +236,7 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "#    Example: \\.bak$   (matches any file ending in .bak)\n"
     "#    Example: ^~       (matches temporary files starting with ~)\n"
     "# ---------------------------------------------------------------------\n"
-    "# Default Stow Ignore List\n"
+    "# Default Drift Ignore List\n"
     "# ---------------------------------------------------------------------\n"
     "# Python bytecode and cache files\n"
     "__pycache__\n"
@@ -269,8 +289,8 @@ DEFAULT_DRIFT_IGNORE_CONTENT = (
     "^/\\.drift$\n"
 )
 
-# Default list of ignore patterns generated from DEFAULT_DRIFT_IGNORE_CONTENT for GNU Stow matching
-DEFAULT_STOW_IGNORE_PATTERNS: List[str] = [
+# Default list of ignore patterns generated from DEFAULT_DRIFT_IGNORE_CONTENT
+DEFAULT_IGNORE_PATTERNS: List[str] = [
     line.strip()
     for line in DEFAULT_DRIFT_IGNORE_CONTENT.splitlines()
     if line.strip() and not line.strip().startswith("#")
@@ -381,7 +401,6 @@ DEFAULT_JINJA2_MUSTACHE_JSON_CONTENT = json.dumps({
 }, indent=4) + "\n"
 
 TEMPORARY_FILE_PATTERNS = (
-    "*.stow-local-ignore*",
     "*.gitignore*",
     "*__pycache__*",
     "*.py[cod]",
@@ -454,7 +473,7 @@ def get_default_internal_gitignore_content() -> str:
 
 def get_default_package_config_content(
     package_name: str,
-    install_method: InstallMethod = InstallMethod.STOW,
+    install_method: InstallMethod = DEFAULT_INSTALL_METHOD,
     target_directory: Optional[str] = None,
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:

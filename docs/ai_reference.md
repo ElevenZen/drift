@@ -62,12 +62,10 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/utils/file_utils.py): Deletes a file or directory safely (with `sudo` if configured).
 *   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
-### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules)
+### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules Lineage)
 *   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/core/ignore.py): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
-*   [`DriftIgnore.for_install_root() -> DriftIgnore`](../src/drift/core/ignore.py): Creates ignore rules for `install/` root (`state.toml` guard).
-*   [`ignore.match_path(rel_path) -> bool`](../src/drift/core/ignore.py): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` and `MANAGED_CONFIG_FILES` exclusion).
+*   [`ignore.match_path(rel_path) -> bool`](../src/drift/core/ignore.py): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` exclusion).
 *   [`ignore.filter_deployable_files(install_pkg_dir) -> List[Path]`](../src/drift/core/ignore.py): Returns non-ignored deployable files.
-*   [`ignore.create_stow_ignore_file(target_dir)`](../src/drift/core/ignore.py): Generates `.stow-local-ignore`.
 
 ### [`core/state_registry.py`](../src/drift/core/state_registry.py) (State Database & Manifests)
 *   [`load_state_registry(path) -> StateRegistry`](../src/drift/core/state_registry.py): Loads `install/state.toml`.
@@ -162,10 +160,8 @@ This document provides a concise, high-density architecture reference, primitive
     *   Engine suffixes **cannot contain dots** (`.`). Reserved suffixes (`drift_package`, `drift_hook`, `drift_ignore`, `drift_workspace`, `drift_hooks`, `drift`) are prohibited.
 3.  **Ignore Engine Invariants (`.drift_ignore`)**:
     *   Single file per package root (`src/<pkg>/.drift_ignore`), rendered/staged to `.drift/.drift_ignore`. Nested `.drift_ignore` or `.driftignore` raise `ValueError`.
-    *   Uses **PCRE Regex**, NOT glob patterns.
-    *   `Group 1` (with `/`): matched against `/rel_path` (`^/sample\.txt$` for root).
-    *   `Group 2` (no `/`): matched against `basename` (`\.bak$`).
-    *   Hardcoded exclusions: `.drift/` internal directory and `MANAGED_CONFIG_FILES` (`.stow-local-ignore`) are never deployed.
+    *   Uses **PCRE Regex**, derived from GNU Stow's ignore rules (Group 1: `/` prefix matched against `/rel_path`; Group 2: no `/` matched against `basename`), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host.
+    *   Hardcoded exclusions: `.drift/` internal control plane is never deployed to the host.
 4.  **Collision Guard & Safety**:
     *   **Nominal & Canonical Target Check**: Target cannot be inside `drift_root`.
     *   **Parent Symlink Guard**: Parent cannot be a symlink into workspace root (`InstallCollisionError`).
@@ -176,8 +172,7 @@ This document provides a concise, high-density architecture reference, primitive
     *   Prohibits running CLI under `sudo` on user-owned workspaces to prevent target path mismatch (`$HOME`/`~` expanding to `/root`) and root-owned file corruption in `render/.git` and `install/.git`.
     *   Permitted only if running as true root (`SUDO_USER` unset) or workspace directory is root-owned (`uid == 0`). Elevated deployment is configured per-package via `sudo = true`.
 7.  **Stage Structural Fidelity Invariant**:
-    *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with 1:1 fidelity.
-    *   The only files in `install/` not originating from `render/` are dynamically generated stage artifacts (`DRIFT_GENERATED_FILES = (".stow-local-ignore",)`).
+    *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`).
     *   All package metadata and internal control plane files (`.drift/drift_package.toml`, `.drift/.drift_ignore`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
 8.  **Render Engine Scope & Invariants**:
     *   **Global Engines Only for Package Config**: Dynamic package configuration templates (`src/<pkg>/drift_package.envst.toml`) can only be compiled by global workspace render engines (`drift_workspace.toml`), evaluated during workspace bootstrap.

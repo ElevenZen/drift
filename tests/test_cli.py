@@ -147,7 +147,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         # Create a package with broken template (var engine with undefined variable)
         broken_pkg = Path(self.drift_root) / "src" / "broken_pkg"
         broken_pkg.mkdir(parents=True, exist_ok=True)
-        (broken_pkg / "drift_package.toml").write_text("[package]\ninstall_method='stow'\n")
+        (broken_pkg / "drift_package.toml").write_text("[package]\ninstall_method='symlink'\n")
         (broken_pkg / "bad.var").write_text("Hello $UNDEFINED_TEST_VARIABLE_XYZ_999\n")
 
         stdout = StringIO()

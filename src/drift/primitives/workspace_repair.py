@@ -19,7 +19,6 @@ Repair Pipeline Flow:
             ├── repair_render_repo(drift_root, workspace_config, dry_run)
             ├── repair_install_repo(drift_root, workspace_config, dry_run)
             ├── repair_internal_gitignores(drift_root, workspace_config, dry_run)
-            ├── repair_install_stow_ignore(drift_root, workspace_config, dry_run)
             ├── repair_state_registry(drift_root, workspace_config, dry_run)
             ├── repair_secrets_env(drift_root, workspace_config, dry_run)
             ├── repair_engine_inputs(drift_root, workspace_config, dry_run)
@@ -38,7 +37,6 @@ Layers (ordered bottom-up by dependency):
         repair_render_repo
         repair_install_repo
         repair_internal_gitignores
-        repair_install_stow_ignore
         repair_state_registry
         repair_secrets_env
         repair_engine_inputs
@@ -62,7 +60,6 @@ from ..core.constants import (
     WORKSPACE_CONFIG_LOCAL_FILE_NAME,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
-    STOW_LOCAL_IGNORE_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME,
@@ -77,7 +74,6 @@ from ..core.constants import (
     DEFAULT_ROOT_GITIGNORE_ENTRIES,
     DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
 )
-from ..core.ignore import get_default_install_stow_ignore_content
 from .workspace_check import (
     ComponentStatus,
     WorkspaceHealthReport,
@@ -86,7 +82,6 @@ from .workspace_check import (
     check_install_repo,
     check_render_gitignore,
     check_install_gitignore,
-    check_install_stow_ignore,
     check_state_registry,
     check_workspace_config,
     check_package_metadata_structure,
@@ -377,25 +372,6 @@ def repair_internal_gitignores(
     return actions
 
 
-def repair_install_stow_ignore(
-    drift_root: Path,
-    workspace_config: WorkspaceConfig,
-    dry_run: bool = False,
-) -> List[str]:
-    """Repairs install/.stow-local-ignore configuration."""
-    actions: List[str] = []
-    stow_ignore_res = check_install_stow_ignore(drift_root, workspace_config=workspace_config)
-    install_dir = workspace_config.install_path
-    stow_ignore_path = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
-
-    if stow_ignore_res.status != ComponentStatus.GOOD:
-        actions.append(f"Restored '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}'.")
-        if not dry_run:
-            install_dir.mkdir(parents=True, exist_ok=True)
-            stow_ignore_path.write_text(get_default_install_stow_ignore_content(), encoding="utf-8")
-    return actions
-
-
 def repair_state_registry(
     drift_root: Path,
     workspace_config: WorkspaceConfig,
@@ -609,7 +585,6 @@ def repair_drift_workspace(
     actions.extend(repair_render_repo(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_install_repo(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_internal_gitignores(drift_root, workspace_config=ws_config, dry_run=dry_run))
-    actions.extend(repair_install_stow_ignore(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_state_registry(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_secrets_env(drift_root, workspace_config=ws_config, dry_run=dry_run))
     actions.extend(repair_engine_inputs(drift_root, workspace_config=ws_config, dry_run=dry_run))

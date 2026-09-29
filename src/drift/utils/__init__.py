@@ -7,6 +7,7 @@ from .path_utils import (
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,
+    compute_relative_symlink_target,
 )
 from .file_inspect import (
     file_hash,
@@ -129,6 +130,7 @@ __all__ = [
     "encode_dot_prefix",
     "decode_dot_prefix",
     "relative_path_between",
+    "compute_relative_symlink_target",
     "file_hash",
     "is_binary_file",
     "normalize_newlines",

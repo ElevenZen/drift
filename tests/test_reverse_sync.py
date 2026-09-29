@@ -48,9 +48,9 @@ class TestReverseSync(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_reverse_sync_stow_missing_symlink(self) -> None:
+    def test_reverse_sync_missing_symlink(self) -> None:
         """Verifies that if a symlink on the system is missing, its counterpart in install/ is deleted."""
-        pkg = "pkg_stow"
+        pkg = "pkg_symlink"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -59,7 +59,7 @@ class TestReverseSync(unittest.TestCase):
             f.write(f"""
             [package]
             name = "{pkg}"
-            install_method = "stow"
+            install_method = "symlink"
             target_directory = "{self.system_target_dir}"
             """)
 
@@ -77,9 +77,9 @@ class TestReverseSync(unittest.TestCase):
         # Counterpart in install/ should be deleted
         self.assertFalse(test_file.exists())
 
-    def test_reverse_sync_stow_replaced_by_regular_file(self) -> None:
+    def test_reverse_sync_symlink_replaced_by_regular_file(self) -> None:
         """Verifies that if a symlink is replaced by a regular physical file containing edits, those contents are copied back."""
-        pkg = "pkg_stow"
+        pkg = "pkg_symlink"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
@@ -88,7 +88,7 @@ class TestReverseSync(unittest.TestCase):
             f.write(f"""
             [package]
             name = "{pkg}"
-            install_method = "stow"
+            install_method = "symlink"
             target_directory = "{self.system_target_dir}"
             """)
 
@@ -267,7 +267,7 @@ class TestReverseSync(unittest.TestCase):
             f.write(f"""
             [package]
             name = "{pkg}"
-            install_method = "stow"
+            install_method = "symlink"
             target_directory = "{self.system_target_dir}"
             """)
 
@@ -323,7 +323,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual(os.readlink(install_link), "fcd_broken_dest")
 
     def test_reverse_sync_missing_target_managed_config_files_not_deleted(self) -> None:
-        """Verifies that missing managed config files (drift_package.toml, .drift_ignore, .stow-local-ignore) on target system do NOT trigger deletion in install/."""
+        """Verifies that missing managed config files (drift_package.toml, .drift_ignore) on target system do NOT trigger deletion in install/."""
         pkg = "pkg_managed_configs"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -340,16 +340,12 @@ class TestReverseSync(unittest.TestCase):
         drift_ignore_path = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
         drift_ignore_path.write_text("*.tmp\n", encoding="utf-8")
 
-        stow_ignore_path = pkg_install_dir / ".stow-local-ignore"
-        stow_ignore_path.write_text("*.bak\n", encoding="utf-8")
-
         regular_file = pkg_install_dir / "regular_file.txt"
         regular_file.write_text("I should be deleted", encoding="utf-8")
 
         # 2. On host system, none of the above files exist
         self.assertFalse((self.system_target_dir / PACKAGE_CONFIG_FILE_NAME).exists())
         self.assertFalse((self.system_target_dir / DRIFT_IGNORE_FILE_NAME).exists())
-        self.assertFalse((self.system_target_dir / ".stow-local-ignore").exists())
         self.assertFalse((self.system_target_dir / "regular_file.txt").exists())
 
         # 3. Run reverse sync
@@ -359,7 +355,6 @@ class TestReverseSync(unittest.TestCase):
         # 4. Managed config files MUST still exist in install/
         self.assertTrue(pkg_config_path.exists(), "drift_package.toml in install/ must not be deleted!")
         self.assertTrue(drift_ignore_path.exists(), ".drift_ignore in install/ must not be deleted!")
-        self.assertTrue(stow_ignore_path.exists(), ".stow-local-ignore in install/ must not be deleted!")
 
         # 5. Regular file should have been deleted because it was missing on host
         self.assertFalse(regular_file.exists(), "regular_file.txt should be deleted as it is missing on host!")
@@ -591,19 +586,19 @@ class TestReverseSync(unittest.TestCase):
         self.assertFalse((pkg_install_dir / "uncontrolled_zone").exists())
         self.assertFalse((pkg_install_dir / "root_wild_file.txt").exists())
 
-    def test_reverse_sync_fcd_in_stow_package_lifecycle(self) -> None:
-        """Verifies end-to-end FCD lifecycle under stow deployment:
-        deploy stow -> create wild file on host -> reverse-sync -> deploy update.
+    def test_reverse_sync_fcd_in_symlink_package_lifecycle(self) -> None:
+        """Verifies end-to-end FCD lifecycle under symlink deployment:
+        deploy symlink -> create wild file on host -> reverse-sync -> deploy update.
         """
         from drift.primitives.install_repo import run_primitive_5_install_deployment
-        pkg = "pkg_fcd_stow_lifecycle"
+        pkg = "pkg_fcd_symlink_lifecycle"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
 
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
-        install_method = "stow"
+        install_method = "symlink"
         target_directory = "{self.system_target_dir}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
@@ -612,16 +607,14 @@ class TestReverseSync(unittest.TestCase):
         (pkg_install_dir / "plugins" / "base.plugin").parent.mkdir(parents=True, exist_ok=True)
         (pkg_install_dir / "plugins" / "base.plugin").write_text("base plugin", encoding="utf-8")
 
-        # 1. Initial stow deployment
+        # 1. Initial symlink deployment
         res_dep1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertEqual(res_dep1.status, "SUCCESS")
 
         # 2. Host app dynamically creates a new plugin file
         host_plugins = self.system_target_dir / "plugins"
-        # If stow created plugins as a symlink or directory, ensure target file exists
+        # If symlink created plugins as a symlink or directory, ensure target file exists
         if host_plugins.is_symlink():
-            # In folded stow tree, plugins is a symlink to install/pkg/plugins
-            # App writes new file inside the directory
             (host_plugins / "dynamic.plugin").write_text("dynamic plugin", encoding="utf-8")
         else:
             host_plugins.mkdir(parents=True, exist_ok=True)
@@ -634,7 +627,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue((pkg_install_dir / "plugins" / "dynamic.plugin").exists())
         self.assertEqual((pkg_install_dir / "plugins" / "dynamic.plugin").read_text(encoding="utf-8"), "dynamic plugin")
 
-        # 4. Subsequent stow deployment succeeds without collision errors
+        # 4. Subsequent symlink deployment succeeds without collision errors
         res_dep2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertEqual(res_dep2.status, "SUCCESS")
 

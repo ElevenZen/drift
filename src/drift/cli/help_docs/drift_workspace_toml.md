@@ -4,7 +4,7 @@
 In Drift, the entire workspace is orchestrated by the global `config/drift_workspace.toml` configuration file (with optional local overrides via `config/drift_workspace.local.toml` and programmatic extensions via `config/drift_workspace.py`).
 
 This document provides a comprehensive reference for all global workspace configuration tables and settings, including:
-1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "stow" | "copy"`), and custom Python workspace hooks (`hook_file`).
+1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "symlink" | "copy"`), and custom Python workspace hooks (`hook_file`).
 2. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical workspace variables across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
 3. **Template Rendering Engine DAGs (`[render.<name>]`)**: Multi-level template compilation engines (e.g. `envsubst`, `mustache`, `jinja2`, `var`) with dependency resolution and `.drift/render/` sandboxing.
 4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs, and optional Git identity configuration (`git_user_name`, `git_user_email`) for internal auto-commits in `render/` and `install/` repositories.
@@ -34,8 +34,8 @@ backup_directory = "backup"
 default_target_directory = "~"
 
 # Global default installation method if unspecified in drift_package.toml
-# Options: "stow" (symlinks) or "copy" (physical copies)
-default_install_method = "stow"
+# Options: "symlink" (symlinks) or "copy" (physical copies)
+default_install_method = "symlink"
 
 # Optional dynamic Python workspace configuration hook file (relative to the 'config/' directory).
 # Defaults to "drift_workspace.py" if present.

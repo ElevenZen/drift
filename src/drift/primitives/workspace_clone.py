@@ -128,7 +128,7 @@ def convert_legacy_dotfiles_repo(target_dir: Path, pkg_name: str) -> List[str]:
     if not pkg_config_path.exists():
         pkg_config_path.write_text(f"""[package]
 name = "{pkg_name}"
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~"
 """, encoding="utf-8")
         actions.append(f"Generated default package metadata 'src/{pkg_name}/{PACKAGE_CONFIG_FILE_NAME}'.")
@@ -209,7 +209,7 @@ def run_primitive_clone(
         repaired_actions = convert_legacy_dotfiles_repo(target_dir, converted_pkg)
         next_steps = [
             f"cd {target_dir.name}",
-            f"Review converted package configuration in 'src/{converted_pkg}/{PACKAGE_CONFIG_FILE_NAME}' (verify target_directory = \"~\" and install_method = \"stow\" or \"copy\"; see 'drift help drift_package.toml')",
+            f"Review converted package configuration in 'src/{converted_pkg}/{PACKAGE_CONFIG_FILE_NAME}' (verify target_directory = \"~\" and install_method = \"symlink\" or \"copy\"; see 'drift help drift_package.toml')",
             f"Review 'src/{converted_pkg}/.drift_ignore' (exclude files like README/scripts from deployment; see 'drift help ignore')",
             "Adjust local settings in 'config/drift_workspace.local.toml' (this overrides 'config/drift_workspace.toml'; see 'drift help drift_workspace.toml')",
             "Define machine-specific secrets and environment variables in 'config/secrets.env' (see 'drift help workspace')",

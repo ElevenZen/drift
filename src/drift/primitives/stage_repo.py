@@ -27,7 +27,6 @@ Pipeline Architecture:
                     * apply_package_stage_changes(pkg, ...) [Layer 3]
                         - remove_with_parents (direct physical deletion)
                         - copy_file / copy_permissions (additions & modifications)
-                        - generate_stage_stow_ignore(install_dir, ignore_handler) [Layer 1]
                     * state_registry.set_package_state("staged") & save
             -> Returns Summary Map of Changed Packages
 
@@ -39,7 +38,6 @@ Pipeline Architecture:
 Layers (ordered bottom-up by dependency):
     Layer 1: Pre-flight Verification & File Operations
         assert_packages_stage_ready
-        generate_stage_stow_ignore
     Layer 2: Diff Computation & Classification
         compute_package_stage_diff
     Layer 3: Single Package Physical Staging
@@ -197,13 +195,6 @@ def assert_packages_stage_ready(
     assert_install_pkg_dirs_clean(install_base, pkg_metadata.keys())
 
 
-def generate_stage_stow_ignore(
-    install_pkg_dir: Path,
-    ignore_handler: DriftIgnore,
-) -> None:
-    """Generates the physical .stow-local-ignore file inside the install/ package directory."""
-    ignore_handler.create_stow_ignore_file(install_pkg_dir)
-
 
 # =====================================================================
 # Layer 2: Diff Computation & Classification
@@ -245,7 +236,7 @@ def compute_package_stage_diff(
         resolve_symlinks=False,
     )
 
-    # Exclude DRIFT_GENERATED_FILES (.stow-local-ignore) from deleted list as they are generated directly in install/
+    # Exclude DRIFT_GENERATED_FILES from deleted list as they are generated directly in install/
     all_diff.deleted = [p for p in all_diff.deleted if p.name not in DRIFT_GENERATED_FILES]
 
     stage_changes = PackageStageChanges(
@@ -319,11 +310,6 @@ def apply_package_stage_changes(
         else:
             copy_file(src, dst)
 
-    # Generate .stow-local-ignore for GNU Stow compatibility
-    generate_stage_stow_ignore(
-        install_pkg_dir=install_pkg_dir,
-        ignore_handler=ignore_handler,
-    )
 
 
 # =====================================================================

@@ -143,7 +143,7 @@ class TestDiff(unittest.TestCase):
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Modify drift_package.toml in src/
-        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="stow"\n')
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="symlink"\n')
 
         # 3. Diff A (Template Evolution) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
@@ -151,7 +151,7 @@ class TestDiff(unittest.TestCase):
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
-            self.assertIn("stow", out)
+            self.assertIn("symlink", out)
 
         # 4. Diff Δ (Pending Delta) should show change in drift_package.toml
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
@@ -159,10 +159,10 @@ class TestDiff(unittest.TestCase):
             out = stdout.getvalue()
             self.assertIn("drift_package.toml", out)
             self.assertIn("install_method", out)
-            self.assertIn("stow", out)
+            self.assertIn("symlink", out)
 
-    def test_diff_stow_local_ignore_excluded(self):
-        """Verifies synthetic .stow-local-ignore in install/ is not reported as deleted in Pending diff."""
+    def test_diff_pending_clean_after_stage_and_install(self):
+        """Verifies 1:1 structural fidelity between render/ and install/ produces empty Pending diff."""
         pkg = "pkg_a"
         pkg_src_dir = self.source_dir / pkg
         pkg_src_dir.mkdir(parents=True, exist_ok=True)
@@ -174,22 +174,22 @@ class TestDiff(unittest.TestCase):
         from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
-        # 1. Full Deploy and commit (generates .stow-local-ignore in install/)
+        # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
         run_primitive_5_install_deployment(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
-        # Verify .stow-local-ignore exists in install/ but not in render/
-        self.assertTrue((self.install_dir / pkg / ".stow-local-ignore").exists())
-        self.assertFalse((self.render_dir / pkg / ".stow-local-ignore").exists())
+        # Verify 1:1 structural fidelity: render and install trees are identical
+        from drift.utils.file_inspect import tree_files
+        self.assertEqual(tree_files(self.install_dir / pkg), tree_files(self.render_dir / pkg))
 
-        # 2. Diff Δ should be completely empty (no false positive deletion of .stow-local-ignore)
+        # 2. Diff Δ should be completely empty
         with io.StringIO() as stdout, patch("sys.stdout", stdout):
             run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
             out = stdout.getvalue()
-            self.assertNotIn(".stow-local-ignore", out)
+            self.assertNotIn("diff --git", out)
 
     def test_diff_enum_types(self):
         """Verifies run_primitive_15_workspace_diff accepts DiffType enum members."""

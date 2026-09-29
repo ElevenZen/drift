@@ -45,7 +45,7 @@ class TestPackageHook(unittest.TestCase):
         self.workspace_config_file.write_text("""
 [workspace]
 default_target_directory = "~"
-default_install_method = "stow"
+default_install_method = "symlink"
 
 [packages.enable]
 pkg1 = true
@@ -58,7 +58,7 @@ WORKSPACE_BASE = "https://example.com"
         # Standard pkg1 config
         (self.drift_root / "src" / "pkg1" / PACKAGE_CONFIG_FILE_NAME).write_text("""
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/pkg1"
 
 [env.fallback]
@@ -75,7 +75,7 @@ PKG_PORT = "3000"
         pkg_dir = self.drift_root / "src" / "pkg1"
         cfg = PackageConfig.from_source_dir(pkg_dir, self.workspace_config)
         self.assertEqual(cfg.name, "pkg1")
-        self.assertEqual(cfg.package.install_method, "stow")
+        self.assertEqual(cfg.package.install_method, "symlink")
         self.assertEqual(cfg.package.target_directory, Path("~/.config/pkg1").expanduser())
         self.assertIsNone(cfg.package.hook_file)
 
@@ -176,7 +176,7 @@ def configure_package(context):
 
         (self.drift_root / "src" / "pkg1" / PACKAGE_CONFIG_FILE_NAME).write_text("""
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/pkg1"
 hook_file = "hooks/custom_setup.py"
 """, encoding="utf-8")
@@ -199,7 +199,7 @@ def configure_package(context):
 
         (self.drift_root / "src" / "pkg1" / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/pkg1"
 hook_file = "{custom_hook_file.as_posix()}"
 """, encoding="utf-8")
@@ -212,7 +212,7 @@ hook_file = "{custom_hook_file.as_posix()}"
         """Missing custom hook_file raises ConfigError."""
         (self.drift_root / "src" / "pkg1" / PACKAGE_CONFIG_FILE_NAME).write_text("""
 [package]
-install_method = "stow"
+install_method = "symlink"
 target_directory = "~/.config/pkg1"
 hook_file = "non_existent_hook.py"
 """, encoding="utf-8")
@@ -428,7 +428,7 @@ def configure_package(context):
     return cfg
 """, encoding="utf-8")
 
-        cfg_dict = {"package": {"install_method": "stow"}}
+        cfg_dict = {"package": {"install_method": "symlink"}}
         res_dict, hook_path = apply_package_hook(pkg_dir, cfg_dict, self.workspace_config)
         self.assertEqual(hook_path, default_hook)
         self.assertEqual(res_dict["package"]["install_method"], "copy")

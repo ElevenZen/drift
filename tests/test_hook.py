@@ -446,7 +446,7 @@ echo "VALUE=$DYNAMIC_VAL"
 
         (pkg_b_dir / "drift_package.toml").write_text("""
         [package]
-        install_method = "stow"
+        install_method = "symlink"
 
         [env.override]
         DYNAMIC_VAL = "rendered_at_runtime"

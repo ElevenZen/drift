@@ -23,11 +23,6 @@ class TestDriftIgnore(unittest.TestCase):
         # Create a DriftIgnore with no patterns
         ignore = DriftIgnore([])
 
-        # Check each managed config file (.stow-local-ignore) is matched (ignored) by match_path
-        for filename in MANAGED_CONFIG_FILES:
-            self.assertTrue(ignore.match_path(Path(filename)))
-            self.assertTrue(ignore.match_path(Path("subdir") / filename))
-
         # Check that files in .drift/ are always ignored
         self.assertTrue(ignore.match_path(Path(".drift/drift_package.toml")))
         self.assertTrue(ignore.match_path(Path(".drift/.drift_ignore")))
@@ -37,7 +32,6 @@ class TestDriftIgnore(unittest.TestCase):
         # Check that regular files resembling drift names outside .drift/ are NOT ignored
         self.assertFalse(ignore.match_path(Path("xdrift_ignore")))
         self.assertFalse(ignore.match_path(Path("xdrift_package.toml")))
-        self.assertFalse(ignore.match_path(Path("x.stow-local-ignore")))
 
         # Check normal files are not ignored
         self.assertFalse(ignore.match_path(Path("normal_file.txt")))
@@ -46,7 +40,6 @@ class TestDriftIgnore(unittest.TestCase):
     def test_filter_deployable_files_excludes_managed_config_files(self) -> None:
         """Verifies that filter_deployable_files filters out MANAGED_CONFIG_FILES, .drift/, and ignored patterns."""
         # Setup files in pkg_dir
-        (self.pkg_dir / ".stow-local-ignore").touch()
         (self.pkg_dir / ".drift").mkdir(parents=True, exist_ok=True)
         (self.pkg_dir / ".drift" / "drift_package.toml").touch()
         (self.pkg_dir / ".drift" / ".drift_ignore").touch()
@@ -67,7 +60,6 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertIn("xdrift_package.toml", deployable_set)
         self.assertNotIn(".drift/drift_package.toml", deployable_set)
         self.assertNotIn(".drift/.drift_ignore", deployable_set)
-        self.assertNotIn(".stow-local-ignore", deployable_set)
         self.assertNotIn("ignored_pattern.txt", deployable_set)
 
     def test_strip_comments(self) -> None:
@@ -103,14 +95,14 @@ class TestDriftIgnore(unittest.TestCase):
         ignore_internal = DriftIgnore.load_from_dir(self.pkg_dir, is_source=False)
         self.assertEqual(ignore_internal.patterns, ["internal_pattern"])
 
-    def test_load_from_dir_missing_uses_default_stow_ignore_patterns(self) -> None:
-        """Verifies that load_from_dir returns a DriftIgnore with default Stow ignore patterns if .drift_ignore doesn't exist."""
-        from drift.core.constants import DEFAULT_STOW_IGNORE_PATTERNS
+    def test_load_from_dir_missing_uses_default_ignore_patterns(self) -> None:
+        """Verifies that load_from_dir returns a DriftIgnore with default ignore patterns if .drift_ignore doesn't exist."""
+        from drift.core.constants import DEFAULT_IGNORE_PATTERNS
         # pkg_dir has no .drift_ignore
         ignore = DriftIgnore.load_from_dir(self.pkg_dir, is_source=True)
-        self.assertEqual(ignore.patterns, DEFAULT_STOW_IGNORE_PATTERNS)
+        self.assertEqual(ignore.patterns, DEFAULT_IGNORE_PATTERNS)
 
-        # Ensure default patterns match common Stow ignored files
+        # Ensure default patterns match common ignored files
         self.assertTrue(ignore.match_path(Path("README.md")))
         self.assertTrue(ignore.match_path(Path("README.txt")))
         self.assertTrue(ignore.match_path(Path("LICENSE")))
@@ -140,8 +132,7 @@ class TestDriftIgnore(unittest.TestCase):
         # Subdirectory README should NOT be ignored because pattern is ^/README.*
         self.assertFalse(ignore.match_path(Path("subdir/README.md")))
 
-        # Ensure .stow-local-ignore and .drift/ are ignored
-        (self.pkg_dir / ".stow-local-ignore").touch()
+        # Ensure .drift/ is ignored
         (self.pkg_dir / ".drift").mkdir(parents=True, exist_ok=True)
         (self.pkg_dir / ".drift" / "drift_package.toml").touch()
         (self.pkg_dir / "normal.txt").touch()
@@ -151,32 +142,8 @@ class TestDriftIgnore(unittest.TestCase):
         deployable_set = {p.as_posix() for p in deployable}
 
         self.assertIn("normal.txt", deployable_set)
-        self.assertNotIn(".stow-local-ignore", deployable_set)
         self.assertNotIn(".drift/drift_package.toml", deployable_set)
         self.assertNotIn("README.md", deployable_set)
-
-    def test_export_stow_ignore_patterns_and_content(self) -> None:
-        """Verifies that export_stow_ignore_patterns includes MANAGED_CONFIG_FILES and patterns."""
-        ignore = DriftIgnore(["^/custom_file\\.txt$", "\\.log$"])
-        exported = ignore.export_stow_ignore_patterns()
-
-        # Verify MANAGED_CONFIG_FILES are present in exported list with escaped dots
-        self.assertIn(r"^/\.stow-local-ignore$", exported)
-
-        # Verify custom patterns are present
-        self.assertIn("^/custom_file\\.txt$", exported)
-        self.assertIn("\\.log$", exported)
-
-        content = ignore.generate_stow_local_ignore_content()
-        self.assertIn("# .stow-local-ignore - Generated by Drift", content)
-        self.assertIn(r"^/\.stow-local-ignore$", content)
-        self.assertIn(r"^/custom_file\.txt$", content)
-
-        # Check matching behavior of exported patterns with re.search
-        import re
-        self.assertTrue(bool(re.search(r"^/\.stow-local-ignore$", "/.stow-local-ignore")))
-        self.assertFalse(bool(re.search(r"^/\.stow-local-ignore$", "/x.stow-local-ignore")))
-        self.assertFalse(bool(re.search(r"^/\.stow-local-ignore$", "/sub/.stow-local-ignore")))
 
     def test_match_path_regex_matching_logic(self) -> None:
         """Verifies that step 1 (with slash) and step 2 (without slash) matching logic works correctly."""
@@ -258,44 +225,6 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertTrue(isinstance(custom_ignore, IgnoreHandler))
         self.assertTrue(custom_ignore.match_path(Path("test.tmp")))
         self.assertFalse(custom_ignore.match_path(Path("test.txt")))
-
-    def test_create_stow_ignore_file_method(self) -> None:
-        """Verifies that create_stow_ignore_file generates the .stow-local-ignore file with expected contents."""
-        from drift.core.constants import STOW_LOCAL_IGNORE_FILE_NAME
-        ignore = DriftIgnore(["^/custom_ignored\\.txt$"])
-        target_dir = self.pkg_dir / "target_pkg"
-        ignore.create_stow_ignore_file(target_dir)
-
-        stow_ignore_file = target_dir / STOW_LOCAL_IGNORE_FILE_NAME
-        self.assertTrue(stow_ignore_file.is_file())
-        content = stow_ignore_file.read_text(encoding="utf-8")
-        self.assertIn("^/custom_ignored\\.txt$", content)
-        self.assertIn(r"^/\.stow-local-ignore$", content)
-
-        # Calling again when content is unchanged doesn't fail
-        ignore.create_stow_ignore_file(target_dir)
-        self.assertTrue(stow_ignore_file.is_file())
-
-    def test_for_install_root_and_default_install_content(self) -> None:
-        """Verifies DriftIgnore.for_install_root() and get_default_install_stow_ignore_content()."""
-        from drift.core.ignore import get_default_install_stow_ignore_content
-        from drift.core.constants import INSTALL_STOW_IGNORE_PATTERN, DEFAULT_STOW_IGNORE_PATTERNS
-
-        ignore = DriftIgnore.for_install_root()
-        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, ignore.patterns)
-        for p in DEFAULT_STOW_IGNORE_PATTERNS:
-            self.assertIn(p, ignore.patterns)
-
-        # state.toml is matched (ignored)
-        self.assertTrue(ignore.match_path(Path("state.toml")))
-        self.assertTrue(ignore.match_path(Path(".git")))
-        self.assertTrue(ignore.match_path(Path("README.md")))
-        self.assertFalse(ignore.match_path(Path("some_package/file.txt")))
-
-        content = get_default_install_stow_ignore_content()
-        self.assertIn(INSTALL_STOW_IGNORE_PATTERN, content)
-        self.assertIn(r"^/\.stow-local-ignore$", content)
-        self.assertIn(r"\.git", content)
 
     def test_load_from_dir_legacy_fallback(self) -> None:
         """Verifies that load_from_dir with is_source=False falls back to root .drift_ignore with deprecation warning."""

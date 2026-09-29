@@ -22,7 +22,6 @@ Health Inspection Flow:
             ├── check_install_repo(drift_root, workspace_config)
             ├── check_render_gitignore(drift_root, workspace_config)
             ├── check_install_gitignore(drift_root, workspace_config)
-            ├── check_install_stow_ignore(drift_root, workspace_config)
             ├── check_state_registry(drift_root, workspace_config)
             ├── check_engine_inputs(drift_root, workspace_config)
             └── check_package_metadata_structure(drift_root, workspace_config)
@@ -44,7 +43,6 @@ Layers (ordered bottom-up by dependency):
         check_install_repo
         check_render_gitignore
         check_install_gitignore
-        check_install_stow_ignore
         check_state_registry
         check_engine_inputs
         check_package_metadata_structure
@@ -72,8 +70,6 @@ from ..core.constants import (
     LEGACY_WORKSPACE_CONFIG_FILE_NAMES,
     SECRETS_ENV_FILE_NAME,
     STATE_REGISTRY_FILE_NAME,
-    INSTALL_STOW_IGNORE_PATTERN,
-    STOW_LOCAL_IGNORE_FILE_NAME,
     DEFAULT_ROOT_GITIGNORE_ENTRIES,
     DEFAULT_INTERNAL_GITIGNORE_ENTRIES,
     PACKAGE_CONFIG_FILE_NAME,
@@ -546,55 +542,6 @@ def check_install_gitignore(
     return check_internal_gitignore_file(install_dir / ".gitignore", "Install .gitignore", install_dir.name)
 
 
-def check_install_stow_ignore(
-    drift_root: Path,
-    workspace_config: WorkspaceConfig,
-) -> CheckResult:
-    """Checks install/.stow-local-ignore configuration."""
-    install_dir = workspace_config.install_path
-    if not install_dir.exists() or not install_dir.is_dir():
-        return CheckResult(
-            name="Install Stow Ignore",
-            status=ComponentStatus.NOT_FOUND,
-            details=f"'{install_dir.name}/' directory does not exist.",
-            fix_hint=f"Create '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' after initializing '{install_dir.name}/'"
-        )
-
-    stow_ignore_file = install_dir / STOW_LOCAL_IGNORE_FILE_NAME
-    if not stow_ignore_file.exists():
-        return CheckResult(
-            name="Install Stow Ignore",
-            status=ComponentStatus.NOT_FOUND,
-            details=f"'{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' not found.",
-            fix_hint=f"Create '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' with '{INSTALL_STOW_IGNORE_PATTERN}'"
-        )
-
-    try:
-        content = stow_ignore_file.read_text(encoding="utf-8")
-    except Exception as e:
-        return CheckResult(
-            name="Install Stow Ignore",
-            status=ComponentStatus.BROKEN,
-            details=f"Unreadable '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}': {e}",
-            fix_hint=f"Ensure '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' is readable"
-        )
-
-    lines = {line.strip() for line in content.splitlines() if line.strip() and not line.strip().startswith("#")}
-    if INSTALL_STOW_IGNORE_PATTERN not in lines:
-        return CheckResult(
-            name="Install Stow Ignore",
-            status=ComponentStatus.BROKEN,
-            details=f"'{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' is missing '{INSTALL_STOW_IGNORE_PATTERN}'.",
-            fix_hint=f"Add '{INSTALL_STOW_IGNORE_PATTERN}' to '{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}'"
-        )
-
-    return CheckResult(
-        name="Install Stow Ignore",
-        status=ComponentStatus.GOOD,
-        details=f"'{install_dir.name}/{STOW_LOCAL_IGNORE_FILE_NAME}' is configured correctly."
-    )
-
-
 def check_state_registry(
     drift_root: Path,
     workspace_config: WorkspaceConfig,
@@ -802,7 +749,6 @@ def check_existing_workspace_status(
         check_install_repo(drift_root, workspace_config=ws_config),
         check_render_gitignore(drift_root, workspace_config=ws_config),
         check_install_gitignore(drift_root, workspace_config=ws_config),
-        check_install_stow_ignore(drift_root, workspace_config=ws_config),
         check_state_registry(drift_root, workspace_config=ws_config),
         check_engine_inputs(drift_root, workspace_config=ws_config),
         check_package_metadata_structure(drift_root, workspace_config=ws_config),

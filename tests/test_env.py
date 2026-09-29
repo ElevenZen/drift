@@ -295,7 +295,7 @@ class TestStrictVariablePrecedence(unittest.TestCase):
         pkg_src = self.src_dir / pkg_name
         pkg_src.mkdir(parents=True, exist_ok=True)
         (pkg_src / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname = "{pkg_name}"\ninstall_method = "stow"\ntarget_directory = "~"\n',
+            f'[package]\nname = "{pkg_name}"\ninstall_method = "symlink"\ntarget_directory = "~"\n',
             encoding="utf-8"
         )
         template_file = pkg_src / "dot-config.envst.txt"
@@ -1218,7 +1218,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 install_directory=Path("custom_install"),
                 backup_directory=Path("custom_backup"),
                 default_target_directory=Path("/target"),
-                default_install_method=InstallMethod.STOW,
+                default_install_method=InstallMethod.SYMLINK,
             ),
             packages_enable={},
             packages_enable_default=True,
@@ -1299,7 +1299,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 install_directory=Path("install"),
                 backup_directory=Path("backup"),
                 default_target_directory=Path("/target"),
-                default_install_method=InstallMethod.STOW,
+                default_install_method=InstallMethod.SYMLINK,
             ),
             packages_enable={},
             packages_enable_default=True,
@@ -1352,7 +1352,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
                 install_directory=Path("install"),
                 backup_directory=Path("backup"),
                 default_target_directory=Path("/target"),
-                default_install_method=InstallMethod.STOW,
+                default_install_method=InstallMethod.SYMLINK,
             ),
             packages_enable={},
             packages_enable_default=True,
@@ -2122,7 +2122,7 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
             drift_root=Path("/mock/drift"),
             workspace=WorkspaceSectionConfig(
                 default_target_directory=Path("/default/target"),
-                default_install_method=InstallMethod.STOW,
+                default_install_method=InstallMethod.SYMLINK,
             ),
         )
 
