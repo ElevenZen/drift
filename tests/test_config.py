@@ -2841,6 +2841,59 @@ class TestPackageDependencies(unittest.TestCase):
         self.assertEqual(sec_3.dependencies.optional_names, ["git"])
 
 
+    def test_workspace_config_from_dict_quiet_flag(self) -> None:
+        """Verifies that from_dict emits warning when quiet=False, and suppresses it when quiet=True."""
+        import tempfile
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.core.constants import set_test_mode
+        data = {
+            "workspace": {},
+            "packages": {"enable": {}},
+        }
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+
+            set_test_mode(True, enable_logging=True)
+            try:
+                # 1. Default quiet=False emits warning
+                with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                    WorkspaceConfig.from_dict(data, drift_root=root, quiet=False)
+                self.assertTrue(any("No packages are enabled" in msg for msg in cm.output))
+
+                # 2. quiet=True suppresses warning
+                with self.assertRaises(AssertionError):
+                    # assertLogs raises AssertionError when NO logs are emitted at or above WARNING
+                    with self.assertLogs("drift.config.workspace_config", level="WARNING"):
+                        WorkspaceConfig.from_dict(data, drift_root=root, quiet=True)
+            finally:
+                set_test_mode(True, enable_logging=False)
+
+    def test_workspace_config_from_workspace_dir_quiet_flag(self) -> None:
+        """Verifies that from_workspace_dir forwards quiet flag to suppress warnings."""
+        import tempfile
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.core.constants import set_test_mode
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_dir = Path(tmp_dir) / "config"
+            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file = config_dir / WORKSPACE_CONFIG_FILE_NAME
+            config_file.write_text("[workspace]\n[packages.enable]\nDEFAULT = false\n", encoding="utf-8")
+
+            set_test_mode(True, enable_logging=True)
+            try:
+                # 1. Default quiet=False emits warning
+                with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                    WorkspaceConfig.from_workspace_dir(Path(tmp_dir), quiet=False)
+                self.assertTrue(any("No packages are enabled" in msg for msg in cm.output))
+
+                # 2. quiet=True suppresses warning
+                with self.assertRaises(AssertionError):
+                    with self.assertLogs("drift.config.workspace_config", level="WARNING"):
+                        WorkspaceConfig.from_workspace_dir(Path(tmp_dir), quiet=True)
+            finally:
+                set_test_mode(True, enable_logging=False)
+
+
 if __name__ == "__main__":
     unittest.main()
 

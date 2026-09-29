@@ -163,7 +163,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [x] **Fix error message stacking.** Error messages repeat each other because inner error messages are appended to outer error messages, producing redundant multi-line errors. We can design like this: log the details at where original error happens, and for the outer errors, if the inner error is a drift custom error, then the error has been logged, so we do not need to log again, otherwise we should log the errors. That's my draft solution, the try-blocks should be analyzed to give a clear answer.
 
-- [ ] **Fix repeating "No packages are enabled" warnings in `drift repair`.** (from old roadmap)
+- [x] **Fix repeating "No packages are enabled" warnings in `drift repair`.**
 
 - [ ] **Smarter rollback with WAL.** Current `drift rollback` does `git checkout` + reinstall, but doesn't rollback backup process or other filesystem side effects. Needs a Write-Ahead Log (WAL) that records each filesystem mutation during deployment, enabling precise reversal. This is prerequisite for reliable auto-rollback. (from old roadmap)
 

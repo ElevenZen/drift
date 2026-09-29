@@ -70,7 +70,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
 
     # Check if already initialized or partially initialized
     if not force:
-        report = check_existing_workspace_status(drift_root)
+        report = check_existing_workspace_status(drift_root, quiet=True)
         if report.overall_status == ComponentStatus.GOOD:
             raise RuntimeError(f"drift workspace is already initialized in '{drift_root}'.")
         elif report.overall_status == ComponentStatus.BROKEN:
@@ -157,7 +157,7 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     # 7. Apply workspace-configured git user identity to render/ and install/ if configured
     try:
         from ..config.workspace_config import WorkspaceConfig
-        ws_cfg = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
+        ws_cfg = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, quiet=True)
         if ws_cfg.git_user_name or ws_cfg.git_user_email:
             configure_repo_git_user(render_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
             configure_repo_git_user(install_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)

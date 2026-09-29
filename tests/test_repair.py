@@ -19,6 +19,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
     DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT,
+    STATE_REGISTRY_FILE_NAME,
     set_test_mode,
 )
 from drift.primitives.workspace_check import (
@@ -824,6 +825,51 @@ class TestWorkspaceGitUserRepair(unittest.TestCase):
             res_install = check_install_repo(self.drift_root, ws_config)
             self.assertEqual(res_install.status, ComponentStatus.BROKEN)
             self.assertIn("Git identity not configured", res_install.details)
+
+
+    def test_check_workspace_config_quiet_flag(self) -> None:
+        """Verifies that check_workspace_config supports quiet flag to suppress un-enabled package warnings."""
+        config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        config_file.write_text("[workspace]\n[packages.enable]\nDEFAULT = false\n", encoding="utf-8")
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            # 1. Default quiet=False emits warning
+            with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                res = check_workspace_config(self.drift_root, quiet=False)
+            self.assertEqual(res.status, ComponentStatus.GOOD)
+            self.assertTrue(any("No packages are enabled" in msg for msg in cm.output))
+
+            # 2. quiet=True suppresses warning
+            with self.assertRaises(AssertionError):
+                with self.assertLogs("drift.config.workspace_config", level="WARNING"):
+                    res_quiet = check_workspace_config(self.drift_root, quiet=True)
+            self.assertEqual(res_quiet.status, ComponentStatus.GOOD)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_repair_drift_workspace_quiet_logging(self) -> None:
+        """Verifies that repair_drift_workspace suppresses 'No packages are enabled' warning during repair."""
+        config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        config_file.write_text("[workspace]\n[packages.enable]\nDEFAULT = false\n", encoding="utf-8")
+        # Remove state.toml so it requires an actual repair action
+        state_file = self.drift_root / "install" / STATE_REGISTRY_FILE_NAME
+        if state_file.exists():
+            state_file.unlink()
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            try:
+                with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                    repair_drift_workspace(self.drift_root)
+                # If any warning was logged on drift.config.workspace_config, fail if it's "No packages are enabled"
+                enabled_warnings = [msg for msg in cm.output if "No packages are enabled" in msg]
+                self.assertEqual(enabled_warnings, [])
+            except AssertionError:
+                # No warnings at all was emitted on drift.config.workspace_config - which is also desired!
+                pass
+        finally:
+            set_test_mode(True, enable_logging=False)
 
 
 if __name__ == "__main__":

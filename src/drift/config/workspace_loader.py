@@ -193,6 +193,7 @@ def load_workspace_config(
     drift_root: Path,
     check_legacy: bool = True,
     config_files_override: Optional[Sequence[Path]] = None,
+    quiet: bool = False,
 ) -> WorkspaceConfig:
     """Loads, transforms, and validates the workspace configuration.
 
@@ -211,6 +212,7 @@ def load_workspace_config(
         drift_root: Path to the drift workspace repository root.
         check_legacy: Whether to detect and reject legacy drift.toml files.
         config_files_override: Optional custom sequence of configuration paths to load instead of defaults.
+        quiet: If True, suppresses non-error logging such as missing enabled package warnings.
 
     Returns:
         Fully resolved and validated WorkspaceConfig instance.
@@ -239,7 +241,12 @@ def load_workspace_config(
     )
 
     try:
-        return WorkspaceConfig.from_dict(interpolated_dict, drift_root=root, env_resolve=env_res)
+        return WorkspaceConfig.from_dict(
+            interpolated_dict,
+            drift_root=root,
+            env_resolve=env_res,
+            quiet=quiet,
+        )
     except ConfigError:
         raise
     except (TypeError, ValueError) as e:

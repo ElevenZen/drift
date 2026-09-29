@@ -195,7 +195,7 @@ def probe_existing_workspace_structure(drift_root: Path) -> bool:
     return any(p.exists() for p in candidates)
 
 
-def check_workspace_config(drift_root: Path) -> CheckResult:
+def check_workspace_config(drift_root: Path, quiet: bool = False) -> CheckResult:
     """Checks the workspace configuration file (config/drift_workspace.toml or template).
 
     If any legacy configuration file (e.g. config/drift.toml or config/drift.local.toml)
@@ -230,7 +230,7 @@ def check_workspace_config(drift_root: Path) -> CheckResult:
 
     try:
         # Validate full workspace config loading (without legacy check since already checked)
-        WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
+        WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, quiet=quiet)
     except Exception as e:
         return CheckResult(
             name="Workspace Configuration",
@@ -744,6 +744,7 @@ def check_package_metadata_structure(
 
 def check_existing_workspace_status(
     drift_root: Path,
+    quiet: bool = False,
 ) -> WorkspaceHealthReport:
     """Performs a comprehensive health inspection across all workspace subsystems.
 
@@ -763,14 +764,15 @@ def check_existing_workspace_status(
 
     Args:
         drift_root: Path to workspace root.
+        quiet: If True, suppresses non-critical warnings during configuration loading.
 
     Returns:
         WorkspaceHealthReport containing overall_status and list of CheckResult objects.
     """
     drift_root = Path(drift_root).resolve()
 
-    # 1. Step 1: Workspace Configuration Check (Fail-Fast Gatekeeper)
-    config_check = check_workspace_config(drift_root)
+    # 1. Step 1: Workspace Configuration Check (Fail-Fast Gatekeeper, quiet=True to avoid double warnings)
+    config_check = check_workspace_config(drift_root, quiet=True)
     if config_check.status == ComponentStatus.BROKEN:
         return WorkspaceHealthReport(overall_status=ComponentStatus.BROKEN, checks=[config_check])
 
@@ -781,7 +783,7 @@ def check_existing_workspace_status(
 
     from ..config.workspace_config import WorkspaceConfig
     try:
-        ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
+        ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, quiet=quiet)
     except Exception as e:
         broken_check = CheckResult(
             name="Workspace Configuration",

@@ -159,7 +159,7 @@ def repair_workspace_config(
                 use_legacy_local = True
 
     # 2. Check if main workspace configuration needs to be generated or inspected
-    config_res = check_workspace_config(drift_root)
+    config_res = check_workspace_config(drift_root, quiet=True)
     if config_res.status == ComponentStatus.NOT_FOUND:
         # check_workspace_config will return BROKEN if legacy main exists.
         actions.append(f"Generated default '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_FILE_NAME}'.")
@@ -184,7 +184,7 @@ def repair_workspace_config(
             local_config_file.write_text(DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT, encoding="utf-8")
         actions.append(f"Generated '{CONFIG_DIR_NAME}/{WORKSPACE_CONFIG_LOCAL_FILE_NAME}' template.")
 
-    # 4. Load and validate WorkspaceConfig
+    # 4. Load and validate WorkspaceConfig (quiet=True to suppress non-enabled package warning during repair)
     load_config_from = [
             config_dir / ('drift.toml' if use_legacy_main else WORKSPACE_CONFIG_FILE_NAME),
             config_dir / ('drift.local.toml' if use_legacy_local else WORKSPACE_CONFIG_LOCAL_FILE_NAME),
@@ -193,10 +193,16 @@ def repair_workspace_config(
         if dry_run and not any(p.exists() or add_envst_path(p).exists() for p in load_config_from):
             ws_config = WorkspaceConfig.from_dict(
                 parse_toml(get_default_drift_workspace_toml_content()),
-                drift_root=drift_root
+                drift_root=drift_root,
+                quiet=True,
             )
         else:
-            ws_config = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, config_files_override=load_config_from)
+            ws_config = WorkspaceConfig.from_workspace_dir(
+                drift_root,
+                check_legacy=False,
+                config_files_override=load_config_from,
+                quiet=True,
+            )
     except ConfigError:
         raise
     except Exception as e:

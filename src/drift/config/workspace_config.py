@@ -502,6 +502,7 @@ class WorkspaceConfig:
         data: dict,
         drift_root: Path,
         env_resolve: Optional[EnvResolve] = None,
+        quiet: bool = False,
     ) -> "WorkspaceConfig":
         """Builds a WorkspaceConfig instance from a parsed TOML dictionary."""
         root = drift_root
@@ -537,7 +538,7 @@ class WorkspaceConfig:
         packages_enable_default = parse_bool_value(
             packages_enable_data.get(cls.PACKAGES_ENABLE_DEFAULT_KEY, False)
         )
-        if not packages_enable_default and len(packages) == 0:
+        if not quiet and not packages_enable_default and len(packages) == 0:
             logger.warning("No packages are enabled in the workspace configuration. "
                         + "Consider enabling packages or setting 'DEFAULT = true' under [packages.enable].")
 
@@ -580,6 +581,7 @@ class WorkspaceConfig:
         drift_root: Path,
         check_legacy: bool = True,
         config_files_override: Optional[Sequence[Path]] = None,
+        quiet: bool = False,
     ) -> "WorkspaceConfig":
         """Loads, transforms, and validates the workspace configuration from a drift workspace directory."""
         from .workspace_loader import load_workspace_config
@@ -587,4 +589,5 @@ class WorkspaceConfig:
             drift_root=drift_root,
             check_legacy=check_legacy,
             config_files_override=config_files_override,
+            quiet=quiet,
         )

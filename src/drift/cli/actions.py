@@ -195,7 +195,7 @@ def assert_workspace_healthy(
     """
     from ..primitives.workspace_check import check_existing_workspace_status, ComponentStatus
 
-    report = check_existing_workspace_status(drift_root)
+    report = check_existing_workspace_status(drift_root, quiet=True)
     if report.is_uninitialized():
         raise ConfigError(
             f"No Drift workspace found at '{drift_root}'.\n\n"
@@ -602,7 +602,7 @@ def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = Fa
     from ..primitives.workspace_repair import repair_drift_workspace, build_repair_result
     from ..primitives.workspace_check import check_existing_workspace_status
 
-    report = check_existing_workspace_status(drift_root)
+    report = check_existing_workspace_status(drift_root, quiet=True)
 
     if report.is_healthy():
         if json_mode:
