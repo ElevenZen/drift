@@ -95,6 +95,7 @@ from ..utils.git_utils import (
     git_init_repo,
     append_to_gitignore,
     commit_repo_changes,
+    configure_repo_git_user,
     is_git_tracked,
 )
 from ..config.workspace_config import WorkspaceConfig
@@ -275,6 +276,19 @@ def repair_render_repo(
         actions.append(f"Initialized '{render_dir.name}/' sandbox Git repository.")
         if not dry_run:
             git_init_repo(render_dir, "render")
+            configure_repo_git_user(
+                render_dir,
+                user_name=workspace_config.git_user_name,
+                user_email=workspace_config.git_user_email,
+            )
+    elif workspace_config.git_user_name or workspace_config.git_user_email:
+        actions.append(f"Configured git user in '{render_dir.name}/' repository.")
+        if not dry_run:
+            configure_repo_git_user(
+                render_dir,
+                user_name=workspace_config.git_user_name,
+                user_email=workspace_config.git_user_email,
+            )
     else:
         actions.append(f"⚠️ Error in '{render_dir.name}/' Git repository: {render_res.details}. Manual resolution required.")
 
@@ -303,6 +317,19 @@ def repair_install_repo(
         actions.append(f"Initialized '{install_dir.name}/' local state Git repository.")
         if not dry_run:
             git_init_repo(install_dir, "install")
+            configure_repo_git_user(
+                install_dir,
+                user_name=workspace_config.git_user_name,
+                user_email=workspace_config.git_user_email,
+            )
+    elif workspace_config.git_user_name or workspace_config.git_user_email:
+        actions.append(f"Configured git user in '{install_dir.name}/' repository.")
+        if not dry_run:
+            configure_repo_git_user(
+                install_dir,
+                user_name=workspace_config.git_user_name,
+                user_email=workspace_config.git_user_email,
+            )
     else:
         actions.append(f"⚠️ Error in '{install_dir.name}/' Git repository: {install_res.details}. Manual resolution required.")
 

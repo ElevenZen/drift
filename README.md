@@ -771,6 +771,16 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
   ```
   Drift automatically detects `$VISUAL` / `$EDITOR` (or finds `nvim`, `vim`, `code`, `emacs`) and opens changed file pairs in side-by-side split viewports across multiple tabs/windows.
 
+### 11. Configuring Git User Identity Without Global Git Config
+* **Q**: What should I do if `drift deploy` fails with "Git configuration error: 'user.name' is not configured", and I don't want to set global Git config (e.g. on CI runners or headless servers)?
+* **A**: Define `git_user_name` and `git_user_email` under `[settings]` in `config/drift_workspace.toml` (or machine-specific `config/drift_workspace.local.toml`):
+  ```toml
+  [settings]
+  git_user_name = "Drift Bot"
+  git_user_email = "drift@localhost"
+  ```
+  Then run **`drift repair`** to apply it locally to the `render/` and `install/` repositories.
+
 👉 Run `drift help faq` for more tips and topic manuals.
 
 ---

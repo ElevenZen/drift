@@ -2244,6 +2244,63 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertTrue(ws_cfg_default_true.packages_enable_default)
         self.assertTrue(ws_cfg_default_true.is_package_enabled("any_package"))
 
+    def test_settings_git_user_defaults(self) -> None:
+        from drift.config.workspace_config import SettingsConfig
+        settings = SettingsConfig()
+        self.assertIsNone(settings.git_user_name)
+        self.assertIsNone(settings.git_user_email)
+
+    def test_settings_git_user_from_dict(self) -> None:
+        from drift.config.workspace_config import SettingsConfig
+        settings = SettingsConfig.from_dict({
+            "git_user_name": "Drift Bot",
+            "git_user_email": "bot@example.com",
+        })
+        self.assertEqual(settings.git_user_name, "Drift Bot")
+        self.assertEqual(settings.git_user_email, "bot@example.com")
+
+        # Test workspace config integration and convenience properties
+        toml_content = """
+        [workspace]
+        [packages.enable]
+        DEFAULT = true
+        [settings]
+        git_user_name = "Drift Bot"
+        git_user_email = "bot@example.com"
+        """
+        data = parse_toml(toml_content)
+        ws_cfg = WorkspaceConfig.from_dict(data, drift_root=Path("/tmp/workspace"))
+        self.assertEqual(ws_cfg.git_user_name, "Drift Bot")
+        self.assertEqual(ws_cfg.git_user_email, "bot@example.com")
+
+    def test_settings_git_user_warning_when_only_one_set(self) -> None:
+        from drift.config.workspace_config import SettingsConfig
+        from drift.core.constants import set_test_mode
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                SettingsConfig.from_dict({"git_user_name": "Only Name"})
+            self.assertTrue(any("git_user_email" in msg for msg in cm.output))
+
+            with self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                SettingsConfig.from_dict({"git_user_email": "only@email.com"})
+            self.assertTrue(any("git_user_name" in msg for msg in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_settings_git_user_invalid_types(self) -> None:
+        from drift.config.workspace_config import SettingsConfig
+        from drift.core.exceptions import ConfigError
+
+        with self.assertRaises(ConfigError) as ctx:
+            SettingsConfig.from_dict({"git_user_name": 123})
+        self.assertIn("git_user_name under [settings] must be a string", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            SettingsConfig.from_dict({"git_user_email": ["not_a_str"]})
+        self.assertIn("git_user_email under [settings] must be a string", str(ctx.exception))
+
     def test_class_constants(self) -> None:
         """Verifies schema and key ClassVars on configuration classes."""
         self.assertEqual(WorkspaceConfig.PACKAGES_ENABLE_DEFAULT_KEY, "DEFAULT")
@@ -2254,6 +2311,8 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertIn("source_directory", WorkspaceSectionConfig.KNOWN_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.KNOWN_KEYS)
+        self.assertIn("git_user_name", SettingsConfig.KNOWN_KEYS)
+        self.assertIn("git_user_email", SettingsConfig.KNOWN_KEYS)
 
         self.assertIn("input_file", RenderEngineConfig.KNOWN_KEYS)
         self.assertIn("os", PackageRequirements.KNOWN_KEYS)

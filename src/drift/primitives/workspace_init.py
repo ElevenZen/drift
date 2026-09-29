@@ -31,6 +31,7 @@ from ..utils.git_utils import (
     get_drift_root,
     assert_git_repository_health,
     git_init_repo,
+    configure_repo_git_user,
     append_to_gitignore,
 )
 from ..utils.file_ops import assert_writable
@@ -152,3 +153,13 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     # Write install/state.toml
     state_file = install_dir / STATE_REGISTRY_FILE_NAME
     state_file.write_text("[packages]\n", encoding="utf-8")
+
+    # 7. Apply workspace-configured git user identity to render/ and install/ if configured
+    try:
+        from ..config.workspace_config import WorkspaceConfig
+        ws_cfg = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False)
+        if ws_cfg.git_user_name or ws_cfg.git_user_email:
+            configure_repo_git_user(render_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
+            configure_repo_git_user(install_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
+    except Exception:
+        pass

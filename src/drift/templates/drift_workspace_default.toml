@@ -114,3 +114,16 @@ backup_directory = "backup"
 # Optional dynamic Python workspace configuration hook file (relative to the 'config/' directory).
 # Defaults to "drift_workspace.py".
 # hook_file = "drift_workspace.py"
+
+# ---------------------------------------------------------------------
+# Workspace Behavioral Settings
+# ---------------------------------------------------------------------
+# [settings]
+# Automatically inject non-interactive environment variables during lifecycle hooks (default: true)
+# hook_inject_non_interactive_envs = true
+
+# Optional Git identity for render/ and install/ auto-commits.
+# Useful on machines without a global Git user or to use a separate identity.
+# Applied to render/.git/config and install/.git/config during 'drift repair'.
+# git_user_name = "Drift Bot"
+# git_user_email = "drift@localhost"

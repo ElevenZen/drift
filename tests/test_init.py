@@ -379,5 +379,33 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         self.assertFalse(os.path.isfile(os.path.join(self.drift_root, "config", "drift_workspace.toml")))
 
 
+    def test_init_applies_workspace_git_user_if_present(self) -> None:
+        """Verifies that init_drift_workspace applies configured git identity if settings exist in template."""
+        from drift.core.constants import get_default_drift_workspace_toml_content
+
+        custom_template = (
+            get_default_drift_workspace_toml_content()
+            + "\n[settings]\ngit_user_name = \"Init Bot\"\ngit_user_email = \"init@example.com\"\n"
+        )
+        with patch("drift.primitives.workspace_init.get_default_drift_workspace_toml_content", return_value=custom_template):
+            init_drift_workspace(self.drift_root)
+
+        res_name = subprocess.run(
+            ["git", "-C", str(self.drift_root / "render"), "config", "--local", "user.name"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(res_name.stdout.strip(), "Init Bot")
+
+        res_email = subprocess.run(
+            ["git", "-C", str(self.drift_root / "install"), "config", "--local", "user.email"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(res_email.stdout.strip(), "init@example.com")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -342,6 +342,10 @@ DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT = (
 
 [packages.enable]
 # gui_apps = false
+
+# [settings]
+# git_user_name = "Drift Bot"
+# git_user_email = "drift@localhost"
 """
 )
 DEFAULT_DRIFT_LOCAL_TOML_CONTENT = DEFAULT_DRIFT_WORKSPACE_LOCAL_TOML_CONTENT

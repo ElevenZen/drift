@@ -170,5 +170,22 @@ drift diff -t -y shell
 
 ---
 
+### Q15: How do I configure a Git identity for Drift's internal auto-commits on machines without a global Git user?
+**Situation**: You are running Drift in CI, in an ephemeral container, or on a freshly installed system without global `git config user.name/email` configured. Commands like `drift deploy` fail pre-flight checks with: `Git configuration error: 'user.name' is not configured in the repository or globally`.  
+**Solution**: Define `git_user_name` and `git_user_email` under `[settings]` in your workspace configuration:
+```toml
+# config/drift_workspace.toml (or config/drift_workspace.local.toml)
+[settings]
+git_user_name = "Drift Bot"
+git_user_email = "drift@localhost"
+```
+Then run **`drift repair`** to apply the configuration locally to the `render/` and `install/` Git repositories:
+```bash
+drift repair
+```
+All subsequent Drift auto-commits (compiling templates, staging, adopting, and deployments) will use this identity without requiring a system-wide or global Git configuration.
+
+---
+
 👉 Run `drift help workspace` to learn more about workspace architecture and dual-layer configuration overrides.  
 👉 Run `drift help [topic]` for topic-specific manuals.

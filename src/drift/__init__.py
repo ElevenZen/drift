@@ -217,6 +217,8 @@ from .utils import (
     has_uncommitted_modifications,
     get_git_status_porcelain,
     assert_repo_can_commit,
+    check_repo_can_commit,
+    configure_repo_git_user,
     git_init_repo,
     append_to_gitignore,
     get_configured_editor,

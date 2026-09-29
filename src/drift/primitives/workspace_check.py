@@ -85,6 +85,8 @@ from ..core.constants import (
 from ..utils.git_utils import (
     is_git_tracked,
     is_bare_repository,
+    check_repo_can_commit,
+    check_repo_git_user_synced,
 )
 
 logger = logging.getLogger(__name__)
@@ -379,6 +381,28 @@ def check_render_repo(
             fix_hint=f"Run 'git init' inside '{render_dir.name}/'"
         )
 
+    commit_error = check_repo_can_commit(render_dir)
+    if commit_error:
+        return CheckResult(
+            name="Render Sandbox Repo",
+            status=ComponentStatus.BROKEN,
+            details=f"'{render_dir.name}/' Git identity not configured: {commit_error}",
+            fix_hint="Set 'git_user_name' and 'git_user_email' under [settings] in config/drift_workspace.toml and run 'drift repair'"
+        )
+
+    sync_error = check_repo_git_user_synced(
+        render_dir,
+        expected_name=workspace_config.git_user_name,
+        expected_email=workspace_config.git_user_email,
+    )
+    if sync_error:
+        return CheckResult(
+            name="Render Sandbox Repo",
+            status=ComponentStatus.BROKEN,
+            details=f"'{render_dir.name}/' {sync_error}.",
+            fix_hint="Run 'drift repair' to apply workspace Git identity"
+        )
+
     return CheckResult(
         name="Render Sandbox Repo",
         status=ComponentStatus.GOOD,
@@ -415,6 +439,28 @@ def check_install_repo(
             status=ComponentStatus.BROKEN,
             details=f"'{install_dir.name}/' is not a valid non-bare Git repository.",
             fix_hint=f"Run 'git init' inside '{install_dir.name}/'"
+        )
+
+    commit_error = check_repo_can_commit(install_dir)
+    if commit_error:
+        return CheckResult(
+            name="Install State Repo",
+            status=ComponentStatus.BROKEN,
+            details=f"'{install_dir.name}/' Git identity not configured: {commit_error}",
+            fix_hint="Set 'git_user_name' and 'git_user_email' under [settings] in config/drift_workspace.toml and run 'drift repair'"
+        )
+
+    sync_error = check_repo_git_user_synced(
+        install_dir,
+        expected_name=workspace_config.git_user_name,
+        expected_email=workspace_config.git_user_email,
+    )
+    if sync_error:
+        return CheckResult(
+            name="Install State Repo",
+            status=ComponentStatus.BROKEN,
+            details=f"'{install_dir.name}/' {sync_error}.",
+            fix_hint="Run 'drift repair' to apply workspace Git identity"
         )
 
     return CheckResult(

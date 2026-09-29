@@ -300,14 +300,41 @@ def assert_git_repository_health(dir_path: Path) -> None:
         raise RuntimeError("Git repository is currently in the middle of a merge or rebase operation.")
 
 
-def assert_repo_can_commit(repo_path: Path) -> None:
-    """Verifies that Git user.name and user.email are configured for the repository.
-    Raises a RuntimeError if either configuration is missing, preventing commit failures.
+def configure_repo_git_user(
+    repo_path: Path,
+    user_name: Optional[str] = None,
+    user_email: Optional[str] = None,
+) -> None:
+    """Configures git user.name and/or user.email locally in a repository.
+
+    Applies 'git config --local user.name/email' so all subsequent git operations
+    in that repository use the specified identity without requiring global git config.
+    Skips silently when both values are None.
+    """
+    if user_name:
+        run_command(
+            ["git", "-C", str(repo_path), "config", "user.name", user_name],
+            text=True,
+        )
+        logger.debug(f"Configured git user.name = '{user_name}' in {repo_path}")
+    if user_email:
+        run_command(
+            ["git", "-C", str(repo_path), "config", "user.email", user_email],
+            text=True,
+        )
+        logger.debug(f"Configured git user.email = '{user_email}' in {repo_path}")
+
+
+def check_repo_can_commit(repo_path: Path) -> Optional[str]:
+    """Checks if Git user.name and user.email are configured for the repository.
+
+    Returns None if both are configured, or an error message string describing
+    the missing configuration. Does not raise exceptions or modify state.
     """
     if not repo_path.exists():
-        raise FileNotFoundError(f"Directory does not exist: {repo_path}")
+        return f"Directory does not exist: {repo_path}"
 
-    # Query user.name
+    # Check user.name
     has_env_name = bool(os.environ.get("GIT_AUTHOR_NAME") or os.environ.get("GIT_COMMITTER_NAME"))
     if not has_env_name:
         res = run_command(
@@ -317,12 +344,14 @@ def assert_repo_can_commit(repo_path: Path) -> None:
             suppress_output=True,
         )
         if res.returncode != 0 or not res.stdout or not res.stdout.strip():
-            raise RuntimeError(
+            return (
                 f"Git configuration error: 'user.name' is not configured in the repository or globally for '{repo_path}'. "
-                "Please run: git config --global user.name \"Your Name\""
+                "Please run: git config --global user.name \"Your Name\"\n"
+                "Alternatively, set 'git_user_name' under [settings] in config/drift_workspace.toml "
+                "and run 'drift repair' to apply it to render/ and install/ repositories."
             )
 
-    # Query user.email
+    # Check user.email
     has_env_email = bool(os.environ.get("GIT_AUTHOR_EMAIL") or os.environ.get("GIT_COMMITTER_EMAIL"))
     if not has_env_email:
         res = run_command(
@@ -332,10 +361,55 @@ def assert_repo_can_commit(repo_path: Path) -> None:
             suppress_output=True,
         )
         if res.returncode != 0 or not res.stdout or not res.stdout.strip():
-            raise RuntimeError(
+            return (
                 f"Git configuration error: 'user.email' is not configured in the repository or globally for '{repo_path}'. "
-                "Please run: git config --global user.email \"you@example.com\""
+                "Please run: git config --global user.email \"you@example.com\"\n"
+                "Alternatively, set 'git_user_email' under [settings] in config/drift_workspace.toml "
+                "and run 'drift repair' to apply it to render/ and install/ repositories."
             )
+
+    return None
+
+
+def assert_repo_can_commit(repo_path: Path) -> None:
+    """Verifies that Git user.name and user.email are configured for the repository.
+    Raises a RuntimeError if either configuration is missing, preventing commit failures.
+    """
+    error = check_repo_can_commit(repo_path)
+    if error:
+        raise RuntimeError(error)
+
+
+def check_repo_git_user_synced(
+    repo_path: Path,
+    expected_name: Optional[str] = None,
+    expected_email: Optional[str] = None,
+) -> Optional[str]:
+    """Checks whether local git config user.name and user.email match expected workspace settings.
+
+    Returns an error message if out of sync, or None if synchronized (or when expected values are None).
+    """
+    if expected_name:
+        res = run_command(
+            ["git", "-C", str(repo_path), "config", "--local", "user.name"],
+            text=True,
+            check=False,
+            suppress_output=True,
+        )
+        if res.returncode != 0 or res.stdout.strip() != expected_name:
+            return f"Git user.name does not match workspace settings ('{expected_name}')"
+
+    if expected_email:
+        res = run_command(
+            ["git", "-C", str(repo_path), "config", "--local", "user.email"],
+            text=True,
+            check=False,
+            suppress_output=True,
+        )
+        if res.returncode != 0 or res.stdout.strip() != expected_email:
+            return f"Git user.email does not match workspace settings ('{expected_email}')"
+
+    return None
 
 
 def git_init_repo(dir_path: Path, name: str) -> bool:

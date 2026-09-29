@@ -7,7 +7,7 @@ This document provides a comprehensive reference for all global workspace config
 1. **Directory Topology & Defaults (`[workspace]`)**: Relative locations of source templates (`src/`), compilation sandbox (`render/`), deployment database (`install/`), backup archive (`backup/`), global default destination path (`default_target_directory`), default install method (`default_install_method = "stow" | "copy"`), and custom Python workspace hooks (`hook_file`).
 2. **Unified 6-Tier Environment Variables (`[env]`)**: Symmetrical workspace variables across 4 sub-tables (`[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`) evaluated via Kahn's topological sort algorithm with cyclic dependency detection, host fact injection, secret vault interpolation, and cross-section referencing.
 3. **Template Rendering Engine DAGs (`[render.<name>]`)**: Multi-level template compilation engines (e.g. `envsubst`, `mustache`, `jinja2`, `var`) with dependency resolution and `.drift/render/` sandboxing.
-4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs.
+4. **Behavioral Settings (`[settings]`)**: Global workspace runtime flags including automatic non-interactive environment injection (`PAGER=cat`, `CI=true`) during lifecycle hook runs, and optional Git identity configuration (`git_user_name`, `git_user_email`) for internal auto-commits in `render/` and `install/` repositories.
 5. **Active Packages Registry (`[packages.enable]`)**: Declarative enablement and disablement of package folders, supporting explicit keys and fallback `DEFAULT = true | false`.
 6. **Dynamic Python Workspace Hooks (`drift_workspace.py`)**: Programmatic preprocessor executed before variable stitching—the best place to dynamically download global configuration or secrets from remote servers and inject them into `[env.default]` / `[env.secrets]`.
 
@@ -132,6 +132,12 @@ render_command = "mustache %i %s"
 # Automatically inject non-interactive environment variables (PAGER=cat, CI=true, etc.)
 # during lifecycle hook executions. Defaults to true.
 # hook_inject_non_interactive_envs = true
+
+# Optional Git identity for render/ and install/ auto-commits.
+# Useful on machines without a global Git user or to use a separate identity.
+# Applied to render/.git/config and install/.git/config during 'drift repair'.
+# git_user_name = "Drift Bot"
+# git_user_email = "drift@localhost"
 
 
 # ---------------------------------------------------------------------

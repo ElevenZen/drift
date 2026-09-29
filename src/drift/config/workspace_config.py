@@ -78,14 +78,29 @@ class SettingsConfig:
     )
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
+        "git_user_name",
+        "git_user_email",
     )
 
     hook_inject_non_interactive_envs: bool = True
+    git_user_name: Optional[str] = None
+    git_user_email: Optional[str] = None
 
     def validate(self) -> None:
         """Validates settings types."""
         if not isinstance(self.hook_inject_non_interactive_envs, bool):
             raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
+        if self.git_user_name is not None and not isinstance(self.git_user_name, str):
+            raise ConfigError(f"git_user_name under [settings] must be a string, got {type(self.git_user_name).__name__}.")
+        if self.git_user_email is not None and not isinstance(self.git_user_email, str):
+            raise ConfigError(f"git_user_email under [settings] must be a string, got {type(self.git_user_email).__name__}.")
+        if bool(self.git_user_name) != bool(self.git_user_email):
+            provided = "git_user_name" if self.git_user_name else "git_user_email"
+            missing = "git_user_email" if self.git_user_name else "git_user_name"
+            logger.warning(
+                f"⚠️  [settings] '{provided}' is set but '{missing}' is not. "
+                f"Consider setting both for complete Git identity configuration."
+            )
 
     @classmethod
     def from_dict(cls, data: Any) -> "SettingsConfig":
@@ -102,6 +117,9 @@ class SettingsConfig:
             cls.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
             default=True,
         )
+        git_user_name = data.get("git_user_name")
+        git_user_email = data.get("git_user_email")
+
         settings = cls(
             hook_inject_non_interactive_envs=parse_bool_value(
                 raw_hook_env,
@@ -109,6 +127,8 @@ class SettingsConfig:
                 strict=True,
                 context="[settings] hook_inject_non_interactive_envs",
             ),
+            git_user_name=git_user_name,
+            git_user_email=git_user_email,
         )
         settings.validate()
         return settings
@@ -308,6 +328,16 @@ class WorkspaceConfig:
     def default_target_path(self) -> Path:
         """Returns the resolved path to default target directory."""
         return self.workspace.default_target_directory
+
+    @property
+    def git_user_name(self) -> Optional[str]:
+        """Returns configured git user.name for render/install repos, or None."""
+        return self.settings.git_user_name
+
+    @property
+    def git_user_email(self) -> Optional[str]:
+        """Returns configured git user.email for render/install repos, or None."""
+        return self.settings.git_user_email
 
     @classmethod
     def get_package_names_from_dir(cls, custom_dir: Path) -> List[str]:

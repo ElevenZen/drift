@@ -742,6 +742,91 @@ class TestPackageMetadataStructureCheckAndRepair(unittest.TestCase):
         self.assertEqual(res.overall_health, "good")
 
 
+class TestWorkspaceGitUserRepair(unittest.TestCase):
+    """Tests for workspace git user configuration detection and repair."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.drift_root = Path(self.temp_dir.name).resolve()
+        init_drift_workspace(self.drift_root)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_repair_applies_workspace_git_user_config(self) -> None:
+        """repair_drift_workspace configures user.name and user.email in render/ and install/ from [settings]."""
+        from drift.utils.process_utils import run_command
+        from drift.primitives.workspace_check import check_existing_workspace_status
+
+        config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        existing_cfg = config_file.read_text(encoding="utf-8")
+        settings_section = "\n[settings]\ngit_user_name = \"Bot Repair\"\ngit_user_email = \"bot-repair@example.com\"\n"
+        config_file.write_text(existing_cfg + settings_section, encoding="utf-8")
+
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertTrue(any("Configured git user in 'render/' repository." in a for a in actions))
+        self.assertTrue(any("Configured git user in 'install/' repository." in a for a in actions))
+
+        render_name = run_command(
+            ["git", "-C", str(self.drift_root / "render"), "config", "--local", "user.name"],
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(render_name, "Bot Repair")
+
+        install_email = run_command(
+            ["git", "-C", str(self.drift_root / "install"), "config", "--local", "user.email"],
+            text=True,
+        ).stdout.strip()
+        self.assertEqual(install_email, "bot-repair@example.com")
+
+        report = check_existing_workspace_status(self.drift_root)
+        self.assertTrue(report.is_healthy())
+
+    def test_repair_git_user_idempotent(self) -> None:
+        """Running repair a second time when git user is already configured does not re-add action."""
+        config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        existing_cfg = config_file.read_text(encoding="utf-8")
+        settings_section = "\n[settings]\ngit_user_name = \"Bot Repair\"\ngit_user_email = \"bot-repair@example.com\"\n"
+        config_file.write_text(existing_cfg + settings_section, encoding="utf-8")
+
+        # First repair
+        repair_drift_workspace(self.drift_root)
+
+        # Second repair - should be a no-op for git user
+        actions = repair_drift_workspace(self.drift_root)
+        self.assertFalse(any("Configured git user" in a for a in actions))
+
+    def test_check_detects_git_identity_unsynchronized(self) -> None:
+        """check_render_repo and check_install_repo report BROKEN when local config doesn't match workspace settings."""
+        config_file = self.drift_root / CONFIG_DIR_NAME / WORKSPACE_CONFIG_FILE_NAME
+        existing_cfg = config_file.read_text(encoding="utf-8")
+        settings_section = "\n[settings]\ngit_user_name = \"Unsynced Name\"\ngit_user_email = \"unsynced@example.com\"\n"
+        config_file.write_text(existing_cfg + settings_section, encoding="utf-8")
+
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        res_render = check_render_repo(self.drift_root, ws_config)
+        self.assertEqual(res_render.status, ComponentStatus.BROKEN)
+        self.assertIn("Git user.name does not match workspace settings", res_render.details)
+
+        res_install = check_install_repo(self.drift_root, ws_config)
+        self.assertEqual(res_install.status, ComponentStatus.BROKEN)
+        self.assertIn("Git user.name does not match workspace settings", res_install.details)
+
+    def test_check_detects_missing_git_identity(self) -> None:
+        """check_render_repo and check_install_repo report BROKEN when git identity is missing entirely."""
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        with patch("drift.primitives.workspace_check.check_repo_can_commit", return_value="Git configuration error: 'user.name' is not configured"):
+            res_render = check_render_repo(self.drift_root, ws_config)
+            self.assertEqual(res_render.status, ComponentStatus.BROKEN)
+            self.assertIn("Git identity not configured", res_render.details)
+
+            res_install = check_install_repo(self.drift_root, ws_config)
+            self.assertEqual(res_install.status, ComponentStatus.BROKEN)
+            self.assertIn("Git identity not configured", res_install.details)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
