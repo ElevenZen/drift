@@ -406,6 +406,30 @@ class TestPackageAssertions(unittest.TestCase):
         order = resolve_package_install_order(deps_map)
         self.assertEqual(order, ["pkg_a", "pkg_b", "pkg_c"])
 
+    def test_resolve_package_install_order_deterministic_lexical(self) -> None:
+        """Verifies that topological sorting resolves ties deterministically using lexical order."""
+        # 1. Independent packages passed in reverse alphabetical order
+        deps_map_independent = {
+            "pkg_z": PackageDependencies(items=[]),
+            "pkg_m": PackageDependencies(items=[]),
+            "pkg_a": PackageDependencies(items=[]),
+        }
+        order = resolve_package_install_order(deps_map_independent)
+        self.assertEqual(order, ["pkg_a", "pkg_m", "pkg_z"])
+
+        # 2. Dependency constraints combined with lexical tie-breaking:
+        # pkg_z depends on pkg_b; pkg_a and pkg_b have in-degree 0
+        deps_map_branching = {
+            "pkg_z": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
+            "pkg_a": PackageDependencies(items=[]),
+            "pkg_b": PackageDependencies(items=[]),
+        }
+        order_branching = resolve_package_install_order(deps_map_branching)
+        # pkg_a and pkg_b both have in-degree 0 -> pkg_a is chosen first, then pkg_b unlocks pkg_z
+        self.assertEqual(order_branching, ["pkg_a", "pkg_b", "pkg_z"])
+        # Reverse uninstall order reverses the forward install order
+        self.assertEqual(resolve_package_uninstall_order(deps_map_branching), ["pkg_z", "pkg_b", "pkg_a"])
+
     def test_assert_required_package_dependencies_exist_success(self) -> None:
         deps_map = {
             "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),

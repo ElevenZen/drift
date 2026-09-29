@@ -584,17 +584,40 @@ def topological_sort(
         for dep in (deps & raw_keys):
             dependents[dep].add(node)
 
-    # 4. Topological sort using Kahn's algorithm
-    queue = [k for k, deg in in_degree.items() if deg == 0]
+    # 4. Topological sort using Kahn's algorithm with min-heap for deterministic tie-breaking
+    import heapq
+
+    try:
+        heap: List[T] = [k for k, deg in in_degree.items() if deg == 0]
+        heapq.heapify(heap)
+        use_heap = True
+    except TypeError:
+        # Fallback for unorderable node types
+        queue: List[T] = [k for k, deg in in_degree.items() if deg == 0]
+        use_heap = False
+
     eval_order: List[T] = []
 
-    while queue:
-        curr = queue.pop(0)
-        eval_order.append(curr)
-        for dep in dependents[curr]:
-            in_degree[dep] -= 1
-            if in_degree[dep] == 0:
-                queue.append(dep)
+    if use_heap:
+        while heap:
+            curr = heapq.heappop(heap)
+            eval_order.append(curr)
+            try:
+                deps_iter = sorted(dependents[curr])
+            except TypeError:
+                deps_iter = list(dependents[curr])
+            for dep in deps_iter:
+                in_degree[dep] -= 1
+                if in_degree[dep] == 0:
+                    heapq.heappush(heap, dep)
+    else:
+        while queue:
+            curr = queue.pop(0)
+            eval_order.append(curr)
+            for dep in dependents[curr]:
+                in_degree[dep] -= 1
+                if in_degree[dep] == 0:
+                    queue.append(dep)
 
     if len(eval_order) != len(raw_keys):
         cyclic_keys = sorted([str(k) for k, deg in in_degree.items() if deg > 0])
