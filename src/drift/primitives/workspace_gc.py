@@ -228,7 +228,8 @@ def run_primitive_9_purge_workspace_garbage(
     # --- Part 3: Commit Database Changes ---
     if not dry_run:
         if render_zombies:
-            render_commit_msg = f"GC Purge: Removed folder(s) {', '.join(render_zombies)}"
+            fld_word = "folder" if len(render_zombies) == 1 else "folders"
+            render_commit_msg = f"GC Purge: Removed {fld_word} {', '.join(render_zombies)}"
             commit_repo_changes(
                 workspace_config.render_path,
                 render_commit_msg,
@@ -238,9 +239,11 @@ def run_primitive_9_purge_workspace_garbage(
         if install_zombies or ghost_packages:
             purge_descs = []
             if install_zombies:
-                purge_descs.append(f"folder(s) {', '.join(install_zombies)}")
+                fld_word = "folder" if len(install_zombies) == 1 else "folders"
+                purge_descs.append(f"{fld_word} {', '.join(install_zombies)}")
             if ghost_packages:
-                purge_descs.append(f"ghost package(s) {', '.join(ghost_packages)}")
+                pkg_word = "package" if len(ghost_packages) == 1 else "packages"
+                purge_descs.append(f"ghost {pkg_word} {', '.join(ghost_packages)}")
             install_commit_msg = f"GC Purge: Removed {'; '.join(purge_descs)}"
             targets = list(install_zombies)
             commit_repo_changes(

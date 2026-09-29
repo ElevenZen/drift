@@ -1131,9 +1131,10 @@ def run_primitive_adopt_drifts(
     # 3. Commit resolved packages in install base
     if resolved_packages and not dry_run:
         from ..utils.git_utils import commit_repo_changes
+        pkg_word = "package" if len(resolved_packages) == 1 else "packages"
         commit_repo_changes(
             repo_path=workspace_config.install_path,
-            commit_message=f"Adopt: Resolved and locked drifts for package(s) {', '.join(resolved_packages)}",
+            commit_message=f"Adopt: Resolved and locked drifts for {pkg_word} {', '.join(resolved_packages)}",
             target_pkgs=resolved_packages,
             repo_name="install repo"
         )

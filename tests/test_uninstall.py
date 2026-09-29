@@ -103,7 +103,7 @@ class TestUninstall(unittest.TestCase):
         
         # Verify commit happened
         res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn(f"Uninstall: Removed package(s) {pkg}", res.stdout)
+        self.assertIn(f"Uninstall: Removed package {pkg}", res.stdout)
 
     def test_uninstall_with_backup_restore(self):
         """Verifies that uninstallation restores overwritten files from backup."""
@@ -260,7 +260,7 @@ class TestUninstall(unittest.TestCase):
         
         # Verify commit happened with "Detach" message
         res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn(f"Detach: Removed package(s) {pkg}", res.stdout)
+        self.assertIn(f"Detach: Removed package {pkg}", res.stdout)
 
     def test_uninstall_triggers_pre_and_post_uninstall_hooks(self):
         """Verifies that pre_uninstall and post_uninstall hooks run in the correct order with correct environments."""
@@ -561,6 +561,37 @@ fi
         self.assertEqual(res.status, "SUCCESS")
         updated_reg = load_state_registry(state_file)
         self.assertNotIn(pkg, updated_reg.packages)
+
+    def test_uninstall_commit_message_plural(self):
+        """Verifies that uninstalling multiple packages uses 'packages' instead of 'package(s)' in commit message."""
+        pkgs = ["pkg_mult1", "pkg_mult2"]
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        for p in pkgs:
+            p_dir = self.install_dir / p
+            p_dir.mkdir(parents=True, exist_ok=True)
+            (p_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (p_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+                f"[package]\nname = '{p}'\ndefault_install_method = 'copy'\n",
+                encoding="utf-8"
+            )
+            registry.set_package_state(p, "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Record multiple packages"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            pkgs,
+            config=UninstallConfig(force=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+
+        log_res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
+        self.assertIn("Uninstall: Removed packages", log_res.stdout)
+        self.assertIn("pkg_mult1", log_res.stdout)
+        self.assertIn("pkg_mult2", log_res.stdout)
 
 
 if __name__ == "__main__":

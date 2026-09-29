@@ -491,9 +491,10 @@ def run_primitive_7_uninstall_packages(
             registry.save()
             from .install_repo import run_primitive_6_commit_install_repo
             action_name = "Detach" if cfg.detach else "Uninstall"
-            commit_msg = f"{action_name}: Removed package(s) {', '.join(successfully_uninstalled)}"
+            pkg_word = "package" if len(successfully_uninstalled) == 1 else "packages"
+            commit_msg = f"{action_name}: Removed {pkg_word} {', '.join(successfully_uninstalled)}"
             run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
-            logger.info(f"✨ Successfully {action_name.lower()}ed {len(successfully_uninstalled)} package(s)!")
+            logger.info(f"✨ Successfully {action_name.lower()}ed {len(successfully_uninstalled)} {pkg_word}!")
         else:
             logger.info("Nothing was uninstalled.")
 
