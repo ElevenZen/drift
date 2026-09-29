@@ -10,14 +10,14 @@ parameter for transparent privilege escalation on POSIX.
 
 Atomic Operations (temp-file + rename, never leaves partial state):
     copy_file(src, dst, sudo, line_ending, follow_symlinks)
-        copy_symlink(src, dst) [internal]
+        copy_symlink(src, dst, sudo) [internal]
         copy_permissions(src, dst, sudo) [internal]
         _atomic_copy_local(src, dst, line_ending, follow_symlinks) [private]
         _atomic_copy_elevated(src, dst) [private]
-    copy_symlink(src, dst) — Atomic symlink recreation via temp + replace.
     write_file(dst, content, sudo, permission) — Atomic write from string/bytes.
 
 Direct Operations:
+    copy_symlink(src, dst, sudo) — Recreate symlink pointing to src's target.
     copy_permissions(src, dst, sudo) — chmod permissions sync.
     remove(path, sudo) — Remove file/symlink/dir tree.
     remove_with_parents(file_path, limit_dir) — Remove + prune empty ancestors.
@@ -199,27 +199,18 @@ def remove_with_parents(file_path: Path, limit_dir: Optional[Path] = None) -> No
 # Symlink operations
 # ---------------------------------------------------------------------------
 
-def copy_symlink(src: Path, dst: Path) -> None:
-    """Atomically copies/recreates a symlink from src to dst using a temporary sibling link."""
-    dst_parent = dst.parent
-    dst_parent.mkdir(parents=True, exist_ok=True)
+def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
+    """Copies/recreates a symlink from src to dst pointing to src's readlink target."""
+    ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
+    remove(dst, sudo=sudo)
 
     link_target = os.readlink(src)
-    fd, temp_name = tempfile.mkstemp(dir=dst_parent, prefix=f".tmp_{dst.name}_")
-    os.close(fd)
-    temp_path = Path(temp_name)
-    try:
-        temp_path.unlink()
-        temp_path.symlink_to(link_target)
-        clear_readonly(dst)
-        os.replace(temp_path, dst)
-    finally:
-        if temp_path.exists() or temp_path.is_symlink():
-            try:
-                temp_path.unlink()
-            except OSError as exc:
-                logger.debug(f"Failed to clean up temporary symlink '{temp_path}': {exc}")
+    if sys.platform == "win32" or not sudo:
+        dst.symlink_to(link_target)
+    else:
+        cmd = ["ln", "-s", str(link_target), str(dst)]
+        run_command(cmd, sudo=True)
 
 
 def create_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
@@ -320,7 +311,7 @@ def copy_file(
 
     # Symlink passthrough
     if not follow_symlinks and src.is_symlink():
-        copy_symlink(src, dst)
+        copy_symlink(src, dst, sudo=sudo)
         return
 
     # Mode-only shortcut: content matches but permissions differ

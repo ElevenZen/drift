@@ -399,7 +399,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(dst.is_symlink())
         self.assertEqual(os.readlink(dst), "non_existent")
 
-    def test_atomic_copy_symlink(self) -> None:
+    def test_copy_symlink(self) -> None:
         # 1. Broken symlink
         src = self.root / "broken_link"
         src.symlink_to("another_non_existent")
@@ -419,6 +419,11 @@ class TestFileUtils(unittest.TestCase):
         copy_symlink(src_valid, dst_valid)
         self.assertTrue(dst_valid.is_symlink())
         self.assertEqual(os.readlink(dst_valid), str(target_file))
+
+        # 3. Overwriting existing destination symlink
+        copy_symlink(src, dst_valid)
+        self.assertTrue(dst_valid.is_symlink())
+        self.assertEqual(os.readlink(dst_valid), "another_non_existent")
 
     def test_reverse_sync_file_or_dir_valid_symlink(self) -> None:
         # If src is a valid symlink, it should recursively sync the resolved target content
