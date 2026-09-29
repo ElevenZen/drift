@@ -42,6 +42,11 @@ from .install_repo import (
 from .uninstall_repo import (
     run_primitive_7_uninstall_packages,
     UninstallConfig,
+    UninstallPlan,
+    assert_packages_uninstall_ready,
+    prepare_uninstall_packages,
+    execute_uninstall_packages,
+    uninstall_missing_package,
 )
 from .rollback_repo import (
     run_primitive_8_rollback_recovery,
@@ -125,6 +130,11 @@ __all__ = [
     "deploy_one_package_impl",
     "run_primitive_7_uninstall_packages",
     "UninstallConfig",
+    "UninstallPlan",
+    "assert_packages_uninstall_ready",
+    "prepare_uninstall_packages",
+    "execute_uninstall_packages",
+    "uninstall_missing_package",
     "run_primitive_8_rollback_recovery",
     "run_primitive_9_purge_workspace_garbage",
     "run_primitive_10_create_new_package",

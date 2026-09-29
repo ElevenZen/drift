@@ -818,6 +818,9 @@ def check_package_deployment_skip(
             error="No changes detected and redeploy is False",
         )
 
+    if not config.force and state_registry.is_package_in_midway_state(pkg):
+        assert_packages_not_in_midway_state([pkg], state_registry)
+
     return None
 
 
@@ -990,9 +993,6 @@ def deploy_one_package(
     if skip_res is not None:
         return skip_res
     
-    if not cfg.force and state_registry.is_package_in_midway_state(pkg):
-        assert_packages_not_in_midway_state([pkg], state_registry)
-
     logger.info(f"🚀 Deploying package: {pkg}")
     
     state_registry.set_package_state(pkg, "installing")

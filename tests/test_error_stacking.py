@@ -187,8 +187,9 @@ class TestErrorStacking(unittest.TestCase):
         mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
         mock_execute.side_effect = OSError("Disk full while writing install state")
 
-        with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        with self.assertLogs("drift.primitives.deploy_repo", level="INFO"):
+            with self.assertRaises(RuntimeError) as ctx:
+                run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         self.assertIn("Midway crash: Step 3 (Sandbox Staging) failed.", str(ctx.exception))
         mock_recovery_card.assert_called_once()

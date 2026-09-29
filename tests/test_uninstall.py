@@ -7,7 +7,15 @@ from pathlib import Path
 from drift.core.exceptions import ConfigError
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.core.state_registry import load_state_registry, save_state_registry, PackageState
-from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
+from drift.primitives.uninstall_repo import (
+    run_primitive_7_uninstall_packages,
+    UninstallConfig,
+    UninstallPlan,
+    prepare_uninstall_packages,
+    execute_uninstall_packages,
+    uninstall_missing_package,
+    assert_packages_uninstall_ready,
+)
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
 
 class TestUninstall(unittest.TestCase):
@@ -589,9 +597,89 @@ fi
         self.assertEqual(res.status, "SUCCESS")
 
         log_res = subprocess.run(["git", "log", "-1", "--pretty=%B"], cwd=str(self.install_dir), capture_output=True, text=True)
-        self.assertIn("Uninstall: Removed packages", log_res.stdout)
-        self.assertIn("pkg_mult1", log_res.stdout)
-        self.assertIn("pkg_mult2", log_res.stdout)
+        self.assertEqual(log_res.stdout.strip(), "Uninstall: Removed packages pkg_mult2, pkg_mult1")
+
+    def test_prepare_and_execute_uninstall_pipeline(self):
+        """Verifies that prepare_uninstall_packages and execute_uninstall_packages work as modular sub-stages."""
+        # Setup pkg_a and pkg_b (pkg_b depends on pkg_a)
+        for pkg, deps_text in [("pkg_a", ""), ("pkg_b", 'dependencies = ["pkg_a"]')]:
+            p_dir = self.install_dir / pkg
+            p_dir.mkdir(parents=True, exist_ok=True)
+            (p_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            (p_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+                f"[package]\nname = '{pkg}'\n{deps_text}\n", encoding="utf-8"
+            )
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed")
+        registry.set_package_state("pkg_b", "installed")
+        save_state_registry(registry)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 1. Test prepare_uninstall_packages (read-only plan preparation)
+        plan = prepare_uninstall_packages(
+            self.workspace_config,
+            ["pkg_a", "pkg_b"],
+            config=UninstallConfig(force=True),
+        )
+        self.assertIsInstance(plan, UninstallPlan)
+        # Reverse dependency order: pkg_b must be uninstalled before pkg_a
+        self.assertEqual(plan.ordered_packages, ["pkg_b", "pkg_a"])
+        self.assertIn("pkg_a", plan.pkg_config_map)
+        self.assertIn("pkg_b", plan.pkg_config_map)
+        # Registry and install directories must still exist unmodified
+        self.assertTrue((self.install_dir / "pkg_a").is_dir())
+        self.assertTrue((self.install_dir / "pkg_b").is_dir())
+
+        # 2. Test execute_uninstall_packages (state-mutating execution)
+        result = execute_uninstall_packages(self.workspace_config, plan)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual([p.package for p in result.packages], ["pkg_b", "pkg_a"])
+        self.assertFalse((self.install_dir / "pkg_a").exists())
+        self.assertFalse((self.install_dir / "pkg_b").exists())
+
+        updated_reg = load_state_registry(state_file)
+        self.assertNotIn("pkg_a", updated_reg.packages)
+        self.assertNotIn("pkg_b", updated_reg.packages)
+
+    def test_prepare_uninstall_safeguard_error(self):
+        """Verifies that prepare_uninstall_packages raises RuntimeError on active packages without force."""
+        self.workspace_config.packages_enable["pkg_a"] = True
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "installed")
+        save_state_registry(registry)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            prepare_uninstall_packages(self.workspace_config, ["pkg_a"])
+
+        self.assertIn("Safeguard abort", str(ctx.exception))
+
+    def test_uninstall_missing_package_unit(self):
+        """Verifies uninstall_missing_package helper cleans up directories and returns proper result."""
+        pkg_state = PackageState(
+            state="installed",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.STOW,
+        )
+        # Setup empty backup directory for pkg
+        pkg_backup = self.backup_dir / "pkg_ghost"
+        pkg_backup.mkdir(parents=True, exist_ok=True)
+
+        res = uninstall_missing_package(
+            workspace_config=self.workspace_config,
+            pkg="pkg_ghost",
+            pkg_state=pkg_state,
+            dry_run=False,
+            detach=False,
+        )
+        self.assertEqual(res.package, "pkg_ghost")
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.removed_files, [])
+        # Empty backup dir should have been pruned
+        self.assertFalse(pkg_backup.exists())
 
 
 if __name__ == "__main__":

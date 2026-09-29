@@ -120,7 +120,9 @@ This document provides a concise, high-density architecture reference, primitive
 
 ### [`primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) & [`primitives/rollback_repo.py`](../src/drift/primitives/rollback_repo.py)
 *   [`UninstallConfig(force=False, dry_run=False, detach=False, ignore_missing_dependencies=False, flags=None)`](../src/drift/primitives/uninstall_repo.py): Configuration options controlling package uninstallation behavior.
-*   [`run_primitive_7_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): Uninstalls packages in reverse topological order, validating remaining package dependencies and gracefully handling missing install directories.
+*   [`prepare_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallPlan`](../src/drift/primitives/uninstall_repo.py): Read-only pre-flight safeguard checks, dependency integrity validation, and uninstallation plan preparation with reverse topological dependency ordering.
+*   [`execute_uninstall_packages(workspace_config, plan) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): State-mutating physical file removal, backup restoration, missing package directory cleanup, and install repository state synchronization.
+*   [`run_primitive_7_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): Orchestrates uninstallation or detachment of packages by preparing and executing `UninstallPlan`.
 *   [`run_primitive_8_rollback_recovery(workspace_config, target_pkgs=(), force=False, flags=None) -> RollbackResult`](../src/drift/primitives/rollback_repo.py): Recovers from aborted deployments in unified reverse topological order across committed redeployments and uncommitted first-time installs.
 
 ### [`primitives/adopt_repo.py`](../src/drift/primitives/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
