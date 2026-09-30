@@ -88,7 +88,6 @@ class TestUninstall(unittest.TestCase):
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.SYMLINK,
-            redeploy=True,
             deployable_files=[Path("dot-bashrc")],
         )
         save_state_registry(registry)
@@ -147,7 +146,6 @@ class TestUninstall(unittest.TestCase):
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("config.txt")],
         )
         save_state_registry(registry)
@@ -238,7 +236,6 @@ class TestUninstall(unittest.TestCase):
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.SYMLINK,
-            redeploy=True,
             deployable_files=[Path("dot-bashrc")],
         )
         save_state_registry(registry)
@@ -318,7 +315,6 @@ fi
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("app.conf")],
         )
         save_state_registry(registry)
@@ -372,7 +368,6 @@ fi
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("sample.txt")],
         )
         save_state_registry(registry)
@@ -419,7 +414,6 @@ fi
             pkg,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("sample.txt")],
         )
         save_state_registry(registry)

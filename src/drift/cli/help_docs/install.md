@@ -62,7 +62,7 @@ When multiple interdependent packages are updated within the same install method
 ### 6. Dry-Run Deployment Simulation (`drift apply --dry-run`)
 Pass `--dry-run` to simulate deployment without modifying host files, executing hooks, or altering `state.toml`:
 * **Inspectable Execution Plan**: Evaluates pre-existing files, internal/foreign symlinks, directory structures, and orphan files from shallowest to deepest.
-* **Deterministic Operation List**: Generates the complete ordered plan (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_ORPHAN`, `ENSURE_DIR`).
+* **Deterministic Operation List**: Generates the complete ordered plan (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `ENSURE_DIR`).
 * **Machine-Readable Support**: Combine with `--json` (`drift apply --dry-run --json`) to retrieve the plan programmatically.
 
 ### 7. Why `drift install` Is Not a Command

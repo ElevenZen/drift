@@ -113,9 +113,7 @@ class StateRegistry:
         pkg: str,
         target_directory: Path,
         install_method: InstallMethod,
-        redeploy: bool = False,
         deployable_files: Iterable[Path] = (),
-        package_changes: Optional[Any] = None,
     ) -> None:
         """Updates the target directory, install method, and deployed_files manifest list for a package in the state registry.
 
@@ -123,9 +121,7 @@ class StateRegistry:
             pkg: Name of the package.
             target_directory: Target directory on host system.
             install_method: Method used to install package ('copy', 'symlink').
-            redeploy: If True (or if package_changes is None), overwrites the manifest with deployable_files.
-            deployable_files: Full iterable of deployable files in the package (used during redeploy/full deploy).
-            package_changes: Incremental stage changes containing added and deleted file lists.
+            deployable_files: Full iterable of deployable files in the package.
 
         Raises:
             KeyError: If pkg is not registered in the state registry.
@@ -135,13 +131,7 @@ class StateRegistry:
 
         self.packages[pkg].target_directory = Path(target_directory)
         self.packages[pkg].install_method = install_method
-
-        if redeploy or package_changes is None:
-            self.packages[pkg].deployed_files = [Path(x) for x in deployable_files]
-        else:
-            current_deployed = set(self.packages[pkg].deployed_files)
-            updated_deployed = (current_deployed - set(package_changes.deployable_changes.deleted)) | set(package_changes.deployable_changes.added)
-            self.packages[pkg].deployed_files = sorted(Path(x) for x in updated_deployed)
+        self.packages[pkg].deployed_files = sorted(Path(x) for x in deployable_files)
 
     def remove_package(self, pkg: str) -> None:
         if pkg in self.packages:

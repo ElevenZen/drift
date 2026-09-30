@@ -80,7 +80,6 @@ class TestRollback(unittest.TestCase):
             "pkg_a",
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("file.txt")],
         )
         save_state_registry(registry)
@@ -167,7 +166,6 @@ class TestRollback(unittest.TestCase):
             pkg_first,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("app_config.json")],
         )
         save_state_registry(registry)
@@ -255,7 +253,6 @@ class TestRollback(unittest.TestCase):
             pkg_first,
             target_directory=self.system_target_dir,
             install_method=InstallMethod.COPY,
-            redeploy=True,
             deployable_files=[Path("brand_new.txt")],
         )
         save_state_registry(registry)

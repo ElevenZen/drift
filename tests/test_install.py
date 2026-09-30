@@ -21,6 +21,7 @@ from drift.config.package_config import PackageConfig, PackageSectionConfig
 from drift.config.package_hooks import PackageHooks
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.folder_diff import FolderDiff
+from drift.core.ignore import DriftIgnore
 from drift.core.state_registry import (
         load_state_registry,
         save_state_registry,
@@ -234,13 +235,9 @@ class TestInstallRepo(unittest.TestCase):
             f.write("content of bashrc")
 
         # Run deployment
-        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(
-                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
-            ),
         )
 
         # Verify symlink is created
@@ -279,13 +276,9 @@ class TestInstallRepo(unittest.TestCase):
             f.write("pre-existing user content")
 
         # Run deployment
-        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(
-                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("dot-bashrc")]))}
-            ),
         )
 
         # Collision file should be backed up under backup/pkg_symlink/overwritten/dot-bashrc
@@ -338,13 +331,9 @@ class TestInstallRepo(unittest.TestCase):
             f.write("colliding user file")
 
         # Run first-time deployment
-        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(
-                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("test.txt")]))}
-            ),
         )
 
         # Target file is copied and pre-existing file backed up
@@ -376,13 +365,9 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(hook_marker)
 
         # Run update deployment
-        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(
-                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("test.txt")]))}
-            ),
         )
 
         # Target file should be directly overwritten
@@ -721,7 +706,6 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(
                 self.workspace_config,
                 [pkg],
-                config=InstallConfig(package_changes={}),
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
@@ -755,13 +739,9 @@ class TestInstallRepo(unittest.TestCase):
         os.symlink(fake_drift_dest, nested_target_symlink)
 
         # Deploy
-        from drift.primitives.stage_repo import PackageStageChanges
         run_primitive_5_install_deployment(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(
-                package_changes={pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(added=[Path("nested_app/config.json")]))}
-            ),
         )
 
         # 1. Parent symlink should be removed and rebuilt as a physical directory
@@ -808,7 +788,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=deployable_files,
-            redeploy=True,
         )
         execute_package_deployment(context=context, plan=plan)
 
@@ -1504,10 +1483,8 @@ class TestInstallRepo(unittest.TestCase):
         system_file_a = self.system_target_dir / "file_a.txt"
         system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
 
-        # Execute partial deployment modifying file_a.txt
-        from drift.primitives.stage_repo import PackageStageChanges
-        changes = {pkg: PackageStageChanges(package_name=pkg, deployable_changes=FolderDiff(modified=[Path("file_a.txt")]))}
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg], config=InstallConfig(package_changes=changes))
+        # Execute deployment modifying file_a.txt
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1814,7 +1791,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("nested/app.conf"), Path("root.conf")],
-            redeploy=True,
         )
 
         # 'nested' ancestor has BACKUP_OVERWRITE (Internal ancestor symlink conflict) and ENSURE_DIR
@@ -1858,7 +1834,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("sub_dir/file.txt")],
-            redeploy=True,
         )
         execute_package_deployment(context=context, plan=plan)
 
@@ -1907,7 +1882,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("a/b/c.txt")],
-            redeploy=True,
         )
 
         # 1. Exactly one BACKUP_OVERWRITE (on 'a'), ENSURE_DIR on 'a', ENSURE_DIR on 'a/b', CREATE_SYMLINK on 'a/b/c.txt'
@@ -1975,7 +1949,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("dot-config/nvim/lua/init.lua")],
-            redeploy=True,
         )
 
         # 1. Exactly one BACKUP_OVERWRITE for dot-config
@@ -2042,7 +2015,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("a/b/c/deep.txt"), Path("a/sibling.txt")],
-            redeploy=True,
         )
 
         # Only 'a/b' receives BACKUP_OVERWRITE
@@ -2089,7 +2061,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("valid_file.txt")],
-            redeploy=True,
         )
 
         # System target is planned as SKIP_IDENTICAL
@@ -2146,7 +2117,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("nested/app.conf"), Path("root.conf")],
-            redeploy=True,
         )
         execute_package_deployment(context=context, plan=plan)
 
@@ -2191,7 +2161,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("file.txt")],
-            redeploy=True,
         )
         self.assertEqual(len(plan.skipped), 1)
         self.assertEqual(plan.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
@@ -2265,7 +2234,6 @@ class TestInstallRepo(unittest.TestCase):
         plan = plan_package_deployment(
             context=context,
             deployable_files=[Path("conflicting_link.txt"), Path("valid_link.txt")],
-            redeploy=True,
         )
         execute_package_deployment(context=context, plan=plan)
 
@@ -2304,7 +2272,7 @@ class TestInstallRepo(unittest.TestCase):
         )
 
         # 1. Target does not exist -> plan creates CREATE_SYMLINK action
-        plan1 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        plan1 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan1.created), 1)
         self.assertEqual(plan1.created[0].action_type, ActionType.CREATE_SYMLINK)
         execute_single_action(context, plan1.created[0])
@@ -2316,7 +2284,7 @@ class TestInstallRepo(unittest.TestCase):
         mock_create_symlink.reset_mock()
 
         # 2. Target already exists and points to src_file -> plan creates SKIP_IDENTICAL action
-        plan2 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        plan2 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan2.skipped), 1)
         self.assertEqual(plan2.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
         execute_single_action(context, plan2.skipped[0])
@@ -2328,12 +2296,143 @@ class TestInstallRepo(unittest.TestCase):
         other_file.write_text("other", encoding="utf-8")
         os.symlink(other_file, system_target)
 
-        plan3 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        plan3 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan3.overwritten_backups), 1)
         self.assertEqual(len(plan3.created), 1)
         for act in plan3.actions:
             execute_single_action(context, act)
         self.assertEqual(mock_create_symlink.call_count, 1)
+
+    def test_ensure_dir_raises_on_non_directory_and_symlink(self) -> None:
+        """Verifies ensure_dir and execute_single_action raise NotADirectoryError when target is a file or symlink."""
+        from drift.utils.file_ops import ensure_dir
+
+        # 1. Existing regular file
+        file_path = self.system_target_dir / "existing_file.txt"
+        file_path.write_text("file content", encoding="utf-8")
+
+        with self.assertRaises(NotADirectoryError):
+            ensure_dir(file_path)
+
+        context = PackageInstallContext(
+            pkg_name="pkg_test",
+            install_pkg_dir=self.install_dir / "pkg_test",
+            backup_pkg_dir=self.backup_dir / "pkg_test",
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+        action = PlannedFileAction(
+            action_type=ActionType.ENSURE_DIR,
+            rel_path=Path("existing_file.txt"),
+            system_target=file_path,
+        )
+        with self.assertRaises(NotADirectoryError):
+            execute_single_action(context, action)
+
+        # 2. Existing symlink (even if pointing to a directory)
+        target_dir = self.system_target_dir / "real_dir"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        symlink_path = self.system_target_dir / "dir_symlink"
+        symlink_path.symlink_to(target_dir)
+
+        with self.assertRaises(NotADirectoryError):
+            ensure_dir(symlink_path)
+
+        action_symlink = PlannedFileAction(
+            action_type=ActionType.ENSURE_DIR,
+            rel_path=Path("dir_symlink"),
+            system_target=symlink_path,
+        )
+        with self.assertRaises(NotADirectoryError):
+            execute_single_action(context, action_symlink)
+
+    def test_backup_prune_backs_up_and_removes_file(self) -> None:
+        """Verifies execute_single_action with BACKUP_PRUNE atomically backs up to deleted_files and deletes target."""
+        pkg = "pkg_prune_test"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        target_file = self.system_target_dir / "orphan.txt"
+        target_file.write_text("orphan content to be pruned", encoding="utf-8")
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=False,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        action = PlannedFileAction(
+            action_type=ActionType.BACKUP_PRUNE,
+            rel_path=Path("orphan.txt"),
+            system_target=target_file,
+            reason="Orphaned file 'orphan.txt' prune",
+        )
+        execute_single_action(context, action)
+
+        # 1. Target file must be physically removed
+        self.assertFalse(target_file.exists())
+        self.assertFalse(target_file.is_symlink())
+
+        # 2. Backup must exist in backup/<pkg>/deleted_files/orphan.txt
+        backup_file = self.backup_dir / pkg / "deleted_files" / "orphan.txt"
+        self.assertTrue(backup_file.is_file())
+        self.assertEqual(backup_file.read_text(encoding="utf-8"), "orphan content to be pruned")
+
+    def test_plan_and_execute_orphan_reconciliation(self) -> None:
+        """Verifies plan_package_deployment plans single BACKUP_PRUNE for orphaned files and execution deletes them."""
+        pkg = "pkg_orphan_reconcile"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "keep.txt").write_text("keep content", encoding="utf-8")
+
+        # Create host files
+        (self.system_target_dir / "keep.txt").write_text("keep content", encoding="utf-8")
+        orphan_host = self.system_target_dir / "old_deleted.txt"
+        orphan_host.write_text("historical orphan content", encoding="utf-8")
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=False,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("keep.txt")],
+            deployed_files=[Path("keep.txt"), Path("old_deleted.txt")],
+        )
+
+        # Only one prune action for old_deleted.txt
+        self.assertEqual(len(plan.pruned), 1)
+        self.assertEqual(plan.pruned[0].action_type, ActionType.BACKUP_PRUNE)
+        self.assertEqual(plan.pruned[0].rel_path, Path("old_deleted.txt"))
+
+        # Execute package deployment
+        execute_package_deployment(context=context, plan=plan)
+
+        # Orphan removed from host
+        self.assertFalse(orphan_host.exists())
+
+        # Backup created in deleted_files
+        backup_file = self.backup_dir / pkg / "deleted_files" / "old_deleted.txt"
+        self.assertTrue(backup_file.is_file())
+        self.assertEqual(backup_file.read_text(encoding="utf-8"), "historical orphan content")
 
     def test_full_copy_deployment_translates_dot_prefixes(self) -> None:
         """Verifies full copy deployment (initial deploy and full redeploy) translates dot- prefixes to leading dots."""
@@ -2397,7 +2496,6 @@ class TestInstallRepo(unittest.TestCase):
             context=context,
             deployable_files=deployable_gen,
             deployed_files=deployed_gen,
-            redeploy=True,
         )
         self.assertEqual(len(plan.created), 2)
         # file_3.txt is orphaned but doesn't exist on disk, so no prune actions are generated
@@ -2674,7 +2772,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(registry_migrated.get_target_migrated_from(pkg, target_2), None)
 
     def test_state_registry_sync_deployed_files(self) -> None:
-        """Verifies StateRegistry.sync_deployed_files with redeploy, incremental changes, target directory, and install method."""
+        """Verifies StateRegistry.sync_deployed_files updates target directory, install method, and deployed files."""
         registry = StateRegistry({
             "test_pkg": PackageState(
                 state="installed",
@@ -2682,12 +2780,11 @@ class TestInstallRepo(unittest.TestCase):
             )
         })
 
-        # Overwrite with redeploy=True and record target_directory and install_method
+        # Synchronize with target_directory, install_method, and deployable_files
         registry.sync_deployed_files(
             "test_pkg",
             target_directory=Path("/home/user/target"),
             install_method=InstallMethod.SYMLINK,
-            redeploy=True,
             deployable_files=[Path("c.txt"), Path("d.txt")]
         )
         self.assertEqual(
@@ -2703,22 +2800,12 @@ class TestInstallRepo(unittest.TestCase):
             [Path("c.txt"), Path("d.txt")]
         )
 
-        # Incremental sync with package_changes
-        pkg_changes = PackageStageChanges(
-            package_name="test_pkg",
-            deployable_changes=FolderDiff(
-                added=[Path("e.txt")],
-                modified=[],
-                deleted=[Path("c.txt")],
-                matches=[]
-            )
-        )
+        # Update sync with new deployable_files
         registry.sync_deployed_files(
             "test_pkg",
             target_directory=Path("/home/user/target_updated"),
             install_method=InstallMethod.COPY,
-            redeploy=False,
-            package_changes=pkg_changes
+            deployable_files=[Path("d.txt"), Path("e.txt")]
         )
         self.assertEqual(
             registry.get_package_target_directory("test_pkg"),
@@ -2994,7 +3081,7 @@ class TestInstallDependencies(unittest.TestCase):
         registry.save()
 
         # Target only pkg_c and pkg_a, while pkg_b is already installed
-        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_c", "pkg_a"])
+        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_c", "pkg_a"])
         self.assertEqual(plan.discovered_packages, ["pkg_a", "pkg_c"])
 
     def test_prepare_install_deployment_with_disabled_installed_prerequisite(self) -> None:
@@ -3011,7 +3098,7 @@ class TestInstallDependencies(unittest.TestCase):
         # pkg_b depends on pkg_a and is enabled
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
-        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.discovered_packages, ["pkg_b"])
 
     def test_prepare_install_deployment_with_missing_installed_dir(self) -> None:
@@ -3023,18 +3110,18 @@ class TestInstallDependencies(unittest.TestCase):
         # pkg_b depends on pkg_a
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
-        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.discovered_packages, ["pkg_b"])
 
     def test_prepare_install_deployment_missing_required_dependency(self) -> None:
         self._create_install_package("pkg_b", dependencies=["missing_pkg"])
         with self.assertRaises(ConfigError) as ctx:
-            prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+            prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertIn("missing_pkg", str(ctx.exception))
 
     def test_prepare_install_deployment_optional_dependency_pruned(self) -> None:
         self._create_install_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
-        plan = prepare_install_deployment(self.workspace_config, packages_to_redeploy=["pkg_b"])
+        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.discovered_packages, ["pkg_b"])
 
 

@@ -286,6 +286,7 @@ def execute_apply(
     drift_root: Path,
     package_names: Sequence[str] = (),
     force: bool = False,
+    redeploy: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
     no_deps: bool = False,
@@ -301,10 +302,11 @@ def execute_apply(
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
     res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
-        packages_to_redeploy=package_names,
+        target_pkgs=package_names,
         config=InstallConfig(
             resolve_symlinks=True,
             force=force,
+            redeploy=redeploy,
             flags=flags,
             no_deps=no_deps,
             dry_run=dry_run,

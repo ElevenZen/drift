@@ -223,7 +223,7 @@ post_install = "drift_hooks/post_install.sh"
         # Step C: Deploy package to target
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
-            packages_to_redeploy=["my_app"],
+            target_pkgs=["my_app"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
@@ -282,7 +282,7 @@ post_install = "drift_hooks/post_install.sh"
 
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
-            packages_to_redeploy=["cli_tool"],
+            target_pkgs=["cli_tool"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")
@@ -359,7 +359,7 @@ post_install = "drift_hooks/post_install.sh"
         # Deploy
         deploy_res = run_primitive_5_install_deployment(
             self.workspace_config,
-            packages_to_redeploy=["custom_subfolder_pkg"],
+            target_pkgs=["custom_subfolder_pkg"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),
         )
         self.assertEqual(deploy_res.status, "SUCCESS")

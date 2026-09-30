@@ -1077,20 +1077,16 @@ To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax 
     2.  *Mustache*: Uses suffix **`.mustache.[ext]`** (e.g., `home.mustache.nix`, `settings.mustache.json`).
 *   **Why this is superior**: Because the terminal extension is the actual target format (like `.sh`, `.nix`, `.json`), text editors instantly apply the correct syntax highlighting, formatters, and LSP environments without requiring custom regex filetype mappings.
 
-### C. Incremental vs. Full Deployment Strategies
-To minimize system disruption and application reloads, deployment is executed under two distinct strategies via the unified deployment planner (`plan_package_deployment`):
-1.  **Incremental Deployment (Surgical File-by-File)**:
-    *   When executing a deployment sequence, Primitive 4 outputs a granular `PackageStageChanges` object of added, modified, or deleted files.
-    *   In both `symlink` and `copy` modes, the deployment engine compiles a surgical plan inspecting only changed files and deleted orphans.
-    *   Instead of bulk reloading, it surgically executes individual relative symlink updates (or file copies/deletions), maintaining a minimal interruption footprint.
-    *   **Infinite Loop & Ancestor Protection**: Before creating any link or file, intermediate ancestor directories are inspected (`_inspect_ancestor_directories`). If any parent directory is an internal symlink pointing into `drift_root` or is blocked by an existing file, it is backed up to `backup/<package>/overwritten/` and replaced with a concrete directory (`ENSURE_DIR`), preventing circular symlink loops.
-2.  **Full Deployment (Native Symlink & Copy Linker)**:
-    *   When triggering a standalone deployment, running `drift rollback`, or performing a first-time setup (or with `--redeploy`), the system executes a clean **Full Package Redeploy**.
-    *   Drift compiles a complete `PackageDeploymentPlan` across all deployable files in the package:
-        *   *Symlink Packages (`install_method = "symlink"`, default on POSIX)*: Deploys relative symlinks via `execute_package_deployment`. For each deployable file, it computes relative symlink targets from the host target path to `install/<pkg>/` (`compute_relative_symlink_target`), applies `dot-` prefix translation, creates intermediate directories, and safely skips or overwrites targets according to collision guard rules.
-        *   *Copy Packages (`install_method = "copy"`, default on Windows)*: Executes atomic file copy delivery across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+### C. Unified Declarative Deployment Architecture
+Deployment is executed through a single unified declarative pipeline via the per-path deployment planner (`plan_package_deployment`):
+*   **Host-Level Declarative Comparison**: Rather than maintaining separate "surgical" and "full" codepaths driven by staging deltas, the installation engine inspects deployable files directly against host state.
+    *   **Identical Files & Symlinks**: Existing relative symlinks pointing to correct targets and existing file copies with identical contents receive `SKIP_IDENTICAL` (zero filesystem I/O, zero link re-creation).
+    *   **New or Differing Files**: Missing or modified files receive `CREATE_SYMLINK`, `CREATE_COPY`, or `UPDATE_COPY` (with `BACKUP_OVERWRITE` if colliding with an untracked node).
+    *   **Historical Orphan Reconciliation**: Historical files in `deployed_files` that are no longer part of the package receive `BACKUP_PRUNE` (atomically backed up to `backup/<pkg>/deleted_files/` and removed from the host).
+*   **Infinite Loop & Ancestor Protection**: Before creating any link or file, intermediate ancestor directories are inspected (`_inspect_ancestor_directories`). If any parent directory is an internal symlink pointing into `drift_root` or is blocked by an existing file, it is backed up to `backup/<package>/overwritten/` and replaced with a concrete directory (`ENSURE_DIR`), preventing circular symlink loops.
+*   **Target Migration & Redeployment**: Standalone deployment (`drift apply`), pipeline deployment (`drift deploy`), rollback (`drift rollback`), and `--redeploy` all execute through this unified planner. If a package's target directory migrated (`target_migrated_from`), Drift undeploys from the former destination and plans complete deployment at the new destination.
 
-The program ensures compatibility between these two modes. In either mode, the program verifies the package config has `enable_install=true` and loads the install method, install location, and sudo flag from it.
+The program ensures consistent behavior across both `symlink` and `copy` install methods, verifying `enable_install=true` and respecting package metadata, install location, and sudo permissions.
 
 ### D. Physical Conflict Prevention (Collision Guard & Deployment Planner)
 To protect pre-existing manual files from being silently overridden or destroyed during deployment, Drift dispenses collision guarding into an inspectable, side-effect-free per-path deployment planner (`plan_package_deployment`), accompanied by centralized pre-flight boundary assertions before any physical operations or lifecycle hooks take place.
@@ -1122,9 +1118,9 @@ Rather than relying on mutating collision routines or monolithic filesystem fold
         *   **Identical Content**: If the host file is a regular file with identical content (`filecmp.cmp`), plans `SKIP_IDENTICAL`.
         *   **Previously Deployed (`state.toml`)**: If the regular file is already tracked in `deployed_files` manifest, plans `UPDATE_COPY` without backup.
         *   **Untracked / Type Collision**: Plans `BACKUP_OVERWRITE` to `backup/<package>/overwritten/<path>` followed by `CREATE_COPY`.
-3.  **Orphan Reconciliation (`_inspect_orphan_cleanup`)**:
+3.  **Orphan Reconciliation (`_inspect_orphans`)**:
     *   Compares the current package files against the historical `deployed_files` manifest stored in `install/state.toml`.
-    *   Any previously deployed files that are no longer part of the package are planned as `BACKUP_PRUNE` (swept safely into `backup/<package>/deleted_files/<path>`) followed by `DELETE_ORPHAN`.
+    *   Any previously deployed files that are no longer part of the package are planned as `BACKUP_PRUNE` (swept safely into `backup/<package>/deleted_files/<path>` and physically removed from the host in a single atomic action).
 4.  **Dotfile Backup Translation (`decode_dot_prefix`)**:
     *   When saving displaced host files into `backup/<package>/overwritten/` or `backup/<package>/deleted_files/`, leading dots on path components are translated back to `dot-` prefixes (e.g. `.bashrc` $\rightarrow$ `dot-bashrc`, `.config/nvim` $\rightarrow$ `dot-config/nvim`).
     *   This ensures that the backup archive mirrors the exact structural naming conventions of `src/` and `install/`.
@@ -1352,7 +1348,7 @@ For each redeployable package:
 *   **Declarative Plan Compilation (`plan_package_deployment`)**:
     - *Intermediate Directory Inspection*: Evaluates all intermediate directory levels between `target_dir` and the destination file, planning `BACKUP_OVERWRITE` and `ENSURE_DIR` if blocked by files or internal symlinks.
     - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`.
-    - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted_files/` and `DELETE_ORPHAN`.
+    - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted_files/` and physical removal.
     - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.

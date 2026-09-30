@@ -671,6 +671,10 @@ def build_completion_schema() -> CompletionSchema:
                         description="Simulate deployment planning without modifying host filesystem or executing hooks",
                     ),
                     OptionSpec(
+                        flags=["--redeploy"],
+                        description="Force full redeployment of all packages, bypassing change skipping",
+                    ),
+                    OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"

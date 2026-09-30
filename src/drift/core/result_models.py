@@ -137,9 +137,8 @@ class ActionType(str, Enum):
     SKIP_IDENTICAL = "SKIP_IDENTICAL"
 
     # Collisions & Cleanups
-    BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Colliding physical file or conflicting symlink
-    BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical orphan backed up before deletion
-    DELETE_ORPHAN = "DELETE_ORPHAN"        # Host orphan removed after backup
+    BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
+    BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
 
 
 @dataclass
@@ -174,7 +173,7 @@ class PackageDeploymentPlan(SerializableModel):
 
     @property
     def pruned(self) -> List[PlannedFileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.DELETE_ORPHAN]
+        return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
 
     @property
     def overwritten_backups(self) -> List[PlannedFileAction]:
@@ -211,8 +210,6 @@ class PackageDeploymentPlan(SerializableModel):
                     lines.append(f"    🛡️ [BACKUP_OVERWRITE] {action.system_target}{reason_str}")
                 elif action.action_type == ActionType.BACKUP_PRUNE:
                     lines.append(f"    📦 [BACKUP_PRUNE]    {action.system_target}{reason_str}")
-                elif action.action_type == ActionType.DELETE_ORPHAN:
-                    lines.append(f"    🗑️ [DELETE_ORPHAN]  {action.system_target}{reason_str}")
                 else:
                     lines.append(f"    [{action.action_type}] {action.rel_path} -> {action.system_target}{reason_str}")
 
@@ -231,7 +228,7 @@ class PackageDeploymentPlan(SerializableModel):
         if backups_count:
             counts.append(f"{backups_count} to backup")
         if self.pruned:
-            counts.append(f"{len(self.pruned)} to delete")
+            counts.append(f"{len(self.pruned)} to prune")
         ensured_dirs = [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
         if ensured_dirs:
             counts.append(f"{len(ensured_dirs)} directories")

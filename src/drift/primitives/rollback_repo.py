@@ -131,10 +131,11 @@ def rollback_redeploy_committed_package(
     logger.info(f"Rollback redeployment for committed package '{pkg}'")
     install_res = run_primitive_5_install_deployment(
         workspace_config=workspace_config,
-        packages_to_redeploy=[pkg],
+        target_pkgs=[pkg],
         config=InstallConfig(
             resolve_symlinks=True,
             force=True,
+            redeploy=True,
             flags=flags,
         ),
     )

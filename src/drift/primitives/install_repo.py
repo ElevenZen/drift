@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_install_deployment(workspace_config, packages_to_redeploy, config) [Layer 4]
+        prepare_install_deployment(workspace_config, target_pkgs, config) [Layer 4]
             - Package Discovery & Selection (filter_install_packages_by_target)
             - Metadata Resolution (PackageConfig.from_install_dir)
             - Pre-flight Readiness (assert_packages_deployment_ready [Layer 4])
@@ -27,12 +27,13 @@ Pipeline Architecture:
                 deploy_one_package_with_error_wrapping [Layer 4]
                     deploy_one_package [Layer 4]
                         check_package_deployment_skip [Layer 4]
-                        state_registry.set_package_state("installing") & save (if not dry_run)
                         pkg_config.package_envs context
                         deploy_one_package_impl [Layer 4]
                             Target Directory Migration Detection -> cleanup old target & force redeploy
                             plan_package_deployment [Layer 3] (Pure, inspectable per-path plan)
                             If dry_run -> return PackageInstallResult(plan=plan) immediately (zero disk mutations)
+                            If no mutations & not redeploy & not first_time -> return SKIPPED (zero disk mutations)
+                            state_registry.set_package_state("installing") & save
                             trigger pre_install / pre_update hook
                             state_registry.sync_deployed_files & save
                             execute_package_deployment [Layer 3] (Applies PlannedFileAction items deterministically)
@@ -42,7 +43,7 @@ Pipeline Architecture:
             -> Returns Aggregated InstallDeploymentResult
 
     3. Public Composite Primitive Entry Points:
-        run_primitive_5_install_deployment(workspace_config, packages_to_redeploy, options) [Layer 5]
+        run_primitive_5_install_deployment(workspace_config, target_pkgs, options) [Layer 5]
             = prepare_install_deployment >> execute_install_deployment
         run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 5]
             commit_repo_changes (commits state repository changes in install/)
@@ -58,7 +59,7 @@ Pipeline Architecture:
             * UPDATE_COPY: Existing managed copy has changed content.
             * BACKUP_OVERWRITE: Pre-existing physical file, foreign symlink, or internal symlink collision.
         - Orphan Reconciliation: Identifies historical files no longer in deployable set, planning
-          BACKUP_PRUNE and DELETE_ORPHAN.
+          BACKUP_PRUNE.
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
@@ -132,7 +133,6 @@ from ..core.exceptions import (
 from ..core.ignore import DriftIgnore
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
-from .stage_repo import PackageStageChanges
 from .package_assertions import (
     assert_packages_hooks_exist,
     assert_packages_not_in_midway_state,
@@ -181,17 +181,10 @@ class InstallConfig:
     """Options controlling package deployment behavior."""
     resolve_symlinks: bool = True
     force: bool = False
-    redeploy: bool = True
+    redeploy: bool = False
     dry_run: bool = False
     no_deps: bool = False
-    package_changes: Optional[Mapping[str, PackageStageChanges]] = None
     flags: Optional[HookExecFlags] = None
-
-    def get_package_changes(self, pkg: str) -> Optional[PackageStageChanges]:
-        """Retrieves stage changes for a specific package name from mapping."""
-        if self.package_changes is not None:
-            return self.package_changes.get(pkg)
-        return None
 
 
 @dataclass(frozen=True)
@@ -292,12 +285,13 @@ def execute_single_action(
             reason=action.reason,
             resolve_symlinks=resolve_symlinks,
         )
-
-    elif action.action_type == ActionType.DELETE_ORPHAN:
-        if action.system_target.exists() or action.system_target.is_symlink():
-            remove(action.system_target, context.sudo)
+        remove(action.system_target, context.sudo)
 
     elif action.action_type == ActionType.ENSURE_DIR:
+        if action.system_target.is_symlink() or (action.system_target.exists() and not action.system_target.is_dir()):
+            raise NotADirectoryError(
+                f"Cannot ensure directory '{action.system_target}': path exists and is not a directory."
+            )
         ensure_dir(action.system_target, context.sudo)
 
     elif action.action_type == ActionType.CREATE_SYMLINK:
@@ -591,7 +585,7 @@ def _plan_orphan_prune(
     orphan_rel: Path,
     reason: str,
 ) -> List[PlannedFileAction]:
-    """Inspects an orphaned path on host and plans BACKUP_PRUNE and DELETE_ORPHAN if present."""
+    """Inspects an orphaned path on host and plans BACKUP_PRUNE if present."""
     system_target = resolve_target_path(orphan_rel, context.target_dir)
     if not (system_target.exists() or system_target.is_symlink()):
         return []
@@ -604,12 +598,6 @@ def _plan_orphan_prune(
             system_target=system_target,
             reason=reason,
         ),
-        PlannedFileAction(
-            action_type=ActionType.DELETE_ORPHAN,
-            rel_path=decoded_rel,
-            system_target=system_target,
-            reason=f"Orphaned file '{orphan_rel}' deletion",
-        ),
     ]
 
 
@@ -617,18 +605,12 @@ def _inspect_orphans(
     context: PackageInstallContext,
     deployable_files: Sequence[Path],
     deployed_files: Sequence[Path],
-    redeploy: bool,
-    package_changes: Optional[PackageStageChanges],
     actions: List[PlannedFileAction],
 ) -> None:
-    """Plans backup and deletion of historical or stage-detected orphaned files."""
-    if redeploy:
-        orphaned_files = sorted(set(deployed_files) - set(deployable_files))
-        for orphaned in orphaned_files:
-            actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
-    elif package_changes is not None and package_changes.deployable_changes.deleted:
-        for deleted_rel in sorted(package_changes.deployable_changes.deleted):
-            actions.extend(_plan_orphan_prune(context, deleted_rel, f"Deleted file '{deleted_rel}' prune"))
+    """Plans backup and deletion of historical orphaned files."""
+    orphaned_files = sorted(set(deployed_files) - set(deployable_files))
+    for orphaned in orphaned_files:
+        actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
 
 
 # =============================================================================
@@ -639,8 +621,6 @@ def plan_package_deployment(
     context: PackageInstallContext,
     deployable_files: Iterable[Path],
     deployed_files: Iterable[Path] = (),
-    redeploy: bool = True,
-    package_changes: Optional[PackageStageChanges] = None,
 ) -> PackageDeploymentPlan:
     """Pure, read-only planner that inspects package candidate paths and host state to produce a deterministic deployment plan.
 
@@ -654,23 +634,13 @@ def plan_package_deployment(
     actions: List[PlannedFileAction] = []
     handled_targets: Set[Path] = set()
 
-    # Determine active files to install or update
-    if redeploy or package_changes is None:
-        active_files = deployable_list
-    else:
-        # Incremental redeploy: consider added and modified
-        active_files = [
-            p for p in deployable_list
-            if p in package_changes.deployable_changes.added or p in package_changes.deployable_changes.modified
-        ]
+    active_files = deployable_list
 
-    # 1. Prune historical or stage orphans first
+    # 1. Prune historical orphans first
     _inspect_orphans(
         context=context,
         deployable_files=deployable_list,
         deployed_files=deployed_list,
-        redeploy=redeploy,
-        package_changes=package_changes,
         actions=actions,
     )
 
@@ -722,9 +692,7 @@ def update_state_registry_post_deployment(
     pkg: str,
     target_directory: Path,
     install_method: InstallMethod,
-    redeploy: bool,
     deployable_files: Sequence[Path],
-    package_changes: Optional[PackageStageChanges] = None,
 ) -> None:
     """Updates and saves state registry to reflect successful package deployment."""
     now_str = datetime.datetime.now().isoformat()
@@ -737,9 +705,7 @@ def update_state_registry_post_deployment(
         pkg=pkg,
         target_directory=target_directory,
         install_method=install_method,
-        redeploy=redeploy,
         deployable_files=deployable_files,
-        package_changes=package_changes,
     )
     state_registry.save()
 
@@ -782,22 +748,6 @@ def check_package_deployment_skip(
             error="enable_install is False",
         )
 
-    target_dir = metadata.get_target_directory(workspace_config)
-    pkg_change = config.get_package_changes(pkg)
-    if (
-        config.redeploy is False
-        and (pkg_change is None or not pkg_change.has_changes)
-        and (state_registry.get_target_migrated_from(pkg, target_dir) is None)
-    ):
-        logger.info(f"Skipping package '{pkg}' deployment (no changes detected and redeploy is False).")
-        return PackageInstallResult(
-            package=pkg,
-            install_method=metadata.get_install_method(workspace_config),
-            target_directory=str(target_dir),
-            status="SKIPPED",
-            error="No changes detected and redeploy is False",
-        )
-
     if not config.force and state_registry.is_package_in_midway_state(pkg):
         assert_packages_not_in_midway_state([pkg], state_registry)
 
@@ -819,7 +769,6 @@ def deploy_one_package_impl(
 
     target_dir = context.target_dir
     target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)
-    redeploy = config.redeploy
 
     if target_migrated_from is not None:
         logger.info(
@@ -835,10 +784,7 @@ def deploy_one_package_impl(
                 target_dir=target_migrated_from,
                 sudo=context.sudo,
             )
-        # Force redeploy to populate new target_dir completely
-        redeploy = True
 
-    package_changes = config.get_package_changes(context.pkg_name)
     deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
     deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
 
@@ -847,8 +793,6 @@ def deploy_one_package_impl(
         context=context,
         deployable_files=deployable_files,
         deployed_files=deployed_files,
-        redeploy=redeploy,
-        package_changes=package_changes,
     )
 
     if config.dry_run:
@@ -861,6 +805,23 @@ def deploy_one_package_impl(
             is_first_time=context.is_first_time,
             status="SUCCESS",
         )
+
+    has_mutations = any(a.action_type != ActionType.SKIP_IDENTICAL for a in plan.actions)
+    if not config.redeploy and not context.is_first_time and not has_mutations and target_migrated_from is None:
+        logger.info(f"Skipping package '{context.pkg_name}' deployment (no changes detected and redeploy is False).")
+        return PackageInstallResult(
+            package=context.pkg_name,
+            install_method=context.install_method,
+            target_directory=str(context.target_dir),
+            plan=plan,
+            is_first_time=False,
+            status="SKIPPED",
+            error="No changes detected and redeploy is False",
+        )
+
+    logger.info(f"🚀 Deploying package: {context.pkg_name}")
+    state_registry.set_package_state(context.pkg_name, "installing")
+    state_registry.save()
 
     # 2. Lifecycle Hooks & State registry update
     hook_flags = HookExecFlags.resolve(config.flags, settings=workspace_config.settings)
@@ -885,9 +846,7 @@ def deploy_one_package_impl(
         pkg=context.pkg_name,
         target_directory=context.target_dir,
         install_method=context.install_method,
-        redeploy=redeploy,
         deployable_files=deployable_files,
-        package_changes=package_changes,
     )
     state_registry.save()
 
@@ -921,9 +880,7 @@ def deploy_one_package_impl(
                 pkg=context.pkg_name,
                 target_directory=context.target_dir,
                 install_method=context.install_method,
-                redeploy=redeploy,
                 deployable_files=deployable_files,
-                package_changes=package_changes,
             )
 
     logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
@@ -946,7 +903,6 @@ def deploy_one_package(
 ) -> PackageInstallResult:
     """Core function to deploy a single package configuration."""
     cfg = config if config is not None else InstallConfig()
-    pkg = metadata.name
 
     skip_res = check_package_deployment_skip(
         workspace_config=workspace_config,
@@ -956,12 +912,6 @@ def deploy_one_package(
     )
     if skip_res is not None:
         return skip_res
-
-    logger.info(f"🚀 Deploying package: {pkg}")
-
-    if not cfg.dry_run:
-        state_registry.set_package_state(pkg, "installing")
-        state_registry.save()
 
     with metadata.package_envs():
         return deploy_one_package_impl(
@@ -1070,7 +1020,7 @@ def assert_packages_deployment_ready(
 
 def prepare_install_deployment(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: Sequence[str] = (),
+    target_pkgs: Sequence[str] = (),
     config: Optional[InstallConfig] = None,
 ) -> InstallPlan:
     """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package conflicts before deployment.
@@ -1081,7 +1031,7 @@ def prepare_install_deployment(
 
     Args:
         workspace_config: The workspace configuration instance.
-        packages_to_redeploy: Specific package name(s) to deploy, or empty sequence for all installed packages.
+        target_pkgs: Specific package name(s) to deploy, or empty sequence for all installed packages.
         config: Optional InstallConfig controlling installation behavior.
 
     Returns:
@@ -1097,7 +1047,7 @@ def prepare_install_deployment(
 
     # Targeted packages for this deployment
     discovered_packages = workspace_config.filter_install_packages_by_target(
-        target_packages=packages_to_redeploy or None,
+        target_packages=target_pkgs or None,
     )
 
     # 1. Collect: Load metadata for targeted packages from INSTALL directory
@@ -1183,22 +1133,22 @@ def execute_install_deployment(
 
 def run_primitive_5_install_deployment(
     workspace_config: WorkspaceConfig,
-    packages_to_redeploy: Sequence[str] = (),
+    target_pkgs: Sequence[str] = (),
     config: Optional[InstallConfig] = None,
 ) -> InstallDeploymentResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
-        packages_to_redeploy: Specific package name(s) to deploy, or empty/omitted for all installed packages.
-        config: Optional InstallConfig controlling deployment behavior (resolve_symlinks, force, redeploy, package_changes, flags).
+        target_pkgs: Specific package name(s) to deploy, or empty/omitted for all installed packages.
+        config: Optional InstallConfig controlling deployment behavior (resolve_symlinks, force, redeploy, flags).
 
     Returns:
         InstallDeploymentResult with detailed per-package deployment results.
     """
     plan = prepare_install_deployment(
         workspace_config=workspace_config,
-        packages_to_redeploy=packages_to_redeploy,
+        target_pkgs=target_pkgs,
         config=config,
     )
     return execute_install_deployment(workspace_config, plan=plan)

@@ -269,8 +269,7 @@ def execute_sequential_compile_and_apply(
     install_config = InstallConfig(
         resolve_symlinks=True,
         force=force,
-        redeploy=redeploy,
-        package_changes=package_changes,
+        redeploy=True,
         flags=hook_flags,
         no_deps=no_deps,
     )
@@ -280,7 +279,7 @@ def execute_sequential_compile_and_apply(
     try:
         install_plan = prepare_install_deployment(
             workspace_config,
-            packages_to_redeploy=pkgs_to_install,
+            target_pkgs=pkgs_to_install,
             config=install_config,
         )
     except Exception as e:

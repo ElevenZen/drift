@@ -85,7 +85,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 ### 8. Two-Phase Primitive 5 Decomposition & Generic Topological Sorting
 - **Primitive 5 Decomposition**: Deconstructed monolithic `run_primitive_5_install_deployment` into two discrete, inspectable sub-stages:
-  - `prepare_install_deployment(workspace_config, packages_to_redeploy, config) -> InstallPlan`: Read-only pre-flight audit validating hook readiness, directory permissions, and cross-package path collisions.
+  - `prepare_install_deployment(workspace_config, target_pkgs=(), config=None) -> InstallPlan`: Read-only pre-flight audit validating hook readiness, directory permissions, and cross-package path collisions.
   - `execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`: State-mutating execution phase handling backups, physical deployment, hooks, and state registry tracking.
 - **Strongly Typed Deployment Plans**: Introduced `InstallPlan` and `PackageInstallContext` dataclass models.
 - **Redundant Loading Elimination**: Refactored `deploy_one_package_with_error_wrapping` and `deploy_one_package` to accept `PackageConfig` instances directly instead of repeatedly parsing from `install/`.
