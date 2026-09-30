@@ -456,7 +456,7 @@ Drift enforces strict guardrails to prevent broken environments:
 ### 6. CLI Bypass Flags & Overrides
 
 You can bypass dependency validation guards when needed:
-* **`--ignore-missing-dependencies`** (or **`--allow-missing-dependencies`**):
+* **`--no-deps`**:
   Available on `stage`, `apply`, `deploy`, and `uninstall` commands. Bypasses prerequisite existence checks and broken dependency guards.
 * **`--force` (`-f`)**:
   Available on `uninstall`. Forcibly removes targeted packages even if remaining packages depend on them.

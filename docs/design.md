@@ -176,20 +176,20 @@ Reconciles the sandbox `render/` folder into the `install/` database:
 ### Primitive 5: Install Repo Deployment [Low-level: `drift apply`]
 Applies changes to the physical active system across a two-phase architecture:
 *   **Pre-Flight Inspection (`prepare_install_deployment`)**: Validates readiness guards (`assert_packages_deployment_ready`), verifies hook file existence, checks escalation privileges, audits cross-package path collisions, and resolves prerequisite topological deploy order (`InstallPlan`).
-*   **Execution Phase (`execute_install_deployment`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, ignore_missing_dependencies)`.
-*   **Collision Guard**: Backs up colliding physical files to `backup/<package>/overwritten/`.
-*   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment.
-*   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion.
-*   **Symlink Mode**: Deploys relative symlinks from host target paths to `install/<pkg>/` via Drift's native linker (`run_full_symlink_deployment`).
+*   **Execution Phase (`execute_install_deployment`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
+*   **Collision Guard & Planning (`plan_package_deployment`)**: Pure read-only per-path planner compiling inspectable `PackageDeploymentPlan`. Backs up colliding physical files to `backup/<package>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and historical orphans to `backup/<package>/deleted_files/`.
+*   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment (skipped during `--dry-run`).
+*   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion (skipped during `--dry-run`).
+*   **Symlink Mode**: Deploys relative symlinks from host target paths to `install/<pkg>/` via Drift's native linker.
 *   **Copy Mode**: Copies files to `target_directory` (prefixed with `sudo` if configured).
 
 ### Primitive 6: Install Repo Commit [Low-level: `drift install-commit`]
 Locks the deployed configurations and `state.toml` into the local state database with an automated commit.
 
 ### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
-Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, ignore_missing_dependencies, flags)`:
+Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, no_deps, flags)`:
 1.  **Dependency Safeguards & Reverse Topological Order**:
-    *   **Pre-Flight Broken Dependency Guard**: Invokes `assert_no_broken_dependencies_on_uninstall` to verify that remaining installed packages do not depend on any targeted packages (bypassed if `force=True` or `ignore_missing_dependencies=True`).
+    *   **Pre-Flight Broken Dependency Guard**: Invokes `assert_no_broken_dependencies_on_uninstall` to verify that remaining installed packages do not depend on any targeted packages (bypassed if `force=True` or `no_deps=True`).
     *   **Reverse Topological Order**: Resolves `resolve_package_uninstall_order` so dependent packages are uninstalled before prerequisites, guaranteeing cleanup hooks execute while prerequisite configurations remain intact.
     *   **Graceful Missing Directory Handling**: If a package's directory is missing in `install/`, Drift emits a warning and gracefully removes the record from `state.toml` without crashing.
 2.  **Standard Uninstall Mode (Default)**:
@@ -917,7 +917,7 @@ Dependencies are categorized into two distinct operational semantics:
     *   The referenced package **must exist** in the active package universe (either already recorded as installed in `install/state.toml` or targeted for deployment in the current transaction with `enable_install = true`).
     *   The prerequisite package must be staged and deployed **before** the declaring package.
     *   If a required dependency is missing from the available universe, Drift immediately halts during pre-flight assertions before any physical file operations are executed.
-    *   **Bypass Option**: If a user needs to bypass missing prerequisite errors (e.g., during partial recovery or standalone testing), passing `--force` or setting `ignore_missing_dependencies = true` in `InstallConfig` / `UninstallConfig` bypasses the check.
+    *   **Bypass Option**: If a user needs to bypass missing prerequisite errors (e.g., during partial recovery or standalone testing), passing `--force` or setting `no_deps = true` in `InstallConfig` / `UninstallConfig` (CLI: `--no-deps`) bypasses the check.
 *   **Optional Dependencies (`optional = true`)**:
     *   Acts strictly as an **ordering constraint**.
     *   If the named prerequisite exists in the active package universe, Drift guarantees it is staged and installed prior to the declaring package.
@@ -946,10 +946,10 @@ Drift enforces a strict separation between read-only validation guards and pure 
     *   Pure reverse topological sorter returning package names in reverse dependency order (dependents before prerequisites).
 *   [`assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)`](../src/drift/primitives/package_assertions.py):
     *   Read-only guard for uninstallation. Evaluates packages that will remain installed on the system to verify none of them require any of the packages targeted for uninstallation.
-    *   Aggregates all broken dependency relationships and raises `ConfigError` unless bypassed via `--force` or `ignore_missing_dependencies = true`.
-*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config, ignore_missing_dependencies=False) -> List[str]`](../src/drift/primitives/package_assertions.py):
+    *   Aggregates all broken dependency relationships and raises `ConfigError` unless bypassed via `--force` or `no_deps = true` (CLI: `--no-deps`).
+*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py):
     *   Centralized resolution helper that constructs the full package universe (already-installed packages from `state.toml` + target batch).
-    *   Runs `assert_required_package_dependencies_exist` upfront when `not ignore_missing_dependencies`.
+    *   Runs `assert_required_package_dependencies_exist` upfront when `not no_deps`.
     *   Computes and returns the topologically sorted package sequence. If a package directory is missing from `install/`, it gracefully falls back to a default `PackageConfig(PackageSectionConfig(name=pkg))` representation.
 
 #### 5. Multi-Phase Lifecycle Pipeline Integration
@@ -961,10 +961,10 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
 *   **Primitive 5: Install Repo Deployment**:
     *   `prepare_install_deployment` validates deployment readiness (`assert_packages_deployment_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
     *   `execute_install_deployment` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy.
-    *   Controlled by strongly-typed `InstallConfig(force, dry_run, flags, ignore_missing_dependencies)`.
+    *   Controlled by strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
 *   **Primitive 7: Uninstall Repo Package**:
-    *   Operates using `UninstallConfig(force, dry_run, detach, ignore_missing_dependencies, flags)`.
-    *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `ignore_missing_dependencies`).
+    *   Operates using `UninstallConfig(force, dry_run, detach, no_deps, flags)`.
+    *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `no_deps`).
     *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
     *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
 *   **Primitive 8: Rollback Recovery**:
@@ -1078,47 +1078,63 @@ To guarantee full IDE and Language Server Protocol (LSP) features (e.g., syntax 
 *   **Why this is superior**: Because the terminal extension is the actual target format (like `.sh`, `.nix`, `.json`), text editors instantly apply the correct syntax highlighting, formatters, and LSP environments without requiring custom regex filetype mappings.
 
 ### C. Incremental vs. Full Deployment Strategies
-To minimize system disruption and application reloads, deployment is executed under two distinct strategies:
+To minimize system disruption and application reloads, deployment is executed under two distinct strategies via the unified deployment planner (`plan_package_deployment`):
 1.  **Incremental Deployment (Surgical File-by-File)**:
     *   When executing a deployment sequence, Primitive 4 outputs a granular `PackageStageChanges` object of added, modified, or deleted files.
-    *   In both `symlink` and `copy` modes, the deployment engine uses a pure-Python execution pipeline without invoking external shell tools.
-    *   Instead, it surgically iterates through the computed file list, creating individual relative symlinks (or copying individual files) manually. This maintains a minimal interruption footprint and prevents bulk reload signals to running processes.
-    *   **Infinite Loop Protection**: In `symlink` mode, before creating any symlink `~/<path>`, the incremental deployer traverses up the directory path from the parent. If it discovers any parent directory (e.g. `~/.config/nvim/`) is **already a symlink** pointing into `install/`, it **must immediately and safely skip** creating individual symlinks inside that directory. This prevents creating self-referencing circular symlink loops inside the local database.
+    *   In both `symlink` and `copy` modes, the deployment engine compiles a surgical plan inspecting only changed files and deleted orphans.
+    *   Instead of bulk reloading, it surgically executes individual relative symlink updates (or file copies/deletions), maintaining a minimal interruption footprint.
+    *   **Infinite Loop & Ancestor Protection**: Before creating any link or file, intermediate ancestor directories are inspected (`_inspect_ancestor_directories`). If any parent directory is an internal symlink pointing into `drift_root` or is blocked by an existing file, it is backed up to `backup/<package>/overwritten/` and replaced with a concrete directory (`ENSURE_DIR`), preventing circular symlink loops.
 2.  **Full Deployment (Native Symlink & Copy Linker)**:
-    *   When triggering a standalone deployment, running `drift rollback`, or performing a first-time setup, the system executes a clean **Full Package Redeploy**.
-    *   Drift utilizes a fully native, self-contained linker pipeline without external binaries:
-        *   *Symlink Packages (`install_method = "symlink"`, default on POSIX)*: Deploys relative symlinks via `run_full_symlink_deployment`. For each deployable file, it computes relative symlink targets from the host target path to `install/<pkg>/` (`compute_relative_symlink_target`), applies `dot-` prefix translation, creates intermediate directories, and safely skips or overwrites targets according to collision guard rules.
-        *   *Copy Packages (`install_method = "copy"`, default on Windows)*: Executes an atomic file copy delivery loop across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
+    *   When triggering a standalone deployment, running `drift rollback`, or performing a first-time setup (or with `--redeploy`), the system executes a clean **Full Package Redeploy**.
+    *   Drift compiles a complete `PackageDeploymentPlan` across all deployable files in the package:
+        *   *Symlink Packages (`install_method = "symlink"`, default on POSIX)*: Deploys relative symlinks via `execute_package_deployment`. For each deployable file, it computes relative symlink targets from the host target path to `install/<pkg>/` (`compute_relative_symlink_target`), applies `dot-` prefix translation, creates intermediate directories, and safely skips or overwrites targets according to collision guard rules.
+        *   *Copy Packages (`install_method = "copy"`, default on Windows)*: Executes atomic file copy delivery across deployable package files (applying dot-prefix translation via `translate_dot_prefixes`, prefixed with `sudo` if configured) without deleting unrelated files inside target directories. Any wild-file pruning is strictly scoped and handled during Primitive 1.  
 
 The program ensures compatibility between these two modes. In either mode, the program verifies the package config has `enable_install=true` and loads the install method, install location, and sudo flag from it.
 
-### D. Physical Conflict Prevention (Collision Guard)
-To protect pre-existing manual files from being silently overridden or destroyed during deployment, the Collision Guard strictly enforces comprehensive audits using the centralized `compare_folders` tool before any physical deployment operations.
+### D. Physical Conflict Prevention (Collision Guard & Deployment Planner)
+To protect pre-existing manual files from being silently overridden or destroyed during deployment, Drift dispenses collision guarding into an inspectable, side-effect-free per-path deployment planner (`plan_package_deployment`), accompanied by centralized pre-flight boundary assertions before any physical operations or lifecycle hooks take place.
 
-#### 1. Target Parent Symlink Nominal Safety Check (Pre-Check)
-Prior to running any file comparisons, the system performs a nominal check on the target directory path (`get_symlinked_parent(target_dir, workspace_config.drift_root)`). If any parent directory at or above the target base is a symlink pointing inside the workspace root (`drift_root`), Drift **aborts immediately** with an `InstallCollisionError` (Exit Code `5`). Setting an installation target inside `drift_root` is fundamentally forbidden behavior to protect the workspace repository from accidental corruption or circular deployment loops.
+#### 1. Centralized Pre-Flight Boundary & Conflict Guards
+Before any deployment planning or file operations occur, Drift executes fail-fast pre-flight assertions across all target packages:
+1.  **Canonical Workspace Root Boundary Guard**:
+    *   Checks whether `target_dir.resolve()` is relative to (or equal to) `drift_root.resolve()` via `assert_packages_ready_for_install`.
+    *   Because path resolution expands all symlinks in target path ancestors and leaf destinations, this single canonical check guarantees that no deployment target—whether directly specified or reached via parent symlinks—can point into `drift_root`.
+    *   If violated, Drift **aborts immediately** with an `InstallCollisionError` (Exit Code `5`). Deploying into `drift_root` is strictly forbidden to protect the workspace repository from accidental corruption or circular deployment loops.
+2.  **Cross-Package Destination Conflict Audit**:
+    *   Invokes `assert_no_cross_package_conflicts` across all active packages scheduled for deployment.
+    *   Computes the resolved target paths for all deployable files across packages. If two or more packages claim the same host destination path, Drift halts immediately with an `InstallCollisionError` (Exit Code `5`) before modifying any files, preventing inter-package race conditions and destructive overwrites.
 
-#### 2. Internal Symlink Conflicts Resolution & Canonical Path Check
-1.  **Internal Symlinks Backup & Replacement**:
-    *   The collision guard identifies any paths inside `target_dir` that are internal symlinks pointing into `drift_root` that conflict with files in `install/<pkg>/`.
-    *   The system backs up these symlinks to `backup/<package>/overwritten/<path>`, removes the links, and recreates physical parent directories.
-2.  **Resolved Canonical Path Check**:
-    *   After resolving and backing up conflicting internal symlinks inside `target_dir`, the system checks the resolved canonical path (`target_dir.resolve()`).
-    *   If the canonical path of `target_dir` still points inside the workspace root (`drift_root`), Drift **aborts immediately** with an `InstallCollisionError` (Exit Code `5`). Deploying into `drift_root` is strictly forbidden and requires updating `target_directory` in `drift_package.toml`.  
+#### 2. Declarative Per-Path Planning Pipeline (`plan_package_deployment`)
+Rather than relying on mutating collision routines or monolithic filesystem folder diffing, Drift generates a typed `PackageDeploymentPlan` using pure per-path inspection helpers:
+1.  **Ancestor Directory Inspection (`_inspect_ancestor_directories`)**:
+    *   For every deployable file, the planner evaluates all intermediate directory levels between `target_dir` and the destination file, sorted by depth (shallowest to deepest).
+    *   Evaluates whether an intermediate path is blocked by a non-directory (e.g. regular file) or is an internal symlink pointing into `drift_root`.
+    *   If blocked or internally symlinked, a `BACKUP_OVERWRITE` action is planned (safely backing up the conflicting node to `backup/<package>/overwritten/<path>` with `dot-` prefix translation via `decode_dot_prefix`), followed by an `ENSURE_DIR` action.
+    *   Ancestor path inspections are deduplicated across all files in the package to prevent redundant backups or directory creation.
+2.  **Leaf File State Machine (`_inspect_symlink_leaf` / `_inspect_physical_file_leaf`)**:
+    *   *Symlink Mode*:
+        *   **Missing Destination**: Plans `CREATE_SYMLINK`.
+        *   **Valid Existing Link**: If the host path is already a relative symlink pointing correctly to the target file in `install/<pkg>/`, plans `SKIP_IDENTICAL`.
+        *   **Colliding Node (Stale Symlink, File, or Directory)**: Plans `BACKUP_OVERWRITE` to `backup/<package>/overwritten/<path>` followed by `CREATE_SYMLINK`.
+    *   *Copy Mode*:
+        *   **Missing Destination**: Plans `CREATE_COPY`.
+        *   **Identical Content**: If the host file is a regular file with identical content (`filecmp.cmp`), plans `SKIP_IDENTICAL`.
+        *   **Previously Deployed (`state.toml`)**: If the regular file is already tracked in `deployed_files` manifest, plans `UPDATE_COPY` without backup.
+        *   **Untracked / Type Collision**: Plans `BACKUP_OVERWRITE` to `backup/<package>/overwritten/<path>` followed by `CREATE_COPY`.
+3.  **Orphan Reconciliation (`_inspect_orphan_cleanup`)**:
+    *   Compares the current package files against the historical `deployed_files` manifest stored in `install/state.toml`.
+    *   Any previously deployed files that are no longer part of the package are planned as `BACKUP_PRUNE` (swept safely into `backup/<package>/deleted_files/<path>`) followed by `DELETE_ORPHAN`.
+4.  **Dotfile Backup Translation (`decode_dot_prefix`)**:
+    *   When saving displaced host files into `backup/<package>/overwritten/` or `backup/<package>/deleted_files/`, leading dots on path components are translated back to `dot-` prefixes (e.g. `.bashrc` $\rightarrow$ `dot-bashrc`, `.config/nvim` $\rightarrow$ `dot-config/nvim`).
+    *   This ensures that the backup archive mirrors the exact structural naming conventions of `src/` and `install/`.
 
-#### 3. Unified Recursive Audit Flow & Non-Abort Backup Routing
-If all safety checks pass, the system invokes `compare_folders` with parameters `src_only=True` and `translate_mode="forward"` to check how files in the repository's `install/` base compare to the active target system paths (handling path conversions like `dot-` to `.` automatically).
-
-For regular host file conflicts, Drift does **not** abort. Instead, files are categorized and safely backed up to `backup/<package>/overwritten/<path>` to protect pre-existing data:
-*   *Type Mismatches (`diff.deleted`)*: If the type of a target path on the host differs from the repository (e.g. a physical file exists where the repo expects a folder), the host item is backed up to `backup/<package>/overwritten/<path>` and cleared.
-*   *Modified Paths (`diff.modified`)*:
-    *   *Symlink Link Exemption*: If the target is already a symlink pointing to OUR package in `install/`, it is a valid pre-existing link and skipped.
-    *   *Copy Mode Exemption*: If deployed via `copy` and already registered in `state.toml`, target files are updated with new content.
-    *   *Overwritten Backup*: Otherwise, the conflicting file/folder on the host is backed up to `backup/<package>/overwritten/<path>` and replaced.
-*   *Content Matches (`diff.matches` under Symlink mode)*: If a file matches content exactly but exists on the host as a physical regular file rather than a symlink, the physical file is backed up to `backup/<package>/overwritten/<path>` and replaced by the relative symlink.
-
-#### 4. Planned Feature: Cross-Package Ownership Collision
-*(Future Capability)*: In future releases, Drift will detect when multiple active packages claim the exact same target path on the host system in `install/state.toml`, halting deployment with an `InstallCollisionError` before applying changes to prevent inter-package race conditions.
+#### 3. Inspectable Simulation & Execution Separation
+*   **Dry-Run Mode (`drift apply --dry-run`)**:
+    *   Passes `dry_run=True` to compile and display the complete `PackageDeploymentPlan` with planned actions, action counts, and skipped lifecycle hooks without performing any filesystem mutations.
+    *   Supports programmatic consumption via `--json`.
+*   **Execution Phase (`execute_package_deployment`)**:
+    *   State mutations strictly follow the pre-computed plan in dependency order: intermediate directory creation, backups, symlink/copy file application, and orphan pruning.
 
 > [!IMPORTANT]
 > **Transient `backup/` Directory Policy & User Responsibility**:
@@ -1329,19 +1345,19 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:
-*   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root.
+*   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root (`target_dir.resolve()` relative to `drift_root.resolve()`).
+*   **Cross-Package Conflict Guard**: Verifies no two deployable packages target identical host file paths (`assert_no_cross_package_conflicts`).
+*   **Target Migration Check**: If the target directory changed from previous deployments (`target_migrated_from`), Drift undeploys files from the former host location and forces a full redeployment.
 *   **State Transition to `"installing"`**: The state registry database `state.toml` is written to mark the package's state as `"installing"`.
-*   **Collision Guard (Incremental/Full)**:
-    - *Symlinked Parent Pre-Check*: Traverses up the target path. If any parent directory is a symlink pointing into the workspace root, aborts immediately.
-    - *Unified Audit*: Uses `compare_folders` to compare files in the `install/` base directory with the active target. Collisions are safely backed up to `backup/<package>/overwritten/` and removed from the active system to clear the path.
+*   **Declarative Plan Compilation (`plan_package_deployment`)**:
+    - *Intermediate Directory Inspection*: Evaluates all intermediate directory levels between `target_dir` and the destination file, planning `BACKUP_OVERWRITE` and `ENSURE_DIR` if blocked by files or internal symlinks.
+    - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`.
+    - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted_files/` and `DELETE_ORPHAN`.
+    - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
-*   **File Delivery Phase**:
-    - *Full Deployment Delivery*: If `package_changes` is `None` (representing a clean redeploy, rollback, or initial deploy):
-        1.  *Orphan File Pruning*: Compares the current package files with the historical `deployed_files` manifest. Any orphaned paths are backed up and deleted from the target system.
-        2.  *High-Level Delivery*: Delivers physical files via an atomic single-file copy pipeline applying dot-prefix translation (`translate_dot_prefixes`), or links packages via Drift's native relative symlink linker (`run_full_symlink_deployment`). Internal `.drift` directories and hook scripts are strictly filtered from deployment.
-    - *Incremental Deployment Delivery*: If `package_changes` is provided (surgical deploy):
-        1.  Deletes files listed in `package_changes.deployable_changes.deleted`.
-        2.  Deploys individual files manually using precise symlink creation or copy operations with dot-prefix translation.
+*   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.
+*   **Plan Execution Phase (`execute_package_deployment`)**:
+    - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/`, atomic file copying or relative symlink creation, and orphan pruning.
 *   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
 

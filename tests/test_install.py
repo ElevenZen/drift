@@ -46,16 +46,18 @@ from drift.primitives.install_repo import (
         prepare_install_deployment,
         execute_install_deployment,
         InstallPlan,
-        run_full_symlink_deployment,
-        find_internal_symlink_conflicts,
-        resolve_single_internal_symlink_conflict,
-        handle_internal_symlink_conflicts,
-        run_collision_guard,
-        deploy_single_symlink_file,
+        plan_package_deployment,
+        execute_package_deployment,
+        execute_single_action,
         deploy_one_package,
         InstallConfig,
         PackageInstallContext,
         assert_packages_deployment_ready,
+)
+from drift.core.result_models import (
+        ActionType,
+        PlannedFileAction,
+        PackageDeploymentPlan,
 )
 from drift.utils.path_utils import compute_relative_symlink_target
 from drift.primitives.package_assertions import (
@@ -723,7 +725,7 @@ class TestInstallRepo(unittest.TestCase):
             )
         
         self.assertIn("Safety Abort", str(ctx.exception))
-        self.assertIn("lies outside", str(ctx.exception))
+        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
     def test_symlinked_parent_rebuilt_inside_target_dir(self) -> None:
         """Verifies that a parent symlink situated INSIDE the package's target_dir is successfully backed up, deleted, and rebuilt as a physical folder."""
@@ -779,7 +781,8 @@ class TestInstallRepo(unittest.TestCase):
         )
 
     def test_run_full_symlink_deployment(self) -> None:
-        """Verifies that run_full_symlink_deployment links deployable files natively without invoking subprocesses."""
+        """Verifies that plan_package_deployment and execute_package_deployment link deployable files natively."""
+        from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_full"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -790,12 +793,24 @@ class TestInstallRepo(unittest.TestCase):
         target_dir = self.system_target_dir / "symlink_test_target"
         deployable_files = [Path("file1.txt"), Path("sub/file2.txt")]
 
-        run_full_symlink_deployment(
-            src_pkg_dir=pkg_install_dir,
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
             target_dir=target_dir,
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
             sudo=False,
-            deployable_files=deployable_files,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
         )
+
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=deployable_files,
+            redeploy=True,
+        )
+        execute_package_deployment(context=context, plan=plan)
 
         # Target files exist as relative symlinks
         target_f1 = target_dir / "file1.txt"
@@ -894,7 +909,7 @@ class TestInstallRepo(unittest.TestCase):
         # Re-run standalone deployment (without package_changes)
         res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
-        self.assertEqual(res2.packages[0].operations.deleted_backup, ["file2.txt"])
+        self.assertEqual([str(a.rel_path) for a in res2.packages[0].plan.prune_backups], ["file2.txt"])
 
         # 3. Assert file2.txt is pruned from system target
         self.assertFalse(system_file2.exists())
@@ -1598,7 +1613,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
-        self.assertEqual(res.packages[0].operations.overwritten_backup, ["app.conf"])
+        self.assertEqual([str(a.rel_path) for a in res.packages[0].plan.overwritten_backups], ["app.conf"])
 
     def test_switch_method_from_symlink_to_copy_backs_up_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'symlink' switches to 'copy',
@@ -1758,8 +1773,8 @@ class TestInstallRepo(unittest.TestCase):
             run_primitive_5_install_deployment(self.workspace_config, [pkg])
         self.assertIn("not a regular file", str(cm.exception))
 
-    def test_find_internal_symlink_conflicts_direct(self) -> None:
-        """Directly verifies find_internal_symlink_conflicts helper function."""
+    def test_plan_package_deployment_detects_internal_symlink_conflicts(self) -> None:
+        """Verifies plan_package_deployment detects internal ancestor symlinks and leaf symlink collisions."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_find_conflicts"
         pkg_install_dir = self.install_dir / pkg
@@ -1780,7 +1795,7 @@ class TestInstallRepo(unittest.TestCase):
         fake_internal_dest.mkdir(parents=True, exist_ok=True)
         (self.system_target_dir / "nested").symlink_to(fake_internal_dest)
 
-        # 2. 'root.conf' is a symlink pointing outside drift_root (e.g. /tmp) -> ignored
+        # 2. 'root.conf' is a symlink pointing outside drift_root (e.g. /tmp) -> colliding external symlink
         outside_target = Path(tempfile.gettempdir()) / "outside_drift.txt"
         outside_target.write_text("outside", encoding="utf-8")
         (self.system_target_dir / "root.conf").symlink_to(outside_target)
@@ -1796,15 +1811,25 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        conflicts = find_internal_symlink_conflicts(context=context)
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("nested/app.conf"), Path("root.conf")],
+            redeploy=True,
+        )
 
-        # Should only find 'nested' as an internal symlink conflict
-        self.assertEqual(len(conflicts), 1)
-        self.assertEqual(conflicts[0][0], Path("nested"))
-        self.assertEqual(conflicts[0][1], self.system_target_dir / "nested")
+        # 'nested' ancestor has BACKUP_OVERWRITE (Internal ancestor symlink conflict) and ENSURE_DIR
+        nested_overwrites = [a for a in plan.actions if a.rel_path == Path("nested") and a.action_type == ActionType.BACKUP_OVERWRITE]
+        self.assertEqual(len(nested_overwrites), 1)
+        self.assertEqual(nested_overwrites[0].reason, "Internal ancestor symlink conflict")
+        self.assertEqual(nested_overwrites[0].system_target, self.system_target_dir / "nested")
 
-    def test_resolve_single_internal_symlink_conflict_direct(self) -> None:
-        """Directly verifies resolve_single_internal_symlink_conflict helper function."""
+        # 'root.conf' leaf has BACKUP_OVERWRITE (Colliding external symlink) and CREATE_COPY
+        root_overwrites = [a for a in plan.actions if a.rel_path == Path("root.conf") and a.action_type == ActionType.BACKUP_OVERWRITE]
+        self.assertEqual(len(root_overwrites), 1)
+        self.assertEqual(root_overwrites[0].reason, "Colliding external symlink")
+
+    def test_plan_and_execute_internal_symlink_directory_conflict(self) -> None:
+        """Verifies planning and executing an internal symlink directory conflict replaces it with a real dir."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_resolve_conflict"
         pkg_install_dir = self.install_dir / pkg
@@ -1830,15 +1855,12 @@ class TestInstallRepo(unittest.TestCase):
         system_target = self.system_target_dir / "sub_dir"
         system_target.symlink_to(fake_drift_dest)
 
-        processed_paths: set = set()
-
-        resolve_single_internal_symlink_conflict(
+        plan = plan_package_deployment(
             context=context,
-            install_rel_path=Path("sub_dir"),
-            system_target=system_target,
-            resolve_symlinks=True,
-            processed_paths=processed_paths
+            deployable_files=[Path("sub_dir/file.txt")],
+            redeploy=True,
         )
+        execute_package_deployment(context=context, plan=plan)
 
         # 1. system_target is now a physical directory
         self.assertTrue(system_target.is_dir())
@@ -1848,12 +1870,199 @@ class TestInstallRepo(unittest.TestCase):
         backup_path = self.backup_dir / pkg / "overwritten" / "sub_dir"
         self.assertTrue(backup_path.exists())
 
-        # 3. processed_paths contains sub_dir and its child
-        self.assertIn(Path("sub_dir"), processed_paths)
-        self.assertIn(Path("sub_dir/file.txt"), processed_paths)
+        # 3. File was created
+        self.assertTrue((system_target / "file.txt").is_file())
+        self.assertEqual((system_target / "file.txt").read_text(encoding="utf-8"), "file content")
 
-    def test_resolve_single_internal_symlink_conflict_valid_symlink_skipped(self) -> None:
-        """Verifies that a valid relative symlink pointing to the current package is skipped."""
+    def test_plan_and_execute_ancestor_symlink_with_nested_descendants(self) -> None:
+        """Verifies that when shallow ancestor 'a' is a symlink to a folder on host, only 'a' is backed up,
+        subsequent deeper ancestors emit ENSURE_DIR, and leaf files emit creation actions without duplicate backups."""
+        from drift.core.ignore import DriftIgnore
+        pkg = "pkg_ancestor_symlink_nesting"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "a" / "b").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "a" / "b" / "c.txt").write_text("package c content", encoding="utf-8")
+
+        # Create external folder on host containing b/c.txt
+        external_folder = Path(tempfile.mkdtemp(prefix="drift_foreign_dir_"))
+        (external_folder / "b").mkdir(parents=True, exist_ok=True)
+        (external_folder / "b" / "c.txt").write_text("foreign c content", encoding="utf-8")
+
+        # Host system_target_dir / "a" is a symlink to external_folder
+        (self.system_target_dir / "a").symlink_to(external_folder)
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("a/b/c.txt")],
+            redeploy=True,
+        )
+
+        # 1. Exactly one BACKUP_OVERWRITE (on 'a'), ENSURE_DIR on 'a', ENSURE_DIR on 'a/b', CREATE_SYMLINK on 'a/b/c.txt'
+        overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
+        self.assertEqual(len(overwrites), 1)
+        self.assertEqual(overwrites[0].rel_path, Path("a"))
+        self.assertEqual(overwrites[0].system_target, self.system_target_dir / "a")
+        self.assertEqual(overwrites[0].reason, "Symlink blocking directory")
+
+        ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
+        self.assertEqual(len(ensure_dirs), 2)
+        self.assertEqual(ensure_dirs[0].rel_path, Path("a"))
+        self.assertEqual(ensure_dirs[1].rel_path, Path("a/b"))
+
+        creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_SYMLINK]
+        self.assertEqual(len(creations), 1)
+        self.assertEqual(creations[0].rel_path, Path("a/b/c.txt"))
+
+        # 2. Execute plan and verify host state
+        execute_package_deployment(context=context, plan=plan)
+
+        self.assertTrue((self.system_target_dir / "a").is_dir())
+        self.assertFalse((self.system_target_dir / "a").is_symlink())
+        self.assertTrue((self.system_target_dir / "a" / "b").is_dir())
+        self.assertTrue((self.system_target_dir / "a" / "b" / "c.txt").is_symlink())
+        self.assertEqual((self.system_target_dir / "a" / "b" / "c.txt").read_text(encoding="utf-8"), "package c content")
+
+        # 3. Verify backup of the original contents
+        backup_dir = self.backup_dir / pkg / "overwritten" / "a"
+        self.assertTrue(backup_dir.is_dir())
+        self.assertEqual((backup_dir / "b" / "c.txt").read_text(encoding="utf-8"), "foreign c content")
+
+        shutil.rmtree(external_folder, ignore_errors=True)
+
+    def test_plan_and_execute_dotfile_ancestor_symlink_with_nested_descendants(self) -> None:
+        """Verifies that dotfile prefixes like dot-config as host symlinks trigger backup only on .config,
+        with proper dot-prefix translation for backup paths and ENSURE_DIR for subpaths."""
+        from drift.core.ignore import DriftIgnore
+        pkg = "pkg_dotfile_ancestor_symlink"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config" / "nvim" / "lua").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config" / "nvim" / "lua" / "init.lua").write_text("lua content", encoding="utf-8")
+
+        # Create external folder on host containing nvim/lua/init.lua
+        external_folder = Path(tempfile.mkdtemp(prefix="drift_foreign_dotconfig_"))
+        (external_folder / "nvim" / "lua").mkdir(parents=True, exist_ok=True)
+        (external_folder / "nvim" / "lua" / "init.lua").write_text("old lua content", encoding="utf-8")
+
+        # Host system_target_dir / ".config" is a symlink to external_folder
+        (self.system_target_dir / ".config").symlink_to(external_folder)
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("dot-config/nvim/lua/init.lua")],
+            redeploy=True,
+        )
+
+        # 1. Exactly one BACKUP_OVERWRITE for dot-config
+        overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
+        self.assertEqual(len(overwrites), 1)
+        self.assertEqual(overwrites[0].rel_path, Path("dot-config"))
+        self.assertEqual(overwrites[0].system_target, self.system_target_dir / ".config")
+
+        # 2. ENSURE_DIR for .config, .config/nvim, .config/nvim/lua
+        ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
+        self.assertEqual(len(ensure_dirs), 3)
+        self.assertEqual([d.rel_path for d in ensure_dirs], [Path("dot-config"), Path("dot-config/nvim"), Path("dot-config/nvim/lua")])
+
+        # 3. CREATE_COPY for init.lua
+        creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_COPY]
+        self.assertEqual(len(creations), 1)
+        self.assertEqual(creations[0].rel_path, Path("dot-config/nvim/lua/init.lua"))
+
+        # 4. Execute and verify
+        execute_package_deployment(context=context, plan=plan)
+
+        self.assertTrue((self.system_target_dir / ".config").is_dir())
+        self.assertFalse((self.system_target_dir / ".config").is_symlink())
+        self.assertTrue((self.system_target_dir / ".config" / "nvim" / "lua" / "init.lua").is_file())
+        self.assertEqual((self.system_target_dir / ".config" / "nvim" / "lua" / "init.lua").read_text(encoding="utf-8"), "lua content")
+
+        # 5. Backup translation to dot-config
+        backup_dir = self.backup_dir / pkg / "overwritten" / "dot-config"
+        self.assertTrue(backup_dir.is_dir())
+        self.assertEqual((backup_dir / "nvim" / "lua" / "init.lua").read_text(encoding="utf-8"), "old lua content")
+
+        shutil.rmtree(external_folder, ignore_errors=True)
+
+    def test_plan_intermediate_ancestor_symlink_deduplication(self) -> None:
+        """Verifies that when a deeper ancestor 'a/b' is a symlink (with 'a' being a regular dir),
+        only 'a/b' is backed up, while other siblings of 'a' are inspected normally."""
+        from drift.core.ignore import DriftIgnore
+        pkg = "pkg_intermediate_ancestor_symlink"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "a" / "b" / "c").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "a" / "b" / "c" / "deep.txt").write_text("deep", encoding="utf-8")
+        (pkg_install_dir / "a" / "sibling.txt").write_text("sibling", encoding="utf-8")
+
+        # Host has real directory 'a', and 'a/b' is a symlink to external_folder containing c/deep.txt
+        (self.system_target_dir / "a").mkdir(parents=True, exist_ok=True)
+        external_folder = Path(tempfile.mkdtemp(prefix="drift_foreign_b_"))
+        (external_folder / "c").mkdir(parents=True, exist_ok=True)
+        (external_folder / "c" / "deep.txt").write_text("foreign deep", encoding="utf-8")
+        (self.system_target_dir / "a" / "b").symlink_to(external_folder)
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("a/b/c/deep.txt"), Path("a/sibling.txt")],
+            redeploy=True,
+        )
+
+        # Only 'a/b' receives BACKUP_OVERWRITE
+        overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
+        self.assertEqual(len(overwrites), 1)
+        self.assertEqual(overwrites[0].rel_path, Path("a/b"))
+
+        # ENSURE_DIR for 'a/b' and 'a/b/c' ('a' is already a dir on host so _inspect_single_ancestor returns [])
+        ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
+        self.assertEqual(len(ensure_dirs), 2)
+        self.assertEqual([d.rel_path for d in ensure_dirs], [Path("a/b"), Path("a/b/c")])
+
+        # Leaf creations for both files
+        creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_SYMLINK]
+        self.assertEqual(len(creations), 2)
+
+        shutil.rmtree(external_folder, ignore_errors=True)
+
+    def test_plan_skips_valid_relative_symlink(self) -> None:
+        """Verifies that a valid relative symlink pointing to the current package is planned as SKIP_IDENTICAL."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_valid"
         pkg_install_dir = self.install_dir / pkg
@@ -1877,22 +2086,22 @@ class TestInstallRepo(unittest.TestCase):
         rel_to_install = os.path.relpath(pkg_install_dir / "valid_file.txt", self.system_target_dir)
         os.symlink(rel_to_install, system_target)
 
-        processed_paths: set = set()
-
-        resolve_single_internal_symlink_conflict(
+        plan = plan_package_deployment(
             context=context,
-            install_rel_path=Path("valid_file.txt"),
-            system_target=system_target,
-            resolve_symlinks=True,
-            processed_paths=processed_paths
+            deployable_files=[Path("valid_file.txt")],
+            redeploy=True,
         )
 
-        # System target remains untouched as a symlink and not marked in processed_paths
-        self.assertTrue(system_target.is_symlink())
-        self.assertEqual(len(processed_paths), 0)
+        # System target is planned as SKIP_IDENTICAL
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertEqual(plan.skipped[0].rel_path, Path("valid_file.txt"))
+        self.assertEqual(plan.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
 
-    def test_handle_internal_symlink_conflicts_direct(self) -> None:
-        """Directly verifies handle_internal_symlink_conflicts detects, backs up, and removes internal symlinks."""
+        execute_package_deployment(context=context, plan=plan)
+        self.assertTrue(system_target.is_symlink())
+
+    def test_plan_and_execute_internal_symlink_conflicts(self) -> None:
+        """Verifies planning and executing detects, backs up, and removes internal symlinks."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_handle_conflicts"
         pkg_install_dir = self.install_dir / pkg
@@ -1918,7 +2127,7 @@ class TestInstallRepo(unittest.TestCase):
         fake_internal_file.write_text("internal", encoding="utf-8")
         (self.system_target_dir / "root.conf").symlink_to(fake_internal_file)
 
-        # 3. 'external.conf' is a symlink pointing outside drift_root (should not be touched by handle_internal_symlink_conflicts)
+        # 3. 'external.conf' is a symlink pointing outside drift_root (not in package deployable files)
         outside_target = Path(tempfile.gettempdir()) / "outside_drift.txt"
         outside_target.write_text("outside", encoding="utf-8")
         (self.system_target_dir / "external.conf").symlink_to(outside_target)
@@ -1934,30 +2143,28 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        processed_paths: Set[Path] = set()
-        handle_internal_symlink_conflicts(
+        plan = plan_package_deployment(
             context=context,
-            resolve_symlinks=True,
-            processed_paths=processed_paths,
+            deployable_files=[Path("nested/app.conf"), Path("root.conf")],
+            redeploy=True,
         )
+        execute_package_deployment(context=context, plan=plan)
 
-        # root.conf symlink should be removed and backed up
-        self.assertFalse((self.system_target_dir / "root.conf").exists())
+        # root.conf is now a regular file and was backed up
+        self.assertTrue((self.system_target_dir / "root.conf").is_file())
+        self.assertFalse((self.system_target_dir / "root.conf").is_symlink())
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "root.conf").exists())
-        self.assertIn(Path("root.conf"), processed_paths)
 
         # nested symlink should be backed up and replaced with a physical directory
         self.assertTrue((self.system_target_dir / "nested").is_dir())
         self.assertFalse((self.system_target_dir / "nested").is_symlink())
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "nested").exists())
-        self.assertIn(Path("nested"), processed_paths)
-        self.assertIn(Path("nested/app.conf"), processed_paths)
+        self.assertTrue((self.system_target_dir / "nested" / "app.conf").is_file())
 
-        # external.conf was NOT an internal link -> untouched
+        # external.conf was NOT in package files -> untouched
         self.assertTrue((self.system_target_dir / "external.conf").is_symlink())
-        self.assertNotIn(Path("external.conf"), processed_paths)
 
-    def test_handle_internal_symlink_conflicts_valid_symlink_link_preserved(self) -> None:
+    def test_plan_and_execute_valid_symlink_link_preserved(self) -> None:
         """Verifies that a valid relative symlink pointing to the same package install dir is preserved."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_preserve"
@@ -1981,19 +2188,21 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        processed_paths: Set[Path] = set()
-        handle_internal_symlink_conflicts(
+        plan = plan_package_deployment(
             context=context,
-            resolve_symlinks=True,
-            processed_paths=processed_paths,
+            deployable_files=[Path("file.txt")],
+            redeploy=True,
         )
+        self.assertEqual(len(plan.skipped), 1)
+        self.assertEqual(plan.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
+
+        execute_package_deployment(context=context, plan=plan)
 
         # Should remain untouched
         self.assertTrue(system_target.is_symlink())
-        self.assertEqual(len(processed_paths), 0)
         self.assertFalse((self.backup_dir / pkg).exists())
 
-    def test_handle_internal_symlink_conflicts_aborts_when_target_resolves_inside_drift_root(self) -> None:
+    def test_plan_aborts_when_target_resolves_inside_drift_root(self) -> None:
         """Verifies safety abort when target_dir canonical path resolves inside drift workspace root."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_abort"
@@ -2015,15 +2224,14 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
         with self.assertRaises(InstallCollisionError) as cm:
-            handle_internal_symlink_conflicts(
+            plan_package_deployment(
                 context=context,
-                resolve_symlinks=True,
-                processed_paths=set(),
+                deployable_files=[],
             )
         self.assertIn("Safety Abort: Target directory", str(cm.exception))
 
-    def test_run_collision_guard_internal_symlink_invariant_holds(self) -> None:
-        """Verifies collision guard processes internal symlink conflicts without violating the Step 4 invariant."""
+    def test_plan_and_execute_internal_symlink_invariant_holds(self) -> None:
+        """Verifies planning and execution handles internal symlink conflicts and valid symlinks together."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_guard_invariant"
         pkg_install_dir = self.install_dir / pkg
@@ -2054,19 +2262,26 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        # Running collision guard should execute cleanly without AssertionError in Step 4
-        run_collision_guard(context=context, resolve_symlinks=True)
+        plan = plan_package_deployment(
+            context=context,
+            deployable_files=[Path("conflicting_link.txt"), Path("valid_link.txt")],
+            redeploy=True,
+        )
+        execute_package_deployment(context=context, plan=plan)
 
-        # Conflicting internal link was backed up and removed before deployment
-        self.assertFalse(system_conflict.exists())
+        # Conflicting internal link was backed up and re-linked to current package
+        self.assertTrue(system_conflict.is_symlink())
+        self.assertEqual(system_conflict.resolve(), (pkg_install_dir / "conflicting_link.txt").resolve())
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "conflicting_link.txt").exists())
 
         # Valid link to same package remains intact
         self.assertTrue(system_valid.is_symlink())
+        self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_link.txt").resolve())
 
     @patch("drift.primitives.install_repo.create_symlink")
-    def test_deploy_single_symlink_file_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
-        """Verifies deploy_single_symlink_file skips recreating symlink if target already points to source."""
+    def test_execute_single_action_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
+        """Verifies execute_single_action and plan_package_deployment skip recreating symlink if target already points to source."""
+        from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_skip"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -2076,13 +2291,23 @@ class TestInstallRepo(unittest.TestCase):
         system_target = self.system_target_dir / "app.conf"
         self.system_target_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Target does not exist -> creates symlink
-        deploy_single_symlink_file(
-            rel_file=Path("app.conf"),
+        context = PackageInstallContext(
+            pkg_name=pkg,
             install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
             target_dir=self.system_target_dir,
-            sudo=False
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
         )
+
+        # 1. Target does not exist -> plan creates CREATE_SYMLINK action
+        plan1 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        self.assertEqual(len(plan1.created), 1)
+        self.assertEqual(plan1.created[0].action_type, ActionType.CREATE_SYMLINK)
+        execute_single_action(context, plan1.created[0])
         self.assertEqual(mock_create_symlink.call_count, 1)
 
         # Create the actual relative symlink on filesystem
@@ -2090,27 +2315,24 @@ class TestInstallRepo(unittest.TestCase):
         os.symlink(rel_target, system_target)
         mock_create_symlink.reset_mock()
 
-        # 2. Target already exists and points to src_file -> should skip recreation
-        deploy_single_symlink_file(
-            rel_file=Path("app.conf"),
-            install_pkg_dir=pkg_install_dir,
-            target_dir=self.system_target_dir,
-            sudo=False
-        )
+        # 2. Target already exists and points to src_file -> plan creates SKIP_IDENTICAL action
+        plan2 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        self.assertEqual(len(plan2.skipped), 1)
+        self.assertEqual(plan2.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
+        execute_single_action(context, plan2.skipped[0])
         mock_create_symlink.assert_not_called()
 
-        # 3. Target points to an invalid/different location -> should call create_symlink
+        # 3. Target points to an invalid/different location -> plan creates BACKUP_OVERWRITE + CREATE_SYMLINK
         system_target.unlink()
         other_file = Path(tempfile.gettempdir()) / "other.conf"
         other_file.write_text("other", encoding="utf-8")
         os.symlink(other_file, system_target)
 
-        deploy_single_symlink_file(
-            rel_file=Path("app.conf"),
-            install_pkg_dir=pkg_install_dir,
-            target_dir=self.system_target_dir,
-            sudo=False
-        )
+        plan3 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")], redeploy=True)
+        self.assertEqual(len(plan3.overwritten_backups), 1)
+        self.assertEqual(len(plan3.created), 1)
+        for act in plan3.actions:
+            execute_single_action(context, act)
         self.assertEqual(mock_create_symlink.call_count, 1)
 
     def test_full_copy_deployment_translates_dot_prefixes(self) -> None:
@@ -2152,9 +2374,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / "dot-bashrc").exists())
         self.assertFalse((self.system_target_dir / "dot-config").exists())
 
-    def test_reconcile_orphaned_files_with_generators(self) -> None:
-        """Verifies reconcile_orphaned_files accepts unmaterialized generator expressions."""
-        from drift.primitives.install_repo import reconcile_orphaned_files, PackageInstallContext
+    def test_plan_package_deployment_accepts_generators(self) -> None:
+        """Verifies plan_package_deployment accepts unmaterialized generator expressions."""
         from drift.core.ignore import DriftIgnore
 
         context = PackageInstallContext(
@@ -2172,13 +2393,127 @@ class TestInstallRepo(unittest.TestCase):
         deployable_gen = (Path(f"file_{i}.txt") for i in [1, 2])
         deployed_gen = (Path(f"file_{i}.txt") for i in [1, 2, 3])
 
-        # file_3.txt is orphaned but doesn't exist on disk, so handle_collision is not triggered
-        reconcile_orphaned_files(
+        plan = plan_package_deployment(
             context=context,
             deployable_files=deployable_gen,
             deployed_files=deployed_gen,
-            resolve_symlinks=False,
+            redeploy=True,
         )
+        self.assertEqual(len(plan.created), 2)
+        # file_3.txt is orphaned but doesn't exist on disk, so no prune actions are generated
+        self.assertEqual(len(plan.pruned), 0)
+
+    def test_dry_run_zero_host_and_state_mutations(self) -> None:
+        """Verifies that InstallConfig(dry_run=True) produces a complete deployment plan
+        without creating target files, making backups, triggering hooks, or modifying state.toml.
+        """
+        pkg = "pkg_dry_run"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / "hooks").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "app.conf").write_text("config_v1", encoding="utf-8")
+
+        # Add a pre-install hook script that would fail or create a marker file if executed
+        hook_marker = self.drift_root / "hook_executed.marker"
+        hook_script = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / "hooks" / "pre_install.sh"
+        hook_script.write_text(f"#!/bin/sh\ntouch {hook_marker}\n", encoding="utf-8")
+        hook_script.chmod(0o755)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+
+        [hooks]
+        pre_install = "drift_hooks/pre_install.sh"
+        """, encoding="utf-8")
+
+        # System target has an existing app.conf that would be backed up during a live install
+        target_file = self.system_target_dir / "app.conf"
+        target_file.write_text("host_original", encoding="utf-8")
+
+        # Run deployment with dry_run=True
+        cfg = InstallConfig(dry_run=True)
+        result = run_primitive_5_install_deployment(self.workspace_config, [pkg], config=cfg)
+
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual(len(result.packages), 1)
+        pkg_res = result.packages[0]
+        self.assertEqual(pkg_res.status, "SUCCESS")
+        self.assertIsNotNone(pkg_res.plan)
+
+        # Plan contains the planned overwrite and creation
+        self.assertEqual(len(pkg_res.plan.overwritten_backups), 1)
+        self.assertEqual(pkg_res.plan.overwritten_backups[0].rel_path, Path("app.conf"))
+        self.assertEqual(len(pkg_res.plan.created), 1)
+        self.assertEqual(pkg_res.plan.created[0].rel_path, Path("app.conf"))
+
+        # Zero mutations on host filesystem:
+        # 1. Target file remains untouched with original content
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "host_original")
+        # 2. No backup was created
+        self.assertFalse((self.backup_dir / pkg).exists())
+        # 3. Hook was NOT executed
+        self.assertFalse(hook_marker.exists())
+
+        # Zero mutations on state database:
+        from drift.core.state_registry import load_state_registry
+        state_file = self.install_dir / "state.toml"
+        if state_file.exists():
+            registry = load_state_registry(state_file)
+            self.assertNotIn(pkg, registry.packages)
+
+    def test_backup_path_translates_dotfiles_into_dot_prefixes(self) -> None:
+        """Verifies that backup paths translate dotfile segments into 'dot-' prefixes
+        for both overwritten collisions and pruned orphans.
+        """
+        pkg = "pkg_dot_backup"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-bashrc").write_text("package bashrc", encoding="utf-8")
+        (pkg_install_dir / "dot-config" / "dot-app").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "dot-config" / "dot-app" / "dot-secret").write_text("package secret", encoding="utf-8")
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        # 1. Existing host dotfiles that collide and will be backed up into overwritten/
+        host_bashrc = self.system_target_dir / ".bashrc"
+        host_bashrc.write_text("existing host bashrc", encoding="utf-8")
+
+        host_secret = self.system_target_dir / ".config" / ".app" / ".secret"
+        host_secret.parent.mkdir(parents=True, exist_ok=True)
+        host_secret.write_text("existing host secret", encoding="utf-8")
+
+        # Deploy package
+        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Assert backups in backup/<pkg>/overwritten/ use 'dot-' prefixes (not leading dots)
+        backup_bashrc = self.backup_dir / pkg / "overwritten" / "dot-bashrc"
+        self.assertTrue(backup_bashrc.is_file())
+        self.assertEqual(backup_bashrc.read_text(encoding="utf-8"), "existing host bashrc")
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / ".bashrc").exists())
+
+        backup_secret = self.backup_dir / pkg / "overwritten" / "dot-config" / "dot-app" / "dot-secret"
+        self.assertTrue(backup_secret.is_file())
+        self.assertEqual(backup_secret.read_text(encoding="utf-8"), "existing host secret")
+        self.assertFalse((self.backup_dir / pkg / "overwritten" / ".config").exists())
+
+        # 2. Orphan removal: simulate deleting dot-bashrc from package, then redeploying
+        (pkg_install_dir / "dot-bashrc").unlink()
+        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        self.assertEqual(res2.status, "SUCCESS")
+
+        # Assert orphan backup in backup/<pkg>/deleted_files/ uses 'dot-' prefix
+        backup_pruned = self.backup_dir / pkg / "deleted_files" / "dot-bashrc"
+        self.assertTrue(backup_pruned.is_file())
+        self.assertEqual(backup_pruned.read_text(encoding="utf-8"), "package bashrc")
+        self.assertFalse((self.backup_dir / pkg / "deleted_files" / ".bashrc").exists())
 
     def test_cross_package_intra_batch_conflict_collects_all(self) -> None:
         """Verifies that intra-batch cross-package destination collisions collect all conflicting paths in one report."""

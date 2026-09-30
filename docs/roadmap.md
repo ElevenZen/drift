@@ -107,7 +107,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 ### 12. Inter-Package Dependency DAG & Lifecycle Ordering
 - **Declarative Dependencies**: Added `dependencies` inline list and `[[package.dependencies]]` array-of-tables syntax with required (default) and optional semantics.
 - **Topological Sorting Across Lifecycle**: Forward prerequisite ordering for staging (Primitive 4) and installation (Primitive 5); reverse topological ordering for multi-package uninstallation (Primitive 7) and unified rollback recovery (Primitive 8).
-- **Pre-Flight Guards & Bypass Flags**: Added `assert_required_package_dependencies_exist`, `assert_no_cyclic_package_dependencies`, and `assert_no_broken_dependencies_on_uninstall`, bypassable via `ignore_missing_dependencies` and `--force`.
+- **Pre-Flight Guards & Bypass Flags**: Added `assert_required_package_dependencies_exist`, `assert_no_cyclic_package_dependencies`, and `assert_no_broken_dependencies_on_uninstall`, bypassable via `--no-deps` (`no_deps=True`) and `--force`.
 - **`UninstallConfig` & Ghost Package Purge**: Introduced typed `UninstallConfig`, graceful handling for missing install directories, and automatic ghost package purging from `state.toml` in `drift gc` (Primitive 9).
 
 ### 13. Test Suite Expansion & Cleanliness
@@ -126,7 +126,8 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 * **Smarter Rollback with WAL (Write-Ahead Log)**: Guarantees 100% reversible rollbacks for physical host filesystem side effects.
 * **Unified Layered Import System (`[[imports]]`)**: Layered overlay mounting for package inheritance, file remounting, and external assets.
 
-### 🚀 Tier A: High Value & Ergonomic Wins
+### 🚀 Tier A: High Value & Ergonomic Wins  
+
 * **Package Dependency Declaration & Topological Install Ordering**: Packages declare explicit `dependencies` in `drift_package.toml` with required/optional semantics, enabling install-order guarantees and pre-flight validation.
 * **Command Hooks & Arguments (`shlex`)**: Inline shell commands in hooks without creating wrapper files.
 * **Passive File Triggers (Pacman-style Hooks)**: Directory-watching triggers executed once in a consolidated batch after deployment.

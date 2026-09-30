@@ -97,8 +97,14 @@ def clear_readonly(path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 def ensure_dir(path: Path, sudo: bool = False) -> None:
-    """Ensures directory exists, creating with sudo on POSIX if requested, or pathlib on Windows."""
-    if path.exists():
+    """Ensures directory exists, creating with sudo on POSIX if requested, or pathlib on Windows.
+
+    Raises:
+        NotADirectoryError: If path exists and is not a concrete directory (e.g. regular file or symlink).
+    """
+    if path.is_symlink() or (path.exists() and not path.is_dir()):
+        raise NotADirectoryError(f"Cannot ensure directory '{path}': path exists and is not a directory.")
+    if path.is_dir():
         return
     if sudo and sys.platform != "win32":
         run_command(["mkdir", "-p", str(path)], sudo=True)

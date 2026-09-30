@@ -57,7 +57,7 @@ Packages can declare explicit dependencies on other packages:
 *   **Declarative Prerequisites**: Declare `dependencies = ["base", "git"]` or optional dependencies (`{ name = "fzf", optional = true }`).
 *   **Topological DAG Staging & Deployment**: Drift constructs a dependency graph (DAG) across the workspace and sequences actions so prerequisite packages are always compiled, staged, and deployed *before* dependents.
 *   **Reverse Topological Uninstallation**: During package uninstallation (`drift uninstall`), packages are dismantled in **reverse topological order**, ensuring dependent packages are cleanly detached before base dependencies.
-*   **Downstream Safety Guards**: Drift prevents accidental uninstallation of a package if other active packages still depend on it, unless bypassed with `--ignore-missing-dependencies` or `--force`.
+*   **Downstream Safety Guards**: Drift prevents accidental uninstallation of a package if other active packages still depend on it, unless bypassed with `--no-deps` or `--force`.
 
 ### 3. 🛡️ Declarative Host Requirements & Platform Filtering (`[requirements]`)
 Packages can declare platform prerequisites evaluated **strictly before template rendering begins**:

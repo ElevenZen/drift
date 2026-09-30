@@ -243,7 +243,7 @@ def execute_stage(
     package_names: Sequence[str] = (),
     force: bool = False,
     json_mode: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
@@ -256,7 +256,7 @@ def execute_stage(
         workspace_config,
         target_pkgs=package_names,
         force=force,
-        ignore_missing_dependencies=ignore_missing_dependencies,
+        no_deps=no_deps,
     )
     if json_mode:
         pkg_names = list(changes.keys())
@@ -288,7 +288,8 @@ def execute_apply(
     force: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
     from ..primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
@@ -305,11 +306,16 @@ def execute_apply(
             resolve_symlinks=True,
             force=force,
             flags=flags,
-            ignore_missing_dependencies=ignore_missing_dependencies,
+            no_deps=no_deps,
+            dry_run=dry_run,
         ),
     )
     if json_mode:
         print(res.to_json())
+    elif dry_run:
+        text = res.format_text(dry_run=True)
+        if text:
+            print(text)
     if res.status != "SUCCESS":
         raise RuntimeError(res.error_message or "Deployment installation failed.")
 
@@ -381,7 +387,7 @@ def execute_uninstall(
     detach: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """Core function to uninstall or detach packages, shared by both CLI backends."""
     from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
@@ -396,7 +402,7 @@ def execute_uninstall(
         dry_run=dry_run,
         detach=detach,
         flags=flags,
-        ignore_missing_dependencies=ignore_missing_dependencies,
+        no_deps=no_deps,
     )
     res = run_primitive_7_uninstall_packages(
         workspace_config,
@@ -567,7 +573,7 @@ def execute_deploy(
     json_mode: bool = False,
     no_hooks: bool = False,
     redeploy: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..primitives.deploy_repo import run_primitive_deploy_pipeline_with_error_handling
@@ -583,7 +589,7 @@ def execute_deploy(
         force=force,
         flags=flags,
         redeploy=redeploy,
-        ignore_missing_dependencies=ignore_missing_dependencies,
+        no_deps=no_deps,
     )
     if json_mode:
         print(res.to_json())

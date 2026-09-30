@@ -402,7 +402,7 @@ class UninstallConfig:
     force: bool = False
     dry_run: bool = False
     detach: bool = False
-    ignore_missing_dependencies: bool = False
+    no_deps: bool = False
     flags: Optional[HookExecFlags] = None
 
 
@@ -440,7 +440,7 @@ def assert_packages_uninstall_ready(
     hook_flags = HookExecFlags.resolve(config.flags, settings=workspace_config.settings)
 
     # 1. Dependency integrity check on remaining installed packages
-    if not (config.force or config.ignore_missing_dependencies):
+    if not (config.force or config.no_deps):
         all_installed = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
         remaining_pkgs = set(all_installed) - set(packages_to_uninstall.keys())
         remaining_metadata = {

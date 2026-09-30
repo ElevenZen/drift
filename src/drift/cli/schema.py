@@ -276,7 +276,7 @@ def build_completion_schema() -> CompletionSchema:
                     )
                 ],
                 options=[
-                    OptionSpec(["--dry-run"], "Preview the import without making changes"),
+                    OptionSpec(["-n", "--dry-run"], "Preview the import without making changes"),
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
@@ -308,7 +308,7 @@ def build_completion_schema() -> CompletionSchema:
                         description="Force adoption even if the package source directory has uncommitted modifications"
                     ),
                     OptionSpec(
-                        flags=["--dry-run"],
+                        flags=["-n", "--dry-run"],
                         description="Simulate the adoption, previewing changes and conflict results"
                     ),
                     OptionSpec(
@@ -346,9 +346,9 @@ def build_completion_schema() -> CompletionSchema:
                         dest="no_hooks"
                     ),
                     OptionSpec(
-                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        flags=["--no-deps"],
                         description="Bypass missing required package dependency errors and proceed with deployment",
-                        dest="ignore_missing_dependencies"
+                        dest="no_deps"
                     ),
                 ]
             ),
@@ -406,7 +406,7 @@ def build_completion_schema() -> CompletionSchema:
                         flags=["-f", "--force"],
                         description="Force uninstallation even if package is still active in drift_workspace.toml"
                     ),
-                    OptionSpec(["--dry-run"], "Preview uninstallation without making changes"),
+                    OptionSpec(["-n", "--dry-run"], "Preview uninstallation without making changes"),
                     OptionSpec(
                         flags=["--detach"],
                         description="Remove management relationship but keep configurations as actual physical files on host system"
@@ -417,9 +417,9 @@ def build_completion_schema() -> CompletionSchema:
                         dest="no_hooks"
                     ),
                     OptionSpec(
-                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        flags=["--no-deps"],
                         description="Bypass dependency checks and proceed with uninstallation even if remaining packages require this package",
-                        dest="ignore_missing_dependencies"
+                        dest="no_deps"
                     ),
                 ]
             ),
@@ -508,7 +508,7 @@ def build_completion_schema() -> CompletionSchema:
                 description="Identify and uninstall orphan packages (present in state but disabled in config)",
                 positionals=[],
                 options=[
-                    OptionSpec(["--dry-run"], "Simulate the garbage collection without making changes"),
+                    OptionSpec(["-n", "--dry-run"], "Simulate the garbage collection without making changes"),
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
@@ -521,7 +521,7 @@ def build_completion_schema() -> CompletionSchema:
                 description="Repair missing, damaged, or partially-initialized components in the drift workspace.",
                 positionals=[],
                 options=[
-                    OptionSpec(["--dry-run"], "Show repair actions without executing them"),
+                    OptionSpec(["-n", "--dry-run"], "Show repair actions without executing them"),
                 ]
             ),
             "help": CommandSpec(
@@ -642,9 +642,9 @@ def build_completion_schema() -> CompletionSchema:
                         description="Force staging and bypass uncommitted modifications check"
                     ),
                     OptionSpec(
-                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        flags=["--no-deps"],
                         description="Bypass missing required package dependency errors and proceed with staging",
-                        dest="ignore_missing_dependencies"
+                        dest="no_deps"
                     ),
                 ]
             ),
@@ -667,14 +667,18 @@ def build_completion_schema() -> CompletionSchema:
                         description="Force deployment and bypass check"
                     ),
                     OptionSpec(
+                        flags=["-n", "--dry-run"],
+                        description="Simulate deployment planning without modifying host filesystem or executing hooks",
+                    ),
+                    OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
                         dest="no_hooks"
                     ),
                     OptionSpec(
-                        flags=["--ignore-missing-dependencies", "--allow-missing-dependencies"],
+                        flags=["--no-deps"],
                         description="Bypass missing required package dependency errors and proceed with deployment",
-                        dest="ignore_missing_dependencies"
+                        dest="no_deps"
                     ),
                 ]
             ),
@@ -747,6 +751,10 @@ def build_completion_schema() -> CompletionSchema:
                 options=[
                     OptionSpec(
                         flags=["-f", "--force"],
+                        description="Ignored flag for command stub",
+                    ),
+                    OptionSpec(
+                        flags=["-n", "--dry-run"],
                         description="Ignored flag for command stub",
                     ),
                 ],

@@ -12,8 +12,10 @@ from drift.cli import main
 from drift.core.result_models import (
     SerializableModel,
     NextActionType,
+    ActionType,
+    PlannedFileAction,
+    PackageDeploymentPlan,
     PackageInstallResult,
-    FileOperations,
     InstallDeploymentResult,
     StatusResult,
     DeployResult,
@@ -35,26 +37,89 @@ class TestResultModels(unittest.TestCase):
     """Unit tests for result models and serialization."""
 
     def test_serialization_primitives(self) -> None:
-        ops = FileOperations(
-            added=["/tmp/a", "/tmp/b"],
-            modified=[],
-            deleted=[]
+        plan = PackageDeploymentPlan(
+            package="zsh",
+            target_directory="/home/user",
+            install_method=InstallMethod.SYMLINK,
+            actions=[
+                PlannedFileAction(
+                    action_type=ActionType.CREATE_SYMLINK,
+                    rel_path=Path("dot-zshrc"),
+                    system_target=Path("/home/user/.zshrc"),
+                )
+            ],
+            hooks_to_trigger=["pre_install", "post_install"],
         )
         pkg_res = PackageInstallResult(
             package="zsh",
             install_method=InstallMethod.SYMLINK,
             target_directory="/home/user",
-            operations=ops,
+            plan=plan,
             is_first_time=True
         )
         data = pkg_res.to_dict()
         self.assertEqual(data["package"], "zsh")
-        self.assertEqual(data["operations"]["added"], ["/tmp/a", "/tmp/b"])
+        self.assertEqual(len(data["plan"]["actions"]), 1)
+        self.assertEqual(data["plan"]["actions"][0]["action_type"], "CREATE_SYMLINK")
+        self.assertEqual(data["plan"]["actions"][0]["rel_path"], "dot-zshrc")
+        self.assertEqual(data["plan"]["actions"][0]["system_target"], "/home/user/.zshrc")
 
         json_str = pkg_res.to_json()
         parsed = json.loads(json_str)
         self.assertEqual(parsed["package"], "zsh")
         self.assertEqual(parsed["is_first_time"], True)
+        self.assertEqual(parsed["plan"]["actions"][0]["action_type"], "CREATE_SYMLINK")
+
+    def test_deployment_plan_format_text(self) -> None:
+        plan = PackageDeploymentPlan(
+            package="zsh",
+            target_directory="/home/user",
+            install_method=InstallMethod.SYMLINK,
+            actions=[
+                PlannedFileAction(
+                    action_type=ActionType.ENSURE_DIR,
+                    rel_path=Path("dot-config"),
+                    system_target=Path("/home/user/.config"),
+                ),
+                PlannedFileAction(
+                    action_type=ActionType.CREATE_SYMLINK,
+                    rel_path=Path("dot-zshrc"),
+                    system_target=Path("/home/user/.zshrc"),
+                ),
+                PlannedFileAction(
+                    action_type=ActionType.BACKUP_OVERWRITE,
+                    rel_path=Path("dot-zshrc"),
+                    system_target=Path("/home/user/.zshrc"),
+                    reason="Pre-existing file collision",
+                ),
+            ],
+            hooks_to_trigger=["pre_install", "post_install"],
+        )
+        plan_text = plan.format_text()
+        self.assertIn("Package 'zsh':", plan_text)
+        self.assertIn("Target: /home/user", plan_text)
+        self.assertIn("Method: symlink", plan_text)
+        self.assertIn("[ENSURE_DIR]", plan_text)
+        self.assertIn("[CREATE_SYMLINK]", plan_text)
+        self.assertIn("[BACKUP_OVERWRITE]", plan_text)
+        self.assertIn("pre_install, post_install", plan_text)
+        self.assertIn("1 to create", plan_text)
+        self.assertIn("1 to backup", plan_text)
+
+        result = InstallDeploymentResult(
+            status="SUCCESS",
+            packages=[
+                PackageInstallResult(
+                    package="zsh",
+                    install_method=InstallMethod.SYMLINK,
+                    target_directory="/home/user",
+                    plan=plan,
+                )
+            ],
+        )
+        dry_run_text = result.format_text(dry_run=True)
+        self.assertIn("[DRY-RUN] Package Deployment Simulation Plan", dry_run_text)
+        self.assertIn("zero host mutations performed", dry_run_text)
 
     def test_deploy_failure_model(self) -> None:
         failure = DeployFailure(

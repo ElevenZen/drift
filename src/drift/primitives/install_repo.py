@@ -21,26 +21,21 @@ Pipeline Architecture:
             - Universe Construction & Topological Ordering (resolve_package_install_order)
             -> Returns InstallPlan(pkg_metadata_map, state_registry, discovered_packages, config)
 
-    2. Single-Package Deployment Execution (State-Mutating):
+    2. Single-Package Deployment Execution:
         execute_install_deployment(workspace_config, plan: InstallPlan) [Layer 4]
             - Iterates over plan.discovered_packages:
                 deploy_one_package_with_error_wrapping [Layer 4]
                     deploy_one_package [Layer 4]
                         check_package_deployment_skip [Layer 4]
-                        state_registry.set_package_state("installing") & save
+                        state_registry.set_package_state("installing") & save (if not dry_run)
                         pkg_config.package_envs context
                         deploy_one_package_impl [Layer 4]
                             Target Directory Migration Detection -> cleanup old target & force redeploy
-                            run_collision_guard [Layer 3]
-                            reconcile_orphaned_files [Layer 2] (if redeploy)
+                            plan_package_deployment [Layer 3] (Pure, inspectable per-path plan)
+                            If dry_run -> return PackageInstallResult(plan=plan) immediately (zero disk mutations)
                             trigger pre_install / pre_update hook
                             state_registry.sync_deployed_files & save
-                            Physical Delivery:
-                                run_full_file_delivery [Layer 3] (redeploy)
-                                    run_full_copy_deployment [Layer 3] / run_full_symlink_deployment [Layer 3]
-                                run_incremental_file_delivery [Layer 3] (incremental redeploy)
-                                    deploy_single_symlink_file [Layer 2] / deploy_single_copy_file [Layer 2]
-                                    delete_single_system_file_or_dir [Layer 1]
+                            execute_package_deployment [Layer 3] (Applies PlannedFileAction items deterministically)
                             trigger post_install / post_update hook
                             update_state_registry_post_deployment [Layer 3]
                                 state_registry.set_package_state("installed") & save
@@ -52,66 +47,39 @@ Pipeline Architecture:
         run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 5]
             commit_repo_changes (commits state repository changes in install/)
 
-    4. Collision Guard Architecture & Logic (run_collision_guard):
-        Pre-deployment audit protecting active host configurations from silent loss
-        and preventing circular loops through a multi-stage audit pipeline:
-
-        Stage 0: Target Ancestor Symlink Guard (find_symlink_ancestor)
-            - Safety Abort: Detects if any ancestor directory at or above target_dir is a symlink
-              pointing into drift_root. Aborts with InstallCollisionError to prevent loops and corruption.
-
-        Stage 1: Internal Symlink Conflict Resolution (handle_internal_symlink_conflicts)
-            - Identifies symlinks in target_dir pointing into drift_root that conflict with package items.
-            - Symlink Link Exemption: Preserves valid relative symlinks pointing into the same install_pkg_dir.
-            - Conflict Resolution: Conflicting symlinks are backed up to backup/<pkg>/overwritten/<path>,
-              removed from target_dir, and recorded in processed_paths (including all sub-paths).
-            - Physical Directory Recreation: Recreates real physical directories where the package
-              expects a directory, preventing symlink directory cycles.
-            - Target Canonical Boundary Check: Aborts with InstallCollisionError if target_dir.resolve()
-              resolves to or inside drift_root.
-
-        Stage 2: Recursive Filesystem Audit (compare_folders)
-            - Recursively compares install_pkg_dir against target_dir (src_only=True, translate_mode="forward").
-            - Categorizes discrepancies into deleted, modified, and matching paths.
-
-        Stage 3: Type Mismatches & Ignored Files (diff.deleted)
-            - Ignored Files Cleanup: Files now matching ignore rules are backed up to
-              backup/<pkg>/deleted_files/<path> and cleared.
-            - Type Mismatches: Host items blocking repo directories (e.g. system file blocking a directory)
-              are backed up to backup/<pkg>/overwritten/<path> and cleared.
-
-        Stage 4: Modified Content & Collisions (diff.modified)
-            - Invariant Assertion: Asserts no symlinks pointing into drift_root (outside install_pkg_dir)
-              reach this stage (guaranteed handled in Stage 1).
-            - Symlink Exemption: Skips backup if the system target is a valid symlink to another file in the
-              same install_pkg_dir.
-            - Copy Update Exemption: Skips backup if deploying via copy method and the file is an update
-              to an already-installed file (not first-time installation).
-            - Overwritten Backup: All other colliding host files are backed up to backup/<pkg>/overwritten/<path>
-              and removed before deployment.
-
-        Stage 5: Symlink Content-Match Physical Collisions (diff.matches)
-            - Under symlink method, if host has a physical file matching repo content instead of a symlink,
-              it is backed up to backup/<pkg>/overwritten/<path> and cleared so the linker can create the symlink.
+    4. Declarative Per-Path Install Planner (plan_package_deployment):
+        Pure read-only pre-deployment audit inspecting candidate paths shallowest to deepest:
+        - Canonical Target Boundary: Verifies target_dir.resolve() does not point into drift_root.resolve().
+        - Ancestor Directory Guard: Deduplicates intermediate target directory checks; detects files or internal
+          symlinks blocking required directories, planning BACKUP_OVERWRITE and ENSURE_DIR.
+        - Leaf File State Machine: Inspects each deployable file against host state:
+            * CREATE_SYMLINK / CREATE_COPY: Target missing on host.
+            * SKIP_IDENTICAL: Existing symlink/copy already matches expected source/content.
+            * UPDATE_COPY: Existing managed copy has changed content.
+            * BACKUP_OVERWRITE: Pre-existing physical file, foreign symlink, or internal symlink collision.
+        - Orphan Reconciliation: Identifies historical files no longer in deployable set, planning
+          BACKUP_PRUNE and DELETE_ORPHAN.
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
     Layer 1: Atomic Host Actions
-        handle_collision_error
-        delete_single_system_file_or_dir
-    Layer 2: Single-File Delivery & Conflict Resolution Helpers
-        find_internal_symlink_conflicts
-        resolve_single_internal_symlink_conflict
-        handle_internal_symlink_conflicts
-        deploy_single_symlink_file
-        deploy_single_copy_file
-        reconcile_orphaned_files
-    Layer 3: Batch Delivery & Collision Audit
-        run_collision_guard
-        run_full_copy_deployment
-        run_full_symlink_deployment
-        run_full_file_delivery
-        run_incremental_file_delivery
+        backup_host_item
+        execute_single_action
+    Layer 2: Single-Path Inspection & Planning Helpers
+        assert_target_dir_outside_drift_root
+        _plan_file_creation
+        _check_symlink_points_to_source
+        _check_has_backed_up_ancestor
+        _inspect_single_ancestor
+        _inspect_ancestor_directories
+        _inspect_symlink_leaf
+        _inspect_physical_file_leaf
+        _inspect_leaf_file
+        _plan_orphan_prune
+        _inspect_orphans
+    Layer 3: Plan Generation & Batch Execution
+        plan_package_deployment
+        execute_package_deployment
         update_state_registry_post_deployment
     Layer 4: Single-Package Pipeline & Pre-flight Validation
         check_package_deployment_skip
@@ -164,7 +132,6 @@ from ..core.exceptions import (
 from ..core.ignore import DriftIgnore
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
-from ..core.folder_diff import compare_folders, list_folder_paths
 from .stage_repo import PackageStageChanges
 from .package_assertions import (
     assert_packages_hooks_exist,
@@ -185,7 +152,6 @@ from ..utils.path_utils import (
     compute_relative_symlink_target,
     is_relative_to,
 )
-from ..utils.file_inspect import find_symlink_ancestor
 from ..utils.file_ops import (
     copy_file,
     create_symlink,
@@ -195,7 +161,13 @@ from ..utils.file_ops import (
 )
 from ..utils.process_utils import run_command
 from ..core.sync_ops import backup_file_or_dir_external
-from ..core.result_models import FileOperations, PackageInstallResult, InstallDeploymentResult
+from ..core.result_models import (
+    ActionType,
+    PlannedFileAction,
+    PackageDeploymentPlan,
+    PackageInstallResult,
+    InstallDeploymentResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +182,8 @@ class InstallConfig:
     resolve_symlinks: bool = True
     force: bool = False
     redeploy: bool = True
-    ignore_missing_dependencies: bool = False
+    dry_run: bool = False
+    no_deps: bool = False
     package_changes: Optional[Mapping[str, PackageStageChanges]] = None
     flags: Optional[HookExecFlags] = None
 
@@ -275,474 +248,473 @@ class PackageInstallContext:
 # Layer 1: Atomic Host Actions
 # =============================================================================
 
-def handle_collision_error(
+def backup_host_item(
     context: PackageInstallContext,
     system_target: Path,
-    backup_subfolder: BackupSubfolder,
-    backup_rel_path: Path,
-    reason: str,
-    resolve_symlinks: bool,
-    ops: Optional[FileOperations] = None,
+    subfolder: BackupSubfolder,
+    rel_path: Path,
+    reason: Optional[str] = None,
+    resolve_symlinks: bool = True,
 ) -> None:
-    """Helper to backup and report a collision/error at a system target path."""
-    subfolder_str = backup_subfolder.value if isinstance(backup_subfolder, BackupSubfolder) else str(backup_subfolder)
+    """Safely backs up a host file, symlink, or directory to the package backup directory."""
+    subfolder_str = subfolder.value if isinstance(subfolder, BackupSubfolder) else str(subfolder)
+    backup_rel_path = decode_dot_prefix(rel_path)
     backup_path = context.backup_pkg_dir / subfolder_str / backup_rel_path
-    logger.warning(f"🛡️  [COLLISION] {reason} at '{system_target}'")
+    if reason:
+        logger.warning(f"🛡️  [BACKUP] {reason} at '{system_target}'")
     logger.debug(f"   Backing up to: {backup_path}")
     backup_file_or_dir_external(system_target, backup_path, context.sudo, resolve_symlinks=resolve_symlinks)
-    # After backup, remove the colliding item to clear the way
-    remove(system_target, context.sudo)
-    if ops is not None:
-        if backup_subfolder == BackupSubfolder.DELETED_FILES:
-            ops.deleted_backup.append(str(backup_rel_path))
-        else:
-            ops.overwritten_backup.append(str(backup_rel_path))
 
 
-def delete_single_system_file_or_dir(
-    rel_file: Path,
-    target_dir: Path,
-    sudo: bool
+def execute_single_action(
+    context: PackageInstallContext,
+    action: PlannedFileAction,
+    resolve_symlinks: bool = True,
 ) -> None:
-    """Helper to delete a single file on host system (for incremental deletions)."""
-    system_target = resolve_target_path(rel_file, target_dir)
-    remove(system_target, sudo)
+    """Executes a single planned file/directory deployment action on the host system."""
+    if action.action_type == ActionType.BACKUP_OVERWRITE:
+        backup_host_item(
+            context=context,
+            system_target=action.system_target,
+            subfolder=BackupSubfolder.OVERWRITTEN,
+            rel_path=action.rel_path,
+            reason=action.reason,
+            resolve_symlinks=resolve_symlinks,
+        )
+        remove(action.system_target, context.sudo)
+
+    elif action.action_type == ActionType.BACKUP_PRUNE:
+        backup_host_item(
+            context=context,
+            system_target=action.system_target,
+            subfolder=BackupSubfolder.DELETED_FILES,
+            rel_path=action.rel_path,
+            reason=action.reason,
+            resolve_symlinks=resolve_symlinks,
+        )
+
+    elif action.action_type == ActionType.DELETE_ORPHAN:
+        if action.system_target.exists() or action.system_target.is_symlink():
+            remove(action.system_target, context.sudo)
+
+    elif action.action_type == ActionType.ENSURE_DIR:
+        ensure_dir(action.system_target, context.sudo)
+
+    elif action.action_type == ActionType.CREATE_SYMLINK:
+        source_file = context.install_pkg_dir / action.rel_path
+        relative_target = compute_relative_symlink_target(source_file, action.system_target.parent)
+        create_symlink(relative_target, action.system_target, context.sudo)
+
+    elif action.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY):
+        source_file = context.install_pkg_dir / action.rel_path
+        copy_file(source_file, action.system_target, context.sudo)
+
+    elif action.action_type == ActionType.SKIP_IDENTICAL:
+        logger.debug(f"   Skipping '{action.system_target}': already up-to-date")
 
 
 # =============================================================================
 # Layer 2: Single-File Delivery & Conflict Resolution Helpers
 # =============================================================================
 
-def _is_valid_symlink_link(system_target: Path, abs_install_pkg: Path) -> bool:
-    """Checks if system_target is a relative symlink pointing into abs_install_pkg."""
-    try:
-        raw_link = os.readlink(system_target)
-        link_content = Path(raw_link)
-        if link_content.is_absolute() or system_target.is_dir():
-            return False
-        # Canonicalize the link target to check if it points inside the same install_pkg_dir
-        link_target = (system_target.parent / link_content).resolve()
-        return is_relative_to(link_target, abs_install_pkg)
-    except Exception:
-        return False
-
-
-def find_internal_symlink_conflicts(
-    context: PackageInstallContext,
-) -> List[Tuple[Path, Path]]:
-    """Detects symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files.
-
-    Instead of recursively scanning the entire target_dir (which could be the whole HOME directory),
-    we inspect only the specific target paths and ancestor directories covered by install_pkg_dir.
-    Returns a list of (install_rel_path, system_target) tuples sorted by path depth.
-    """
-    if not (context.install_pkg_dir.exists() and context.install_pkg_dir.is_dir()):
-        return []
-
-    # 1. Collect all deployable relative paths inside the package
-    pkg_items = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
-
-    def _expand_path_ancestors(rel: Path) -> Set[Path]:
-        target_rel = encode_dot_prefix(rel)
-        return {target_rel, *target_rel.parents} - {Path(".")}
-
-    # 2. Build the set of target relative paths and all intermediate parent directories
-    target_candidates = {p for install_rel in pkg_items for p in _expand_path_ancestors(install_rel)}
-    
-    # 3. Sort candidates from shallowest to deepest so parents are checked before children
-    sorted_candidates = sorted(target_candidates, key=lambda p: len(p.parts))
-    abs_drift_root = context.drift_root.resolve()
-
-    def _is_internal_drift_link(system_target: Path) -> bool:
-        if not system_target.is_symlink():
-            return False
-        try:
-            return is_relative_to(system_target.resolve(), abs_drift_root)
-        except Exception:
-            return False
-
-    return [
-        (decode_dot_prefix(t_rel), context.target_dir / t_rel)
-        for t_rel in sorted_candidates
-        if _is_internal_drift_link(context.target_dir / t_rel)
-    ]
-
-
-def resolve_single_internal_symlink_conflict(
-    context: PackageInstallContext,
-    install_rel_path: Path,
-    system_target: Path,
-    resolve_symlinks: bool,
-    processed_paths: set,
-    ops: Optional[FileOperations] = None,
-) -> None:
-    """Processes a single detected internal symlink conflict: validates symlink compatibility,
-    marks paths as processed, backs up & removes conflicting symlinks, and recreates physical directories.
-    """
-    install_file_path = context.install_pkg_dir / install_rel_path
-    abs_install_pkg = context.install_pkg_dir.resolve()
-
-    # If install method is symlink and link points into our pkg install dir, it's valid for this package
-    if context.install_method == InstallMethod.SYMLINK and _is_valid_symlink_link(system_target, abs_install_pkg):
-        return
-
-    # Otherwise, it is a link conflict and must be backed up & removed
-    processed_paths.add(install_rel_path)
-
-    # Add all children of this install_rel_path to processed_paths to avoid double handling
-    if install_file_path.is_dir():
-        for child_rel in list_folder_paths(
-            src_dir=install_file_path,
-            base_rel=install_rel_path,
-            ignore_handler=context.ignore_handler,
-            resolve_symlinks=resolve_symlinks,
-            translate_mode="forward"
-        ):
-            processed_paths.add(child_rel)
-
-    handle_collision_error(
-        context=context,
-        system_target=system_target,
-        backup_subfolder=BackupSubfolder.OVERWRITTEN,
-        backup_rel_path=install_rel_path,
-        reason="Internal symlink detected",
-        resolve_symlinks=resolve_symlinks,
-        ops=ops,
-    )
-
-    # If repo expects a directory here, recreate it as physical to avoid cycles
-    if install_file_path.is_dir() and not install_file_path.is_symlink():
-        ensure_dir(system_target, context.sudo)
-
-
-def handle_internal_symlink_conflicts(
-    context: PackageInstallContext,
-    resolve_symlinks: bool,
-    processed_paths: set,
-    ops: Optional[FileOperations] = None,
-) -> None:
-    """Detects and backs up symlinks in target_dir pointing into drift_root that conflict with install_pkg_dir files."""
-    links_detected = find_internal_symlink_conflicts(context=context)
-
-    for install_rel_path, system_target in links_detected:
-        resolve_single_internal_symlink_conflict(
-            context=context,
-            install_rel_path=install_rel_path,
-            system_target=system_target,
-            resolve_symlinks=resolve_symlinks,
-            processed_paths=processed_paths,
-            ops=ops,
-        )
-
-    # Check if the canonical path of target_dir still points inside drift_root after resolving conflicts
-    abs_drift_root = context.drift_root.resolve()
-    resolved_target = context.target_dir.resolve()
-    if resolved_target == abs_drift_root or is_relative_to(resolved_target, abs_drift_root):
+def assert_target_dir_outside_drift_root(target_dir: Path, drift_root: Path) -> None:
+    """Guards against deployment into drift_root via direct path or symlink resolution."""
+    abs_drift_root = drift_root.resolve()
+    resolved_target = target_dir.resolve()
+    if is_relative_to(resolved_target, abs_drift_root):
         raise InstallCollisionError(
-            f"Safety Abort: Target directory '{context.target_dir}' (resolved to '{resolved_target}') "
-            f"points inside drift workspace root '{context.drift_root}'. "
+            f"Safety Abort: Target directory '{target_dir}' (resolved to '{resolved_target}') "
+            f"points inside drift workspace root '{drift_root}'. "
             f"Resolving this automatically is unsafe. Please resolve manually."
         )
 
 
-def deploy_single_symlink_file(
+def _plan_file_creation(
+    install_method: InstallMethod,
     rel_file: Path,
-    install_pkg_dir: Path,
-    target_dir: Path,
-    sudo: bool
-) -> None:
-    """Helper to deploy a single file as a relative symlink on host system."""
-    src_file = install_pkg_dir / rel_file
-    system_target = resolve_target_path(rel_file, target_dir)
-    relative_target = compute_relative_symlink_target(src_file, system_target.parent)
+    system_target: Path,
+) -> PlannedFileAction:
+    """Returns CREATE_SYMLINK or CREATE_COPY depending on the package install method."""
+    action_type = ActionType.CREATE_SYMLINK if install_method == InstallMethod.SYMLINK else ActionType.CREATE_COPY
+    return PlannedFileAction(action_type=action_type, rel_path=rel_file, system_target=system_target)
 
-    # If the target already points into the source, do not create the symlink again
-    if system_target.is_symlink():
+
+def _check_symlink_points_to_source(system_target: Path, source_file: Path) -> bool:
+    """Read-only check returning True if system_target symlink resolves or points to source_file."""
+    try:
+        link_raw = Path(os.readlink(system_target))
+        expected_rel = compute_relative_symlink_target(source_file, system_target.parent)
+        return link_raw == expected_rel or (system_target.parent / link_raw).resolve() == source_file.resolve()
+    except Exception:
+        return False
+
+
+def _inspect_single_ancestor(
+    ancestor_target: Path,
+    rel_path: Path,
+    abs_drift_root: Path,
+) -> List[PlannedFileAction]:
+    """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
+    if not (ancestor_target.exists() or ancestor_target.is_symlink()):
+        return [PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target)]
+
+    if ancestor_target.is_dir() and not ancestor_target.is_symlink():
+        return []
+
+    # Blocked by an internal symlink, foreign symlink, or physical file
+    if ancestor_target.is_symlink():
+        is_internal = False
         try:
-            link_target_raw = Path(os.readlink(system_target))
-            if (link_target_raw == relative_target
-                    or (system_target.parent / link_target_raw).resolve() == src_file.resolve()):
-                logger.debug(f"   Skipping symlink creation for '{system_target}' as it already points to '{relative_target}'")
-                return
-        except OSError:
-            pass
+            is_internal = is_relative_to(ancestor_target.resolve(), abs_drift_root)
+        except Exception:
+            is_internal = False
+        reason = "Internal ancestor symlink conflict" if is_internal else "Symlink blocking directory"
+    else:
+        reason = "File blocking directory"
 
-    create_symlink(relative_target, system_target, sudo)
-
-
-def deploy_single_copy_file(
-    rel_file: Path,
-    install_pkg_dir: Path,
-    target_dir: Path,
-    sudo: bool
-) -> None:
-    """Helper to deploy a single file using Copy method."""
-    src_file = install_pkg_dir / rel_file
-    system_target = resolve_target_path(rel_file, target_dir)
-    copy_file(
-        src_file,
-        system_target,
-        sudo,
-        line_ending=(LineEnding.CRLF if sys.platform == "win32" else LineEnding.PRESERVE)
-    )
+    return [
+        PlannedFileAction(action_type=ActionType.BACKUP_OVERWRITE, rel_path=rel_path, system_target=ancestor_target, reason=reason),
+        PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target),
+    ]
 
 
-def reconcile_orphaned_files(
+def _check_has_backed_up_ancestor(target: Path, backed_up_targets: Set[Path]) -> bool:
+    """Read-only check returning True if any parent directory of target has been backed up."""
+    return any(parent in backed_up_targets for parent in target.parents)
+
+
+def _inspect_ancestor_directories(
     context: PackageInstallContext,
-    deployable_files: Iterable[Path],
-    deployed_files: Iterable[Path],
-    resolve_symlinks: bool,
-    ops: Optional[FileOperations] = None,
-) -> None:
-    """Reconciles historical deployment files to prune orphaned files from active system target."""
-    orphaned_files = set(deployed_files) - set(deployable_files)
-    if not orphaned_files:
-        return
-    logger.info(f"🔍 Reconciling desired state: Pruning {len(orphaned_files)} orphaned files")
-    for orphaned in sorted(orphaned_files):
-        system_target = resolve_target_path(orphaned, context.target_dir)
-        if system_target.exists() or system_target.is_symlink():
-            handle_collision_error(
-                context=context,
+    active_files: Iterable[Path],
+    handled_targets: Set[Path],
+    actions: List[PlannedFileAction],
+) -> Set[Path]:
+    """Inspects parent directories of active files from shallowest to deepest, planning necessary directory recreation or backups."""
+    def _expand_path_ancestors(rel: Path) -> Set[Path]:
+        target_rel = encode_dot_prefix(rel)
+        return {p for p in target_rel.parents if p != Path(".")}
+
+    all_ancestors = {p for rel in active_files for p in _expand_path_ancestors(rel)}
+    sorted_ancestors = sorted(all_ancestors, key=lambda p: len(p.parts))
+    abs_drift_root = context.drift_root.resolve()
+    backed_up_ancestor_targets: Set[Path] = set()
+
+    for p in sorted_ancestors:
+        ancestor_target = context.target_dir / p
+        if ancestor_target in handled_targets:
+            continue
+        handled_targets.add(ancestor_target)
+        rel_path = decode_dot_prefix(p)
+
+        if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
+            actions.append(PlannedFileAction(
+                action_type=ActionType.ENSURE_DIR,
+                rel_path=rel_path,
+                system_target=ancestor_target,
+            ))
+            continue
+
+        res = _inspect_single_ancestor(ancestor_target, rel_path, abs_drift_root)
+        if any(a.action_type == ActionType.BACKUP_OVERWRITE for a in res):
+            backed_up_ancestor_targets.add(ancestor_target)
+        actions.extend(res)
+
+    return backed_up_ancestor_targets
+
+
+def _inspect_symlink_leaf(
+    context: PackageInstallContext,
+    rel_file: Path,
+    system_target: Path,
+    source_file: Path,
+    abs_drift_root: Path,
+) -> List[PlannedFileAction]:
+    """Inspects a host symlink at destination and plans overwrite, skip, or re-link actions."""
+    if not system_target.exists():
+        # Broken symlink
+        return [
+            PlannedFileAction(
+                action_type=ActionType.BACKUP_OVERWRITE,
+                rel_path=rel_file,
                 system_target=system_target,
-                backup_subfolder=BackupSubfolder.DELETED_FILES,
-                backup_rel_path=orphaned,
-                reason=f"Orphaned file '{orphaned}' prune",
-                resolve_symlinks=resolve_symlinks,
-                ops=ops,
-            )
+                reason="Broken symlink collision",
+            ),
+            _plan_file_creation(context.install_method, rel_file, system_target),
+        ]
+
+    # Check if existing symlink already points to source_file
+    if _check_symlink_points_to_source(system_target, source_file):
+        if context.install_method == InstallMethod.SYMLINK:
+            return [PlannedFileAction(
+                action_type=ActionType.SKIP_IDENTICAL,
+                rel_path=rel_file,
+                system_target=system_target,
+                reason="Symlink already points to source",
+            )]
+        # Switching from symlink to copy: backup the existing symlink and create physical copy
+        return [
+            PlannedFileAction(
+                action_type=ActionType.BACKUP_OVERWRITE,
+                rel_path=rel_file,
+                system_target=system_target,
+                reason="Replacing symlink with copy",
+            ),
+            PlannedFileAction(
+                action_type=ActionType.CREATE_COPY,
+                rel_path=rel_file,
+                system_target=system_target,
+            ),
+        ]
+
+    # Symlink points elsewhere (internal conflict vs external collision)
+    points_into_drift = False
+    try:
+        points_into_drift = is_relative_to(system_target.resolve(), abs_drift_root)
+    except Exception:
+        points_into_drift = False
+
+    reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
+    return [
+        PlannedFileAction(
+            action_type=ActionType.BACKUP_OVERWRITE,
+            rel_path=rel_file,
+            system_target=system_target,
+            reason=reason,
+        ),
+        _plan_file_creation(context.install_method, rel_file, system_target),
+    ]
+
+
+def _inspect_physical_file_leaf(
+    context: PackageInstallContext,
+    rel_file: Path,
+    system_target: Path,
+    source_file: Path,
+) -> List[PlannedFileAction]:
+    """Inspects a host regular physical file and plans overwrite, update, or skip actions."""
+    if context.install_method == InstallMethod.SYMLINK:
+        return [
+            PlannedFileAction(
+                action_type=ActionType.BACKUP_OVERWRITE,
+                rel_path=rel_file,
+                system_target=system_target,
+                reason="Physical file collides with symlink",
+            ),
+            PlannedFileAction(
+                action_type=ActionType.CREATE_SYMLINK,
+                rel_path=rel_file,
+                system_target=system_target,
+            ),
+        ]
+
+    # COPY method
+    if context.is_first_time:
+        return [
+            PlannedFileAction(
+                action_type=ActionType.BACKUP_OVERWRITE,
+                rel_path=rel_file,
+                system_target=system_target,
+                reason="Pre-existing file collision",
+            ),
+            PlannedFileAction(
+                action_type=ActionType.CREATE_COPY,
+                rel_path=rel_file,
+                system_target=system_target,
+            ),
+        ]
+
+    from ..utils.file_inspect import contents_differ
+    try:
+        differs = contents_differ(source_file, system_target)
+    except Exception:
+        differs = True
+
+    if differs:
+        return [PlannedFileAction(
+            action_type=ActionType.UPDATE_COPY,
+            rel_path=rel_file,
+            system_target=system_target,
+            reason="File content updated",
+        )]
+
+    return [PlannedFileAction(
+        action_type=ActionType.SKIP_IDENTICAL,
+        rel_path=rel_file,
+        system_target=system_target,
+        reason="File content matches",
+    )]
+
+
+def _inspect_leaf_file(
+    context: PackageInstallContext,
+    rel_file: Path,
+    handled_targets: Set[Path],
+    actions: List[PlannedFileAction],
+    backed_up_ancestor_targets: Set[Path],
+) -> None:
+    """Inspects a single package file against host filesystem state and plans appropriate actions."""
+    rel_file = decode_dot_prefix(rel_file)
+    system_target = resolve_target_path(rel_file, context.target_dir)
+    source_file = context.install_pkg_dir / rel_file
+    handled_targets.add(system_target)
+    abs_drift_root = context.drift_root.resolve()
+
+    if _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets):
+        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
+        return
+
+    target_exists_or_symlink = system_target.exists() or system_target.is_symlink()
+
+    if not target_exists_or_symlink:
+        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
+        return
+
+    if system_target.is_dir() and not system_target.is_symlink():
+        actions.append(PlannedFileAction(
+            action_type=ActionType.BACKUP_OVERWRITE,
+            rel_path=rel_file,
+            system_target=system_target,
+            reason="Directory blocking file",
+        ))
+        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
+        return
+
+    if system_target.is_symlink():
+        actions.extend(_inspect_symlink_leaf(context, rel_file, system_target, source_file, abs_drift_root))
+        return
+
+    actions.extend(_inspect_physical_file_leaf(context, rel_file, system_target, source_file))
+
+
+def _plan_orphan_prune(
+    context: PackageInstallContext,
+    orphan_rel: Path,
+    reason: str,
+) -> List[PlannedFileAction]:
+    """Inspects an orphaned path on host and plans BACKUP_PRUNE and DELETE_ORPHAN if present."""
+    system_target = resolve_target_path(orphan_rel, context.target_dir)
+    if not (system_target.exists() or system_target.is_symlink()):
+        return []
+
+    decoded_rel = decode_dot_prefix(orphan_rel)
+    return [
+        PlannedFileAction(
+            action_type=ActionType.BACKUP_PRUNE,
+            rel_path=decoded_rel,
+            system_target=system_target,
+            reason=reason,
+        ),
+        PlannedFileAction(
+            action_type=ActionType.DELETE_ORPHAN,
+            rel_path=decoded_rel,
+            system_target=system_target,
+            reason=f"Orphaned file '{orphan_rel}' deletion",
+        ),
+    ]
+
+
+def _inspect_orphans(
+    context: PackageInstallContext,
+    deployable_files: Sequence[Path],
+    deployed_files: Sequence[Path],
+    redeploy: bool,
+    package_changes: Optional[PackageStageChanges],
+    actions: List[PlannedFileAction],
+) -> None:
+    """Plans backup and deletion of historical or stage-detected orphaned files."""
+    if redeploy:
+        orphaned_files = sorted(set(deployed_files) - set(deployable_files))
+        for orphaned in orphaned_files:
+            actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
+    elif package_changes is not None and package_changes.deployable_changes.deleted:
+        for deleted_rel in sorted(package_changes.deployable_changes.deleted):
+            actions.extend(_plan_orphan_prune(context, deleted_rel, f"Deleted file '{deleted_rel}' prune"))
 
 
 # =============================================================================
 # Layer 3: Batch Delivery & Collision Audit
 # =============================================================================
 
-def run_collision_guard(
+def plan_package_deployment(
     context: PackageInstallContext,
-    resolve_symlinks: bool,
-    ops: Optional[FileOperations] = None,
-) -> None:
-    """Handles collision backing up before any file deployment using FolderDiff."""
-    # 0. Safety Abort Check for parents ABOVE or AT target_dir
-    # This detects if our target base itself is a symlink into drift_root
-    parent_symlink = find_symlink_ancestor(context.target_dir, context.drift_root)
-    if parent_symlink:
-        raise InstallCollisionError(
-            f"Safety Abort: Parent directory '{parent_symlink}' (resolved to '{parent_symlink.resolve()}') "
-            f"is a symlink pointing into drift workspace root '{context.drift_root}', "
-            f"but lies outside the package target directory '{context.target_dir}'. "
-            f"Resolving this automatically is unsafe. Please resolve manually."
-        )
+    deployable_files: Iterable[Path],
+    deployed_files: Iterable[Path] = (),
+    redeploy: bool = True,
+    package_changes: Optional[PackageStageChanges] = None,
+) -> PackageDeploymentPlan:
+    """Pure, read-only planner that inspects package candidate paths and host state to produce a deterministic deployment plan.
 
-    processed_paths: Set[Path] = set()
+    Does NOT modify the host filesystem, execute hooks, or touch state.toml.
+    """
+    assert_target_dir_outside_drift_root(context.target_dir, context.drift_root)
 
-    # 1. Check and resolve internal symlink conflicts inside target_dir
-    handle_internal_symlink_conflicts(
+    deployable_list = list(deployable_files)
+    deployed_list = list(deployed_files)
+
+    actions: List[PlannedFileAction] = []
+    handled_targets: Set[Path] = set()
+
+    # Determine active files to install or update
+    if redeploy or package_changes is None:
+        active_files = deployable_list
+    else:
+        # Incremental redeploy: consider added and modified
+        active_files = [
+            p for p in deployable_list
+            if p in package_changes.deployable_changes.added or p in package_changes.deployable_changes.modified
+        ]
+
+    # 1. Prune historical or stage orphans first
+    _inspect_orphans(
         context=context,
-        resolve_symlinks=resolve_symlinks,
-        processed_paths=processed_paths,
-        ops=ops,
+        deployable_files=deployable_list,
+        deployed_files=deployed_list,
+        redeploy=redeploy,
+        package_changes=package_changes,
+        actions=actions,
     )
 
-    # 2. Recursive Audit using FolderDiff
-    diff = compare_folders(
-        src_dir=context.install_pkg_dir,
-        dst_dir=context.target_dir,
-        ignore_handler=context.ignore_handler,
-        resolve_symlinks=resolve_symlinks,
-        translate_mode="forward",
-        src_only=True,
+    # 2. Inspect ancestor directories shallowest to deepest
+    backed_up_ancestors = _inspect_ancestor_directories(
+        context=context,
+        active_files=active_files,
+        handled_targets=handled_targets,
+        actions=actions,
     )
 
-    # 3. Handle Deleted items (type mismatches where system files block repo dirs)
-    for rel in diff.deleted:
-        if rel in processed_paths:
-            continue
-        processed_paths.add(rel)
-
-        system_target = resolve_target_path(rel, context.target_dir)
-        if context.ignore_handler.match_path(rel):
-            # Clean up now-ignored files
-            handle_collision_error(
-                context=context,
-                system_target=system_target,
-                backup_subfolder=BackupSubfolder.DELETED_FILES,
-                backup_rel_path=rel,
-                reason="Ignored file cleanup",
-                resolve_symlinks=resolve_symlinks,
-                ops=ops,
-            )
-        else:
-            # Type mismatch (e.g. System has file, Repo has dir)
-            handle_collision_error(
-                context=context,
-                system_target=system_target,
-                backup_subfolder=BackupSubfolder.OVERWRITTEN,
-                backup_rel_path=rel,
-                reason="Type mismatch collision",
-                resolve_symlinks=resolve_symlinks,
-                ops=ops,
-            )
-
-    # 4. Handle Modified items (collisions that need overwrite)
-    for rel in diff.modified:
-        if rel in processed_paths:
-            continue
-        processed_paths.add(rel)
-
-        system_target = resolve_target_path(rel, context.target_dir)
-
-        # Any internal symlink pointing into drift_root (outside this package's install directory)
-        # must have already been handled earlier in handle_internal_symlink_conflicts.
-        if system_target.is_symlink() and system_target.exists():
-            if not is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve()):
-                assert not is_relative_to(system_target.resolve(), context.drift_root.resolve()), (
-                    "Internal symlink conflicts should have been handled earlier."
-                )
-
-        # If the file is marked modified and is a symlink, then it cannot pointing to the same file.
-        # If the symlink points to anywhere inside drift_root but not the same pkg_install_dir,
-        # then it is handled earlier in internal symlink conflicts.
-        # So if a symlink gets here:
-        #   1. it is a broken symlink
-        #   2. it is a symlink pointing outside drift_root
-        #   3. it is pointing inside the same pkg_install_dir, but not the same file.
-        # We can skip if the system target is a symlink pointing to another file in same install_pkg_dir.
-        # If it is not a symlink or a broken link, we need to backup and remove it, because it is a collision.
-        if (context.install_method == InstallMethod.SYMLINK
-                and system_target.is_symlink() and system_target.exists()  # exists() ensures it is not a broken link
-                and is_relative_to(system_target.resolve(), context.install_pkg_dir.resolve())):
-            continue
-
-        # Copy mode check: skip backup if the system target is not a symlink and it's not the first time installation (i.e., it's an update).
-        if (context.install_method == InstallMethod.COPY
-                and not system_target.is_symlink() and not context.is_first_time):
-            continue
-
-        # conditions include:
-        # symlink mode: system target file is not a symlink, or is broken link, or pointing outside install_pkg_dir
-        # copy mode: first installation, or system target is a symlink (broken or not)
-        handle_collision_error(
+    # 3. Inspect leaf files
+    for rel_file in sorted(active_files):
+        _inspect_leaf_file(
             context=context,
-            system_target=system_target,
-            backup_subfolder=BackupSubfolder.OVERWRITTEN,
-            backup_rel_path=rel,
-            reason="Deployment collision",
-            resolve_symlinks=resolve_symlinks,
-            ops=ops,
+            rel_file=rel_file,
+            handled_targets=handled_targets,
+            actions=actions,
+            backed_up_ancestor_targets=backed_up_ancestors,
         )
 
-    # 5. Handle Content Match items (Symlink specific: physical file matching repo content is STILL a collision)
-    if context.install_method == InstallMethod.SYMLINK:
-        for rel in diff.matches:
-            if rel in processed_paths:
-                continue
-            processed_paths.add(rel)
+    hooks_to_trigger = (
+        ["pre_install", "post_install"]
+        if context.is_first_time
+        else ["pre_update", "post_update"]
+    )
 
-            system_target = resolve_target_path(rel, context.target_dir)
-            if not system_target.is_symlink():
-                handle_collision_error(
-                    context=context,
-                    system_target=system_target,
-                    backup_subfolder=BackupSubfolder.OVERWRITTEN,
-                    backup_rel_path=rel,
-                    reason="Symlink physical collision",
-                    resolve_symlinks=resolve_symlinks,
-                    ops=ops,
-                )
+    return PackageDeploymentPlan(
+        package=context.pkg_name,
+        target_directory=str(context.target_dir),
+        install_method=context.install_method,
+        actions=actions,
+        hooks_to_trigger=hooks_to_trigger,
+    )
 
 
-def run_full_copy_deployment(
-    src_pkg_dir: Path,
-    target_dir: Path,
-    sudo: bool,
-    deployable_files: List[Path]
-) -> None:
-    """Executes copy deployment of deployable_files to target_dir."""
-    ensure_dir(target_dir, sudo)
-    pkg = src_pkg_dir.name
-    logger.info(f"🚚 Syncing files: {pkg} (copy)")
-
-    for rel_file in deployable_files:
-        deploy_single_copy_file(rel_file, src_pkg_dir, target_dir, sudo)
-
-
-def run_full_symlink_deployment(
-    src_pkg_dir: Path,
-    target_dir: Path,
-    sudo: bool,
-    deployable_files: List[Path]
-) -> None:
-    """Executes native symlink deployment of deployable_files to target_dir."""
-    ensure_dir(target_dir, sudo)
-    pkg = src_pkg_dir.name
-    logger.info(f"🔗 Linking files: {pkg} (symlink)")
-
-    for rel_file in deployable_files:
-        deploy_single_symlink_file(rel_file, src_pkg_dir, target_dir, sudo)
-
-
-
-def run_full_file_delivery(
+def execute_package_deployment(
     context: PackageInstallContext,
-    deployable_files: List[Path]
+    plan: PackageDeploymentPlan,
+    resolve_symlinks: bool = True,
 ) -> None:
-    """Handles full file delivery during initial or clean redeployment."""
-    if context.install_method == InstallMethod.COPY:
-        run_full_copy_deployment(
-            context.install_pkg_dir, context.target_dir, context.sudo,
-            deployable_files=deployable_files
-        )
-        return
-    if context.install_method == InstallMethod.SYMLINK:
-        run_full_symlink_deployment(
-            context.install_pkg_dir, context.target_dir, context.sudo,
-            deployable_files=deployable_files
-        )
-        return
-
-
-def run_incremental_file_delivery(
-    context: PackageInstallContext,
-    package_changes: PackageStageChanges,
-) -> None:
-    """Handles incremental deployment applying Stage Changes additions, modifications, and deletions."""
-    # A. Process Deletions on active host system
-    for rel_file in package_changes.deployable_changes.deleted:
-        delete_single_system_file_or_dir(rel_file, context.target_dir, context.sudo)
-
-    # B. Process Additions and Modifications
-    for rel_file in package_changes.deployable_changes.added + package_changes.deployable_changes.modified:
-        if not context.install_pkg_dir.joinpath(rel_file).exists():
-            logger.warning(f"⚠️  [BUG] Staged file '{rel_file}' does not exist in install package directory.")
-            continue
-
-        if context.install_pkg_dir.joinpath(rel_file).is_symlink():
-            logger.warning(
-                f"⚠️  [BUG] Staged file '{rel_file}' is a symlink in install package directory, which is not allowed."
-            )
-            continue
-
-        if rel_file.is_dir():
-            ensure_dir(
-                resolve_target_path(rel_file, context.target_dir), context.sudo
-            )
-            continue
-
-        if context.install_method == InstallMethod.SYMLINK:
-            deploy_single_symlink_file(
-                rel_file=rel_file,
-                install_pkg_dir=context.install_pkg_dir,
-                target_dir=context.target_dir,
-                sudo=context.sudo
-            )
-        elif context.install_method == InstallMethod.COPY:
-            deploy_single_copy_file(
-                rel_file=rel_file,
-                install_pkg_dir=context.install_pkg_dir,
-                target_dir=context.target_dir,
-                sudo=context.sudo
-            )
+    """Executes all planned actions in deterministic order on the host filesystem."""
+    for action in plan.actions:
+        execute_single_action(context, action, resolve_symlinks=resolve_symlinks)
 
 
 def update_state_registry_post_deployment(
@@ -751,10 +723,10 @@ def update_state_registry_post_deployment(
     target_directory: Path,
     install_method: InstallMethod,
     redeploy: bool,
-    deployable_files: Iterable[Path] = (),
+    deployable_files: Sequence[Path],
     package_changes: Optional[PackageStageChanges] = None,
 ) -> None:
-    """Updates and persists the package deployment state, target directory, install method, and deployed files manifest in state.toml."""
+    """Updates and saves state registry to reflect successful package deployment."""
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(
         pkg,
@@ -838,19 +810,11 @@ def deploy_one_package_impl(
     metadata: PackageConfig,
     config: InstallConfig,
 ) -> PackageInstallResult:
-    """Executes collision audit, lifecycle hooks, file deliveries, and state registry updates."""
+    """Executes deployment planning, lifecycle hooks, file deliveries, and state registry updates."""
     context = PackageInstallContext.from_package(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
-    )
-    ops = FileOperations()
-
-    # 1. Collision Guard
-    run_collision_guard(
-        context=context,
-        resolve_symlinks=config.resolve_symlinks,
-        ops=ops,
     )
 
     target_dir = context.target_dir
@@ -863,7 +827,7 @@ def deploy_one_package_impl(
             f"'{target_migrated_from}' -> '{target_dir}'. Undeploying from previous location."
         )
         old_deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
-        if old_deployed_files:
+        if old_deployed_files and not config.dry_run:
             from .uninstall_repo import remove_deployed_files
             remove_deployed_files(
                 pkg=context.pkg_name,
@@ -875,18 +839,27 @@ def deploy_one_package_impl(
         redeploy = True
 
     package_changes = config.get_package_changes(context.pkg_name)
-    
-    # Calculate current desired files list
     deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
+    deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
 
-    if redeploy:
-        deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
-        reconcile_orphaned_files(
-            context=context,
-            deployable_files=deployable_files,
-            deployed_files=deployed_files,
-            resolve_symlinks=config.resolve_symlinks,
-            ops=ops,
+    # 1. Pure Planning (Inspect and compile planned actions without mutating state)
+    plan = plan_package_deployment(
+        context=context,
+        deployable_files=deployable_files,
+        deployed_files=deployed_files,
+        redeploy=redeploy,
+        package_changes=package_changes,
+    )
+
+    if config.dry_run:
+        logger.info(f"🔍 [DRY-RUN] Planned {len(plan.actions)} actions for package '{context.pkg_name}'.")
+        return PackageInstallResult(
+            package=context.pkg_name,
+            install_method=context.install_method,
+            target_directory=str(context.target_dir),
+            plan=plan,
+            is_first_time=context.is_first_time,
+            status="SUCCESS",
         )
 
     # 2. Lifecycle Hooks & State registry update
@@ -906,7 +879,7 @@ def deploy_one_package_impl(
             logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Deployment stopped (no rollback needed).")
         raise
 
-    # Persist the target file manifest to state.toml before hooks & physical delivery
+    # Persist the target file manifest to state.toml before physical delivery
     # so that midway file deployment crashes have an authoritative list of files to uninstall/rollback
     state_registry.sync_deployed_files(
         pkg=context.pkg_name,
@@ -917,23 +890,16 @@ def deploy_one_package_impl(
         package_changes=package_changes,
     )
     state_registry.save()
-    
-    # 3. Physical Deployment Execution
-    if redeploy:
-        run_full_file_delivery(
-            context=context,
-            deployable_files=deployable_files,
-        )
-    else:
-        assert package_changes is not None
-        run_incremental_file_delivery(
-            context=context,
-            package_changes=package_changes,
-        )
 
+    # 3. Physical Deployment Execution
+    execute_package_deployment(
+        context=context,
+        plan=plan,
+        resolve_symlinks=config.resolve_symlinks,
+    )
     logger.debug(f"   File delivery completed via {context.install_method}")
-    
-    # Post Hooks
+
+    # 4. Post Hooks
     success = False
     no_rollback_err = False
     try:
@@ -946,6 +912,7 @@ def deploy_one_package_impl(
         if not e.requires_rollback:
             no_rollback_err = True
             logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
+        # The exception is raised here.
         raise
     finally:
         if success or no_rollback_err:
@@ -961,20 +928,13 @@ def deploy_one_package_impl(
 
     logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
 
-    if package_changes is not None:
-        ops.added = [str(p) for p in package_changes.deployable_changes.added]
-        ops.modified = [str(p) for p in package_changes.deployable_changes.modified]
-        ops.deleted = [str(p) for p in package_changes.deployable_changes.deleted]
-    else:
-        ops.added = [str(p) for p in deployable_files]
-
     return PackageInstallResult(
         package=context.pkg_name,
         install_method=context.install_method,
         target_directory=str(context.target_dir),
-        operations=ops,
+        plan=plan,
         is_first_time=context.is_first_time,
-        status="SUCCESS"
+        status="SUCCESS",
     )
 
 
@@ -996,12 +956,13 @@ def deploy_one_package(
     )
     if skip_res is not None:
         return skip_res
-    
+
     logger.info(f"🚀 Deploying package: {pkg}")
-    
-    state_registry.set_package_state(pkg, "installing")
-    state_registry.save()
-    
+
+    if not cfg.dry_run:
+        state_registry.set_package_state(pkg, "installing")
+        state_registry.save()
+
     with metadata.package_envs():
         return deploy_one_package_impl(
             workspace_config=workspace_config,
@@ -1175,7 +1136,7 @@ def prepare_install_deployment(
         target_metadata=pkg_metadata_map,
         state_registry=state_registry,
         workspace_config=workspace_config,
-        ignore_missing_dependencies=(cfg.force or cfg.ignore_missing_dependencies),
+        no_deps=(cfg.force or cfg.no_deps),
     )
 
     return InstallPlan(

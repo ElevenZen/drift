@@ -37,6 +37,8 @@ from .install_repo import (
     PackageInstallContext,
     deploy_one_package,
     deploy_one_package_impl,
+    plan_package_deployment,
+    execute_package_deployment,
     assert_packages_deployment_ready,
 )
 from .uninstall_repo import (
@@ -128,6 +130,8 @@ __all__ = [
     "PackageInstallContext",
     "deploy_one_package",
     "deploy_one_package_impl",
+    "plan_package_deployment",
+    "execute_package_deployment",
     "run_primitive_7_uninstall_packages",
     "UninstallConfig",
     "UninstallPlan",

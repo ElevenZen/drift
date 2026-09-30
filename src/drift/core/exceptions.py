@@ -135,7 +135,7 @@ class RenderCollisionError(RenderError):
 
 
 class InstallCollisionError(DriftError, RuntimeError):
-    """Raised during install_repo collision guard safety aborts (e.g. target directory or parent symlink resolving inside drift_root)."""
+    """Raised during install_repo collision guard safety aborts (e.g. target directory resolving inside drift_root)."""
     exit_code: int = ExitCode.COLLISION_ERROR
 
     def __init__(

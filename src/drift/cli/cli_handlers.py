@@ -189,7 +189,7 @@ def handle_deploy(
     force: bool = False,
     no_hooks: bool = False,
     redeploy: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
@@ -203,7 +203,7 @@ def handle_deploy(
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
             redeploy=redeploy,
-            ignore_missing_dependencies=ignore_missing_dependencies,
+            no_deps=no_deps,
         )
 
 
@@ -229,7 +229,7 @@ def handle_uninstall(
     dry_run: bool = False,
     detach: bool = False,
     no_hooks: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """Uninstall a package from the system and restore any backups."""
     cli_ctx = _extract_cli_context(ctx)
@@ -244,7 +244,7 @@ def handle_uninstall(
             detach=detach,
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
-            ignore_missing_dependencies=ignore_missing_dependencies,
+            no_deps=no_deps,
         )
 
 
@@ -394,7 +394,7 @@ def handle_stage(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
@@ -406,7 +406,7 @@ def handle_stage(
             pkgs,
             force=force,
             json_mode=cli_ctx.json_mode,
-            ignore_missing_dependencies=ignore_missing_dependencies,
+            no_deps=no_deps,
         )
 
 
@@ -415,7 +415,8 @@ def handle_apply(
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """(Low-Level) Apply configurations from state database to active host system."""
     cli_ctx = _extract_cli_context(ctx)
@@ -428,7 +429,8 @@ def handle_apply(
             force=force,
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
-            ignore_missing_dependencies=ignore_missing_dependencies,
+            no_deps=no_deps,
+            dry_run=dry_run,
         )
 
 
@@ -462,6 +464,7 @@ def handle_install(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """(Didactic Stub) Intercepts 'drift install' and provides guidance."""
     cli_ctx = _extract_cli_context(ctx)

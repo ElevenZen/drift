@@ -59,7 +59,7 @@ Pre-flight Assertion Guards:
     - resolve_package_uninstall_order(pkg_dependencies_map)
         * Resolves reverse topological uninstallation order (dependents before prerequisites).
 
-    - resolve_ordered_packages(target_metadata, state_registry, workspace_config, ignore_missing_dependencies)
+    - resolve_ordered_packages(target_metadata, state_registry, workspace_config, no_deps)
         * Assembles the full dependency universe combining targeted packages with installed packages in StateRegistry.
         * Optionally validates required dependencies exist, resolves topological order, and filters targeted packages.
 
@@ -253,18 +253,24 @@ def _inspect_package_target_dir_validity(
     if not metadata.package.enable_install:
         return None
     target_dir = metadata.get_target_directory(workspace_config)
-    abs_drift_root = workspace_config.drift_root.absolute()
     if not target_dir.is_absolute():
         return (
             package_name,
             "non_absolute",
             f"Package '{package_name}': Target directory '{target_dir}' must be absolute.",
         )
-    if target_dir == abs_drift_root or is_relative_to(target_dir, abs_drift_root):
+    abs_drift_root = workspace_config.drift_root.resolve()
+    resolved_target = target_dir.resolve()
+    if is_relative_to(resolved_target, abs_drift_root):
+        detail = (
+            f"'{target_dir}'"
+            if resolved_target == target_dir
+            else f"'{target_dir}' (resolved to '{resolved_target}')"
+        )
         return (
             package_name,
             "collision",
-            f"The target directory written in config '{target_dir}' "
+            f"The target directory written in config {detail} "
             f"cannot be inside or equal to the drift workspace root '{abs_drift_root}'.",
         )
     return None
@@ -598,7 +604,7 @@ def resolve_ordered_packages(
     target_metadata: Mapping[str, PackageConfig],
     state_registry: StateRegistry,
     workspace_config: WorkspaceConfig,
-    ignore_missing_dependencies: bool = False,
+    no_deps: bool = False,
 ) -> List[str]:
     """Resolves topologically sorted package order for a targeted batch against the full package universe.
 
@@ -611,14 +617,14 @@ def resolve_ordered_packages(
         target_metadata: Mapping of package name to PackageConfig for targeted packages being staged or deployed.
         state_registry: Active StateRegistry for discovering already-installed packages.
         workspace_config: The workspace configuration instance.
-        ignore_missing_dependencies: If False, validates that all required dependencies exist in universe.
+        no_deps: If True, bypasses validation that all required dependencies exist in universe.
 
     Returns:
         List of package names in valid topological order (prerequisites before dependents),
         restricted to the targeted packages.
 
     Raises:
-        ConfigError: If a required dependency is missing from the universe (when ignore_missing_dependencies is False)
+        ConfigError: If a required dependency is missing from the universe (when no_deps is False)
             or cyclic dependency detected.
     """
     if not target_metadata:
@@ -642,7 +648,7 @@ def resolve_ordered_packages(
     full_deps = {pkg: meta.package.dependencies for pkg, meta in full_universe.items()}
 
     # Check missing required dependencies at the beginning before resolving DAG order
-    if not ignore_missing_dependencies:
+    if not no_deps:
         assert_required_package_dependencies_exist(full_deps)
 
     sorted_universe = resolve_package_install_order(full_deps)

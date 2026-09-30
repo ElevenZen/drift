@@ -59,7 +59,13 @@ When multiple interdependent packages are updated within the same install method
   ...before any dependent package begins its deployment lifecycle.
 * **Reliable Dependency Invariant**: Dependent packages are guaranteed that all prerequisite binaries, libraries, and configuration files are fully updated, linked, and verified on the host system before their own `pre_update` or `post_update` hooks execute.
 
-### 6. Why `drift install` Is Not a Command
+### 6. Dry-Run Deployment Simulation (`drift apply --dry-run`)
+Pass `--dry-run` to simulate deployment without modifying host files, executing hooks, or altering `state.toml`:
+* **Inspectable Execution Plan**: Evaluates pre-existing files, internal/foreign symlinks, directory structures, and orphan files from shallowest to deepest.
+* **Deterministic Operation List**: Generates the complete ordered plan (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_ORPHAN`, `ENSURE_DIR`).
+* **Machine-Readable Support**: Combine with `--json` (`drift apply --dry-run --json`) to retrieve the plan programmatically.
+
+### 7. Why `drift install` Is Not a Command
 New users frequently expect a `drift install` command due to the `install/` directory name and habits from traditional package managers (`brew install`, `apt install`). However, Drift intentionally does **not** provide a `drift install` command:
 * **The "Stale Pipeline" Ambiguity**: In traditional package managers, `install` is an end-to-end operation (compile source $\rightarrow$ deploy to system). If `drift install` were an alias for `drift apply`, executing `drift install` after modifying templates in `src/` would **not** re-render or stage those changes—it would silently deploy stale files already residing in `install/`.
 * **Explicit Mental Model**:

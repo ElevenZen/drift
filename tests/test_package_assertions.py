@@ -292,6 +292,31 @@ class TestPackageAssertions(unittest.TestCase):
         self.assertEqual(ctx_col.exception.packages, ["pkg_inside"])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_col.exception))
 
+        # Target directory equal to drift_root
+        meta_exact = PackageConfig.from_dict(
+            {"package": {"name": "pkg_exact", "target_directory": str(self.drift_root)}},
+            "pkg_exact",
+            self.source_dir / "pkg_exact",
+            workspace_config=self.workspace_config,
+        )
+        with self.assertRaises(InstallCollisionError) as ctx_exact:
+            assert_packages_target_dirs_valid({"pkg_exact": meta_exact}, self.workspace_config)
+        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_exact.exception))
+
+        # Target directory is a symlink pointing into drift_root
+        symlink_to_drift = Path(self.temp_dir.name) / "symlink_target_dir"
+        symlink_to_drift.symlink_to(self.drift_root / "nested")
+        meta_symlink = PackageConfig.from_dict(
+            {"package": {"name": "pkg_symlink", "target_directory": str(symlink_to_drift)}},
+            "pkg_symlink",
+            self.source_dir / "pkg_symlink",
+            workspace_config=self.workspace_config,
+        )
+        with self.assertRaises(InstallCollisionError) as ctx_symlink:
+            assert_packages_target_dirs_valid({"pkg_symlink": meta_symlink}, self.workspace_config)
+        self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx_symlink.exception))
+        self.assertIn("resolved to", str(ctx_symlink.exception))
+
     def test_assert_packages_target_dirs_writable(self) -> None:
         """Verifies assert_packages_target_dirs_writable checks permissions on target directories."""
         writable_target = Path(self.temp_dir.name).parent / "writable_dir"
@@ -570,22 +595,22 @@ class TestPackageAssertions(unittest.TestCase):
             )
         )
 
-        # By default (ignore_missing_dependencies=False), raises ConfigError
+        # By default (no_deps=False), raises ConfigError
         with self.assertRaises(ConfigError) as ctx:
             resolve_ordered_packages(
                 target_metadata={"pkg_app": meta_target},
                 state_registry=registry,
                 workspace_config=self.workspace_config,
-                ignore_missing_dependencies=False,
+                no_deps=False,
             )
         self.assertIn("non_existent_dep", str(ctx.exception))
 
-        # With ignore_missing_dependencies=True, bypasses missing check and prunes
+        # With no_deps=True, bypasses missing check and prunes
         res = resolve_ordered_packages(
             target_metadata={"pkg_app": meta_target},
             state_registry=registry,
             workspace_config=self.workspace_config,
-            ignore_missing_dependencies=True,
+            no_deps=True,
         )
         self.assertEqual(res, ["pkg_app"])
 

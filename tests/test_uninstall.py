@@ -463,8 +463,8 @@ fi
 
         self.assertIn("Remaining package 'pkg_b' requires uninstalled package(s): ['pkg_a']", str(ctx.exception))
 
-    def test_uninstall_dependency_blocked_bypassed_with_force_or_ignore_missing(self):
-        """Verifies that dependency check on uninstallation is bypassed with force=True or ignore_missing_dependencies=True."""
+    def test_uninstall_dependency_blocked_bypassed_with_force_or_no_deps(self):
+        """Verifies that dependency check on uninstallation is bypassed with force=True or no_deps=True."""
         self.workspace_config.packages_enable["pkg_a"] = False
         self.workspace_config.packages_enable["pkg_b"] = False
         for pkg, deps_text in [("pkg_a", ""), ("pkg_b", 'dependencies = ["pkg_a"]')]:
@@ -485,11 +485,11 @@ fi
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Install pkg_a and pkg_b"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        # 1. With ignore_missing_dependencies=True (pkg_a is disabled in workspace_config, so safeguard passes)
+        # 1. With no_deps=True (pkg_a is disabled in workspace_config, so safeguard passes)
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             ["pkg_a"],
-            config=UninstallConfig(ignore_missing_dependencies=True),
+            config=UninstallConfig(no_deps=True),
         )
         self.assertEqual(res.status, "SUCCESS")
         updated_reg = load_state_registry(state_file)

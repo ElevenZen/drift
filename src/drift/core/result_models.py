@@ -122,16 +122,123 @@ class StageResult(SerializableModel):
 
 
 # =============================================================================
-# Primitive 5: Install Deployment & File Operations
+# Primitive 5: Install Deployment & Deployment Plan
 # =============================================================================
 
+class ActionType(str, Enum):
+    """Specific filesystem operation planned or executed during deployment."""
+    # Creations & Updates
+    CREATE_SYMLINK = "CREATE_SYMLINK"
+    CREATE_COPY = "CREATE_COPY"
+    UPDATE_COPY = "UPDATE_COPY"
+    ENSURE_DIR = "ENSURE_DIR"
+
+    # Skips (already matching desired state)
+    SKIP_IDENTICAL = "SKIP_IDENTICAL"
+
+    # Collisions & Cleanups
+    BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Colliding physical file or conflicting symlink
+    BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical orphan backed up before deletion
+    DELETE_ORPHAN = "DELETE_ORPHAN"        # Host orphan removed after backup
+
+
 @dataclass
-class FileOperations(SerializableModel):
-    added: List[str] = field(default_factory=list)
-    modified: List[str] = field(default_factory=list)
-    deleted: List[str] = field(default_factory=list)
-    deleted_backup: List[str] = field(default_factory=list)
-    overwritten_backup: List[str] = field(default_factory=list)
+class PlannedFileAction(SerializableModel):
+    """Declarative specification of a single file/directory operation on the host system."""
+    action_type: ActionType
+    rel_path: Path
+    system_target: Path
+    reason: Optional[str] = None
+
+
+@dataclass
+class PackageDeploymentPlan(SerializableModel):
+    """Structured deployment plan detailing all planned filesystem operations and lifecycle hooks."""
+    package: str = ""
+    target_directory: str = ""
+    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    actions: List[PlannedFileAction] = field(default_factory=list)
+    hooks_to_trigger: List[str] = field(default_factory=list)
+
+    @property
+    def created(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type in (ActionType.CREATE_SYMLINK, ActionType.CREATE_COPY)]
+
+    @property
+    def updated(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
+
+    @property
+    def skipped(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.SKIP_IDENTICAL]
+
+    @property
+    def pruned(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.DELETE_ORPHAN]
+
+    @property
+    def overwritten_backups(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.BACKUP_OVERWRITE]
+
+    @property
+    def prune_backups(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
+
+    def format_text(self) -> str:
+        """Formats the deployment plan for human-readable terminal output."""
+        method_str = self.install_method.value if isinstance(self.install_method, Enum) else str(self.install_method)
+        lines = [f"📦 Package '{self.package}':"]
+        lines.append(f"  Target: {self.target_directory}")
+        lines.append(f"  Method: {method_str}")
+
+        if not self.actions:
+            lines.append("  Planned Actions: (None)")
+        else:
+            lines.append("  Planned Actions:")
+            for action in self.actions:
+                reason_str = f" ({action.reason})" if action.reason else ""
+                if action.action_type == ActionType.ENSURE_DIR:
+                    lines.append(f"    📁 [ENSURE_DIR]      {action.system_target}")
+                elif action.action_type == ActionType.CREATE_SYMLINK:
+                    lines.append(f"    🔗 [CREATE_SYMLINK]  {action.rel_path} -> {action.system_target}")
+                elif action.action_type == ActionType.CREATE_COPY:
+                    lines.append(f"    📄 [CREATE_COPY]     {action.rel_path} -> {action.system_target}")
+                elif action.action_type == ActionType.UPDATE_COPY:
+                    lines.append(f"    📝 [UPDATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}")
+                elif action.action_type == ActionType.SKIP_IDENTICAL:
+                    lines.append(f"    ⏭️ [SKIP_IDENTICAL]  {action.rel_path} -> {action.system_target}{reason_str}")
+                elif action.action_type == ActionType.BACKUP_OVERWRITE:
+                    lines.append(f"    🛡️ [BACKUP_OVERWRITE] {action.system_target}{reason_str}")
+                elif action.action_type == ActionType.BACKUP_PRUNE:
+                    lines.append(f"    📦 [BACKUP_PRUNE]    {action.system_target}{reason_str}")
+                elif action.action_type == ActionType.DELETE_ORPHAN:
+                    lines.append(f"    🗑️ [DELETE_ORPHAN]  {action.system_target}{reason_str}")
+                else:
+                    lines.append(f"    [{action.action_type}] {action.rel_path} -> {action.system_target}{reason_str}")
+
+        if self.hooks_to_trigger:
+            hooks_str = ", ".join(self.hooks_to_trigger)
+            lines.append(f"  Lifecycle Hooks: {hooks_str} (skipped during simulation)")
+
+        counts = []
+        if self.created:
+            counts.append(f"{len(self.created)} to create")
+        if self.updated:
+            counts.append(f"{len(self.updated)} to update")
+        if self.skipped:
+            counts.append(f"{len(self.skipped)} up-to-date")
+        backups_count = len(self.overwritten_backups) + len(self.prune_backups)
+        if backups_count:
+            counts.append(f"{backups_count} to backup")
+        if self.pruned:
+            counts.append(f"{len(self.pruned)} to delete")
+        ensured_dirs = [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
+        if ensured_dirs:
+            counts.append(f"{len(ensured_dirs)} directories")
+
+        summary_str = ", ".join(counts) if counts else "0 actions"
+        lines.append(f"  Summary: {summary_str}")
+        return "\n".join(lines)
 
 
 @dataclass
@@ -139,7 +246,7 @@ class PackageInstallResult(SerializableModel):
     package: str
     install_method: InstallMethod
     target_directory: str
-    operations: FileOperations = field(default_factory=FileOperations)
+    plan: PackageDeploymentPlan = field(default_factory=PackageDeploymentPlan)
     is_first_time: bool = False
     status: str = "SUCCESS"
     error: Optional[str] = None
@@ -152,6 +259,33 @@ class InstallDeploymentResult(SerializableModel):
     packages: List[PackageInstallResult] = field(default_factory=list)
     error_package: Optional[str] = None
     error_message: Optional[str] = None
+
+    def format_text(self, dry_run: bool = False) -> str:
+        """Formats the deployment or simulation results for human-readable output."""
+        if not self.packages:
+            return "No packages targeted."
+
+        lines = []
+        if dry_run:
+            lines.append("🔍 [DRY-RUN] Package Deployment Simulation Plan")
+            lines.append("=" * 60)
+            for pkg_res in self.packages:
+                lines.append(pkg_res.plan.format_text())
+                lines.append("")
+            total_actions = sum(len(p.plan.actions) for p in self.packages)
+            lines.append("=" * 60)
+            lines.append(
+                f"✨ [DRY-RUN] Simulation completed for {len(self.packages)} package(s). "
+                f"Total planned actions: {total_actions} (zero host mutations performed)."
+            )
+        else:
+            lines.append("✨ Deployment Summary:")
+            for pkg_res in self.packages:
+                status_icon = "✨" if pkg_res.status == "SUCCESS" else "❌"
+                lines.append(f"  {status_icon} Package '{pkg_res.package}': {pkg_res.status}")
+                if pkg_res.error:
+                    lines.append(f"     Error: {pkg_res.error}")
+        return "\n".join(lines)
 
 
 # =============================================================================

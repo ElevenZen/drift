@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import tempfile
 import unittest
 import subprocess
@@ -463,8 +464,8 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     _, kwargs = mock_argparse_action.call_args
                     self.assertTrue(kwargs.get("no_hooks"), f"Argparse {cmd_name} with {flag} did not pass no_hooks=True")
 
-    def test_cli_ignore_missing_dependencies_flags_across_commands(self) -> None:
-        """Verifies that both --ignore-missing-dependencies and --allow-missing-dependencies flags pass ignore_missing_dependencies=True."""
+    def test_cli_no_deps_flag_across_commands(self) -> None:
+        """Verifies that --no-deps flag passes no_deps=True."""
         from drift.cli import run_argparse_cli
 
         commands_to_test = [
@@ -474,7 +475,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             ("uninstall", "drift.cli.cli_handlers.execute_uninstall", ["uninstall", "pkg_a"]),
         ]
 
-        for flag in ["--ignore-missing-dependencies", "--allow-missing-dependencies"]:
+        for flag in ["--no-deps"]:
             for cmd_name, target_action, cmd_args in commands_to_test:
                 with patch(target_action) as mock_action:
                     with patch("sys.stdout", StringIO()):
@@ -482,8 +483,8 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     self.assertTrue(mock_action.called, f"Typer {cmd_name} with {flag} was not called")
                     _, kwargs = mock_action.call_args
                     self.assertTrue(
-                        kwargs.get("ignore_missing_dependencies"),
-                        f"Typer {cmd_name} with {flag} did not pass ignore_missing_dependencies=True",
+                        kwargs.get("no_deps"),
+                        f"Typer {cmd_name} with {flag} did not pass no_deps=True",
                     )
 
                 with patch(target_action) as mock_action:
@@ -492,8 +493,8 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     self.assertTrue(mock_action.called, f"Argparse {cmd_name} with {flag} was not called")
                     _, kwargs = mock_action.call_args
                     self.assertTrue(
-                        kwargs.get("ignore_missing_dependencies"),
-                        f"Argparse {cmd_name} with {flag} did not pass ignore_missing_dependencies=True",
+                        kwargs.get("no_deps"),
+                        f"Argparse {cmd_name} with {flag} did not pass no_deps=True",
                     )
 
     def test_install_command_stub_guidance(self) -> None:
@@ -537,6 +538,100 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         output = stderr_capture.getvalue()
         self.assertIn('"status": "ERROR"', output)
         self.assertIn("'drift install' is not a Drift command.", output)
+
+    def test_cli_apply_dry_run_flag_across_backends(self) -> None:
+        """Verifies that --dry-run and -n flags on apply pass dry_run=True to execute_apply."""
+        from drift.cli import run_argparse_cli
+
+        for flag in ["--dry-run", "-n"]:
+            with patch("drift.cli.cli_handlers.execute_apply") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    main(["-C", self.drift_root, "apply", flag, "pkg_a"])
+                self.assertTrue(mock_action.called, f"Typer apply with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertTrue(kwargs.get("dry_run"), f"Typer apply with {flag} did not pass dry_run=True")
+
+            with patch("drift.cli.cli_handlers.execute_apply") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    run_argparse_cli(["-C", self.drift_root, "apply", flag, "pkg_a"])
+                self.assertTrue(mock_action.called, f"Argparse apply with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertTrue(kwargs.get("dry_run"), f"Argparse apply with {flag} did not pass dry_run=True")
+
+    def test_cli_apply_dry_run(self) -> None:
+        """Verifies that running 'apply --dry-run' prints the deployment plan and leaves target unmodified."""
+        pkg_path = os.path.join(self.src_dir, "pkg_a")
+        target_dir = os.path.join(self.temp_dir.name, "system_home_dry")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "pkg_a"
+            enable_render = true
+            target_directory = "{target_dir}"
+            """)
+
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "apply", "--dry-run", "pkg_a"])
+
+        output = stdout.getvalue()
+        self.assertIn("[DRY-RUN] Package Deployment Simulation Plan", output)
+        self.assertIn("Package 'pkg_a':", output)
+        self.assertIn("[CREATE_SYMLINK]", output)
+        self.assertIn("1 to create", output)
+        self.assertIn("zero host mutations performed", output)
+
+        # Verify that file was NOT created or linked on host
+        self.assertFalse(os.path.exists(os.path.join(target_dir, "file.txt")))
+
+    def test_cli_apply_dry_run_json(self) -> None:
+        """Verifies that running 'apply --dry-run --json' outputs structured JSON with the plan."""
+        pkg_path = os.path.join(self.src_dir, "pkg_a")
+        target_dir = os.path.join(self.temp_dir.name, "system_home_dry_json")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "pkg_a"
+            enable_render = true
+            target_directory = "{target_dir}"
+            """)
+
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "apply", "--dry-run", "--json", "pkg_a"])
+
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["command"], "apply")
+        self.assertEqual(data["status"], "SUCCESS")
+        self.assertEqual(len(data["packages"]), 1)
+        self.assertEqual(data["packages"][0]["package"], "pkg_a")
+        self.assertIn("plan", data["packages"][0])
+        self.assertGreaterEqual(len(data["packages"][0]["plan"]["actions"]), 1)
+        self.assertFalse(os.path.exists(os.path.join(target_dir, "file.txt")))
+
+    def test_install_command_stub_guidance_with_dry_run(self) -> None:
+        """Verifies that 'drift install --dry-run' prints didactic guidance and exits with code 1."""
+        from drift.cli import run_argparse_cli
+
+        stderr_capture = StringIO()
+        with patch("sys.stderr", stderr_capture):
+            with self.assertRaises(SystemExit) as ctx:
+                run_argparse_cli(["install", "--dry-run", "pkg_a"])
+            self.assertEqual(ctx.exception.code, 1)
+        output = stderr_capture.getvalue()
+        self.assertIn("'drift install' is not a Drift command", output)
 
 
 if __name__ == "__main__":
