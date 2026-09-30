@@ -34,24 +34,6 @@ target_directory = "~/.config/my_app"
 # Aliases accepted: target_directory_windows, target_directory_win32, target_directory_winos, target_directory_win.
 # target_directory_windows = "%LOCALAPPDATA%/my_app"
 
-# ---------------------------------------------------------------------
-# Inter-Package Dependencies (Topological Ordering & Prerequisite Guards)
-# ---------------------------------------------------------------------
-# Declare prerequisite packages required by this package.
-# Drift sequences staging and deployment in topological DAG order, and uninstalls in reverse order.
-# Inline list syntax (strings or inline tables):
-# dependencies = ["base", "git", { name = "starship", optional = true }]
-# Or array-of-tables syntax:
-# [[package.dependencies]]
-# name = "nodejs"
-# optional = true
-
-# Optional subfolder within src/<pkg>/ to render (defaults to ".").
-# If specified, only files in this subfolder are compiled and deployed to the host.
-# source_directory = "dotfiles"
-
-# Advanced Flags
-
 # Optional dynamic Python package hook file path (relative to src/<pkg>/, defaults to "drift_package.py" if present)
 # hook_file = "drift_package.py"
 
@@ -71,6 +53,22 @@ fully_controlled_dirs = [
     "themes",
     "plugins"
 ]
+
+# ---------------------------------------------------------------------
+# Inter-Package Dependencies (Topological Ordering & Prerequisite Guards)
+# ---------------------------------------------------------------------
+# Declare prerequisite packages required by this package.
+# Drift sequences staging and deployment in topological DAG order, and uninstalls in reverse order.
+# Inline list syntax (strings or inline tables):
+# dependencies = ["base", "git", { name = "starship", optional = true }]
+# Or array-of-tables syntax:
+# [[package.dependencies]]
+# name = "nodejs"
+# optional = true
+
+# Optional subfolder within src/<pkg>/ to render (defaults to ".").
+# If specified, only files in this subfolder are compiled and deployed to the host.
+# source_directory = "dotfiles"
 
 # Host Requirements & Prerequisites (Declarative pre-flight checks evaluated strictly before rendering; package is skipped if unmet)
 [package.requirements]
