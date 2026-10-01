@@ -228,11 +228,7 @@ def stage_modified_packages(
 
     # 3. Apply stage actions to install/ directory for each package with changes
     for pkg, plan in packages_to_stage.items():
-        install_pkg_dir = install_base / pkg
         context = ActionExecutionContext(
-            target_dir=install_pkg_dir,
-            install_pkg_dir=install_pkg_dir,
-            backup_pkg_dir=install_pkg_dir,
             sudo=False,
             resolve_symlinks=False,
         )

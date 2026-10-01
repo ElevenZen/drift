@@ -11,6 +11,7 @@ from ..utils.file_ops import (
     copy_file,
     copy_symlink,
 )
+from ..utils.file_inspect import is_concrete_dir
 from ..utils.process_utils import run_command
 from .constants import MANAGED_CONFIG_FILES, LineEnding
 from .ignore import IgnoreHandler
@@ -43,7 +44,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
         target_src = src / rel_file if rel_file != Path("") else src
         target_dst = dst / rel_file if rel_file != Path("") else dst
 
-        if target_src.is_dir() and not target_src.is_symlink():
+        if is_concrete_dir(target_src):
             target_dst.mkdir(parents=True, exist_ok=True)
             continue
 
@@ -55,7 +56,7 @@ def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[Igno
             except Exception:
                 is_broken = True
 
-        if is_broken:
+        if is_broken or (target_src.is_symlink() and target_src.is_dir()):
             copy_symlink(target_src, target_dst)
             continue
 
@@ -95,7 +96,7 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
         target_src = src / rel_file if rel_file != Path("") else src
         target_dst = backup_dest / rel_file if rel_file != Path("") else backup_dest
 
-        if target_src.is_dir() and not target_src.is_symlink():
+        if is_concrete_dir(target_src):
             # Directory creation is handled by copy_or_move_file_or_dir_external or mkdir
             target_dst.mkdir(parents=True, exist_ok=True)
             continue
@@ -117,5 +118,5 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
             move_tree(target_src, target_dst, sudo, resolve_symlinks=True)
 
     # After moving all children, if src was a directory, we need to remove the empty directory shell
-    if src.is_dir() and not src.is_symlink():
+    if is_concrete_dir(src):
         remove(src, sudo)

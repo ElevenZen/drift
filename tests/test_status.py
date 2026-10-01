@@ -246,6 +246,60 @@ class TestStatus(unittest.TestCase):
         self.assertIn("drift repair", str(ctx.exception))
         self.assertIn("Package Metadata Structure", str(ctx.exception))
 
+    def test_pending_delta_status_filters_out_concrete_directories(self) -> None:
+        """Verifies pending delta status counts only file changes and ignores intermediate directories."""
+        from drift.primitives.workspace_status import calculate_pending_delta
+        from drift.core.result_models import PackageStatus
+
+        pkg = "pkg_a"
+        render_pkg = self.render_dir / pkg
+        install_pkg = self.install_dir / pkg
+
+        # Setup install_pkg with an initial file
+        install_pkg.mkdir(parents=True, exist_ok=True)
+        (install_pkg / "base.txt").write_text("base\n")
+
+        # Setup render_pkg with the base file plus a nested directory containing one file
+        render_pkg.mkdir(parents=True, exist_ok=True)
+        (render_pkg / "base.txt").write_text("base\n")
+        nested_file = render_pkg / "nested" / "sub" / "file.txt"
+        nested_file.parent.mkdir(parents=True, exist_ok=True)
+        nested_file.write_text("nested content\n")
+
+        status, diff = calculate_pending_delta(render_pkg, install_pkg)
+        self.assertEqual(status, "STAGED")
+        self.assertIsNotNone(diff)
+        # Exactly 1 added file, directory entries 'nested' and 'nested/sub' are excluded
+        self.assertEqual(diff.added, [Path("nested/sub/file.txt")])
+        self.assertEqual(diff.modified, [])
+        self.assertEqual(diff.deleted, [])
+
+        pkg_status = PackageStatus(name=pkg, pending_status=status, pending_changes=diff)
+        formatted = pkg_status.format_text()
+        self.assertIn("(+1, ~0, -0 files)", formatted)
+
+    def test_pending_delta_status_filters_out_temporary_files(self) -> None:
+        """Verifies pending delta status ignores editor temporary/swap/backup and OS metadata files."""
+        from drift.primitives.workspace_status import calculate_pending_delta
+
+        pkg = "pkg_a"
+        render_pkg = self.render_dir / pkg
+        install_pkg = self.install_dir / pkg
+
+        install_pkg.mkdir(parents=True, exist_ok=True)
+        (install_pkg / "base.txt").write_text("base\n")
+        (install_pkg / ".DS_Store").write_text("os metadata\n")
+
+        render_pkg.mkdir(parents=True, exist_ok=True)
+        (render_pkg / "base.txt").write_text("base\n")
+        (render_pkg / "#file.txt#").write_text("emacs auto-save\n")
+        (render_pkg / "notes.txt~").write_text("backup file\n")
+
+        # Only temp files differ between render and install, so pending status should be CLEAN
+        status, diff = calculate_pending_delta(render_pkg, install_pkg)
+        self.assertEqual(status, "CLEAN")
+        self.assertIsNone(diff)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,7 +55,7 @@ from ..core.constants import (
 from ..config.workspace_config import WorkspaceConfig
 from ..core.result_models import DiffType, DiffResult, PackageDiffDetail, FileDiffDetail
 from ..core.folder_diff import compare_folders
-from ..utils.file_inspect import is_temp_file
+from ..utils.file_inspect import is_temp_file, is_concrete_dir, is_diff_candidate
 from ..utils.git_utils import parse_git_status_porcelain
 from ..utils.editor_utils import launch_side_by_side_editor
 
@@ -95,6 +95,14 @@ def get_pending_delta_worklist(
             orphan_pkgs.append(pkg)
 
     return to_diff, new_pkgs, orphan_pkgs
+
+
+def ensure_empty_file(target_path: Path) -> Path:
+    """Creates parent directories and touches an empty file at target_path, returning target_path."""
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.touch()
+    return target_path
+
 
 
 # =====================================================================
@@ -142,9 +150,7 @@ def collect_repo_diff_pairs(
             working_file = repo_path / rel_path
 
             if status.startswith("A"):
-                empty_left = temp_dir / "empty" / rel_path
-                empty_left.parent.mkdir(parents=True, exist_ok=True)
-                empty_left.touch()
+                empty_left = ensure_empty_file(temp_dir / "empty" / rel_path)
                 pairs.append((empty_left, working_file))
             else:
                 head_target = temp_dir / "head" / rel_path
@@ -162,9 +168,7 @@ def collect_repo_diff_pairs(
                     head_target.touch()
 
                 if status.startswith("D"):
-                    empty_right = temp_dir / "empty" / rel_path
-                    empty_right.parent.mkdir(parents=True, exist_ok=True)
-                    empty_right.touch()
+                    empty_right = ensure_empty_file(temp_dir / "empty" / rel_path)
                     pairs.append((head_target, empty_right))
                 else:
                     pairs.append((head_target, working_file))
@@ -187,23 +191,16 @@ def collect_pending_delta_pairs(
     to_diff, new_pkgs, orphan_pkgs = get_pending_delta_worklist(workspace_config, packages)
     pairs: List[Tuple[Path, Path]] = []
 
-    def is_valid_file(rel_f: Path) -> bool:
-        return rel_f.name not in ignored_files and not is_temp_file(rel_f)
-
     for pkg in new_pkgs:
         render_pkg = workspace_config.render_path / pkg
-        for rel_f in filter(is_valid_file, tree_files(render_pkg)):
-            empty_left = temp_dir / "empty" / pkg / rel_f
-            empty_left.parent.mkdir(parents=True, exist_ok=True)
-            empty_left.touch()
+        for rel_f in (f for f in tree_files(render_pkg) if is_diff_candidate(render_pkg / f, ignored_files)):
+            empty_left = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((empty_left, render_pkg / rel_f))
 
     for pkg in orphan_pkgs:
         install_pkg = workspace_config.install_path / pkg
-        for rel_f in filter(is_valid_file, tree_files(install_pkg)):
-            empty_right = temp_dir / "empty" / pkg / rel_f
-            empty_right.parent.mkdir(parents=True, exist_ok=True)
-            empty_right.touch()
+        for rel_f in (f for f in tree_files(install_pkg) if is_diff_candidate(install_pkg / f, ignored_files)):
+            empty_right = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((install_pkg / rel_f, empty_right))
 
     for pkg, _, _ in to_diff:
@@ -211,17 +208,13 @@ def collect_pending_delta_pairs(
         render_pkg = workspace_config.render_path / pkg
 
         diff = compare_folders(render_pkg, install_pkg, resolve_symlinks=False)
-        for rel_f in filter(is_valid_file, diff.modified):
+        for rel_f in (f for f in diff.modified if is_diff_candidate(render_pkg / f, ignored_files) and is_diff_candidate(install_pkg / f, ignored_files)):
             pairs.append((install_pkg / rel_f, render_pkg / rel_f))
-        for rel_f in filter(is_valid_file, diff.added):
-            empty_left = temp_dir / "empty" / pkg / rel_f
-            empty_left.parent.mkdir(parents=True, exist_ok=True)
-            empty_left.touch()
+        for rel_f in (f for f in diff.added if is_diff_candidate(render_pkg / f, ignored_files)):
+            empty_left = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((empty_left, render_pkg / rel_f))
-        for rel_f in filter(is_valid_file, diff.deleted):
-            empty_right = temp_dir / "empty" / pkg / rel_f
-            empty_right.parent.mkdir(parents=True, exist_ok=True)
-            empty_right.touch()
+        for rel_f in (f for f in diff.deleted if is_diff_candidate(install_pkg / f, ignored_files)):
+            empty_right = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((install_pkg / rel_f, empty_right))
 
     return pairs
@@ -262,25 +255,35 @@ def collect_pending_folder_diff_details(
 
     if render_pkg.exists() and install_pkg.exists():
         diff = compare_folders(render_pkg, install_pkg)
-        for p in diff.added:
-            if p.name not in ignored_files and not is_temp_file(p):
-                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
-        for p in diff.modified:
-            if p.name not in ignored_files and not is_temp_file(p):
-                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="modified"))
-        for p in diff.deleted:
-            if p.name not in ignored_files and not is_temp_file(p):
-                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
+        files.extend(
+            FileDiffDetail(path=str(Path(pkg) / p), change_type="added")
+            for p in diff.added
+            if is_diff_candidate(render_pkg / p, ignored_files)
+        )
+        files.extend(
+            FileDiffDetail(path=str(Path(pkg) / p), change_type="modified")
+            for p in diff.modified
+            if is_diff_candidate(render_pkg / p, ignored_files) and is_diff_candidate(install_pkg / p, ignored_files)
+        )
+        files.extend(
+            FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted")
+            for p in diff.deleted
+            if is_diff_candidate(install_pkg / p, ignored_files)
+        )
     elif render_pkg.exists() and not install_pkg.exists():
         from ..utils.file_inspect import tree_files
-        for p in tree_files(render_pkg):
-            if p.name not in ignored_files and not is_temp_file(p):
-                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
+        files.extend(
+            FileDiffDetail(path=str(Path(pkg) / p), change_type="added")
+            for p in tree_files(render_pkg)
+            if is_diff_candidate(render_pkg / p, ignored_files)
+        )
     elif not render_pkg.exists() and install_pkg.exists():
         from ..utils.file_inspect import tree_files
-        for p in tree_files(install_pkg):
-            if p.name not in ignored_files and not is_temp_file(p):
-                files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted"))
+        files.extend(
+            FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted")
+            for p in tree_files(install_pkg)
+            if is_diff_candidate(install_pkg / p, ignored_files)
+        )
 
     return files
 

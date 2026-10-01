@@ -1,25 +1,92 @@
-"""Primitive 11: Resource Import (Add files/folders to package)."""
+"""Primitive 11: Resource Import (Add files/folders to package).
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Pipeline Architecture:
+    1. Pre-flight Preparation & Planning (Read-Only except pre_source hook):
+        prepare_add_resources(workspace_config, package_name, import_paths, dry_run=False, flags=None) [Layer 4]
+            - Package Source Validation (assert_package_source_exists [Layer 1])
+            - Pre-Source Lifecycle Hook (trigger_pre_source_hook)
+            - Package Import Context Resolution (resolve_package_import_context [Layer 1])
+            - Ignore Rules Resolution (DriftIgnore.load_from_dir)
+            - Worklist Resolution (generate_import_worklist [Layer 2])
+            - Global Conflict Assertion (assert_no_import_conflicts [Layer 2])
+            - Plan Compilation (plan_add_resources [Layer 3])
+            -> Returns AddResourcePlan(package, src_dir_to_render, target_base, actions, dry_run)
+
+    2. Resource Import Execution (State-Mutating / Simulated):
+        execute_add_resources(workspace_config, plan: AddResourcePlan) [Layer 4]
+            - If dry_run -> simulates imports, logs operations, performs zero filesystem mutations
+            - If live -> executes execute_delivery_actions with ActionExecutionContext [Layer 3]
+            -> Returns AddResourceResult(command="add", status="SUCCESS", package=plan.package, imported_files=..., dry_run=plan.dry_run, plan=plan)
+
+    3. Public Composite Primitive Entry Point:
+        run_primitive_11_add_resources(workspace_config, package_name, import_paths, dry_run=False, flags=None) [Layer 5]
+            = prepare_add_resources >> execute_add_resources
+
+-------------------------------------------------------------------------------
+Layers (ordered bottom-up by dependency):
+    Layer 1: Pre-flight Verification & Context Resolution
+        assert_package_source_exists
+        resolve_package_import_context
+    Layer 2: Worklist Resolution & Conflict Detection
+        ScopedPackageIgnore
+        resolve_single_import_worklist
+        generate_import_worklist
+        check_import_conflict
+        assert_no_import_conflicts
+    Layer 3: Plan Compilation & Action Mapping
+        plan_resource_import
+        plan_add_resources
+    Layer 4: Pipeline Sub-stages (Preparation & Execution)
+        prepare_add_resources
+        execute_add_resources
+    Layer 5: Public Composite Primitive Entry Point
+        run_primitive_11_add_resources
+===============================================================================
+"""
 
 import logging
-import os
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Any
+from typing import List, Optional, Tuple, Sequence
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
-from ..core.result_models import AddResourceResult
+from ..config.render_engine_config import RenderEngineRegistry
+from ..core.folder_delivery import (
+    ActionExecutionContext,
+    ActionType,
+    FileAction,
+    execute_delivery_actions,
+)
+from ..core.result_models import (
+    AddResourceResult,
+    AddResourcePlan,
+)
 from ..utils.path_utils import (
     decode_dot_prefix,
     is_relative_to,
-    resolve_target_path,
 )
-from ..utils.file_ops import copy_file
 from ..core.ignore import DriftIgnore, IgnoreHandler
 from ..core.folder_diff import list_folder_paths
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Layer 1: Pre-flight Verification & Context Resolution
+# =============================================================================
+
+def assert_package_source_exists(workspace_config: WorkspaceConfig, package_name: str) -> Path:
+    """Validates that the source directory for a package exists, raising FileNotFoundError otherwise."""
+    src_pkg_dir = workspace_config.source_path / package_name
+    if not src_pkg_dir.exists():
+        raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
+    return src_pkg_dir
+
 
 def resolve_package_import_context(
     workspace_config: WorkspaceConfig,
@@ -42,147 +109,278 @@ def resolve_package_import_context(
 
     return src_dir_to_render.resolve(), target_base.resolve(), render_engines
 
-def get_package_source_and_target_directory_from_source(
-    workspace_config: WorkspaceConfig,
-    src_pkg_dir: Path,
-    package_name: str
-) -> Tuple[Path, Path]:
-    """Resolves both source directory to render and host target directory for a package, handling config templates."""
-    src_dir_to_render, target_base, _ = resolve_package_import_context(workspace_config, src_pkg_dir)
-    return src_dir_to_render, target_base
+
+# =============================================================================
+# Layer 2: Worklist Resolution & Conflict Detection
+# =============================================================================
+
+class ScopedPackageIgnore(IgnoreHandler):
+    """Scoped ignore handler that offsets paths by repository prefix to match package-root rules."""
+
+    def __init__(self, base_ignore: IgnoreHandler, repo_prefix: Path) -> None:
+        self._base_ignore = base_ignore
+        self._repo_prefix = repo_prefix
+
+    def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
+        return self._base_ignore.match_path(self._repo_prefix / rel_path, is_dir=is_dir)
+
+
+def resolve_single_import_worklist(
+    target_base: Path,
+    import_path: Path,
+    ignore_handler: IgnoreHandler,
+) -> List[Tuple[Path, Path]]:
+    """Resolves a single import path (file or folder) into concrete (system_abs, rel_target) pairs."""
+    abs_import = import_path.resolve()
+    if not abs_import.exists():
+        raise FileNotFoundError(f"Import path does not exist: {import_path}")
+
+    if not is_relative_to(abs_import, target_base):
+        raise ValueError(f"Import path '{abs_import}' is not inside package target directory '{target_base}'")
+
+    rel_root_target = abs_import.relative_to(target_base)
+    repo_prefix = decode_dot_prefix(rel_root_target)
+    scoped_ignore = ScopedPackageIgnore(ignore_handler, repo_prefix)
+
+    file_paths = list_folder_paths(
+        abs_import,
+        ignore_handler=scoped_ignore,
+        resolve_symlinks=True,
+        translate_mode="reverse",
+    )
+
+    return [
+        (
+            abs_import / rel_path,
+            rel_root_target / rel_path if rel_path != Path("") else rel_root_target,
+        )
+        for rel_path in file_paths
+    ]
+
 
 def generate_import_worklist(
-    workspace_config: WorkspaceConfig,
     target_base: Path,
-    import_paths: List[Path],
-    ignore_handler: IgnoreHandler
+    import_paths: Sequence[Path],
+    ignore_handler: IgnoreHandler,
 ) -> List[Tuple[Path, Path]]:
-    """
-    Generates a list of (absolute_source_path, target_relative_path) for all files to be imported.
-    Handles directory expansion and respects ignore rules.
-    """
-    worklist: List[Tuple[Path, Path]] = []
-    
-    # We use a persistent temp dir for all directory comparisons in this run
-    for path in import_paths:
-        abs_import = path.resolve()
-        if not abs_import.exists():
-            raise FileNotFoundError(f"Import path does not exist: {path}")
+    """Generates a combined list of (absolute_source_path, target_relative_path) across all import paths."""
+    return [
+        item
+        for path in import_paths
+        for item in resolve_single_import_worklist(target_base, path, ignore_handler)
+    ]
 
-        if not is_relative_to(abs_import, target_base):
-            raise ValueError(f"Import path '{abs_import}' is not inside package target directory '{target_base}'")
-        
-        rel_root_target = abs_import.relative_to(target_base)
-        # repo_prefix is the translated path of the import root in the repo (e.g. .config -> dot-config)
-        repo_prefix = decode_dot_prefix(rel_root_target)
 
-        # Scoped ignore handler is a duck-type that offsets paths to match package-root-relative patterns
-        class ScopedIgnore(IgnoreHandler):
-            def match_path(self, rel_path: Path) -> bool:
-                # rel_path is already dot-prefixed by list_folder_paths(translate_mode="reverse")
-                return ignore_handler.match_path(repo_prefix / rel_path)
+def check_import_conflict(
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    src_on_system: Path,
+    rel_target: Path,
+) -> Optional[Tuple[Path, Path]]:
+    """Checks if a single import path conflicts with existing source templates/files."""
+    match = render_engines.find_conflict_in_source_dir(src_dir_to_render, rel_target)
+    return (src_on_system, match.path) if match else None
 
-        scoped_ignore: IgnoreHandler = ScopedIgnore()
 
-        # Use list_folder_paths to get a clean list of files from system.
-        # translate_mode="reverse" ensures the ignore handler receives repo-style paths.
-        file_paths = list_folder_paths(
-            abs_import,
-            ignore_handler=scoped_ignore,
-            resolve_symlinks=True,
-            translate_mode="reverse"
+def assert_no_import_conflicts(
+    drift_root: Path,
+    render_engines: RenderEngineRegistry,
+    src_dir_to_render: Path,
+    worklist: Sequence[Tuple[Path, Path]],
+) -> None:
+    """Validates that no imported resource conflicts with an existing template or blocking file."""
+    conflicts = list(
+        filter(
+            None,
+            (
+                check_import_conflict(render_engines, src_dir_to_render, src, rel_tgt)
+                for src, rel_tgt in worklist
+            ),
         )
-        
-        for rel_path in file_paths:
-            # rel_path is relative to abs_import (system style, e.g. leading dots)
-            full_rel_target = rel_root_target / rel_path if rel_path != Path("") else rel_root_target
-            worklist.append((abs_import / rel_path, full_rel_target))
-                
-    return worklist
+    )
+    if conflicts:
+        src_on_system, conflict_path = conflicts[0]
+        rel_conflict = conflict_path.relative_to(drift_root)
+        raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
 
-def run_primitive_11_add_resources(
+
+# =============================================================================
+# Layer 3: Plan Compilation & Action Mapping
+# =============================================================================
+
+def plan_resource_import(
+    src_dir_to_render: Path,
+    src_on_system: Path,
+    rel_target: Path,
+) -> FileAction:
+    """Compiles a single planned resource import action."""
+    rel_src = decode_dot_prefix(rel_target)
+    dest_path = src_dir_to_render / rel_src
+    return FileAction(
+        action_type=ActionType.CREATE_COPY,
+        src_path=src_on_system,
+        dst_path=dest_path,
+        reason="Resource import",
+    )
+
+
+def plan_add_resources(
+    package_name: str,
+    src_dir_to_render: Path,
+    target_base: Path,
+    worklist: Sequence[Tuple[Path, Path]],
+    dry_run: bool = False,
+) -> AddResourcePlan:
+    """Compiles the declarative import plan containing all planned resource import actions."""
+    planned_actions = [
+        plan_resource_import(src_dir_to_render, src, rel_tgt)
+        for src, rel_tgt in worklist
+    ]
+    return AddResourcePlan(
+        package=package_name,
+        src_dir_to_render=src_dir_to_render,
+        target_base=target_base,
+        actions=planned_actions,
+        dry_run=dry_run,
+    )
+
+
+# =============================================================================
+# Layer 4: Pipeline Sub-stages (Preparation & Execution)
+# =============================================================================
+
+def prepare_add_resources(
     workspace_config: WorkspaceConfig,
     package_name: str,
-    import_paths: List[Path],
+    import_paths: Sequence[Path],
     dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
-) -> AddResourceResult:
+) -> AddResourcePlan:
     """
-    Orchestrates importing multiple resources into a package.
-    1. Resolves package target directory and source render directory.
-    2. Identifies all files to import, respecting ignores.
-    3. Performs global conflict check before any copy.
-    4. Executes the import with dot-prefix translation.
+    Pre-flight preparation and planning sub-stage for resource imports (Read-Only).
 
-    Returns:
-        AddResourceResult detailing the outcome of the import operation.
+    1. Validates that the package source directory exists.
+    2. Triggers pre_source lifecycle hook.
+    3. Resolves source render directory, target directory, render engines, and ignore rules.
+    4. Compiles the global worklist of files to import.
+    5. Asserts that no imported file conflicts with existing templates or blocking paths.
+    6. Returns an AddResourcePlan.
     """
-    # 1. Resolve package source directory
-    src_pkg_dir = workspace_config.source_path / package_name
-    if not src_pkg_dir.exists():
-        raise FileNotFoundError(f"Package '{package_name}' source directory not found: {src_pkg_dir}")
+    src_pkg_dir = assert_package_source_exists(workspace_config, package_name)
 
-    # Trigger pre_source hook before reading/writing source directory
     trigger_pre_source_hook(
         workspace_config, package_name, flags=flags
     )
 
-    # 2. Resolve source render directory, target directory, render engines, and ignores
     src_dir_to_render, target_base, render_engines = resolve_package_import_context(
         workspace_config, src_pkg_dir
     )
     ignore_handler = DriftIgnore.load_from_dir(src_pkg_dir, is_source=True)
 
-    # 3. Generate global worklist of files to import
-    full_worklist = generate_import_worklist(workspace_config, target_base, import_paths, ignore_handler)
+    worklist = generate_import_worklist(target_base, import_paths, ignore_handler)
 
-    if not full_worklist:
-        logger.info(f"No resources to import into '{package_name}'.")
+    assert_no_import_conflicts(
+        drift_root=workspace_config.drift_root,
+        render_engines=render_engines,
+        src_dir_to_render=src_dir_to_render,
+        worklist=worklist,
+    )
+
+    return plan_add_resources(
+        package_name=package_name,
+        src_dir_to_render=src_dir_to_render,
+        target_base=target_base,
+        worklist=worklist,
+        dry_run=dry_run,
+    )
+
+
+def execute_add_resources(
+    workspace_config: WorkspaceConfig,
+    plan: AddResourcePlan,
+) -> AddResourceResult:
+    """
+    Physical execution and state synchronization sub-stage for resource imports.
+
+    If plan.dry_run is True, logs simulation details and performs zero filesystem mutations.
+    Otherwise, executes planned actions using execute_delivery_actions.
+    """
+    if not plan.actions:
+        logger.info(f"No resources to import into '{plan.package}'.")
         return AddResourceResult(
             command="add",
             status="SUCCESS",
-            package=package_name,
+            package=plan.package,
             imported_files=[],
-            dry_run=dry_run,
+            dry_run=plan.dry_run,
+            plan=plan,
         )
 
-    # 4. Global Conflict Check Phase
-    for src_on_system, rel_target in full_worklist:
-        conflict = render_engines.find_conflict_in_source_dir(src_dir_to_render, rel_target)
-        if conflict:
-            rel_conflict = conflict.path.relative_to(workspace_config.drift_root)
-            raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
+    imported_files = [str(action.src_path) for action in plan.actions if action.src_path]
 
-    # 5. Execution Phase
-    imported_files: List[str] = [str(src_on_system) for src_on_system, _ in full_worklist]
-    for src_on_system, rel_target in full_worklist:
-        rel_src = decode_dot_prefix(rel_target)
-        dest_path = src_dir_to_render / rel_src
-        
-        if dry_run:
-            logger.info(f"🔍 [DRY RUN] Would import '{src_on_system}' to '{dest_path.relative_to(workspace_config.drift_root)}'")
-            continue
-
-        logger.info(f"📥 Importing: {src_on_system}")
-        logger.debug(f"   -> {dest_path.relative_to(workspace_config.drift_root)}")
-
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(src_on_system, dest_path)
-
-    if dry_run:
+    if plan.dry_run:
+        for action in plan.actions:
+            rel_dest = (
+                action.dst_path.relative_to(workspace_config.drift_root)
+                if action.dst_path and is_relative_to(action.dst_path, workspace_config.drift_root)
+                else action.dst_path
+            )
+            logger.info(f"🔍 [DRY RUN] Would import '{action.src_path}' to '{rel_dest}'")
         return AddResourceResult(
             command="add",
             status="SUCCESS",
-            package=package_name,
+            package=plan.package,
             imported_files=imported_files,
             dry_run=True,
+            plan=plan,
         )
 
-    logger.info(f"✨ Successfully imported {len(full_worklist)} file(s) into package '{package_name}'.")
+    for action in plan.actions:
+        rel_dest = (
+            action.dst_path.relative_to(workspace_config.drift_root)
+            if action.dst_path and is_relative_to(action.dst_path, workspace_config.drift_root)
+            else action.dst_path
+        )
+        logger.info(f"📥 Importing: {action.src_path}")
+        logger.debug(f"   -> {rel_dest}")
+
+    context = ActionExecutionContext(
+        sudo=False,
+        resolve_symlinks=False,
+    )
+    execute_delivery_actions(context, plan.actions)
+
+    logger.info(f"✨ Successfully imported {len(plan.actions)} file(s) into package '{plan.package}'.")
     return AddResourceResult(
         command="add",
         status="SUCCESS",
-        package=package_name,
+        package=plan.package,
         imported_files=imported_files,
         dry_run=False,
+        plan=plan,
     )
+
+
+# =============================================================================
+# Layer 5: Public Composite Primitive Entry Point
+# =============================================================================
+
+def run_primitive_11_add_resources(
+    workspace_config: WorkspaceConfig,
+    package_name: str,
+    import_paths: Sequence[Path],
+    dry_run: bool = False,
+    flags: Optional[HookExecFlags] = None,
+) -> AddResourceResult:
+    """
+    Public composite primitive entry point for importing resources into a package.
+    Decomposed into: prepare_add_resources >> execute_add_resources.
+    """
+    plan = prepare_add_resources(
+        workspace_config=workspace_config,
+        package_name=package_name,
+        import_paths=import_paths,
+        dry_run=dry_run,
+        flags=flags,
+    )
+    return execute_add_resources(workspace_config, plan)

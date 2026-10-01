@@ -80,7 +80,7 @@ from ..core.constants import (
 from ..core.folder_delivery import (
     ActionExecutionContext,
     ActionType,
-    PlannedFileAction,
+    FileAction,
     execute_delivery_actions,
     plan_backup_restoration,
     plan_file_removals,
@@ -90,6 +90,7 @@ from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, R
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..utils.file_ops import prune_empty_parents, remove
+from ..utils.path_utils import decode_dot_prefix, is_relative_to
 from ..utils.process_utils import assert_can_escalate
 from .package_assertions import (
     assert_no_broken_dependencies_on_uninstall,
@@ -132,11 +133,7 @@ class PackageUninstallContext:
     @property
     def action_context(self) -> ActionExecutionContext:
         return ActionExecutionContext(
-            target_dir=self.target_dir,
-            install_pkg_dir=self.install_pkg_dir,
-            backup_pkg_dir=self.backup_pkg_dir,
             sudo=self.sudo,
-            backup_subfolder=BackupSubfolder.DELETED_FILES,
         )
 
     @contextmanager
@@ -271,7 +268,7 @@ def plan_package_uninstall(
     context: PackageUninstallContext,
 ) -> PackageUninstallPlan:
     """Compiles a deterministic PackageUninstallPlan without modifying host files or registry."""
-    actions: List[PlannedFileAction] = []
+    actions: List[FileAction] = []
     hooks_to_trigger: List[str] = []
 
     if context.is_missing_install_dir:
@@ -290,7 +287,6 @@ def plan_package_uninstall(
                 deployed_files=context.deployed_files,
                 target_dir=context.target_dir,
                 install_pkg_dir=context.install_pkg_dir,
-                drift_root=context.drift_root,
             )
         )
     else:
@@ -353,7 +349,12 @@ def detach_one_package(
     dry_run: bool = False,
 ) -> PackageUninstallResult:
     """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
-    converted = [str(a.rel_path) for a in plan.converted]
+    converted = [
+        str(decode_dot_prefix(a.dst_path.relative_to(context.target_dir)))
+        if a.dst_path and is_relative_to(a.dst_path, context.target_dir)
+        else str(a.dst_path)
+        for a in plan.converted
+    ]
     if not dry_run:
         logger.info(f"🔌 Detaching package: {context.pkg_name} (converting to independent system config)")
         execute_delivery_actions(context.action_context, plan.actions)
@@ -375,11 +376,16 @@ def uninstall_one_package(
     dry_run: bool = False,
 ) -> PackageUninstallResult:
     """Orchestrates standard uninstallation of a single package."""
-    removed = [str(a.rel_path) for a in plan.removed]
+    removed = [
+        str(decode_dot_prefix(a.dst_path.relative_to(context.target_dir)))
+        if a.dst_path and is_relative_to(a.dst_path, context.target_dir)
+        else str(a.dst_path)
+        for a in plan.removed
+    ]
     restored = [
         RestoredBackup(
-            source_backup=str(a.source_path or (context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value / a.rel_path)),
-            restored_to=str(a.system_target),
+            source_backup=str(a.src_path),
+            restored_to=str(a.dst_path),
         )
         for a in plan.restored
     ]
@@ -397,9 +403,8 @@ def uninstall_one_package(
             backup_overwritten = context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value
             if backup_overwritten.is_dir():
                 for a in plan.restored:
-                    backup_file = a.source_path or (backup_overwritten / a.rel_path)
-                    if backup_file.exists():
-                        remove(backup_file, context.sudo)
+                    if a.src_path and a.src_path.exists():
+                        remove(a.src_path, context.sudo)
                 prune_empty_parents(backup_overwritten, context.backup_pkg_dir)
 
             # 4. Post-uninstall hook

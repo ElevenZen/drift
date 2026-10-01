@@ -543,6 +543,10 @@ def execute_add(
     )
     if json_mode:
         print(res.to_json())
+    elif dry_run:
+        text = res.format_text()
+        if text:
+            print(text)
 
 
 def execute_rollback(

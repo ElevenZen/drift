@@ -413,6 +413,45 @@ class TestDiff(unittest.TestCase):
         self.assertEqual(new_pkgs, [])
         self.assertEqual(orphan_pkgs, [])
 
+    def test_pending_delta_diff_filters_out_concrete_directories(self) -> None:
+        """Verifies pending delta diff collectors ignore intermediate directory items from compare_folders."""
+        from drift.primitives.workspace_diff import (
+            collect_pending_delta_pairs,
+            collect_pending_folder_diff_details,
+        )
+
+        pkg = "pkg_a"
+        render_pkg = self.render_dir / pkg
+        install_pkg = self.install_dir / pkg
+
+        # Create nested directory tree with file in render
+        nested_file = render_pkg / "nested" / "sub" / "deep" / "file.txt"
+        nested_file.parent.mkdir(parents=True, exist_ok=True)
+        nested_file.write_text("deep render content\n")
+
+        # Create directory with file in install to be deleted
+        obsolete_file = install_pkg / "obsolete" / "old.txt"
+        obsolete_file.parent.mkdir(parents=True, exist_ok=True)
+        obsolete_file.write_text("obsolete content\n")
+
+        # 1. Verify side-by-side visual diff pairs do not create directories as files or crash with NotADirectoryError
+        with tempfile.TemporaryDirectory() as td:
+            pairs = collect_pending_delta_pairs(self.workspace_config, [pkg], Path(td))
+            self.assertEqual(len(pairs), 2)
+            for left, right in pairs:
+                self.assertFalse(left.is_dir(), f"Left path {left} must be a file, not a directory")
+                self.assertFalse(right.is_dir(), f"Right path {right} must be a file, not a directory")
+
+        # 2. Verify structured file diff details list only files, not directory nodes
+        details = collect_pending_folder_diff_details(self.workspace_config, pkg)
+        paths = [d.path for d in details]
+        self.assertIn("pkg_a/nested/sub/deep/file.txt", paths)
+        self.assertIn("pkg_a/obsolete/old.txt", paths)
+        self.assertNotIn("pkg_a/nested", paths)
+        self.assertNotIn("pkg_a/nested/sub", paths)
+        self.assertNotIn("pkg_a/nested/sub/deep", paths)
+        self.assertNotIn("pkg_a/obsolete", paths)
+
 
 if __name__ == "__main__":
     unittest.main()

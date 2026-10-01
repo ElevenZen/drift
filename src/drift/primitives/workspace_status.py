@@ -9,16 +9,13 @@ from ..config.workspace_config import WorkspaceConfig
 from ..render.render_package import run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..core.folder_diff import compare_folders, FolderDiff
-from ..core.constants import DRIFT_GENERATED_FILES
+from ..utils.file_inspect import is_diff_candidate
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
 from ..utils.process_utils import run_command
 from ..core.state_registry import load_state_registry
 from ..core.result_models import PackageStatus, StatusResult
 
 logger = logging.getLogger(__name__)
-
-# Backward-compatibility alias
-WorkspaceStatusResult = StatusResult
 
 
 def audit_repo_package_status(
@@ -54,10 +51,11 @@ def calculate_pending_delta(
     """Calculates the pending delta between render/ and install/ for a package."""
     if render_pkg_dir.exists() and install_pkg_dir.exists():
         diff = compare_folders(render_pkg_dir, install_pkg_dir)
-        # Filter out internally generated synthetic files from the pending delta view
-        diff.added = [p for p in diff.added if p.name not in DRIFT_GENERATED_FILES]
-        diff.modified = [p for p in diff.modified if p.name not in DRIFT_GENERATED_FILES]
-        diff.deleted = [p for p in diff.deleted if p.name not in DRIFT_GENERATED_FILES]
+        # Filter out internally generated synthetic files and concrete directory entries from the pending delta view
+        diff.added = [p for p in diff.added if is_diff_candidate(render_pkg_dir / p)]
+        diff.modified = [p for p in diff.modified if is_diff_candidate(render_pkg_dir / p) and is_diff_candidate(install_pkg_dir / p)]
+        diff.deleted = [p for p in diff.deleted if is_diff_candidate(install_pkg_dir / p)]
+        diff.permissions_differ = [p for p in diff.permissions_differ if p in diff.modified]
 
         if not diff.added and not diff.modified and not diff.deleted:
             return "CLEAN", None

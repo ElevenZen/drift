@@ -20,6 +20,8 @@ from drift.utils.file_inspect import (
     file_hash,
     contents_differ,
     find_symlink_ancestor,
+    is_concrete_dir,
+    is_diff_candidate,
 )
 from drift.utils.file_ops import (
     prune_empty_parents,
@@ -61,6 +63,56 @@ class TestFileUtils(unittest.TestCase):
         mock_path = MagicMock(spec=Path)
         mock_path.relative_to.side_effect = ValueError("Different drives: C: vs D:")
         self.assertFalse(is_relative_to(mock_path, self.root))
+
+    def test_is_concrete_dir(self) -> None:
+        """Verifies is_concrete_dir returns True only for real directories and False for files, symlinks, and missing paths."""
+        real_dir = self.root / "real_dir"
+        real_dir.mkdir()
+        real_file = self.root / "real_file.txt"
+        real_file.write_text("hello")
+
+        dir_symlink = self.root / "dir_symlink"
+        dir_symlink.symlink_to(real_dir)
+        file_symlink = self.root / "file_symlink"
+        file_symlink.symlink_to(real_file)
+        broken_symlink = self.root / "broken_symlink"
+        broken_symlink.symlink_to(self.root / "nonexistent")
+        missing_path = self.root / "does_not_exist"
+
+        self.assertTrue(is_concrete_dir(real_dir))
+        self.assertFalse(is_concrete_dir(real_file))
+        self.assertFalse(is_concrete_dir(dir_symlink))
+        self.assertFalse(is_concrete_dir(file_symlink))
+        self.assertFalse(is_concrete_dir(broken_symlink))
+        self.assertFalse(is_concrete_dir(missing_path))
+
+    def test_is_diff_candidate(self) -> None:
+        """Verifies is_diff_candidate filters out concrete directories, temp files, and ignored files."""
+        sub_dir = self.root / "sub_dir"
+        sub_dir.mkdir()
+        valid_file = sub_dir / "valid.txt"
+        valid_file.write_text("ok")
+        temp_file = sub_dir / ".DS_Store"
+        temp_file.write_text("junk")
+        ignored_file = sub_dir / "custom_ignored.txt"
+        ignored_file.write_text("ignore me")
+        symlink_to_file = sub_dir / "link_to_file"
+        symlink_to_file.symlink_to(valid_file)
+        symlink_to_dir = sub_dir / "link_to_dir"
+        symlink_to_dir.symlink_to(self.root)
+
+        # 1. Direct path checks
+        self.assertTrue(is_diff_candidate(valid_file))
+        self.assertTrue(is_diff_candidate(symlink_to_file))
+        self.assertTrue(is_diff_candidate(symlink_to_dir))  # symlinks are inspectable candidates
+        self.assertFalse(is_diff_candidate(sub_dir))        # concrete directory rejected
+        self.assertFalse(is_diff_candidate(temp_file))      # editor/OS temp file rejected
+        self.assertFalse(is_diff_candidate(ignored_file, ignored_files=["custom_ignored.txt"]))
+
+        # 2. Checks with base_dir resolution
+        self.assertTrue(is_diff_candidate(Path("sub_dir/valid.txt"), base_dir=self.root))
+        self.assertFalse(is_diff_candidate(Path("sub_dir"), base_dir=self.root))
+        self.assertFalse(is_diff_candidate(Path("sub_dir/.DS_Store"), base_dir=self.root))
 
     def test_resolve_system_target(self) -> None:
         base = self.root / "target"
@@ -803,6 +855,50 @@ class TestFileUtils(unittest.TestCase):
         self.assertFalse(is_temp_file("main.py"))
         self.assertFalse(is_temp_file("README.md"))
         self.assertFalse(is_temp_file("swp_file.py"))
+
+    def test_copy_file_and_file_ops_raise_on_directory_target(self) -> None:
+        """Verifies that copy_file, create_symlink, copy_symlink, and write_file raise IsADirectoryError rather than deleting directories."""
+        from drift.utils.file_ops import copy_file, create_symlink, copy_symlink, write_file
+
+        src_file = self.root / "sample_src.txt"
+        src_file.write_text("sample content", encoding="utf-8")
+
+        dst_dir = self.root / "blocking_dir"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        canary = dst_dir / "canary.txt"
+        canary.write_text("preserve me", encoding="utf-8")
+
+        # 1. copy_file to existing directory dst raises IsADirectoryError
+        with self.assertRaises(IsADirectoryError):
+            copy_file(src_file, dst_dir)
+        self.assertTrue(dst_dir.is_dir())
+        self.assertTrue(canary.is_file())
+
+        # 2. copy_file from existing directory src raises IsADirectoryError
+        nonexistent_dst = self.root / "new_file.txt"
+        with self.assertRaises(IsADirectoryError):
+            copy_file(dst_dir, nonexistent_dst)
+        self.assertFalse(nonexistent_dst.exists())
+
+        # 3. create_symlink to existing directory dst raises IsADirectoryError
+        with self.assertRaises(IsADirectoryError):
+            create_symlink(src_file, dst_dir)
+        self.assertTrue(dst_dir.is_dir())
+        self.assertTrue(canary.is_file())
+
+        # 4. copy_symlink to existing directory dst raises IsADirectoryError
+        sym_src = self.root / "sample_symlink"
+        sym_src.symlink_to(src_file)
+        with self.assertRaises(IsADirectoryError):
+            copy_symlink(sym_src, dst_dir)
+        self.assertTrue(dst_dir.is_dir())
+        self.assertTrue(canary.is_file())
+
+        # 5. write_file to existing directory dst raises IsADirectoryError
+        with self.assertRaises(IsADirectoryError):
+            write_file(dst_dir, "new content")
+        self.assertTrue(dst_dir.is_dir())
+        self.assertTrue(canary.is_file())
 
 
 if __name__ == "__main__":

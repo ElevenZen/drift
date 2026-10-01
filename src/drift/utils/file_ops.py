@@ -45,7 +45,7 @@ from typing import Optional, Union
 
 from ..core.constants import LineEnding
 from .path_utils import is_relative_to
-from .file_inspect import is_binary_file, normalize_newlines, is_mode_only_change
+from .file_inspect import is_binary_file, normalize_newlines, is_mode_only_change, is_concrete_dir
 from .process_utils import run_command
 
 logger = logging.getLogger(__name__)
@@ -181,10 +181,10 @@ def remove(path: Path, sudo: bool = False) -> None:
     if not (path.exists() or path.is_symlink()):
         return
     if sudo and sys.platform != "win32":
-        cmd_rm = ["rm", "-rf" if path.is_dir() and not path.is_symlink() else "-f", str(path)]
+        cmd_rm = ["rm", "-rf" if is_concrete_dir(path) else "-f", str(path)]
         run_command(cmd_rm, sudo=True)
     else:
-        if path.is_dir() and not path.is_symlink():
+        if is_concrete_dir(path):
             shutil.rmtree(path)
         else:
             path.unlink()
@@ -207,7 +207,7 @@ def remove_with_parents(file_path: Path, limit_dir: Optional[Path] = None) -> No
 
 def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     """Copies/recreates a symlink from src to dst pointing to src's readlink target."""
-    if dst.is_dir() and not dst.is_symlink():
+    if is_concrete_dir(dst):
         raise IsADirectoryError(f"Cannot copy symlink to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
@@ -223,7 +223,7 @@ def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
 
 def create_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     """Creates a symlink from src to dst, cleaning up any existing file/link."""
-    if dst.is_dir() and not dst.is_symlink():
+    if is_concrete_dir(dst):
         raise IsADirectoryError(f"Cannot create symlink at '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
@@ -319,9 +319,9 @@ def copy_file(
     Raises:
         IsADirectoryError: If src or dst exists and is a concrete directory.
     """
-    if dst.is_dir() and not dst.is_symlink():
+    if is_concrete_dir(dst):
         raise IsADirectoryError(f"Cannot copy file to '{dst}': destination exists and is a directory.")
-    if src.is_dir() and not src.is_symlink():
+    if is_concrete_dir(src):
         raise IsADirectoryError(f"Cannot copy file from '{src}': source is a directory, not a regular file.")
 
     ensure_dir(dst.parent, sudo=sudo)
@@ -367,7 +367,7 @@ def write_file(
     Raises:
         IsADirectoryError: If dst exists and is a concrete directory.
     """
-    if dst.is_dir() and not dst.is_symlink():
+    if is_concrete_dir(dst):
         raise IsADirectoryError(f"Cannot write file to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
@@ -413,7 +413,7 @@ def _tree_op_windows(src: Path, dst: Path, move: bool, resolve_symlinks: bool) -
             remove(dst)
         shutil.move(str(src), str(dst))
     else:
-        if src.is_dir() and not src.is_symlink():
+        if is_concrete_dir(src):
             shutil.copytree(str(src), str(dst), dirs_exist_ok=True, symlinks=not resolve_symlinks)
         else:
             copy_file(src, dst, follow_symlinks=resolve_symlinks)

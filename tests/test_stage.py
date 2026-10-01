@@ -136,7 +136,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
-        created_paths = {a.rel_path for a in changes["pkg_a"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created}
         self.assertIn(Path("file1.txt"), created_paths)
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / PACKAGE_CONFIG_FILE_NAME, created_paths)
         self.assertEqual(changes["pkg_a"].updated, [])
@@ -167,7 +167,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
         self.assertEqual(changes["pkg_a"].created, [])
-        self.assertEqual([a.rel_path for a in changes["pkg_a"].updated], [Path("file1.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated], [Path("file1.txt")])
         self.assertEqual(changes["pkg_a"].deleted, [])
 
         # Check modified file in install/
@@ -201,7 +201,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
         self.assertEqual(changes["pkg_a"].created, [])
         self.assertEqual(changes["pkg_a"].updated, [])
-        self.assertEqual([a.rel_path for a in changes["pkg_a"].deleted], [Path("file2.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].deleted], [Path("file2.txt")])
 
         # Verify file2 is removed from install/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file2.txt")))
@@ -253,7 +253,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_ignored"].package, "pkg_ignored")
-        created_paths = {a.rel_path for a in changes["pkg_ignored"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_ignored") for a in changes["pkg_ignored"].created}
         self.assertIn(Path("valid.txt"), created_paths)
         self.assertIn(Path("ignored_file.txt"), created_paths)
         self.assertIn(Path("error.log"), created_paths)
@@ -324,7 +324,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_misspelled"].package, "pkg_misspelled")
-        created_paths = {a.rel_path for a in changes["pkg_misspelled"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_misspelled") for a in changes["pkg_misspelled"].created}
         self.assertIn(Path("valid.txt"), created_paths)
         self.assertIn(Path("misspelled_ignored.txt"), created_paths)
 
@@ -440,7 +440,7 @@ class TestStageRepo(unittest.TestCase):
         # Staging should reflect .drift_ignore creation
         self.assertEqual(len(changes), 1)
         self.assertTrue(changes["pkg_a"].has_changes)
-        created_paths = {a.rel_path for a in changes["pkg_a"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created}
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_IGNORE_FILE_NAME, created_paths)
         # file1.txt still exists physically in install/ (so ignored files like hooks remain available)
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
@@ -503,7 +503,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Stage plan contains all files staged to install/
         self.assertEqual(len(changes), 1)
-        created_paths = {a.rel_path for a in changes[pkg].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes[pkg].created}
         self.assertIn(Path("app.json"), created_paths)
         self.assertIn(Path(f"{DRIFT_INTERNAL_DIR_NAME}/{DRIFT_INTERNAL_HOOKS_DIR_NAME}/pre_install.sh"), created_paths)
         self.assertTrue(changes[pkg].has_changes)
@@ -577,7 +577,7 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=True)
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
-        self.assertEqual([a.rel_path for a in changes["pkg_a"].updated], [Path("file1.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated], [Path("file1.txt")])
 
     def test_stage_aborts_if_already_staging(self) -> None:
         """Verifies that staging aborts if any package is already in 'staging' state."""
@@ -869,7 +869,7 @@ class TestStageRepo(unittest.TestCase):
         )
 
         self.assertEqual(plan.package, "pkg_a")
-        self.assertIn(Path("new_diff_file.txt"), [a.rel_path for a in plan.created])
+        self.assertIn(Path("new_diff_file.txt"), [a.dst_path.relative_to(self.install_dir / "pkg_a") for a in plan.created])
         # Verify file was NOT copied to install/ yet
         self.assertFalse((self.install_dir / "pkg_a" / "new_diff_file.txt").exists())
 
@@ -906,24 +906,24 @@ class TestStageRepo(unittest.TestCase):
     def test_package_stage_plan_properties(self) -> None:
         """Verifies PackageStagePlan properties and helper methods."""
         from drift.core.result_models import PackageStagePlan
-        from drift.core.folder_delivery import PlannedFileAction, ActionType
+        from drift.core.folder_delivery import FileAction, ActionType
 
         actions = [
-            PlannedFileAction(action_type=ActionType.CREATE_COPY, rel_path=Path("a.txt"), system_target=Path("/tmp/a.txt")),
-            PlannedFileAction(action_type=ActionType.UPDATE_COPY, rel_path=Path("m.txt"), system_target=Path("/tmp/m.txt")),
-            PlannedFileAction(action_type=ActionType.UPDATE_PERMISSION, rel_path=Path("p.txt"), system_target=Path("/tmp/p.txt")),
-            PlannedFileAction(action_type=ActionType.DELETE_FILE, rel_path=Path("d.txt"), system_target=Path("/tmp/d.txt")),
-            PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=Path("sub"), system_target=Path("/tmp/sub")),
+            FileAction(action_type=ActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
+            FileAction(action_type=ActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
+            FileAction(action_type=ActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
+            FileAction(action_type=ActionType.DELETE_FILE, dst_path=Path("/tmp/d.txt")),
+            FileAction(action_type=ActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
         ]
         plan = PackageStagePlan(package="test_pkg", actions=actions)
 
         self.assertEqual(plan.package, "test_pkg")
         self.assertEqual(plan.package_name, "test_pkg")
-        self.assertEqual([a.rel_path for a in plan.created], [Path("a.txt")])
-        self.assertEqual([a.rel_path for a in plan.updated], [Path("m.txt")])
-        self.assertEqual([a.rel_path for a in plan.permissions_updated], [Path("p.txt")])
-        self.assertEqual([a.rel_path for a in plan.deleted], [Path("d.txt")])
-        self.assertEqual([a.rel_path for a in plan.ensured_dirs], [Path("sub")])
+        self.assertEqual([a.dst_path for a in plan.created], [Path("/tmp/a.txt")])
+        self.assertEqual([a.dst_path for a in plan.updated], [Path("/tmp/m.txt")])
+        self.assertEqual([a.dst_path for a in plan.permissions_updated], [Path("/tmp/p.txt")])
+        self.assertEqual([a.dst_path for a in plan.deleted], [Path("/tmp/d.txt")])
+        self.assertEqual([a.dst_path for a in plan.ensured_dirs], [Path("/tmp/sub")])
         self.assertTrue(plan.has_changes)
 
         formatted = plan.format_text()
@@ -965,19 +965,19 @@ class TestStageRepo(unittest.TestCase):
         )
 
         actions = plan_actions_from_folder_diff(diff, src_dir, dst_dir)
-        action_map = {a.rel_path: a for a in actions}
+        action_map = {a.dst_path.name: a for a in actions}
 
         # 1. Deletions come first
         self.assertEqual(actions[0].action_type, ActionType.DELETE_FILE)
-        self.assertEqual(actions[0].rel_path, Path("deleted.txt"))
+        self.assertEqual(actions[0].dst_path, dst_dir / "deleted.txt")
 
         # 2. Additions: file -> CREATE_COPY, dir -> ENSURE_DIR
-        self.assertEqual(action_map[Path("created.txt")].action_type, ActionType.CREATE_COPY)
-        self.assertEqual(action_map[Path("sub_dir")].action_type, ActionType.ENSURE_DIR)
+        self.assertEqual(action_map["created.txt"].action_type, ActionType.CREATE_COPY)
+        self.assertEqual(action_map["sub_dir"].action_type, ActionType.ENSURE_DIR)
 
         # 3. Modifications: content -> UPDATE_COPY, perm-only -> UPDATE_PERMISSION
-        self.assertEqual(action_map[Path("updated.txt")].action_type, ActionType.UPDATE_COPY)
-        self.assertEqual(action_map[Path("perm.txt")].action_type, ActionType.UPDATE_PERMISSION)
+        self.assertEqual(action_map["updated.txt"].action_type, ActionType.UPDATE_COPY)
+        self.assertEqual(action_map["perm.txt"].action_type, ActionType.UPDATE_PERMISSION)
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
         """Verifies that modifying hook script or drift_package.toml produces stage changes with has_changes=True."""
@@ -1017,7 +1017,7 @@ class TestStageRepo(unittest.TestCase):
         changes3 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
         self.assertIn(pkg, changes3)
         self.assertTrue(changes3[pkg].has_changes)
-        updated_paths = {a.rel_path for a in changes3[pkg].updated}
+        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes3[pkg].updated}
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh", updated_paths)
 
         # Verify post_install.sh was copied into install/
@@ -1057,7 +1057,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn(pkg, changes2)
         stage_pkg = changes2[pkg]
         self.assertTrue(stage_pkg.has_changes)
-        updated_paths = {a.rel_path for a in stage_pkg.updated}
+        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in stage_pkg.updated}
         self.assertIn(Path("config.json"), updated_paths)
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post.sh", updated_paths)
 
@@ -1494,7 +1494,7 @@ class TestStageDependencies(unittest.TestCase):
 
     def test_stage_result_container_and_methods(self) -> None:
         """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
-        from drift.core.folder_delivery import PlannedFileAction, ActionType
+        from drift.core.folder_delivery import FileAction, ActionType
 
         # 1. Empty StageResult
         empty_res = StageResult()
@@ -1513,11 +1513,10 @@ class TestStageDependencies(unittest.TestCase):
         plan_a = PackageStagePlan(
             package="pkg_a",
             actions=[
-                PlannedFileAction(
+                FileAction(
                     action_type=ActionType.CREATE_COPY,
-                    rel_path=Path("foo.txt"),
-                    source_path=Path("/tmp/render/pkg_a/foo.txt"),
-                    system_target=Path("/tmp/install/pkg_a/foo.txt"),
+                    src_path=Path("/tmp/render/pkg_a/foo.txt"),
+                    dst_path=Path("/tmp/install/pkg_a/foo.txt"),
                 )
             ],
         )

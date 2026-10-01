@@ -5,7 +5,14 @@ import tempfile
 from pathlib import Path
 from drift.config.workspace_config import WorkspaceConfig
 from drift.hooks.lifecycle_hooks import HookExecFlags
-from drift.primitives.add_resource import run_primitive_11_add_resources
+from drift.primitives.add_resource import (
+    run_primitive_11_add_resources,
+    prepare_add_resources,
+    execute_add_resources,
+    plan_add_resources,
+    AddResourcePlan,
+)
+from drift.core.folder_delivery import ActionType
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
@@ -70,6 +77,9 @@ class TestAddResource(unittest.TestCase):
         self.assertEqual(res.package, pkg)
         self.assertEqual(res.imported_files, [str(target_file.resolve())])
         self.assertFalse(res.dry_run)
+        self.assertIsInstance(res.plan, AddResourcePlan)
+        self.assertEqual(res.plan.package, pkg)
+        self.assertEqual(len(res.plan.actions), 1)
         
         # 3. Verify translation in src/
         imported_file = pkg_src_dir / "dot-bashrc"
@@ -404,6 +414,131 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res.package, pkg)
         self.assertTrue((pkg_src_dir / "dot-zshrc").is_file())
         self.assertEqual((pkg_src_dir / "dot-zshrc").read_text(encoding="utf-8"), "alias z='echo zsh'")
+
+    def test_prepare_and_execute_plan_decomposition(self):
+        """Verifies decoupled plan preparation and execution sub-stages."""
+        pkg = "pkg_plan_exec"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"', encoding="utf-8")
+
+        target_file = self.system_target_dir / ".vimrc"
+        target_file.write_text("set nocompatible\n", encoding="utf-8")
+
+        # 1. Prepare Plan (Read-Only)
+        plan = prepare_add_resources(self.workspace_config, pkg, [target_file])
+        self.assertIsInstance(plan, AddResourcePlan)
+        self.assertEqual(plan.package, pkg)
+        self.assertTrue(plan.has_changes)
+        self.assertEqual(len(plan), 1)
+
+        action = plan.actions[0]
+        self.assertEqual(action.action_type, ActionType.CREATE_COPY)
+        self.assertEqual(action.src_path, target_file.resolve())
+        self.assertEqual(action.dst_path, pkg_src_dir / "dot-vimrc")
+
+        # Plan formatting check
+        plan_text = plan.format_text()
+        self.assertIn(f"Package '{pkg}':", plan_text)
+        self.assertIn("CREATE_COPY", plan_text)
+        self.assertIn("dot-vimrc", plan_text)
+
+        # Ensure no mutations occurred during planning
+        self.assertFalse((pkg_src_dir / "dot-vimrc").exists())
+
+        # 2. Execute Plan (Physical State Mutation)
+        res = execute_add_resources(self.workspace_config, plan)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.package, pkg)
+        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+        self.assertFalse(res.dry_run)
+        self.assertIs(res.plan, plan)
+
+        # Verify physical file in src/
+        imported_dest = pkg_src_dir / "dot-vimrc"
+        self.assertTrue(imported_dest.is_file())
+        self.assertEqual(imported_dest.read_text(encoding="utf-8"), "set nocompatible\n")
+
+        # Formatted output check
+        formatted = res.format_text()
+        self.assertIn(f"Successfully imported 1 file(s) into package '{pkg}'", formatted)
+
+    def test_add_dry_run_simulation(self):
+        """Verifies dry-run simulation mode leaves source repository untouched."""
+        pkg = "pkg_dry_run"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"', encoding="utf-8")
+
+        target_file = self.system_target_dir / ".tmux.conf"
+        target_file.write_text("set -g mouse on\n", encoding="utf-8")
+
+        # Run with dry_run=True
+        res = run_primitive_11_add_resources(self.workspace_config, pkg, [target_file], dry_run=True)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertTrue(res.dry_run)
+        self.assertEqual(res.imported_files, [str(target_file.resolve())])
+
+        # Verify zero filesystem mutations in src/
+        self.assertFalse((pkg_src_dir / "dot-tmux.conf").exists())
+
+        # Check dry-run formatted output
+        text = res.format_text()
+        self.assertIn("[DRY-RUN]", text)
+        self.assertIn("CREATE_COPY", text)
+        self.assertIn("dot-tmux.conf", text)
+        self.assertIn("1 file(s) would be imported", text)
+
+    def test_add_empty_worklist_plan_and_result(self):
+        """Verifies handling when no files match the import path."""
+        pkg = "pkg_empty"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"', encoding="utf-8")
+
+        # Empty directory on system
+        empty_dir = self.system_target_dir / "empty_dir"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+
+        plan = prepare_add_resources(self.workspace_config, pkg, [empty_dir])
+        self.assertFalse(plan.has_changes)
+        self.assertEqual(len(plan), 0)
+        self.assertIn("No resources to import", plan.format_text())
+
+        res = execute_add_resources(self.workspace_config, plan)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.imported_files, [])
+        self.assertIn("No resources to import", res.format_text())
+
+    def test_cli_execute_add_dry_run(self):
+        """Verifies CLI execute_add with dry_run prints dry run plan."""
+        from io import StringIO
+        from unittest.mock import patch
+        from drift.cli.actions import execute_add
+
+        pkg = "pkg_cli_dry_run"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f'[package]\nname="{pkg}"', encoding="utf-8")
+
+        target_file = self.system_target_dir / ".gitconfig"
+        target_file.write_text("[user]\nname = Test\n", encoding="utf-8")
+
+        with patch("drift.cli.actions.assert_workspace_healthy"), \
+             patch("drift.cli.actions.load_workspace_config_default", return_value=self.workspace_config), \
+             patch("sys.stdout", new_callable=StringIO) as mock_stdout:
+            execute_add(
+                drift_root=self.drift_root,
+                package_name=pkg,
+                import_paths=[str(target_file)],
+                dry_run=True,
+            )
+
+        output = mock_stdout.getvalue()
+        self.assertIn("[DRY-RUN]", output)
+        self.assertIn("CREATE_COPY", output)
+        self.assertIn("dot-gitconfig", output)
+        self.assertFalse((pkg_src_dir / "dot-gitconfig").exists())
 
 
 if __name__ == "__main__":

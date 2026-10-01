@@ -719,12 +719,12 @@ fi
         plan = plan_package_uninstall(context)
         self.assertEqual(plan.package, pkg)
         self.assertEqual(len(plan.removed), 2)
-        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.rel_path == Path("app.conf") for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.rel_path == Path("tools/cli.sh") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "app.conf" for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "tools/cli.sh" for a in plan.actions))
         self.assertTrue(any(a.action_type == ActionType.INFO_MESSAGE for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("nested") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "nested" for a in plan.actions))
         self.assertEqual(len(plan.restored), 1)
-        self.assertEqual(plan.restored[0].rel_path, Path("nested/backup.txt"))
+        self.assertEqual(plan.restored[0].dst_path, self.system_target_dir / "nested/backup.txt")
         self.assertIn("to remove", plan.format_text())
         self.assertIn("to restore", plan.format_text())
 
@@ -755,9 +755,9 @@ fi
 
         plan = plan_package_uninstall(context)
         # Should plan BACKUP_OVERWRITE on the blocking file, ENSURE_DIR, then CREATE_COPY
-        self.assertTrue(any(a.action_type == ActionType.BACKUP_OVERWRITE and a.rel_path == Path("deeply") for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("deeply") for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("deeply/nested") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.BACKUP_OVERWRITE and a.src_path == self.system_target_dir / "deeply" for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply" for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply/nested" for a in plan.actions))
         self.assertEqual(len(plan.restored), 1)
 
         # Execute uninstallation
@@ -766,6 +766,53 @@ fi
         restored_target = self.system_target_dir / "deeply" / "nested" / "restored.conf"
         self.assertTrue(restored_target.is_file())
         self.assertEqual(restored_target.read_text(encoding="utf-8"), "deeply nested config")
+
+    def test_uninstall_backup_restore_colliding_file_backed_up_to_deleted_files(self):
+        """Verifies uninstallation preserves pre-existing host files colliding with restored files into deleted_files."""
+        pkg = "pkg_collision_restore"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        backup_pkg_overwritten = self.backup_dir / pkg / BackupSubfolder.OVERWRITTEN.value
+        backup_pkg_overwritten.mkdir(parents=True, exist_ok=True)
+        (backup_pkg_overwritten / "settings.json").write_text('{"restored": true}', encoding="utf-8")
+
+        # Pre-existing host regular file that was not part of deployed_files colliding with restore target
+        colliding_file = self.system_target_dir / "settings.json"
+        colliding_file.write_text('{"colliding_host": true}', encoding="utf-8")
+
+        context = PackageUninstallContext(
+            pkg_name=pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[],
+            sudo=False,
+            install_pkg_dir=install_pkg_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            drift_root=self.drift_root,
+            detach=False,
+        )
+
+        plan = plan_package_uninstall(context)
+        expected_backup_dst = self.backup_dir / pkg / BackupSubfolder.DELETED_FILES.value / "settings.json"
+
+        # Verify plan: BACKUP_OVERWRITE of colliding file into deleted_files, then CREATE_COPY of restored file
+        backup_action = next((a for a in plan.actions if a.action_type == ActionType.BACKUP_OVERWRITE and a.src_path == colliding_file), None)
+        self.assertIsNotNone(backup_action)
+        self.assertEqual(backup_action.dst_path, expected_backup_dst)
+
+        restore_action = next((a for a in plan.actions if a.action_type == ActionType.CREATE_COPY and a.dst_path == colliding_file), None)
+        self.assertIsNotNone(restore_action)
+        self.assertEqual(restore_action.src_path, backup_pkg_overwritten / "settings.json")
+
+        # Execute uninstallation
+        res = execute_package_uninstall(context, plan, hook_flags=HookExecFlags())
+        self.assertEqual(res.status, "SUCCESS")
+
+        # Verify host target has restored content
+        self.assertEqual(colliding_file.read_text(encoding="utf-8"), '{"restored": true}')
+        # Verify colliding host content was safely preserved in deleted_files/
+        self.assertTrue(expected_backup_dst.is_file())
+        self.assertEqual(expected_backup_dst.read_text(encoding="utf-8"), '{"colliding_host": true}')
 
     def test_uninstall_dry_run_zero_mutations(self):
         """Verifies dry-run uninstallation performs zero host, registry, or directory mutations and returns structured plan."""

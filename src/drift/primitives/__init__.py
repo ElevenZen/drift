@@ -67,6 +67,10 @@ from .new_package import (
 )
 from .add_resource import (
     run_primitive_11_add_resources,
+    prepare_add_resources,
+    execute_add_resources,
+    plan_add_resources,
+    AddResourcePlan,
 )
 from .package_health import (
     run_primitive_health_checks,
@@ -83,7 +87,6 @@ from .workspace_diff import (
 )
 from .workspace_status import (
     PackageStatus,
-    WorkspaceStatusResult,
     run_primitive_status,
 )
 from .deploy_repo import (
@@ -155,13 +158,16 @@ __all__ = [
     "run_primitive_9_purge_workspace_garbage",
     "run_primitive_10_create_new_package",
     "run_primitive_11_add_resources",
+    "prepare_add_resources",
+    "execute_add_resources",
+    "plan_add_resources",
+    "AddResourcePlan",
     "run_primitive_health_checks",
     "run_primitive_clone",
     "repair_drift_workspace",
     "build_repair_result",
     "run_primitive_15_workspace_diff",
     "PackageStatus",
-    "WorkspaceStatusResult",
     "run_primitive_status",
     "run_primitive_deploy_pipeline",
     "run_primitive_deploy_pipeline_with_error_handling",

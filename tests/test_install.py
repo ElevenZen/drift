@@ -56,13 +56,15 @@ from drift.primitives.install_repo import (
         assert_packages_install_ready,
 )
 from drift.core.folder_delivery import (
+        DeliveryInspectionContext,
         execute_single_action,
         format_action_line,
         format_action_summary,
+        plan_folder_delivery,
 )
 from drift.core.result_models import (
         ActionType,
-        PlannedFileAction,
+        FileAction,
         PackageInstallPlan,
 )
 from drift.utils.path_utils import compute_relative_symlink_target
@@ -893,7 +895,7 @@ class TestInstallRepo(unittest.TestCase):
         # Re-run standalone deployment (without package_changes)
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
-        self.assertEqual([str(a.rel_path) for a in res2.packages[0].plan.prune_backups], ["file2.txt"])
+        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res2.packages[0].plan.prune_backups], ["file2.txt"])
 
         # 3. Assert file2.txt is pruned from system target
         self.assertFalse(system_file2.exists())
@@ -1583,7 +1585,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
-        self.assertEqual([str(a.rel_path) for a in res.packages[0].plan.overwritten_backups], ["app.conf"])
+        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups], ["app.conf"])
 
     def test_switch_method_from_symlink_to_copy_backs_up_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'symlink' switches to 'copy',
@@ -1787,13 +1789,13 @@ class TestInstallRepo(unittest.TestCase):
         )
 
         # 'nested' ancestor has BACKUP_OVERWRITE (Internal ancestor symlink conflict) and ENSURE_DIR
-        nested_overwrites = [a for a in plan.actions if a.rel_path == Path("nested") and a.action_type == ActionType.BACKUP_OVERWRITE]
+        nested_overwrites = [a for a in plan.actions if a.src_path == self.system_target_dir / "nested" and a.action_type == ActionType.BACKUP_OVERWRITE]
         self.assertEqual(len(nested_overwrites), 1)
         self.assertEqual(nested_overwrites[0].reason, "Internal ancestor symlink conflict")
-        self.assertEqual(nested_overwrites[0].system_target, self.system_target_dir / "nested")
+        self.assertEqual(nested_overwrites[0].src_path, self.system_target_dir / "nested")
 
         # 'root.conf' leaf has BACKUP_OVERWRITE (Colliding external symlink) and CREATE_COPY
-        root_overwrites = [a for a in plan.actions if a.rel_path == Path("root.conf") and a.action_type == ActionType.BACKUP_OVERWRITE]
+        root_overwrites = [a for a in plan.actions if a.src_path == self.system_target_dir / "root.conf" and a.action_type == ActionType.BACKUP_OVERWRITE]
         self.assertEqual(len(root_overwrites), 1)
         self.assertEqual(root_overwrites[0].reason, "Colliding external symlink")
 
@@ -1880,18 +1882,17 @@ class TestInstallRepo(unittest.TestCase):
         # 1. Exactly one BACKUP_OVERWRITE (on 'a'), ENSURE_DIR on 'a', ENSURE_DIR on 'a/b', CREATE_SYMLINK on 'a/b/c.txt'
         overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
         self.assertEqual(len(overwrites), 1)
-        self.assertEqual(overwrites[0].rel_path, Path("a"))
-        self.assertEqual(overwrites[0].system_target, self.system_target_dir / "a")
+        self.assertEqual(overwrites[0].src_path, self.system_target_dir / "a")
         self.assertEqual(overwrites[0].reason, "Symlink blocking directory")
 
         ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
         self.assertEqual(len(ensure_dirs), 2)
-        self.assertEqual(ensure_dirs[0].rel_path, Path("a"))
-        self.assertEqual(ensure_dirs[1].rel_path, Path("a/b"))
+        self.assertEqual(ensure_dirs[0].dst_path, self.system_target_dir / "a")
+        self.assertEqual(ensure_dirs[1].dst_path, self.system_target_dir / "a" / "b")
 
         creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_SYMLINK]
         self.assertEqual(len(creations), 1)
-        self.assertEqual(creations[0].rel_path, Path("a/b/c.txt"))
+        self.assertEqual(creations[0].dst_path, self.system_target_dir / "a" / "b" / "c.txt")
 
         # 2. Execute plan and verify host state
         execute_package_actions(context=context, plan=plan)
@@ -1947,18 +1948,17 @@ class TestInstallRepo(unittest.TestCase):
         # 1. Exactly one BACKUP_OVERWRITE for dot-config
         overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
         self.assertEqual(len(overwrites), 1)
-        self.assertEqual(overwrites[0].rel_path, Path("dot-config"))
-        self.assertEqual(overwrites[0].system_target, self.system_target_dir / ".config")
+        self.assertEqual(overwrites[0].src_path, self.system_target_dir / ".config")
 
         # 2. ENSURE_DIR for .config, .config/nvim, .config/nvim/lua
         ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
         self.assertEqual(len(ensure_dirs), 3)
-        self.assertEqual([d.rel_path for d in ensure_dirs], [Path("dot-config"), Path("dot-config/nvim"), Path("dot-config/nvim/lua")])
+        self.assertEqual([d.dst_path for d in ensure_dirs], [self.system_target_dir / ".config", self.system_target_dir / ".config/nvim", self.system_target_dir / ".config/nvim/lua"])
 
         # 3. CREATE_COPY for init.lua
         creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_COPY]
         self.assertEqual(len(creations), 1)
-        self.assertEqual(creations[0].rel_path, Path("dot-config/nvim/lua/init.lua"))
+        self.assertEqual(creations[0].dst_path, self.system_target_dir / ".config/nvim/lua/init.lua")
 
         # 4. Execute and verify
         execute_package_actions(context=context, plan=plan)
@@ -2013,12 +2013,12 @@ class TestInstallRepo(unittest.TestCase):
         # Only 'a/b' receives BACKUP_OVERWRITE
         overwrites = [act for act in plan.actions if act.action_type == ActionType.BACKUP_OVERWRITE]
         self.assertEqual(len(overwrites), 1)
-        self.assertEqual(overwrites[0].rel_path, Path("a/b"))
+        self.assertEqual(overwrites[0].src_path, self.system_target_dir / "a/b")
 
         # ENSURE_DIR for 'a/b' and 'a/b/c' ('a' is already a dir on host so _inspect_single_ancestor returns [])
         ensure_dirs = [act for act in plan.actions if act.action_type == ActionType.ENSURE_DIR]
         self.assertEqual(len(ensure_dirs), 2)
-        self.assertEqual([d.rel_path for d in ensure_dirs], [Path("a/b"), Path("a/b/c")])
+        self.assertEqual([d.dst_path for d in ensure_dirs], [self.system_target_dir / "a/b", self.system_target_dir / "a/b/c"])
 
         # Leaf creations for both files
         creations = [act for act in plan.actions if act.action_type == ActionType.CREATE_SYMLINK]
@@ -2058,7 +2058,8 @@ class TestInstallRepo(unittest.TestCase):
 
         # System target is planned as SKIP_IDENTICAL
         self.assertEqual(len(plan.skipped), 1)
-        self.assertEqual(plan.skipped[0].rel_path, Path("valid_file.txt"))
+        self.assertEqual(plan.skipped[0].dst_path, system_target)
+        self.assertEqual(plan.skipped[0].src_path, pkg_install_dir / "valid_file.txt")
         self.assertEqual(plan.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
 
         execute_package_actions(context=context, plan=plan)
@@ -2318,10 +2319,9 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        action = PlannedFileAction(
+        action = FileAction(
             action_type=ActionType.ENSURE_DIR,
-            rel_path=Path("existing_file.txt"),
-            system_target=file_path,
+            dst_path=file_path,
         )
         with self.assertRaises(NotADirectoryError):
             execute_single_action(context.action_context, action)
@@ -2335,10 +2335,9 @@ class TestInstallRepo(unittest.TestCase):
         with self.assertRaises(NotADirectoryError):
             ensure_dir(symlink_path)
 
-        action_symlink = PlannedFileAction(
+        action_symlink = FileAction(
             action_type=ActionType.ENSURE_DIR,
-            rel_path=Path("dir_symlink"),
-            system_target=symlink_path,
+            dst_path=symlink_path,
         )
         with self.assertRaises(NotADirectoryError):
             execute_single_action(context.action_context, action_symlink)
@@ -2364,10 +2363,10 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        action = PlannedFileAction(
+        action = FileAction(
             action_type=ActionType.BACKUP_PRUNE,
-            rel_path=Path("orphan.txt"),
-            system_target=target_file,
+            src_path=target_file,
+            dst_path=self.backup_dir / pkg / "deleted_files" / "orphan.txt",
             reason="Orphaned file 'orphan.txt' prune",
         )
         execute_single_action(context.action_context, action)
@@ -2414,7 +2413,8 @@ class TestInstallRepo(unittest.TestCase):
         # Only one prune action for old_deleted.txt
         self.assertEqual(len(plan.pruned), 1)
         self.assertEqual(plan.pruned[0].action_type, ActionType.BACKUP_PRUNE)
-        self.assertEqual(plan.pruned[0].rel_path, Path("old_deleted.txt"))
+        self.assertEqual(plan.pruned[0].src_path, orphan_host)
+        self.assertEqual(plan.pruned[0].dst_path, self.backup_dir / pkg / "deleted_files" / "old_deleted.txt")
 
         # Execute package actions
         execute_package_actions(context=context, plan=plan)
@@ -2535,9 +2535,9 @@ class TestInstallRepo(unittest.TestCase):
 
         # Plan contains the planned overwrite and creation
         self.assertEqual(len(pkg_res.plan.overwritten_backups), 1)
-        self.assertEqual(pkg_res.plan.overwritten_backups[0].rel_path, Path("app.conf"))
+        self.assertEqual(pkg_res.plan.overwritten_backups[0].src_path, target_file)
         self.assertEqual(len(pkg_res.plan.created), 1)
-        self.assertEqual(pkg_res.plan.created[0].rel_path, Path("app.conf"))
+        self.assertEqual(pkg_res.plan.created[0].dst_path, target_file)
 
         # Zero mutations on host filesystem:
         # 1. Target file remains untouched with original content
@@ -2815,11 +2815,11 @@ class TestInstallRepo(unittest.TestCase):
 
         removals = [a for a in plan.actions if a.action_type == ActionType.DELETE_FILE]
         self.assertEqual(len(removals), 1)
-        self.assertEqual(removals[0].system_target, target_1 / "config.conf")
+        self.assertEqual(removals[0].dst_path, target_1 / "config.conf")
 
         creations = [a for a in plan.actions if a.action_type == ActionType.CREATE_COPY]
         self.assertEqual(len(creations), 1)
-        self.assertEqual(creations[0].system_target, target_2 / "config.conf")
+        self.assertEqual(creations[0].dst_path, target_2 / "config.conf")
 
         # Verify ZERO mutations in dry-run mode
         self.assertTrue((target_1 / "config.conf").is_file(), "Old target file must not be deleted in dry-run")
@@ -3111,6 +3111,48 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(plan2.permissions_updated), 0)
         self.assertEqual(len(plan2.skipped), 1)
         self.assertEqual(plan2.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
+
+    def test_delivery_inspection_context_derivation_and_planning(self) -> None:
+        """Verifies DeliveryInspectionContext properties, backup routing, and integration with plan_folder_delivery."""
+        pkg = "pkg_context_test"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "app.conf").write_text("install app conf", encoding="utf-8")
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.SYMLINK,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        delivery_ctx = context.delivery_context
+        self.assertIsInstance(delivery_ctx, DeliveryInspectionContext)
+        self.assertEqual(delivery_ctx.target_dir, self.system_target_dir)
+        self.assertEqual(delivery_ctx.source_dir, pkg_install_dir)
+        self.assertEqual(delivery_ctx.install_method, InstallMethod.SYMLINK)
+        self.assertTrue(delivery_ctx.is_first_time)
+        self.assertEqual(delivery_ctx.abs_drift_root, self.workspace_config.drift_root.resolve())
+
+        # Test resolve_backup_path (encodes hidden dot to dot- prefix in backup store)
+        backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"))
+        self.assertEqual(backup_path, self.backup_dir / pkg / "overwritten" / "dot-app.conf")
+
+        # Test plan_folder_delivery directly with DeliveryInspectionContext
+        actions = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("app.conf")],
+            deployed_files=(),
+        )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action_type, ActionType.CREATE_SYMLINK)
+        self.assertEqual(actions[0].src_path, pkg_install_dir / "app.conf")
+        self.assertEqual(actions[0].dst_path, self.system_target_dir / "app.conf")
 
 
 class TestInstallDependencies(unittest.TestCase):

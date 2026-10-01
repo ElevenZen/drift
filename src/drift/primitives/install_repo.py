@@ -35,7 +35,7 @@ Pipeline Architecture:
                             - state_registry.set_package_state("installing") & save
                             - trigger pre_install / pre_update hook
                             - state_registry.sync_deployed_files & save
-                            - execute_package_actions (applies PlannedFileAction items deterministically)
+                            - execute_package_actions (applies FileAction items deterministically)
                             - trigger post_install / post_update hook
                             - update_state_registry_post_install ("installed") & save
             -> Returns Aggregated InstallResult
@@ -103,7 +103,6 @@ from ..config.package_config import (
 )
 from ..config.package_hooks import PackageHooks
 from ..core.constants import (
-    LineEnding,
     InstallMethod,
     BackupSubfolder,
 )
@@ -131,27 +130,14 @@ from .package_assertions import (
     resolve_package_install_order,
     resolve_target_package_order,
 )
-from ..utils.path_utils import (
-    resolve_target_path,
-    encode_dot_prefix,
-    decode_dot_prefix,
-    relative_path_between,
-    compute_relative_symlink_target,
-    is_relative_to,
-)
-from ..utils.file_ops import (
-    copy_file,
-    create_symlink,
-    assert_writable,
-    ensure_dir,
-    remove,
-)
 from ..utils.process_utils import run_command
+from ..utils.path_utils import resolve_target_path
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.folder_delivery import (
     ActionExecutionContext,
     ActionType,
-    PlannedFileAction,
+    DeliveryInspectionContext,
+    FileAction,
     plan_folder_delivery,
     plan_file_removals,
     execute_delivery_actions,
@@ -209,10 +195,20 @@ class PackageInstallContext:
     @property
     def action_context(self) -> ActionExecutionContext:
         return ActionExecutionContext(
-            target_dir=self.target_dir,
-            install_pkg_dir=self.install_pkg_dir,
-            backup_pkg_dir=self.backup_pkg_dir,
             sudo=self.sudo,
+        )
+
+    @property
+    def delivery_context(self) -> DeliveryInspectionContext:
+        """Derives delivery inspection context from package install context."""
+        return DeliveryInspectionContext(
+            target_dir=self.target_dir,
+            source_dir=self.install_pkg_dir,
+            drift_root=self.drift_root,
+            install_method=self.install_method,
+            is_first_time=self.is_first_time,
+            backup_pkg_dir=self.backup_pkg_dir,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
         )
 
     @contextmanager
@@ -275,15 +271,13 @@ def plan_package_install(
         if context.is_first_time
         else ["pre_update", "post_update"]
     )
-    actions: List[PlannedFileAction] = []
+    actions: List[FileAction] = []
 
     # 1. Undeploy from previous location if target directory migrated
     if target_migrated_from is not None:
         actions.append(
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.INFO_MESSAGE,
-                rel_path=Path("."),
-                system_target=target_migrated_from,
                 reason=(
                     f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
                     f"'{target_migrated_from}' -> '{context.target_dir}'. Undeploying from previous location."
@@ -302,23 +296,17 @@ def plan_package_install(
 
     # 2. Informational banner indicating package install begins
     actions.append(
-        PlannedFileAction(
+        FileAction(
             action_type=ActionType.INFO_MESSAGE,
-            rel_path=Path("."),
-            system_target=context.target_dir,
             reason=f"🚀 Installing package: {context.pkg_name}",
         )
     )
 
     # 3. Plan folder delivery actions to current target directory
     folder_actions = plan_folder_delivery(
-        target_dir=context.target_dir,
-        source_dir=context.install_pkg_dir,
-        install_method=context.install_method,
-        drift_root=context.drift_root,
-        active_files=deployable_files,
+        context=context.delivery_context,
+        deployable_files=deployable_files,
         deployed_files=active_deployed_files,
-        is_first_time=context.is_first_time,
     )
     actions.extend(folder_actions)
 
@@ -338,9 +326,6 @@ def execute_package_actions(
 ) -> None:
     """Executes all planned actions in deterministic order on the host filesystem."""
     action_ctx = ActionExecutionContext(
-        target_dir=context.target_dir,
-        install_pkg_dir=context.install_pkg_dir,
-        backup_pkg_dir=context.backup_pkg_dir,
         sudo=context.sudo,
         resolve_symlinks=resolve_symlinks,
     )

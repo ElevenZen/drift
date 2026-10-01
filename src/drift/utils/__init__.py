@@ -18,6 +18,8 @@ from .file_inspect import (
     is_mode_only_change,
     tree_files,
     is_temp_file,
+    is_concrete_dir,
+    is_diff_candidate,
     find_symlink_ancestor,
 )
 from .file_ops import (
@@ -139,6 +141,9 @@ __all__ = [
     "is_mode_only_change",
     "tree_files",
     "is_temp_file",
+    "is_concrete_dir",
+    "is_diff_candidate",
+    "is_pending_delta_file",
     "find_symlink_ancestor",
     "copy_file",
     "copy_symlink",

@@ -16,13 +16,12 @@ from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
 from .exceptions import InstallCollisionError
 from .folder_diff import FolderDiff
 from .serialization import SerializableModel
-from ..utils.file_inspect import contents_differ, permissions_differ, tree_files
+from ..utils.file_inspect import contents_differ, permissions_differ, tree_files, is_concrete_dir
 from ..utils.file_ops import (
     copy_file,
     copy_permissions,
     create_symlink,
     ensure_dir,
-    prune_empty_parents,
     remove,
 )
 from .sync_ops import backup_file_or_dir_external
@@ -63,57 +62,82 @@ class ActionType(str, Enum):
 
 
 @dataclass
-class PlannedFileAction(SerializableModel):
+class FileAction(SerializableModel):
     """Declarative specification of a single file/directory operation on the host system."""
     action_type: ActionType
-    rel_path: Path
-    system_target: Path
+    src_path: Optional[Path] = None
+    dst_path: Optional[Path] = None
     reason: Optional[str] = None
-    source_path: Optional[Path] = None
 
 
 @dataclass(frozen=True)
 class ActionExecutionContext:
-    """Encapsulates host filesystem paths and permissions required to execute file actions."""
-    target_dir: Path
-    install_pkg_dir: Path
-    backup_pkg_dir: Path
+    """Encapsulates host filesystem permissions and symlink resolution flags for executing file actions."""
     sudo: bool = False
     resolve_symlinks: bool = True
-    backup_subfolder: BackupSubfolder = BackupSubfolder.OVERWRITTEN
+
+
+@dataclass(frozen=True)
+class DeliveryInspectionContext:
+    """Encapsulates invariant target paths, source paths, install configurations, and backup policies for folder delivery planning."""
+    target_dir: Path
+    source_dir: Path
+    drift_root: Path
+    install_method: InstallMethod
+    is_first_time: bool
+    backup_pkg_dir: Optional[Path]
+    backup_subfolder: BackupSubfolder
+
+    @property
+    def abs_drift_root(self) -> Path:
+        """Returns pre-resolved absolute Path to drift workspace root."""
+        return self.drift_root.resolve()
+
+    def resolve_backup_path(self, rel_path: Path) -> Optional[Path]:
+        """Resolves the backup destination path for a relative path if backup_pkg_dir is configured."""
+        if not self.backup_pkg_dir:
+            return None
+        subfolder_str = (
+            self.backup_subfolder.value
+            if isinstance(self.backup_subfolder, BackupSubfolder)
+            else str(self.backup_subfolder)
+        )
+        return self.backup_pkg_dir / subfolder_str / decode_dot_prefix(rel_path)
 
 
 # =============================================================================
 # Centralized Action Formatting Helpers
 # =============================================================================
 
-def format_action_line(action: PlannedFileAction) -> str:
-    """Formats a single PlannedFileAction into a clean terminal line."""
+def format_action_line(action: FileAction) -> str:
+    """Formats a single FileAction into a clean terminal line."""
     reason_str = f" ({action.reason})" if action.reason else ""
     if action.action_type == ActionType.ENSURE_DIR:
-        return f"    📁 [ENSURE_DIR]      {action.system_target}"
+        return f"    📁 [ENSURE_DIR]      {action.dst_path}"
     elif action.action_type == ActionType.CREATE_SYMLINK:
-        return f"    🔗 [CREATE_SYMLINK]  {action.rel_path} -> {action.system_target}"
+        return f"    🔗 [CREATE_SYMLINK]  {action.src_path} -> {action.dst_path}"
     elif action.action_type == ActionType.CREATE_COPY:
-        return f"    📄 [CREATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}"
+        return f"    📄 [CREATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
     elif action.action_type == ActionType.UPDATE_COPY:
-        return f"    📝 [UPDATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}"
+        return f"    📝 [UPDATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
     elif action.action_type == ActionType.UPDATE_PERMISSION:
-        return f"    🔒 [UPDATE_PERMISSION] {action.rel_path} -> {action.system_target}{reason_str}"
+        return f"    🔒 [UPDATE_PERMISSION] {action.src_path} -> {action.dst_path}{reason_str}"
     elif action.action_type == ActionType.SKIP_IDENTICAL:
-        return f"    ⏭️ [SKIP_IDENTICAL]  {action.rel_path} -> {action.system_target}{reason_str}"
+        return f"    ⏭️ [SKIP_IDENTICAL]  {action.src_path} -> {action.dst_path}{reason_str}"
     elif action.action_type == ActionType.BACKUP_OVERWRITE:
-        return f"    🛡️ [BACKUP_OVERWRITE] {action.system_target}{reason_str}"
+        target = action.src_path or action.dst_path
+        return f"    🛡️ [BACKUP_OVERWRITE] {target}{reason_str}"
     elif action.action_type == ActionType.BACKUP_PRUNE:
-        return f"    📦 [BACKUP_PRUNE]    {action.system_target}{reason_str}"
+        target = action.src_path or action.dst_path
+        return f"    📦 [BACKUP_PRUNE]    {target}{reason_str}"
     elif action.action_type == ActionType.DELETE_FILE:
-        return f"    🗑️ [DELETE_FILE]    {action.system_target}{reason_str}"
+        return f"    🗑️ [DELETE_FILE]    {action.dst_path}{reason_str}"
     elif action.action_type == ActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
-    return f"    [{action.action_type}] {action.rel_path} -> {action.system_target}{reason_str}"
+    return f"    [{action.action_type}] {action.src_path} -> {action.dst_path}{reason_str}"
 
 
-def format_action_summary(actions: Sequence[PlannedFileAction]) -> str:
+def format_action_summary(actions: Sequence[FileAction]) -> str:
     """Formats a concise summary string of action counts."""
     counts = []
     created = [a for a in actions if a.action_type in (ActionType.CREATE_SYMLINK, ActionType.CREATE_COPY)]
@@ -165,31 +189,32 @@ def _expand_path_ancestors(rel: Path) -> Set[Path]:
 
 
 def _inspect_single_ancestor(
+    context: DeliveryInspectionContext,
     ancestor_target: Path,
     rel_path: Path,
-    abs_drift_root: Path,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
     if not (ancestor_target.exists() or ancestor_target.is_symlink()):
-        return [PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target)]
+        return [FileAction(action_type=ActionType.ENSURE_DIR, dst_path=ancestor_target)]
 
-    if ancestor_target.is_dir() and not ancestor_target.is_symlink():
+    if is_concrete_dir(ancestor_target):
         return []
 
     # Blocked by an internal symlink, foreign symlink, or physical file
     if ancestor_target.is_symlink():
         is_internal = False
         try:
-            is_internal = is_relative_to(ancestor_target.resolve(), abs_drift_root)
+            is_internal = is_relative_to(ancestor_target.resolve(), context.abs_drift_root)
         except Exception:
             is_internal = False
         reason = "Internal ancestor symlink conflict" if is_internal else "Symlink blocking directory"
     else:
         reason = "File blocking directory"
 
+    backup_dst = context.resolve_backup_path(rel_path)
     return [
-        PlannedFileAction(action_type=ActionType.BACKUP_OVERWRITE, rel_path=rel_path, system_target=ancestor_target, reason=reason),
-        PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target),
+        FileAction(action_type=ActionType.BACKUP_OVERWRITE, src_path=ancestor_target, dst_path=backup_dst, reason=reason),
+        FileAction(action_type=ActionType.ENSURE_DIR, dst_path=ancestor_target),
     ]
 
 
@@ -199,34 +224,35 @@ def _check_has_backed_up_ancestor(target: Path, backed_up_targets: Set[Path]) ->
 
 
 def inspect_ancestor_directories(
-    target_dir: Path,
-    active_files: Iterable[Path],
-    drift_root: Path,
+    context: DeliveryInspectionContext,
+    deployable_files: Iterable[Path],
     handled_targets: Set[Path],
-    actions: List[PlannedFileAction],
+    actions: List[FileAction],
 ) -> Set[Path]:
-    """Inspects parent directories of active files from shallowest to deepest, planning necessary directory recreation or backups."""
-    all_ancestors = {p for rel in active_files for p in _expand_path_ancestors(rel)}
+    """Inspects parent directories of deployable files from shallowest to deepest, planning necessary directory recreation or backups."""
+    all_ancestors = {p for rel in deployable_files for p in _expand_path_ancestors(rel)}
     sorted_ancestors = sorted(all_ancestors, key=lambda p: len(p.parts))
-    abs_drift_root = drift_root.resolve()
     backed_up_ancestor_targets: Set[Path] = set()
 
     for p in sorted_ancestors:
-        ancestor_target = target_dir / p
+        ancestor_target = context.target_dir / p
         if ancestor_target in handled_targets:
             continue
         handled_targets.add(ancestor_target)
         rel_path = decode_dot_prefix(p)
 
         if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
-            actions.append(PlannedFileAction(
+            actions.append(FileAction(
                 action_type=ActionType.ENSURE_DIR,
-                rel_path=rel_path,
-                system_target=ancestor_target,
+                dst_path=ancestor_target,
             ))
             continue
 
-        res = _inspect_single_ancestor(ancestor_target, rel_path, abs_drift_root)
+        res = _inspect_single_ancestor(
+            context=context,
+            ancestor_target=ancestor_target,
+            rel_path=rel_path,
+        )
         if any(a.action_type == ActionType.BACKUP_OVERWRITE for a in res):
             backed_up_ancestor_targets.add(ancestor_target)
         actions.extend(res)
@@ -245,126 +271,120 @@ def _check_symlink_points_to_source(system_target: Path, source_file: Path) -> b
 
 
 def _plan_file_creation(
-    install_method: InstallMethod,
-    rel_file: Path,
+    context: DeliveryInspectionContext,
+    source_file: Path,
     system_target: Path,
-    source_path: Optional[Path] = None,
     reason: Optional[str] = None,
-) -> PlannedFileAction:
+) -> FileAction:
     """Returns CREATE_SYMLINK or CREATE_COPY depending on the package install method."""
-    action_type = ActionType.CREATE_SYMLINK if install_method == InstallMethod.SYMLINK else ActionType.CREATE_COPY
-    return PlannedFileAction(
+    action_type = ActionType.CREATE_SYMLINK if context.install_method == InstallMethod.SYMLINK else ActionType.CREATE_COPY
+    return FileAction(
         action_type=action_type,
-        rel_path=rel_file,
-        system_target=system_target,
-        source_path=source_path,
+        src_path=source_file,
+        dst_path=system_target,
         reason=reason,
     )
 
 
 def _inspect_symlink_leaf(
-    install_method: InstallMethod,
+    context: DeliveryInspectionContext,
     rel_file: Path,
     system_target: Path,
     source_file: Path,
-    abs_drift_root: Path,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Inspects a host symlink at destination and plans overwrite, skip, or re-link actions."""
+    backup_dst = context.resolve_backup_path(rel_file)
     if not system_target.exists():
         # Broken symlink
         return [
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
+                src_path=system_target,
+                dst_path=backup_dst,
                 reason="Broken symlink collision",
             ),
-            _plan_file_creation(install_method, rel_file, system_target, source_path=source_file),
+            _plan_file_creation(context, source_file, system_target),
         ]
 
     # Check if existing symlink already points to source_file
     if _check_symlink_points_to_source(system_target, source_file):
-        if install_method == InstallMethod.SYMLINK:
-            return [PlannedFileAction(
+        if context.install_method == InstallMethod.SYMLINK:
+            return [FileAction(
                 action_type=ActionType.SKIP_IDENTICAL,
-                rel_path=rel_file,
-                system_target=system_target,
-                source_path=source_file,
+                src_path=source_file,
+                dst_path=system_target,
                 reason="Symlink already points to source",
             )]
         # Switching from symlink to copy: backup the existing symlink and create physical copy
         return [
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
+                src_path=system_target,
+                dst_path=backup_dst,
                 reason="Replacing symlink with copy",
             ),
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.CREATE_COPY,
-                rel_path=rel_file,
-                system_target=system_target,
-                source_path=source_file,
+                src_path=source_file,
+                dst_path=system_target,
             ),
         ]
 
     # Symlink points elsewhere (internal conflict vs external collision)
     points_into_drift = False
     try:
-        points_into_drift = is_relative_to(system_target.resolve(), abs_drift_root)
+        points_into_drift = is_relative_to(system_target.resolve(), context.abs_drift_root)
     except Exception:
         points_into_drift = False
 
     reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
     return [
-        PlannedFileAction(
+        FileAction(
             action_type=ActionType.BACKUP_OVERWRITE,
-            rel_path=rel_file,
-            system_target=system_target,
+            src_path=system_target,
+            dst_path=backup_dst,
             reason=reason,
         ),
-        _plan_file_creation(install_method, rel_file, system_target, source_path=source_file),
+        _plan_file_creation(context, source_file, system_target),
     ]
 
 
 def _inspect_physical_file_leaf(
-    install_method: InstallMethod,
+    context: DeliveryInspectionContext,
     rel_file: Path,
     system_target: Path,
     source_file: Path,
-    is_first_time: bool,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Inspects a host regular physical file and plans overwrite, update, or skip actions."""
-    if install_method == InstallMethod.SYMLINK:
+    backup_dst = context.resolve_backup_path(rel_file)
+    if context.install_method == InstallMethod.SYMLINK:
         return [
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
+                src_path=system_target,
+                dst_path=backup_dst,
                 reason="Physical file collides with symlink",
             ),
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.CREATE_SYMLINK,
-                rel_path=rel_file,
-                system_target=system_target,
-                source_path=source_file,
+                src_path=source_file,
+                dst_path=system_target,
             ),
         ]
 
     # COPY method
-    if is_first_time:
+    if context.is_first_time:
         return [
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
+                src_path=system_target,
+                dst_path=backup_dst,
                 reason="Pre-existing file collision",
             ),
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.CREATE_COPY,
-                rel_path=rel_file,
-                system_target=system_target,
-                source_path=source_file,
+                src_path=source_file,
+                dst_path=system_target,
             ),
         ]
 
@@ -374,110 +394,114 @@ def _inspect_physical_file_leaf(
         differs = True
 
     if differs:
-        return [PlannedFileAction(
+        return [FileAction(
             action_type=ActionType.UPDATE_COPY,
-            rel_path=rel_file,
-            system_target=system_target,
-            source_path=source_file,
+            src_path=source_file,
+            dst_path=system_target,
             reason="File content updated",
         )]
 
     if permissions_differ(source_file, system_target):
         src_mode = oct(source_file.stat().st_mode & 0o777)
         dst_mode = oct(system_target.stat().st_mode & 0o777)
-        return [PlannedFileAction(
+        return [FileAction(
             action_type=ActionType.UPDATE_PERMISSION,
-            rel_path=rel_file,
-            system_target=system_target,
-            source_path=source_file,
+            src_path=source_file,
+            dst_path=system_target,
             reason=f"Permissions differ ({dst_mode} -> {src_mode})",
         )]
 
-    return [PlannedFileAction(
+    return [FileAction(
         action_type=ActionType.SKIP_IDENTICAL,
-        rel_path=rel_file,
-        system_target=system_target,
-        source_path=source_file,
+        src_path=source_file,
+        dst_path=system_target,
         reason="File content matches",
     )]
 
 
 def _inspect_leaf_file(
-    target_dir: Path,
-    source_dir: Path,
-    install_method: InstallMethod,
-    drift_root: Path,
-    is_first_time: bool,
+    context: DeliveryInspectionContext,
     rel_file: Path,
     handled_targets: Set[Path],
-    actions: List[PlannedFileAction],
+    actions: List[FileAction],
     backed_up_ancestor_targets: Set[Path],
 ) -> None:
     """Inspects a single package file against host filesystem state and plans appropriate actions."""
     rel_file = decode_dot_prefix(rel_file)
-    system_target = resolve_target_path(rel_file, target_dir)
-    source_file = source_dir / rel_file
+    system_target = resolve_target_path(rel_file, context.target_dir)
+    source_file = context.source_dir / rel_file
     handled_targets.add(system_target)
-    abs_drift_root = drift_root.resolve()
 
     if _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets):
-        actions.append(_plan_file_creation(install_method, rel_file, system_target, source_path=source_file))
+        actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
     target_exists_or_symlink = system_target.exists() or system_target.is_symlink()
 
     if not target_exists_or_symlink:
-        actions.append(_plan_file_creation(install_method, rel_file, system_target, source_path=source_file))
+        actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
-    if system_target.is_dir() and not system_target.is_symlink():
-        actions.append(PlannedFileAction(
+    if is_concrete_dir(system_target):
+        backup_dst = context.resolve_backup_path(rel_file)
+        actions.append(FileAction(
             action_type=ActionType.BACKUP_OVERWRITE,
-            rel_path=rel_file,
-            system_target=system_target,
+            src_path=system_target,
+            dst_path=backup_dst,
             reason="Directory blocking file",
         ))
-        actions.append(_plan_file_creation(install_method, rel_file, system_target, source_path=source_file))
+        actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
     if system_target.is_symlink():
-        actions.extend(_inspect_symlink_leaf(install_method, rel_file, system_target, source_file, abs_drift_root))
+        actions.extend(_inspect_symlink_leaf(
+            context=context,
+            rel_file=rel_file,
+            system_target=system_target,
+            source_file=source_file,
+        ))
         return
 
-    actions.extend(_inspect_physical_file_leaf(install_method, rel_file, system_target, source_file, is_first_time))
+    actions.extend(_inspect_physical_file_leaf(
+        context=context,
+        rel_file=rel_file,
+        system_target=system_target,
+        source_file=source_file,
+    ))
 
 
 def _plan_orphan_prune(
-    target_dir: Path,
+    context: DeliveryInspectionContext,
     orphan_rel: Path,
     reason: str,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Inspects an orphaned path on host and plans BACKUP_PRUNE if present."""
-    system_target = resolve_target_path(orphan_rel, target_dir)
+    system_target = resolve_target_path(orphan_rel, context.target_dir)
     if not (system_target.exists() or system_target.is_symlink()):
         return []
 
     decoded_rel = decode_dot_prefix(orphan_rel)
+    backup_dst = (context.backup_pkg_dir / BackupSubfolder.DELETED_FILES.value / decoded_rel) if context.backup_pkg_dir else None
     return [
-        PlannedFileAction(
+        FileAction(
             action_type=ActionType.BACKUP_PRUNE,
-            rel_path=decoded_rel,
-            system_target=system_target,
+            src_path=system_target,
+            dst_path=backup_dst,
             reason=reason,
         )
     ]
 
 
 def _inspect_orphans(
-    target_dir: Path,
+    context: DeliveryInspectionContext,
     deployable_files: Iterable[Path],
     deployed_files: Iterable[Path],
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Plans BACKUP_PRUNE actions for historical deployed files missing in candidate package."""
     orphaned_files = sorted(set(deployed_files) - set(deployable_files))
-    actions: List[PlannedFileAction] = []
+    actions: List[FileAction] = []
     for orphaned in orphaned_files:
-        actions.extend(_plan_orphan_prune(target_dir, orphaned, f"Orphaned file '{orphaned}' prune"))
+        actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
     return actions
 
 
@@ -486,41 +510,32 @@ def _inspect_orphans(
 # =============================================================================
 
 def plan_folder_delivery(
-    target_dir: Path,
-    source_dir: Path,
-    install_method: InstallMethod,
-    drift_root: Path,
-    active_files: Iterable[Path],
+    context: DeliveryInspectionContext,
+    deployable_files: Iterable[Path],
     deployed_files: Iterable[Path] = (),
-    is_first_time: bool = False,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Plans declarative filesystem operations for delivering source_dir to target_dir."""
-    assert_target_dir_outside_drift_root(target_dir, drift_root)
-    actions: List[PlannedFileAction] = []
+    assert_target_dir_outside_drift_root(context.target_dir, context.drift_root)
+    actions: List[FileAction] = []
     handled_targets: Set[Path] = set()
 
-    active_file_list = list(active_files)
+    deployable_file_list = list(deployable_files)
 
     # 1. Orphan Files Reconciliation
-    actions.extend(_inspect_orphans(target_dir, active_file_list, deployed_files))
+    actions.extend(_inspect_orphans(context, deployable_file_list, deployed_files))
 
     # 2. Intermediate Ancestor Directories Inspection
     backed_up_ancestor_targets = inspect_ancestor_directories(
-        target_dir=target_dir,
-        active_files=active_file_list,
-        drift_root=drift_root,
+        context=context,
+        deployable_files=deployable_file_list,
         handled_targets=handled_targets,
         actions=actions,
     )
 
     # 3. Leaf Files Inspection
-    for rel_file in active_file_list:
+    for rel_file in deployable_file_list:
         _inspect_leaf_file(
-            target_dir=target_dir,
-            source_dir=source_dir,
-            install_method=install_method,
-            drift_root=drift_root,
-            is_first_time=is_first_time,
+            context=context,
             rel_file=rel_file,
             handled_targets=handled_targets,
             actions=actions,
@@ -534,7 +549,7 @@ def plan_backup_restoration(
     backup_overwritten_dir: Path,
     target_dir: Path,
     drift_root: Path,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Plans declarative actions for safely restoring historical backups to target_dir.
 
     Evaluates intermediate directories and leaf targets using full folder delivery
@@ -548,23 +563,26 @@ def plan_backup_restoration(
     if not backup_files:
         return []
 
-    actions: List[PlannedFileAction] = [
-        PlannedFileAction(
+    actions: List[FileAction] = [
+        FileAction(
             action_type=ActionType.INFO_MESSAGE,
-            rel_path=Path("."),
-            system_target=target_dir,
             reason="Restoring overwritten backups to host...",
         )
     ]
 
-    restore_actions = plan_folder_delivery(
+    context = DeliveryInspectionContext(
         target_dir=target_dir,
         source_dir=backup_overwritten_dir,
         install_method=InstallMethod.COPY,
         drift_root=drift_root,
-        active_files=backup_files,
+        is_first_time=True,
+        backup_pkg_dir=backup_overwritten_dir.parent,
+        backup_subfolder=BackupSubfolder.DELETED_FILES,
+    )
+    restore_actions = plan_folder_delivery(
+        context=context,
+        deployable_files=backup_files,
         deployed_files=(),
-        is_first_time=False,
     )
     actions.extend(restore_actions)
     return actions
@@ -574,31 +592,17 @@ def plan_symlink_conversions(
     deployed_files: Sequence[Path],
     target_dir: Path,
     install_pkg_dir: Path,
-    drift_root: Path,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Plans declarative actions for detaching a symlinked package into concrete physical files."""
-    actions: List[PlannedFileAction] = []
-    handled_targets: Set[Path] = set()
-
-    symlinks_to_convert: List[Path] = []
-    for rel_file in deployed_files:
-        system_target = resolve_target_path(rel_file, target_dir)
-        if system_target.is_symlink():
-            symlinks_to_convert.append(rel_file)
-
+    symlinks_to_convert = [
+        rel_file
+        for rel_file in deployed_files
+        if resolve_target_path(rel_file, target_dir).is_symlink()
+    ]
     if not symlinks_to_convert:
         return []
 
-    # 1. Ensure ancestor directories exist
-    inspect_ancestor_directories(
-        target_dir=target_dir,
-        active_files=symlinks_to_convert,
-        drift_root=drift_root,
-        handled_targets=handled_targets,
-        actions=actions,
-    )
-
-    # 2. Plan removing symlinks and replacing with concrete file copies
+    actions: List[FileAction] = []
     for rel_file in symlinks_to_convert:
         system_target = resolve_target_path(rel_file, target_dir)
         src_file = install_pkg_dir / rel_file
@@ -607,19 +611,17 @@ def plan_symlink_conversions(
             continue
 
         actions.append(
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.DELETE_FILE,
-                rel_path=rel_file,
-                system_target=system_target,
+                dst_path=system_target,
                 reason="Remove symlink for detach",
             )
         )
         actions.append(
-            PlannedFileAction(
+            FileAction(
                 action_type=ActionType.CREATE_COPY,
-                rel_path=rel_file,
-                system_target=system_target,
-                source_path=src_file,
+                src_path=src_file,
+                dst_path=system_target,
                 reason="Replace symlink with copy (detach)",
             )
         )
@@ -630,20 +632,19 @@ def plan_symlink_conversions(
 def plan_file_removals(
     deployed_files: Sequence[Path],
     target_dir: Path,
-) -> List[PlannedFileAction]:
+) -> List[FileAction]:
     """Inspects deployed files on the host and plans removal in reverse order."""
     resolved = [
-        (rel, resolve_target_path(rel, target_dir))
+        resolve_target_path(rel, target_dir)
         for rel in sorted(deployed_files, reverse=True)
     ]
     return [
-        PlannedFileAction(
+        FileAction(
             action_type=ActionType.DELETE_FILE,
-            rel_path=rel,
-            system_target=target,
+            dst_path=target,
             reason="Remove deployed file from host",
         )
-        for rel, target in resolved
+        for target in resolved
         if target.exists() or target.is_symlink()
     ]
 
@@ -652,16 +653,15 @@ def plan_actions_from_folder_diff(
     diff: FolderDiff,
     source_dir: Path,
     target_dir: Path,
-) -> List[PlannedFileAction]:
-    """Compiles a FolderDiff into a deterministic sequence of PlannedFileActions."""
-    actions: List[PlannedFileAction] = []
+) -> List[FileAction]:
+    """Compiles a FolderDiff into a deterministic sequence of FileActions."""
+    actions: List[FileAction] = []
 
     # 1. Deletions first: cleanly clear obsolete paths to avoid directory/file type collisions
-    for rel in diff.deleted:
-        actions.append(PlannedFileAction(
+    for rel in sorted(diff.deleted, reverse=True):
+        actions.append(FileAction(
             action_type=ActionType.DELETE_FILE,
-            rel_path=rel,
-            system_target=target_dir / rel,
+            dst_path=target_dir / rel,
             reason="Deleted in source",
         ))
 
@@ -669,19 +669,17 @@ def plan_actions_from_folder_diff(
     for rel in diff.added:
         src = source_dir / rel
         dst = target_dir / rel
-        if src.is_dir() and not src.is_symlink():
-            actions.append(PlannedFileAction(
+        if is_concrete_dir(src):
+            actions.append(FileAction(
                 action_type=ActionType.ENSURE_DIR,
-                rel_path=rel,
-                system_target=dst,
+                dst_path=dst,
                 reason="Directory created",
             ))
         else:
-            actions.append(PlannedFileAction(
+            actions.append(FileAction(
                 action_type=ActionType.CREATE_COPY,
-                rel_path=rel,
-                system_target=dst,
-                source_path=src,
+                src_path=src,
+                dst_path=dst,
                 reason="New file",
             ))
 
@@ -689,27 +687,24 @@ def plan_actions_from_folder_diff(
     for rel in diff.modified:
         src = source_dir / rel
         dst = target_dir / rel
-        if src.is_dir() and not src.is_symlink():
-            actions.append(PlannedFileAction(
+        if is_concrete_dir(src):
+            actions.append(FileAction(
                 action_type=ActionType.ENSURE_DIR,
-                rel_path=rel,
-                system_target=dst,
+                dst_path=dst,
                 reason="Directory modified",
             ))
         elif rel in diff.permissions_differ:
-            actions.append(PlannedFileAction(
+            actions.append(FileAction(
                 action_type=ActionType.UPDATE_PERMISSION,
-                rel_path=rel,
-                system_target=dst,
-                source_path=src,
+                src_path=src,
+                dst_path=dst,
                 reason="Permissions updated",
             ))
         else:
-            actions.append(PlannedFileAction(
+            actions.append(FileAction(
                 action_type=ActionType.UPDATE_COPY,
-                rel_path=rel,
-                system_target=dst,
-                source_path=src,
+                src_path=src,
+                dst_path=dst,
                 reason="Content modified",
             ))
 
@@ -720,84 +715,52 @@ def plan_actions_from_folder_diff(
 # Unified Plan Execution Engine
 # =============================================================================
 
-def backup_host_item(
-    backup_pkg_dir: Path,
-    system_target: Path,
-    subfolder: BackupSubfolder,
-    rel_path: Path,
-    sudo: bool = False,
-    reason: Optional[str] = None,
-    resolve_symlinks: bool = True,
-) -> None:
-    """Safely backs up a host file, symlink, or directory to the package backup directory."""
-    subfolder_str = subfolder.value if isinstance(subfolder, BackupSubfolder) else str(subfolder)
-    backup_rel_path = decode_dot_prefix(rel_path)
-    backup_path = backup_pkg_dir / subfolder_str / backup_rel_path
-    if reason:
-        logger.warning(f"🛡️  [BACKUP] {reason} at '{system_target}'")
-    logger.debug(f"   Backing up to: {backup_path}")
-    backup_file_or_dir_external(system_target, backup_path, sudo, resolve_symlinks=resolve_symlinks)
-
-
 def execute_single_action(
     context: ActionExecutionContext,
-    action: PlannedFileAction,
+    action: FileAction,
 ) -> None:
     """Executes a single planned file/directory delivery action on the host system."""
-    if action.action_type == ActionType.BACKUP_OVERWRITE:
-        backup_host_item(
-            backup_pkg_dir=context.backup_pkg_dir,
-            system_target=action.system_target,
-            subfolder=context.backup_subfolder,
-            rel_path=action.rel_path,
-            sudo=context.sudo,
-            reason=action.reason,
-            resolve_symlinks=context.resolve_symlinks,
-        )
-        remove(action.system_target, context.sudo)
-
-    elif action.action_type == ActionType.BACKUP_PRUNE:
-        backup_host_item(
-            backup_pkg_dir=context.backup_pkg_dir,
-            system_target=action.system_target,
-            subfolder=BackupSubfolder.DELETED_FILES,
-            rel_path=action.rel_path,
-            sudo=context.sudo,
-            reason=action.reason,
-            resolve_symlinks=context.resolve_symlinks,
-        )
-        remove(action.system_target, context.sudo)
+    if action.action_type in (ActionType.BACKUP_OVERWRITE, ActionType.BACKUP_PRUNE):
+        if action.src_path and action.dst_path:
+            if action.reason:
+                logger.warning(f"🛡️  [BACKUP] {action.reason} at '{action.src_path}'")
+            logger.debug(f"   Backing up to: {action.dst_path}")
+            backup_file_or_dir_external(
+                action.src_path,
+                action.dst_path,
+                context.sudo,
+                resolve_symlinks=context.resolve_symlinks,
+            )
+        if action.src_path:
+            remove(action.src_path, context.sudo)
 
     elif action.action_type == ActionType.ENSURE_DIR:
-        if action.system_target.is_symlink() or (action.system_target.exists() and not action.system_target.is_dir()):
-            raise NotADirectoryError(
-                f"Cannot ensure directory '{action.system_target}': path exists and is not a directory."
-            )
-        ensure_dir(action.system_target, context.sudo)
+        if action.dst_path:
+            if action.dst_path.is_symlink() or (action.dst_path.exists() and not action.dst_path.is_dir()):
+                raise NotADirectoryError(
+                    f"Cannot ensure directory '{action.dst_path}': path exists and is not a directory."
+                )
+            ensure_dir(action.dst_path, context.sudo)
 
     elif action.action_type == ActionType.CREATE_SYMLINK:
-        source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
-        relative_target = compute_relative_symlink_target(source_file, action.system_target.parent)
-        create_symlink(relative_target, action.system_target, context.sudo)
+        if action.src_path and action.dst_path:
+            relative_target = compute_relative_symlink_target(action.src_path, action.dst_path.parent)
+            create_symlink(relative_target, action.dst_path, context.sudo)
 
     elif action.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY):
-        source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
-        copy_file(source_file, action.system_target, context.sudo)
+        if action.src_path and action.dst_path:
+            copy_file(action.src_path, action.dst_path, context.sudo)
 
     elif action.action_type == ActionType.UPDATE_PERMISSION:
-        source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
-        copy_permissions(source_file, action.system_target, sudo=context.sudo)
+        if action.src_path and action.dst_path:
+            copy_permissions(action.src_path, action.dst_path, sudo=context.sudo)
 
     elif action.action_type == ActionType.DELETE_FILE:
-        remove(action.system_target, context.sudo)
-        try:
-            limit_dir = action.system_target.parents[len(action.rel_path.parts) - 1]
-        except IndexError:
-            limit_dir = context.target_dir
-        prune_empty_parents(action.system_target.parent, limit_dir)
+        if action.dst_path:
+            remove(action.dst_path, context.sudo)
 
     elif action.action_type == ActionType.SKIP_IDENTICAL:
-        logger.debug(f"   Skipping '{action.system_target}': already up-to-date")
+        logger.debug(f"   Skipping '{action.dst_path}': already up-to-date")
 
     elif action.action_type == ActionType.INFO_MESSAGE:
         if action.reason:
@@ -806,7 +769,7 @@ def execute_single_action(
 
 def execute_delivery_actions(
     context: ActionExecutionContext,
-    actions: Sequence[PlannedFileAction],
+    actions: Sequence[FileAction],
 ) -> None:
     """Deterministically executes a sequence of planned delivery actions on the host system."""
     for action in actions:

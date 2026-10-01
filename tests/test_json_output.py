@@ -13,7 +13,7 @@ from drift.core.result_models import (
     SerializableModel,
     NextActionType,
     ActionType,
-    PlannedFileAction,
+    FileAction,
     PackageInstallPlan,
     PackageInstallResult,
     InstallResult,
@@ -26,6 +26,7 @@ from drift.core.result_models import (
     GcResult,
     AdoptResult,
     NewPackageResult,
+    AddResourcePlan,
     AddResourceResult,
     RollbackResult,
     RepairResult,
@@ -43,10 +44,10 @@ class TestResultModels(unittest.TestCase):
             target_directory="/home/user",
             install_method=InstallMethod.SYMLINK,
             actions=[
-                PlannedFileAction(
+                FileAction(
                     action_type=ActionType.CREATE_SYMLINK,
-                    rel_path=Path("dot-zshrc"),
-                    system_target=Path("/home/user/.zshrc"),
+                    src_path=Path("/workspace/install/zsh/dot-zshrc"),
+                    dst_path=Path("/home/user/.zshrc"),
                 )
             ],
             hooks_to_trigger=["pre_install", "post_install"],
@@ -59,8 +60,8 @@ class TestResultModels(unittest.TestCase):
         self.assertEqual(data["package"], "zsh")
         self.assertEqual(len(data["plan"]["actions"]), 1)
         self.assertEqual(data["plan"]["actions"][0]["action_type"], "CREATE_SYMLINK")
-        self.assertEqual(data["plan"]["actions"][0]["rel_path"], "dot-zshrc")
-        self.assertEqual(data["plan"]["actions"][0]["system_target"], "/home/user/.zshrc")
+        self.assertEqual(data["plan"]["actions"][0]["src_path"], "/workspace/install/zsh/dot-zshrc")
+        self.assertEqual(data["plan"]["actions"][0]["dst_path"], "/home/user/.zshrc")
 
         json_str = pkg_res.to_json()
         parsed = json.loads(json_str)
@@ -74,20 +75,19 @@ class TestResultModels(unittest.TestCase):
             target_directory="/home/user",
             install_method=InstallMethod.SYMLINK,
             actions=[
-                PlannedFileAction(
+                FileAction(
                     action_type=ActionType.ENSURE_DIR,
-                    rel_path=Path("dot-config"),
-                    system_target=Path("/home/user/.config"),
+                    dst_path=Path("/home/user/.config"),
                 ),
-                PlannedFileAction(
+                FileAction(
                     action_type=ActionType.CREATE_SYMLINK,
-                    rel_path=Path("dot-zshrc"),
-                    system_target=Path("/home/user/.zshrc"),
+                    src_path=Path("/workspace/install/zsh/dot-zshrc"),
+                    dst_path=Path("/home/user/.zshrc"),
                 ),
-                PlannedFileAction(
+                FileAction(
                     action_type=ActionType.BACKUP_OVERWRITE,
-                    rel_path=Path("dot-zshrc"),
-                    system_target=Path("/home/user/.zshrc"),
+                    src_path=Path("/home/user/.zshrc"),
+                    dst_path=Path("/workspace/backup/zsh/overwritten/dot-zshrc"),
                     reason="Pre-existing file collision",
                 ),
             ],
@@ -151,6 +151,38 @@ class TestResultModels(unittest.TestCase):
         uninstalled = list(un)
         self.assertEqual(uninstalled, ["pkg_a"])
         self.assertEqual(len(un), 1)
+
+    def test_add_resource_result_serialization(self) -> None:
+        plan = AddResourcePlan(
+            package="zsh",
+            src_dir_to_render=Path("/workspace/src/zsh"),
+            target_base=Path("/home/user"),
+            actions=[
+                FileAction(
+                    action_type=ActionType.CREATE_COPY,
+                    src_path=Path("/home/user/.zshrc"),
+                    dst_path=Path("/workspace/src/zsh/dot-zshrc"),
+                )
+            ],
+            dry_run=True,
+        )
+        res = AddResourceResult(
+            package="zsh",
+            imported_files=["/home/user/.zshrc"],
+            dry_run=True,
+            plan=plan,
+        )
+        data = res.to_dict()
+        self.assertEqual(data["command"], "add")
+        self.assertEqual(data["package"], "zsh")
+        self.assertTrue(data["dry_run"])
+        self.assertEqual(data["imported_files"], ["/home/user/.zshrc"])
+        self.assertEqual(data["plan"]["package"], "zsh")
+        self.assertEqual(len(data["plan"]["actions"]), 1)
+        self.assertEqual(data["plan"]["actions"][0]["src_path"], "/home/user/.zshrc")
+        self.assertEqual(data["plan"]["actions"][0]["dst_path"], "/workspace/src/zsh/dot-zshrc")
+        parsed = json.loads(res.to_json())
+        self.assertEqual(parsed["plan"]["actions"][0]["action_type"], "CREATE_COPY")
 
 
 class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):

@@ -11,6 +11,7 @@ from datetime import datetime
 from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
+from ..utils.path_utils import is_relative_to
 
 
 class NextActionType(str, Enum):
@@ -84,9 +85,8 @@ class RenderResult(SerializableModel):
 # =============================================================================
 
 from .folder_delivery import (
-    ActionExecutionContext,
     ActionType,
-    PlannedFileAction,
+    FileAction,
     format_action_line,
     format_action_summary,
 )
@@ -96,26 +96,26 @@ from .folder_delivery import (
 class PackageStagePlan(SerializableModel):
     """Structured staging plan detailing operations to sync render/ to install/ for a package."""
     package: str = ""
-    actions: List[PlannedFileAction] = field(default_factory=list)
+    actions: List[FileAction] = field(default_factory=list)
 
     @property
-    def created(self) -> List[PlannedFileAction]:
+    def created(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY]
 
     @property
-    def updated(self) -> List[PlannedFileAction]:
+    def updated(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
 
     @property
-    def permissions_updated(self) -> List[PlannedFileAction]:
+    def permissions_updated(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
 
     @property
-    def deleted(self) -> List[PlannedFileAction]:
+    def deleted(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
 
     @property
-    def ensured_dirs(self) -> List[PlannedFileAction]:
+    def ensured_dirs(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
 
     @property
@@ -226,35 +226,35 @@ class PackageInstallPlan(SerializableModel):
     package: str = ""
     target_directory: str = ""
     install_method: InstallMethod = DEFAULT_INSTALL_METHOD
-    actions: List[PlannedFileAction] = field(default_factory=list)
+    actions: List[FileAction] = field(default_factory=list)
     hooks_to_trigger: List[str] = field(default_factory=list)
 
     @property
-    def created(self) -> List[PlannedFileAction]:
+    def created(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type in (ActionType.CREATE_SYMLINK, ActionType.CREATE_COPY)]
 
     @property
-    def updated(self) -> List[PlannedFileAction]:
+    def updated(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
 
     @property
-    def permissions_updated(self) -> List[PlannedFileAction]:
+    def permissions_updated(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
 
     @property
-    def skipped(self) -> List[PlannedFileAction]:
+    def skipped(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.SKIP_IDENTICAL]
 
     @property
-    def pruned(self) -> List[PlannedFileAction]:
+    def pruned(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
 
     @property
-    def overwritten_backups(self) -> List[PlannedFileAction]:
+    def overwritten_backups(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.BACKUP_OVERWRITE]
 
     @property
-    def prune_backups(self) -> List[PlannedFileAction]:
+    def prune_backups(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
 
     def format_text(self) -> str:
@@ -285,27 +285,27 @@ class PackageUninstallPlan(SerializableModel):
     target_directory: str = ""
     install_method: InstallMethod = DEFAULT_INSTALL_METHOD
     detach_mode: bool = False
-    actions: List[PlannedFileAction] = field(default_factory=list)
+    actions: List[FileAction] = field(default_factory=list)
     hooks_to_trigger: List[str] = field(default_factory=list)
 
     @property
-    def deleted(self) -> List[PlannedFileAction]:
+    def deleted(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
 
     @property
-    def removed(self) -> List[PlannedFileAction]:
+    def removed(self) -> List[FileAction]:
         return self.deleted
 
     @property
-    def restored(self) -> List[PlannedFileAction]:
+    def restored(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY) and not self.detach_mode]
 
     @property
-    def converted(self) -> List[PlannedFileAction]:
+    def converted(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY and self.detach_mode]
 
     @property
-    def ensured_dirs(self) -> List[PlannedFileAction]:
+    def ensured_dirs(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
 
     def format_text(self) -> str:
@@ -565,13 +565,71 @@ class NewPackageResult(SerializableModel):
 # =============================================================================
 
 @dataclass
+class AddResourcePlan(SerializableModel):
+    """Declarative plan for importing host resources into a package source directory."""
+    package: str = ""
+    src_dir_to_render: Path = field(default_factory=Path)
+    target_base: Path = field(default_factory=Path)
+    actions: List[FileAction] = field(default_factory=list)
+    dry_run: bool = False
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if there are any actions planned to import."""
+        return bool(self.actions)
+
+    @property
+    def created(self) -> List[FileAction]:
+        """Returns all CREATE_COPY planned actions."""
+        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY]
+
+    def __len__(self) -> int:
+        return len(self.actions)
+
+    def __iter__(self):
+        return iter(self.actions)
+
+    def format_text(self) -> str:
+        """Formats human-readable summary of planned resource imports."""
+        if not self.actions:
+            return f"No resources to import into '{self.package}'."
+        lines = [f"📦 Package '{self.package}':"]
+        lines.extend(format_action_line(action) for action in self.actions)
+        lines.append(f"  Summary: {format_action_summary(self.actions)}")
+        return "\n".join(lines)
+
+
+@dataclass
 class AddResourceResult(SerializableModel):
     command: str = "add"
     status: str = "SUCCESS"  # "SUCCESS", "FAILED"
     package: str = ""
     imported_files: List[str] = field(default_factory=list)
     dry_run: bool = False
+    plan: AddResourcePlan = field(default_factory=AddResourcePlan)
     error_message: Optional[str] = None
+
+    def format_text(self) -> str:
+        """Formats the import result for human-readable terminal output."""
+        if self.status != "SUCCESS":
+            return f"❌ Failed to import resources into package '{self.package}': {self.error_message}"
+        if not self.plan.has_changes:
+            if self.dry_run:
+                return f"🔍 [DRY-RUN] No resources to import into '{self.package}'."
+            return f"No resources to import into '{self.package}'."
+        if self.dry_run:
+            lines = [
+                f"🔍 [DRY-RUN] Planned Resource Imports for package '{self.package}':",
+                "=" * 60,
+                self.plan.format_text(),
+                "=" * 60,
+                f"✨ [DRY-RUN] Import simulation completed. {len(self.plan.actions)} file(s) would be imported into '{self.package}'.",
+            ]
+            return "\n".join(lines)
+        lines = [f"✨ Successfully imported {len(self.imported_files)} file(s) into package '{self.package}'."]
+        for f in self.imported_files:
+            lines.append(f"  📥 {f}")
+        return "\n".join(lines)
 
 
 # =============================================================================

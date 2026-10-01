@@ -190,7 +190,7 @@ Locks the deployed configurations and `state.toml` into the local state database
 Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, no_deps, flags)`:
 1.  **Declarative Plan-then-Execute Architecture**:
     *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
-    *   **Action Execution Context Derivation**: Derives an `ActionExecutionContext` setting `backup_subfolder=BackupSubfolder.DELETED_FILES`, ensuring any pre-existing host files colliding with restored ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store.
+    *   **Action Execution Context Derivation**: Derives an `ActionExecutionContext` carrying execution flags (`sudo`, `resolve_symlinks`). Backup restoration collision paths are planned directly into `deleted_files/` via `plan_backup_restoration`'s `backup_subfolder=BackupSubfolder.DELETED_FILES` and `is_first_time=True`, ensuring any pre-existing host files or directories colliding with restored files or ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store or unbacked in-place overwrites.
     *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
         *   *Standard Uninstall*: Compiles `plan_file_removals` (`DELETE_FILE`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
         *   *Detach Mode*: Compiles `plan_symlink_conversions` (`DELETE_FILE` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
@@ -261,10 +261,18 @@ Scaffolds a new declarative package inside the `src/` directory:
 3.  Features built-in probing guards to prevent accidental overwriting of existing package configurations unless `--force` is used.
 
 ### Primitive 11: Resource Import [High-level: `drift add`]
-Imports an existing, active host system configuration file directly into the declarative source repository:
-1.  Resolves symlinks to capture actual physical file contents for reproducibility.
-2.  Translates standard hidden dotfile names (e.g. `.bashrc`) to repository-safe dot-prefixes (e.g. `dot-bashrc`).
-3.  Performs a global conflict check before copying; if an import would overwrite an existing source template in `src/<package>`, it halts and reports a conflict error to protect declarative templates.
+Imports existing, active host system configuration files directly into the declarative source repository using a decoupled **Plan & Execute** pipeline:
+1.  **Read-Only Planning Phase (`prepare_add_resources`)**:
+    *   Validates package source directory readiness (`assert_package_source_exists`).
+    *   Triggers declarative pre-source hooks (`trigger_pre_source_hook`).
+    *   Resolves target base directory, render engines, and ignore rules (`DriftIgnore`).
+    *   Resolves worklist with symlink capture and dot-prefix reverse translation (`.config` $\rightarrow$ `dot-config`).
+    *   Performs global conflict checks (`assert_no_import_conflicts`); halts if an import would collide with existing templates or blocking paths.
+    *   Compiles declarative `AddResourcePlan` containing all `PlannedResourceImport` items.
+2.  **Execution Phase (`execute_add_resources`)**:
+    *   In `--dry-run` simulation mode, prints plan summaries with zero filesystem mutations.
+    *   In physical execution mode, creates required parent directories and copies system files into the package source tree.
+    *   Returns structured `AddResourceResult` containing the execution outcome and typed `plan`.
 
 ### Primitive 12: Package Runtime Health Checks [High-level: `drift health`]
 Executes live runtime health check probe scripts declared in `drift_package.toml` (`[hooks] health = ...`):
@@ -1343,7 +1351,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
-        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `PlannedFileAction`s (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
+        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `FileAction`s (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
         2. *Unified Delivery Execution (`execute_package_stage`)*: Dispatches actions to `execute_delivery_actions`, performing physical file deletion, directory creation, file copying, and fast permission synchronization.
         3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
     - **Staged Transaction Complete (or Dry-Run Simulation)**: In live execution, updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s. In dry-run mode (`dry_run=True`), compiles and returns the full `StageResult` with zero mutations to `install/` or `state.toml`.

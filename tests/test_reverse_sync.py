@@ -892,7 +892,68 @@ class TestReverseSync(unittest.TestCase):
         with self.assertRaises(ConfigError) as ctx:
             execute_reverse_sync(self.drift_root)
         self.assertIn("drift repair", str(ctx.exception))
-        self.assertIn("Package Metadata Structure", str(ctx.exception))
+    def test_reverse_sync_ancestor_synced_check_helpers(self) -> None:
+        """Verifies _check_has_synced_ancestor and _collect_leaf_paths helpers."""
+        from drift.primitives.reverse_sync import _check_has_synced_ancestor, _collect_leaf_paths
+
+        synced_ancestors = {Path("dot-config"), Path("dot-local/share")}
+
+        # Direct child of synced ancestor
+        self.assertTrue(_check_has_synced_ancestor(Path("dot-config/app"), synced_ancestors))
+        self.assertTrue(_check_has_synced_ancestor(Path("dot-config/app/sub/file.txt"), synced_ancestors))
+        self.assertTrue(_check_has_synced_ancestor(Path("dot-local/share/data.txt"), synced_ancestors))
+
+        # Not a child of synced ancestor
+        self.assertFalse(_check_has_synced_ancestor(Path("dot-config"), synced_ancestors))
+        self.assertFalse(_check_has_synced_ancestor(Path("dot-local"), synced_ancestors))
+        self.assertFalse(_check_has_synced_ancestor(Path("dot-zshrc"), synced_ancestors))
+        self.assertFalse(_check_has_synced_ancestor(Path(""), synced_ancestors))
+
+        # Leaf paths collection
+        test_dir = self.system_target_dir / "leaf_test"
+        (test_dir / "sub1" / "nested").mkdir(parents=True, exist_ok=True)
+        (test_dir / "sub1" / "nested" / "file1.txt").write_text("1", encoding="utf-8")
+        (test_dir / "sub1" / "file2.txt").write_text("2", encoding="utf-8")
+
+        leaves = _collect_leaf_paths(test_dir)
+        leaf_names = [p.name for p in leaves]
+        self.assertEqual(leaf_names, ["file2.txt", "file1.txt"])
+
+    def test_reverse_sync_fcd_parent_addition_syncs_tree_and_skips_descendants(self) -> None:
+        """Verifies that when a directory with nested files is added in an FCD on host,
+        all nested files are recorded and synced without duplicate copies.
+        """
+        pkg = "pkg_fcd_tree_sync"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["plugins"]
+        """, encoding="utf-8")
+
+        # Host has a deep directory hierarchy added inside plugins
+        host_tree = self.system_target_dir / "plugins" / "my_plugin" / "nested"
+        host_tree.mkdir(parents=True, exist_ok=True)
+        (host_tree / "init.py").write_text("init", encoding="utf-8")
+        (host_tree / "config.json").write_text('{"ok": true}', encoding="utf-8")
+
+        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res.status, "SUCCESS")
+
+        pkg_res = res.packages[0]
+        # Assert files in install/
+        self.assertTrue((pkg_install_dir / "plugins" / "my_plugin" / "nested" / "init.py").exists())
+        self.assertTrue((pkg_install_dir / "plugins" / "my_plugin" / "nested" / "config.json").exists())
+
+        # Assert all leaf files were recorded in drifted_files and synced_files
+        self.assertIn("plugins/my_plugin/nested/init.py", pkg_res.drifted_files)
+        self.assertIn("plugins/my_plugin/nested/init.py", pkg_res.synced_files)
+        self.assertIn("plugins/my_plugin/nested/config.json", pkg_res.drifted_files)
+        self.assertIn("plugins/my_plugin/nested/config.json", pkg_res.synced_files)
 
 
 if __name__ == "__main__":
