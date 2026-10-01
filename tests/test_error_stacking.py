@@ -18,7 +18,7 @@ from drift.core.exceptions import (
 )
 from drift.config.workspace_config import WorkspaceConfig
 from drift.primitives.deploy_repo import run_primitive_deploy_pipeline
-from drift.primitives.stage_repo import StagePlan
+from drift.primitives.stage_repo import StagePlan, StageResult
 
 
 class TestErrorStacking(unittest.TestCase):
@@ -125,7 +125,7 @@ class TestErrorStacking(unittest.TestCase):
         """When Step 4 encounters HookExecutionError, it logs the abort without duplicating the multi-line hook message."""
         mock_p2.return_value = MagicMock(status="SUCCESS")
         mock_prepare.return_value = StagePlan(pkg_metadata={"pkg_a": MagicMock()}, state_registry=MagicMock())
-        mock_execute.return_value = {"pkg_a": MagicMock(has_changes=True)}
+        mock_execute.return_value = StageResult(packages_changed=["pkg_a"])
         mock_prepare_deploy.return_value = MagicMock()
         
         hook_err = HookExecutionError(

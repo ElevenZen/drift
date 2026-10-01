@@ -136,11 +136,12 @@ class TestFolderDiffBasic(unittest.TestCase):
         diff = compare_folders(self.src, self.dst)
         self.assertEqual(diff.matches, [Path("same.sh")])
         self.assertEqual(sorted(diff.modified), [Path("mod.sh"), Path("run.sh")])
+        self.assertEqual(diff.permissions_differ, [Path("run.sh")])
 
         # Verify is_mode_only_change
-        self.assertTrue(diff.is_mode_only_change(Path("run.sh"), self.src, self.dst))
-        self.assertFalse(diff.is_mode_only_change(Path("mod.sh"), self.src, self.dst))
-        self.assertFalse(diff.is_mode_only_change(Path("same.sh"), self.src, self.dst))
+        self.assertTrue(diff.is_mode_only_change(Path("run.sh")))
+        self.assertFalse(diff.is_mode_only_change(Path("mod.sh")))
+        self.assertFalse(diff.is_mode_only_change(Path("same.sh")))
 
 
 class TestFolderDiffSingleFile(unittest.TestCase):

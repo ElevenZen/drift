@@ -20,10 +20,14 @@ from drift.config.package_config import (
 from drift.primitives.package_assertions import assert_install_pkg_dirs_clean
 from drift.primitives.stage_repo import (
     run_primitive_4_stage_render_to_install,
+    PackageStagePlan,
+    plan_package_stage,
+    execute_package_stage,
     assert_packages_stage_ready,
     prepare_stage_packages,
     execute_stage_packages,
     StagePlan,
+    StageResult,
 )
 from drift.render.render_package import render_package
 
@@ -131,10 +135,12 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_a"].package_name, "pkg_a")
-        self.assertEqual(changes["pkg_a"].deployable_changes.added, [Path("file1.txt")])
-        self.assertEqual(changes["pkg_a"].deployable_changes.modified, [])
-        self.assertEqual(changes["pkg_a"].deployable_changes.deleted, [])
+        self.assertEqual(changes["pkg_a"].package, "pkg_a")
+        created_paths = {a.rel_path for a in changes["pkg_a"].created}
+        self.assertIn(Path("file1.txt"), created_paths)
+        self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / PACKAGE_CONFIG_FILE_NAME, created_paths)
+        self.assertEqual(changes["pkg_a"].updated, [])
+        self.assertEqual(changes["pkg_a"].deleted, [])
 
         # Check file exists in install/
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
@@ -159,10 +165,10 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_a"].package_name, "pkg_a")
-        self.assertEqual(changes["pkg_a"].deployable_changes.added, [])
-        self.assertEqual(changes["pkg_a"].deployable_changes.modified, [Path("file1.txt")])
-        self.assertEqual(changes["pkg_a"].deployable_changes.deleted, [])
+        self.assertEqual(changes["pkg_a"].package, "pkg_a")
+        self.assertEqual(changes["pkg_a"].created, [])
+        self.assertEqual([a.rel_path for a in changes["pkg_a"].updated], [Path("file1.txt")])
+        self.assertEqual(changes["pkg_a"].deleted, [])
 
         # Check modified file in install/
         with open(os.path.join(self.install_dir, "pkg_a", "file1.txt"), "r", encoding="utf-8") as f:
@@ -192,10 +198,10 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_a"].package_name, "pkg_a")
-        self.assertEqual(changes["pkg_a"].deployable_changes.added, [])
-        self.assertEqual(changes["pkg_a"].deployable_changes.modified, [])
-        self.assertEqual(changes["pkg_a"].deployable_changes.deleted, [Path("file2.txt")])
+        self.assertEqual(changes["pkg_a"].package, "pkg_a")
+        self.assertEqual(changes["pkg_a"].created, [])
+        self.assertEqual(changes["pkg_a"].updated, [])
+        self.assertEqual([a.rel_path for a in changes["pkg_a"].deleted], [Path("file2.txt")])
 
         # Verify file2 is removed from install/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file2.txt")))
@@ -213,12 +219,14 @@ class TestStageRepo(unittest.TestCase):
             f.write("Should not be copied")
 
         res = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b")
-        self.assertEqual(res, {})
+        self.assertEqual(len(res), 0)
+        self.assertFalse(res.has_changes)
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
         # Force should also not stage a package whose enable_install is False
         res_force = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_b", force=True)
-        self.assertEqual(res_force, {})
+        self.assertEqual(len(res_force), 0)
+        self.assertFalse(res_force.has_changes)
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
     def test_stage_ignores_and_symlinking(self) -> None:
@@ -244,10 +252,11 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_ignored")
 
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_ignored"].package_name, "pkg_ignored")
-        self.assertEqual(changes["pkg_ignored"].deployable_changes.added, [Path("valid.txt")])
-        self.assertEqual(changes["pkg_ignored"].deployable_changes.modified, [])
-        self.assertEqual(changes["pkg_ignored"].deployable_changes.deleted, [])
+        self.assertEqual(changes["pkg_ignored"].package, "pkg_ignored")
+        created_paths = {a.rel_path for a in changes["pkg_ignored"].created}
+        self.assertIn(Path("valid.txt"), created_paths)
+        self.assertIn(Path("ignored_file.txt"), created_paths)
+        self.assertIn(Path("error.log"), created_paths)
 
         # Check that all physical files (including ignored ones like hooks/logs) exist in install/
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_ignored", DRIFT_INTERNAL_DIR_NAME, PACKAGE_CONFIG_FILE_NAME)))
@@ -314,8 +323,10 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_misspelled")
 
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_misspelled"].package_name, "pkg_misspelled")
-        self.assertEqual(changes["pkg_misspelled"].deployable_changes.added, [Path("valid.txt")])
+        self.assertEqual(changes["pkg_misspelled"].package, "pkg_misspelled")
+        created_paths = {a.rel_path for a in changes["pkg_misspelled"].created}
+        self.assertIn(Path("valid.txt"), created_paths)
+        self.assertIn(Path("misspelled_ignored.txt"), created_paths)
 
         # Check that install/pkg_misspelled has .drift_ignore and all physical files (including ignored)
         install_pkg_misspelled = os.path.join(self.install_dir, "pkg_misspelled")
@@ -389,7 +400,8 @@ class TestStageRepo(unittest.TestCase):
             packages_enable_default=False,
         )
         changes = run_primitive_4_stage_render_to_install(empty_config)
-        self.assertEqual(changes, {})
+        self.assertEqual(len(changes), 0)
+        self.assertFalse(changes.has_changes)
 
     def test_stage_empty_target_pkgs_fallback(self) -> None:
         """Verifies that run_primitive_4_stage_render_to_install falls back to all enabled packages when target_pkgs is empty list []."""
@@ -425,11 +437,11 @@ class TestStageRepo(unittest.TestCase):
         # 3. Stage again
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a")
 
-        # Deployable changes should not report file1.txt (.drift_ignore addition is a metadata change)
+        # Staging should reflect .drift_ignore creation
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_a"].deployable_changes.added, [])
-        self.assertFalse(changes["pkg_a"].has_deployable_changes)
-        self.assertTrue(changes["pkg_a"].has_non_deployable_changes)
+        self.assertTrue(changes["pkg_a"].has_changes)
+        created_paths = {a.rel_path for a in changes["pkg_a"].created}
+        self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_IGNORE_FILE_NAME, created_paths)
         # file1.txt still exists physically in install/ (so ignored files like hooks remain available)
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
 
@@ -489,13 +501,12 @@ class TestStageRepo(unittest.TestCase):
         # Stage package
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
 
-        # Return value must ONLY contain deployable files (app.json)
+        # Stage plan contains all files staged to install/
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes[pkg].deployable_changes.added, [Path("app.json")])
-        self.assertNotIn(Path(f"{DRIFT_INTERNAL_DIR_NAME}/{DRIFT_INTERNAL_HOOKS_DIR_NAME}/pre_install.sh"), changes[pkg].deployable_changes.added)
+        created_paths = {a.rel_path for a in changes[pkg].created}
+        self.assertIn(Path("app.json"), created_paths)
+        self.assertIn(Path(f"{DRIFT_INTERNAL_DIR_NAME}/{DRIFT_INTERNAL_HOOKS_DIR_NAME}/pre_install.sh"), created_paths)
         self.assertTrue(changes[pkg].has_changes)
-        self.assertTrue(changes[pkg].has_deployable_changes)
-        self.assertTrue(changes[pkg].has_non_deployable_changes)
 
         # But physical install/ directory MUST contain the hook script
         pkg_install = self.install_dir / pkg
@@ -565,8 +576,8 @@ class TestStageRepo(unittest.TestCase):
         # Staging with force=True should bypass the check and succeed
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=True)
         self.assertEqual(len(changes), 1)
-        self.assertEqual(changes["pkg_a"].package_name, "pkg_a")
-        self.assertEqual(changes["pkg_a"].deployable_changes.modified, [Path("file1.txt")])
+        self.assertEqual(changes["pkg_a"].package, "pkg_a")
+        self.assertEqual([a.rel_path for a in changes["pkg_a"].updated], [Path("file1.txt")])
 
     def test_stage_aborts_if_already_staging(self) -> None:
         """Verifies that staging aborts if any package is already in 'staging' state."""
@@ -844,22 +855,21 @@ class TestStageRepo(unittest.TestCase):
             PackageConfig.from_render_dir(self.render_dir / non_existent_pkg, self.workspace_config)
         self.assertIn("Failed to find drift_package.toml", str(ctx.exception))
 
-    def test_compute_package_stage_diff_returns_stage_changes(self) -> None:
-        """Verifies that compute_package_stage_diff computes changes immutably without modifying install/."""
-        from drift.primitives.stage_repo import compute_package_stage_diff
+    def test_plan_package_stage_returns_plan(self) -> None:
+        """Verifies that plan_package_stage computes changes immutably without modifying install/."""
+        from drift.primitives.stage_repo import plan_package_stage
 
         pkg_a_render = self.render_dir / "pkg_a"
         (pkg_a_render / "new_diff_file.txt").write_text("diff content", encoding="utf-8")
 
-        stage_changes, ignore_handler = compute_package_stage_diff(
+        plan = plan_package_stage(
             pkg="pkg_a",
             install_base=self.install_dir,
             render_base=self.render_dir,
         )
 
-        self.assertEqual(stage_changes.package_name, "pkg_a")
-        self.assertIn(Path("new_diff_file.txt"), stage_changes.deployable_changes.added)
-        self.assertIn(Path("new_diff_file.txt"), stage_changes.physical_changes.added)
+        self.assertEqual(plan.package, "pkg_a")
+        self.assertIn(Path("new_diff_file.txt"), [a.rel_path for a in plan.created])
         # Verify file was NOT copied to install/ yet
         self.assertFalse((self.install_dir / "pkg_a" / "new_diff_file.txt").exists())
 
@@ -893,66 +903,84 @@ class TestStageRepo(unittest.TestCase):
             self.assertEqual(len(changes2), 0)
             mock_sudo.assert_not_called()
 
-    def test_package_stage_changes_properties(self) -> None:
-        """Verifies PackageStageChanges properties."""
-        from drift.primitives.stage_repo import PackageStageChanges
+    def test_package_stage_plan_properties(self) -> None:
+        """Verifies PackageStagePlan properties and helper methods."""
+        from drift.core.result_models import PackageStagePlan
+        from drift.core.folder_delivery import PlannedFileAction, ActionType
+
+        actions = [
+            PlannedFileAction(action_type=ActionType.CREATE_COPY, rel_path=Path("a.txt"), system_target=Path("/tmp/a.txt")),
+            PlannedFileAction(action_type=ActionType.UPDATE_COPY, rel_path=Path("m.txt"), system_target=Path("/tmp/m.txt")),
+            PlannedFileAction(action_type=ActionType.UPDATE_PERMISSION, rel_path=Path("p.txt"), system_target=Path("/tmp/p.txt")),
+            PlannedFileAction(action_type=ActionType.DELETE_FILE, rel_path=Path("d.txt"), system_target=Path("/tmp/d.txt")),
+            PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=Path("sub"), system_target=Path("/tmp/sub")),
+        ]
+        plan = PackageStagePlan(package="test_pkg", actions=actions)
+
+        self.assertEqual(plan.package, "test_pkg")
+        self.assertEqual(plan.package_name, "test_pkg")
+        self.assertEqual([a.rel_path for a in plan.created], [Path("a.txt")])
+        self.assertEqual([a.rel_path for a in plan.updated], [Path("m.txt")])
+        self.assertEqual([a.rel_path for a in plan.permissions_updated], [Path("p.txt")])
+        self.assertEqual([a.rel_path for a in plan.deleted], [Path("d.txt")])
+        self.assertEqual([a.rel_path for a in plan.ensured_dirs], [Path("sub")])
+        self.assertTrue(plan.has_changes)
+
+        formatted = plan.format_text()
+        self.assertIn("Package 'test_pkg':", formatted)
+        self.assertIn("CREATE_COPY", formatted)
+        self.assertIn("UPDATE_COPY", formatted)
+        self.assertIn("UPDATE_PERMISSION", formatted)
+        self.assertIn("DELETE_FILE", formatted)
+
+        # Empty plan
+        empty_plan = PackageStagePlan("empty_pkg")
+        self.assertFalse(empty_plan.has_changes)
+        self.assertEqual(empty_plan.created, [])
+        self.assertEqual(empty_plan.updated, [])
+        self.assertEqual(empty_plan.permissions_updated, [])
+        self.assertEqual(empty_plan.deleted, [])
+        self.assertEqual(empty_plan.ensured_dirs, [])
+
+    def test_plan_actions_from_folder_diff(self) -> None:
+        """Verifies that plan_actions_from_folder_diff compiles FolderDiff into planned actions."""
         from drift.core.folder_diff import FolderDiff
+        from drift.core.folder_delivery import plan_actions_from_folder_diff, ActionType
 
-        # Custom deployable and physical changes
-        change = PackageStageChanges(
-            package_name="test_pkg",
-            deployable_changes=FolderDiff(
-                added=[Path("a.txt")],
-                modified=[Path("m.txt")],
-                deleted=[Path("d.txt")],
-            ),
+        src_dir = self.render_dir / "pkg_diff_test"
+        dst_dir = self.install_dir / "pkg_diff_test"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        dst_dir.mkdir(parents=True, exist_ok=True)
+
+        (src_dir / "created.txt").write_text("new", encoding="utf-8")
+        (src_dir / "updated.txt").write_text("updated", encoding="utf-8")
+        (src_dir / "perm.txt").write_text("perm", encoding="utf-8")
+        (src_dir / "sub_dir").mkdir(parents=True, exist_ok=True)
+
+        diff = FolderDiff(
+            added=[Path("created.txt"), Path("sub_dir")],
+            modified=[Path("updated.txt"), Path("perm.txt")],
+            deleted=[Path("deleted.txt")],
+            permissions_differ=[Path("perm.txt")],
         )
-        self.assertEqual(change.package_name, "test_pkg")
-        self.assertEqual(change.deployable_changes.added, [Path("a.txt")])
-        self.assertEqual(change.deployable_changes.modified, [Path("m.txt")])
-        self.assertEqual(change.deployable_changes.deleted, [Path("d.txt")])
-        self.assertTrue(change.has_changes)
-        self.assertTrue(change.has_deployable_changes)
-        self.assertFalse(change.has_non_deployable_changes)
 
-        # Empty changes
-        empty_change = PackageStageChanges("empty_pkg")
-        self.assertFalse(empty_change.has_changes)
-        self.assertFalse(empty_change.has_deployable_changes)
-        self.assertFalse(empty_change.has_non_deployable_changes)
+        actions = plan_actions_from_folder_diff(diff, src_dir, dst_dir)
+        action_map = {a.rel_path: a for a in actions}
 
-        # Metadata/hook only change
-        hook_change = PackageStageChanges(
-            package_name="hook_pkg",
-            deployable_changes=FolderDiff(),
-            physical_changes=FolderDiff(modified=[Path(".drift/drift_package.toml"), Path(".drift/hooks/post_install.sh")]),
-        )
-        self.assertTrue(hook_change.has_changes)
-        self.assertFalse(hook_change.has_deployable_changes)
-        self.assertTrue(hook_change.has_non_deployable_changes)
-        self.assertEqual(hook_change.deployable_changes.added, [])
-        self.assertEqual(hook_change.deployable_changes.modified, [])
-        self.assertEqual(hook_change.deployable_changes.deleted, [])
-        self.assertEqual(hook_change.non_deployable_changes.modified, [Path(".drift/drift_package.toml"), Path(".drift/hooks/post_install.sh")])
+        # 1. Deletions come first
+        self.assertEqual(actions[0].action_type, ActionType.DELETE_FILE)
+        self.assertEqual(actions[0].rel_path, Path("deleted.txt"))
 
-        # Mixed deployable and metadata/hook change
-        mixed_change = PackageStageChanges(
-            package_name="mixed_pkg",
-            deployable_changes=FolderDiff(added=[Path("payload.txt")]),
-            physical_changes=FolderDiff(
-                added=[Path("payload.txt"), Path(".drift/hooks/pre_install.sh")],
-                modified=[Path(".drift/drift_package.toml")],
-            ),
-        )
-        self.assertTrue(mixed_change.has_changes)
-        self.assertTrue(mixed_change.has_deployable_changes)
-        self.assertTrue(mixed_change.has_non_deployable_changes)
-        self.assertEqual(mixed_change.non_deployable_changes.added, [Path(".drift/hooks/pre_install.sh")])
-        self.assertEqual(mixed_change.non_deployable_changes.modified, [Path(".drift/drift_package.toml")])
-        self.assertEqual(mixed_change.non_deployable_changes.deleted, [])
+        # 2. Additions: file -> CREATE_COPY, dir -> ENSURE_DIR
+        self.assertEqual(action_map[Path("created.txt")].action_type, ActionType.CREATE_COPY)
+        self.assertEqual(action_map[Path("sub_dir")].action_type, ActionType.ENSURE_DIR)
+
+        # 3. Modifications: content -> UPDATE_COPY, perm-only -> UPDATE_PERMISSION
+        self.assertEqual(action_map[Path("updated.txt")].action_type, ActionType.UPDATE_COPY)
+        self.assertEqual(action_map[Path("perm.txt")].action_type, ActionType.UPDATE_PERMISSION)
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
-        """Verifies that modifying hook script or drift_package.toml produces stage changes with has_non_deployable_changes=True."""
+        """Verifies that modifying hook script or drift_package.toml produces stage changes with has_changes=True."""
         pkg = "pkg_hook_detect"
         pkg_render = self.render_dir / pkg
         (pkg_render / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -976,11 +1004,11 @@ class TestStageRepo(unittest.TestCase):
         changes1 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
         self.assertIn(pkg, changes1)
         self.assertTrue(changes1[pkg].has_changes)
-        self.assertTrue(changes1[pkg].has_deployable_changes)
 
-        # Second stage with no changes: returns empty dict
+        # Second stage with no changes: returns empty StageResult
         changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
-        self.assertEqual(changes2, {})
+        self.assertEqual(len(changes2), 0)
+        self.assertFalse(changes2.has_changes)
 
         # Modify ONLY post_install.sh in render/
         (hooks_dir / "post_install.sh").write_text("#!/bin/sh\necho 'v2 updated'\n", encoding="utf-8")
@@ -989,8 +1017,8 @@ class TestStageRepo(unittest.TestCase):
         changes3 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
         self.assertIn(pkg, changes3)
         self.assertTrue(changes3[pkg].has_changes)
-        self.assertFalse(changes3[pkg].has_deployable_changes)
-        self.assertTrue(changes3[pkg].has_non_deployable_changes)
+        updated_paths = {a.rel_path for a in changes3[pkg].updated}
+        self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh", updated_paths)
 
         # Verify post_install.sh was copied into install/
         install_hook = self.install_dir / pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh"
@@ -1029,10 +1057,9 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn(pkg, changes2)
         stage_pkg = changes2[pkg]
         self.assertTrue(stage_pkg.has_changes)
-        self.assertTrue(stage_pkg.has_deployable_changes)
-        self.assertTrue(stage_pkg.has_non_deployable_changes)
-        self.assertEqual(stage_pkg.deployable_changes.modified, [Path("config.json")])
-        self.assertEqual(stage_pkg.non_deployable_changes.modified, [Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post.sh"])
+        updated_paths = {a.rel_path for a in stage_pkg.updated}
+        self.assertIn(Path("config.json"), updated_paths)
+        self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post.sh", updated_paths)
 
     def test_stage_unchanged_package_retains_installed_state(self) -> None:
         """Verifies that packages with no physical changes keep their existing state in state.toml."""
@@ -1052,7 +1079,8 @@ class TestStageRepo(unittest.TestCase):
 
         # 3. Re-run stage when no physical changes exist
         changes2 = run_primitive_4_stage_render_to_install(self.workspace_config, [pkg_a])
-        self.assertEqual(changes2, {})
+        self.assertEqual(len(changes2), 0)
+        self.assertFalse(changes2.has_changes)
 
         # 4. Verify state in state.toml remains "installed" and is NOT set to "staged"
         registry = load_state_registry(state_file)
@@ -1252,13 +1280,14 @@ class TestStageRepo(unittest.TestCase):
         empty_plan = prepare_stage_packages(empty_config)
         self.assertEqual(empty_plan.pkg_metadata, {})
 
-        # 4. execute_stage_packages with empty pkg_metadata returns empty dict
+        # 4. execute_stage_packages with empty pkg_metadata returns empty StageResult
         empty_changes = execute_stage_packages(
             self.workspace_config,
             pkg_metadata={},
             state_registry=plan.state_registry,
         )
-        self.assertEqual(empty_changes, {})
+        self.assertEqual(len(empty_changes), 0)
+        self.assertFalse(empty_changes.has_changes)
 
     def test_assert_install_pkg_dirs_clean(self) -> None:
         """Verifies that assert_install_pkg_dirs_clean collects all unclean package directories before raising."""
@@ -1463,6 +1492,67 @@ class TestStageDependencies(unittest.TestCase):
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.ordered_packages, ["pkg_b"])
 
+    def test_stage_result_container_and_methods(self) -> None:
+        """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
+        from drift.core.folder_delivery import PlannedFileAction, ActionType
+
+        # 1. Empty StageResult
+        empty_res = StageResult()
+        self.assertFalse(empty_res.has_changes)
+        self.assertFalse(bool(empty_res))
+        self.assertEqual(len(empty_res), 0)
+        self.assertEqual(empty_res.plan_map, {})
+        self.assertNotIn("pkg_a", empty_res)
+        self.assertIsNone(empty_res.get("pkg_a"))
+        self.assertEqual(list(empty_res.keys()), [])
+        self.assertEqual(list(empty_res.values()), [])
+        self.assertEqual(list(empty_res.items()), [])
+        self.assertEqual(empty_res.format_text(), "No changes staged. All files are up-to-date.")
+
+        # 2. Populated StageResult
+        plan_a = PackageStagePlan(
+            package="pkg_a",
+            actions=[
+                PlannedFileAction(
+                    action_type=ActionType.CREATE_COPY,
+                    rel_path=Path("foo.txt"),
+                    source_path=Path("/tmp/render/pkg_a/foo.txt"),
+                    system_target=Path("/tmp/install/pkg_a/foo.txt"),
+                )
+            ],
+        )
+        res = StageResult(
+            packages_changed=["pkg_a"],
+            plans=[plan_a],
+        )
+        self.assertTrue(res.has_changes)
+        self.assertTrue(bool(res))
+        self.assertEqual(len(res), 1)
+        self.assertIn("pkg_a", res)
+        self.assertNotIn("pkg_b", res)
+        self.assertEqual(res["pkg_a"], plan_a)
+        self.assertEqual(res.get("pkg_a"), plan_a)
+        self.assertIsNone(res.get("pkg_b"))
+        self.assertEqual(list(res.keys()), ["pkg_a"])
+        self.assertEqual(list(res.values()), [plan_a])
+        self.assertEqual(list(res.items()), [("pkg_a", plan_a)])
+        self.assertEqual(list(res), [plan_a])
+
+        # KeyError on missing
+        with self.assertRaises(KeyError):
+            _ = res["pkg_b"]
+
+        # format_text
+        text = res.format_text()
+        self.assertIn("Package 'pkg_a'", text)
+        self.assertIn("create_copy", text.lower())
+
+        # to_dict
+        d = res.to_dict()
+        self.assertEqual(d["packages_changed"], ["pkg_a"])
+        self.assertEqual(d["plans"][0]["package"], "pkg_a")
+
 
 if __name__ == "__main__":
     unittest.main()
+

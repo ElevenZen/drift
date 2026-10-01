@@ -143,6 +143,7 @@ class PackageUninstallContext:
     def package_envs(self) -> Iterator[None]:
         """Context manager to activate package-specific environment variables for hooks."""
         if self.hooks and getattr(self.hooks, "_package_config", None):
+            assert self.hooks._package_config is not None, "PackageHooks missing _package_config for envs"
             with self.hooks._package_config.package_envs():
                 yield
         else:

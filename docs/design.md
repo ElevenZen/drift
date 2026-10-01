@@ -169,7 +169,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 Reconciles the sandbox `render/` folder into the `install/` database:
 *   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
 *   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
-*   **Mechanism**: Computes exactly which files and packages require redeployment. Directly deletes removed files from `install/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
+*   **Mechanism**: Compiles a declarative staging plan (`PackageStagePlan`) detailing operations (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`) via single-pass folder comparison between `render/` and `install/`. Synchronizes files using the unified delivery engine.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
 
@@ -192,8 +192,8 @@ Removes or detaches packages from the system using strongly-typed `UninstallConf
     *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
     *   **Action Execution Context Derivation**: Derives an `ActionExecutionContext` setting `backup_subfolder=BackupSubfolder.DELETED_FILES`, ensuring any pre-existing host files colliding with restored ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store.
     *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
-        *   *Standard Uninstall*: Compiles `plan_file_removals` (`REMOVE_DEPLOYED`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
-        *   *Detach Mode*: Compiles `plan_symlink_conversions` (`REMOVE_DEPLOYED` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
+        *   *Standard Uninstall*: Compiles `plan_file_removals` (`DELETE_FILE`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
+        *   *Detach Mode*: Compiles `plan_symlink_conversions` (`DELETE_FILE` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
     *   **Unified Action Execution (`execute_package_uninstall`)**: Applies planned operations sequentially via `execute_delivery_actions`.
     *   **Zero-Mutation Dry-Run**: Under `--dry-run`, Drift simulates uninstallation without touching host files, state registry, or executing lifecycle hooks, rendering an inspectable structured summary via `UninstallResult.format_text(dry_run=True)`.
 2.  **Dependency Safeguards & Reverse Topological Order**:
@@ -974,7 +974,7 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
     *   Operates using `UninstallConfig(force, dry_run, detach, no_deps, flags)`.
     *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `no_deps`).
     *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
-    *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`REMOVE_DEPLOYED`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
+    *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`DELETE_FILE`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
     *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
 *   **Primitive 8: Rollback Recovery**:
     *   Executes a single unified reverse topological sort (`resolve_package_uninstall_order`) across all candidate packages requiring recovery.
@@ -1343,10 +1343,10 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
-        1. *Deployable Changes Calculation*: Runs `compare_folders` with the package's `DriftIgnore` handler to calculate granular deployable changes (`PackageStageChanges`: `deployable_changes`, `physical_changes`) for the function return value and downstream physical deployment.
-        2. *Physical Full-State Synchronization*: Runs `compare_folders` **without** ignore filtering (`ignore_handler=None`) to synchronize **all** physical files and internal directories (`.drift/`, `.drift/hooks/`, `.drift/render/`) from `render/<package>` into `install/<package>` (deleting removed files, copying additions and modifications).
-        3. *Ignore & Metadata Synchronization*: Synchronizes `.drift/` directory control plane metadata (`.drift/.drift_ignore` and `.drift/drift_package.toml`). With Drift's native relative symlink linker, no extra `.stow-local-ignore` is needed, maintaining strict 1:1 structural fidelity.
-    - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns the list of `PackageStageChanges` containing only deployable file changes.
+        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `PlannedFileAction`s (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
+        2. *Unified Delivery Execution (`execute_package_stage`)*: Dispatches actions to `execute_delivery_actions`, performing physical file deletion, directory creation, file copying, and fast permission synchronization.
+        3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
+    - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:

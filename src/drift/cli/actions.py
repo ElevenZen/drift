@@ -248,38 +248,28 @@ def execute_stage(
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
     from ..core.result_models import StageResult
+    from ..core.folder_delivery import format_action_line
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="stage")
     workspace_config = load_workspace_config_default(drift_root)
-    changes = run_primitive_4_stage_render_to_install(
+    res = run_primitive_4_stage_render_to_install(
         workspace_config,
         target_pkgs=package_names,
         force=force,
         no_deps=no_deps,
     )
     if json_mode:
-        pkg_names = list(changes.keys())
-        print(StageResult(packages_changed=pkg_names).to_json())
+        print(res.to_json())
         return
 
-    if not changes:
+    if not res:
         logger.info("No changes staged. All files are up-to-date.")
     else:
-        for pkg_change in changes.values():
-            logger.info(f"Package '{pkg_change.package_name}' staged changes:")
-            for file in pkg_change.deployable_changes.added:
-                logger.info(f"  [+] {file.as_posix()}")
-            for file in pkg_change.deployable_changes.modified:
-                logger.info(f"  [*] {file.as_posix()}")
-            for file in pkg_change.deployable_changes.deleted:
-                logger.info(f"  [-] {file.as_posix()}")
-            for file in pkg_change.non_deployable_changes.added:
-                logger.info(f"  [+] {file.as_posix()} (metadata/hook)")
-            for file in pkg_change.non_deployable_changes.modified:
-                logger.info(f"  [*] {file.as_posix()} (metadata/hook)")
-            for file in pkg_change.non_deployable_changes.deleted:
-                logger.info(f"  [-] {file.as_posix()} (metadata/hook)")
+        for plan in res.plans:
+            logger.info(f"Package '{plan.package}' staged changes:")
+            for action in plan.actions:
+                logger.info(format_action_line(action))
 
 
 def execute_apply(

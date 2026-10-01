@@ -34,7 +34,7 @@ This document provides a concise, high-density architecture reference, primitive
 | **P1** | `drift reverse-sync` | [`src/drift/primitives/reverse_sync.py`](../src/drift/primitives/reverse_sync.py) | `run_primitive_1_reverse_sync` | `ReverseSyncResult` |
 | **P2** | `drift render` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_2_render_packages` | `List[PackageRenderResult]` |
 | **P3** | `drift render-commit` | [`src/drift/render/render_package.py`](../src/drift/render/render_package.py) | `run_primitive_3_commit_render_repo` | `RenderCommitResult` |
-| **P4** | `drift stage` | [`src/drift/primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) | `run_primitive_4_stage_render_to_install` (`prepare_stage_packages`, `execute_stage_packages`) | `List[PackageStageChanges]` |
+| **P4** | `drift stage` | [`src/drift/primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py) | `run_primitive_4_stage_render_to_install` (`prepare_stage_packages`, `execute_stage_packages`) | `StageResult` |
 | **P5** | `drift apply` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_5_install` (`prepare_install`, `execute_install`) | `InstallResult` |
 | **P6** | `drift install-commit` | [`src/drift/primitives/install_repo.py`](../src/drift/primitives/install_repo.py) | `run_primitive_6_commit_install_repo` | `InstallCommitResult` |
 | **P7** | `drift uninstall` | [`src/drift/primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) | `run_primitive_7_uninstall_packages` | `UninstallResult` |
@@ -63,14 +63,14 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
 ### [`core/folder_delivery.py`](../src/drift/core/folder_delivery.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
-*   [`ActionType`](../src/drift/core/folder_delivery.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `REMOVE_DEPLOYED`, `INFO_MESSAGE`).
+*   [`ActionType`](../src/drift/core/folder_delivery.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_FILE`, `INFO_MESSAGE`).
 *   [`PlannedFileAction`](../src/drift/core/folder_delivery.py): Dataclass representing a discrete single-file/directory host operation (`action_type`, `rel_path`, `source_path`, `system_target`, `detail`).
 *   [`ActionExecutionContext`](../src/drift/core/folder_delivery.py): Execution context encapsulating `target_dir`, `install_pkg_dir`, `backup_pkg_dir`, `sudo`, `resolve_symlinks`, and `backup_subfolder` (`OVERWRITTEN` or `DELETED_FILES`).
 *   [`PackageInstallPlan`](../src/drift/core/result_models.py) & [`PackageUninstallPlan`](../src/drift/core/result_models.py): Strongly-typed dataclass containers for planned package actions, supporting `.format_text(dry_run=False)` summaries.
 *   [`plan_folder_delivery(source_dir, target_dir, install_method, deployable_files, deployed_files=()) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file delivery actions.
 *   [`plan_backup_restoration(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles backup restoration into discrete `INFO_MESSAGE`, `ENSURE_DIR`, and `CREATE_COPY` actions with intermediate ancestor collision detection via `plan_folder_delivery`.
-*   [`plan_file_removals(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `REMOVE_DEPLOYED` actions for deployed host items.
-*   [`plan_symlink_conversions(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `REMOVE_DEPLOYED` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
+*   [`plan_file_removals(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `DELETE_FILE` actions for deployed host items.
+*   [`plan_symlink_conversions(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `DELETE_FILE` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
 *   [`execute_delivery_actions(context, actions) -> None`](../src/drift/core/folder_delivery.py): Unified sequential executor applying planned file and backup actions to the host system.
 *   [`execute_single_action(context, action) -> None`](../src/drift/core/folder_delivery.py): Executes an individual planned file action.
 *   [`backup_host_item(target_path, rel_path, context) -> None`](../src/drift/core/folder_delivery.py): Backs up existing host items before overwrite or pruning into the configured `backup_subfolder`.
@@ -121,7 +121,9 @@ This document provides a concise, high-density architecture reference, primitive
 
 ### [`primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py), [`primitives/install_repo.py`](../src/drift/primitives/install_repo.py) & [`primitives/package_assertions.py`](../src/drift/primitives/package_assertions.py)
 *   [`prepare_stage_packages(workspace_config, target_pkgs, force) -> StagePlan`](../src/drift/primitives/stage_repo.py): Read-only pre-flight assertion and staging plan preparation with topological dependency ordering.
-*   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry, ordered_packages) -> Dict[str, PackageStageChanges]`](../src/drift/primitives/stage_repo.py): State-mutating physical file staging from `render/` to `install/`.
+*   [`plan_package_stage(pkg, install_base, render_base) -> PackageStagePlan`](../src/drift/primitives/stage_repo.py): Pure single-pass comparison between `render/` and `install/` compiling declarative staging actions (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
+*   [`execute_package_stage(context, plan)`](../src/drift/primitives/stage_repo.py): Executes staging actions on `install/` directory via unified delivery engine.
+*   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry, ordered_packages) -> StageResult`](../src/drift/primitives/stage_repo.py): Coordinates staging plan compilation and physical file synchronization from `render/` to `install/`.
 *   [`prepare_install(workspace_config, target_pkgs=(), config=None) -> InstallPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, cross-package conflict validation, context creation, and declarative deployment plan compilation with topological dependency ordering.
 *   [`PackageInstallContext`](../src/drift/primitives/install_repo.py): Strongly-typed install context with `.action_context` property and `.hooks`.
 *   [`execute_package_actions(context, plan, resolve_symlinks=True)`](../src/drift/primitives/install_repo.py): Executes planned file actions in deterministic order on the host filesystem.

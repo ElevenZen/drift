@@ -40,7 +40,6 @@ from drift.config.package_config import (
     PackageDependencies,
     PackageDependency,
 )
-from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
         resolve_target_path,
         run_primitive_5_install,
@@ -1456,7 +1455,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(system_file_b.resolve(), (pkg_install_dir / "file_b.txt").resolve())
 
     def test_symlink_link_pointing_to_different_file_in_same_pkg_updated_partial_deploy(self) -> None:
-        """Verifies that under partial/incremental deployment (via PackageStageChanges),
+        """Verifies that under partial/incremental deployment (via PackageStagePlan),
         a host symlink pointing to a different file in the same package is safely updated to the desired target file.
         """
         pkg = "pkg_switch_target_partial"
@@ -2814,7 +2813,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("target_mig_1", migration_messages[0].reason)
         self.assertIn("target_mig_2", migration_messages[0].reason)
 
-        removals = [a for a in plan.actions if a.action_type == ActionType.REMOVE_DEPLOYED]
+        removals = [a for a in plan.actions if a.action_type == ActionType.DELETE_FILE]
         self.assertEqual(len(removals), 1)
         self.assertEqual(removals[0].system_target, target_1 / "config.conf")
 

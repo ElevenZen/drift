@@ -13,27 +13,11 @@ class FolderDiff:
     modified: List[Path] = field(default_factory=list)
     deleted: List[Path] = field(default_factory=list)
     matches: List[Path] = field(default_factory=list)
+    permissions_differ: List[Path] = field(default_factory=list)
 
-    def is_mode_only_change(
-        self,
-        rel_path: Path,
-        src_dir: Path,
-        dst_dir: Path,
-        translate_mode: Optional[str] = None
-    ) -> bool:
-        """Checks if a relative path in modified list is a mode-only change (content matches, executable mode differs)."""
-        from ..utils.file_inspect import is_mode_only_change
-        from ..utils.path_utils import encode_dot_prefix, decode_dot_prefix
-
-        src_file = src_dir / rel_path
-        if translate_mode == "forward":
-            dst_file = dst_dir / encode_dot_prefix(rel_path)
-        elif translate_mode == "reverse":
-            dst_file = dst_dir / decode_dot_prefix(rel_path)
-        else:
-            dst_file = dst_dir / rel_path
-
-        return is_mode_only_change(src_file, dst_file)
+    def is_mode_only_change(self, rel_path: Path) -> bool:
+        """Checks if a relative path in modified list is a mode-only change (content matches, permissions differ)."""
+        return rel_path in self.permissions_differ
 
 def compare_folders(
     src_dir: Path,
@@ -195,6 +179,7 @@ def compare_folders(
                 _compare_recursive(src_target, dst_target, rel, visited)
                 return
 
+            # at least one is broken symlink, compare symlink targets directly
             if src_is_symlink and dst_is_symlink:
                 try:
                     if os.readlink(p_src) == os.readlink(p_dst):
@@ -284,8 +269,11 @@ def compare_folders(
                 visited.remove(pair_key)
 
         elif p_src.is_file() and p_dst.is_file():
-            if contents_differ(p_src, p_dst) or permissions_differ(p_src, p_dst):
+            if contents_differ(p_src, p_dst):
                 diff.modified.append(rel)
+            elif permissions_differ(p_src, p_dst):
+                diff.modified.append(rel)
+                diff.permissions_differ.append(rel)
             else:
                 diff.matches.append(rel)
         else:
@@ -330,6 +318,7 @@ def compare_folders(
     diff.added = sorted(list(set(diff.added)))
     diff.modified = sorted(list(set(diff.modified)))
     diff.deleted = sorted(list(set(diff.deleted)))
+    diff.permissions_differ = sorted(list(set(diff.permissions_differ)))
     return diff
 
 

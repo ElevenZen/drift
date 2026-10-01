@@ -754,6 +754,12 @@ class TestFileUtils(unittest.TestCase):
         copy_file(f1, f2)
         self.assertTrue(bool(f2.stat().st_mode & 0o111))
 
+        # Test non-executable permission bit difference (e.g. 0o644 vs 0o600)
+        f1.chmod(0o644)
+        f2.chmod(0o600)
+        self.assertTrue(permissions_differ(f1, f2))
+        self.assertTrue(is_mode_only_change(f1, f2))
+
     def test_run_command_debug_logging(self) -> None:
         """Verifies run_command logs external command and stdout/stderr in debug mode."""
         import sys

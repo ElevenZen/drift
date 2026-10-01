@@ -11,9 +11,8 @@ without modifying it.
     file_hash(file_path) — MD5 hash for change tracking.
     normalize_newlines(content, line_ending) — LF/CRLF byte-level conversion.
     contents_differ(file1, file2, convert_line_endings) — Byte/text content comparison.
-    permissions_differ(file1, file2) — POSIX executable bit comparison.
+    permissions_differ(file1, file2) — POSIX permission mode bits (0o777) comparison.
     is_mode_only_change(file1, file2) — Content same + permissions different.
-    file_mode_differs(file1, file2) — POSIX permission mode bits (0o777) comparison.
     tree_files(dir_path) — Recursive glob returning sorted relative paths.
     is_temp_file(file_name_or_path) — Editor/OS temp file pattern matching.
     find_symlink_ancestor(file_path, link_target_range) — Walks up to find symlink pointing into range.
@@ -110,28 +109,6 @@ def contents_differ(file1: Path, file2: Path, convert_line_endings: Optional[boo
 
 
 def permissions_differ(file1: Path, file2: Path) -> bool:
-    """Returns True if the executable permissions of file1 and file2 differ on POSIX.
-
-    Always returns False on Windows (win32) or if either file does not exist.
-    """
-    if sys.platform == "win32":
-        return False
-    if not file1.exists() or not file2.exists():
-        return False
-    try:
-        mode1 = file1.stat().st_mode
-        mode2 = file2.stat().st_mode
-        return bool(mode1 & 0o111) != bool(mode2 & 0o111)
-    except Exception:
-        return False
-
-
-def is_mode_only_change(file1: Path, file2: Path, convert_line_endings: Optional[bool] = None) -> bool:
-    """Returns True if the byte contents of file1 and file2 match, but their executable permissions differ."""
-    return not contents_differ(file1, file2, convert_line_endings=convert_line_endings) and permissions_differ(file1, file2)
-
-
-def file_mode_differs(file1: Path, file2: Path) -> bool:
     """Returns True if POSIX file permission mode bits (& 0o777) differ between file1 and file2.
 
     Always returns False on Windows (win32) or if either file does not exist.
@@ -142,6 +119,11 @@ def file_mode_differs(file1: Path, file2: Path) -> bool:
         return (file1.stat().st_mode & 0o777) != (file2.stat().st_mode & 0o777)
     except Exception:
         return False
+
+
+def is_mode_only_change(file1: Path, file2: Path, convert_line_endings: Optional[bool] = None) -> bool:
+    """Returns True if the byte contents of file1 and file2 match, but their permission mode bits differ."""
+    return not contents_differ(file1, file2, convert_line_endings=convert_line_endings) and permissions_differ(file1, file2)
 
 
 def tree_files(dir_path: Path) -> List[Path]:

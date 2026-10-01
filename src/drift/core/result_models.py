@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass, field, is_dataclass, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, Tuple
 from datetime import datetime
 from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
@@ -83,15 +83,6 @@ class RenderResult(SerializableModel):
 # Primitive 4: Stage Render to Install
 # =============================================================================
 
-@dataclass
-class StageResult(SerializableModel):
-    command: str = "stage"
-    status: str = "SUCCESS"  # "SUCCESS", "FAILED"
-    packages_changed: List[str] = field(default_factory=list)
-    error_message: Optional[str] = None
-
-
-# =============================================================================
 from .folder_delivery import (
     ActionExecutionContext,
     ActionType,
@@ -99,6 +90,116 @@ from .folder_delivery import (
     format_action_line,
     format_action_summary,
 )
+
+
+@dataclass
+class PackageStagePlan(SerializableModel):
+    """Structured staging plan detailing operations to sync render/ to install/ for a package."""
+    package: str = ""
+    actions: List[PlannedFileAction] = field(default_factory=list)
+
+    @property
+    def created(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY]
+
+    @property
+    def updated(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
+
+    @property
+    def permissions_updated(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
+
+    @property
+    def deleted(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
+
+    @property
+    def ensured_dirs(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
+
+    @property
+    def package_name(self) -> str:
+        return self.package
+
+    @property
+    def has_changes(self) -> bool:
+        return bool(self.actions)
+
+    def format_text(self) -> str:
+        """Formats the staging plan for human-readable terminal output."""
+        lines = [f"📦 Package '{self.package}':"]
+        if self.actions:
+            lines.extend(format_action_line(action) for action in self.actions)
+        lines.append(f"  Summary: {format_action_summary(self.actions)}")
+        return "\n".join(lines)
+
+
+@dataclass
+class StageResult(SerializableModel):
+    command: str = "stage"
+    status: str = "SUCCESS"  # "SUCCESS", "FAILED"
+    packages_changed: List[str] = field(default_factory=list)
+    plans: List[PackageStagePlan] = field(default_factory=list)
+    error_message: Optional[str] = None
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if any package stage plan contains actions."""
+        return any(plan.has_changes for plan in self.plans)
+
+    @property
+    def plan_map(self) -> Dict[str, PackageStagePlan]:
+        """Provides a mapping from package name to PackageStagePlan."""
+        return {p.package: p for p in self.plans}
+
+    def __getitem__(self, package: str) -> PackageStagePlan:
+        """Allows direct dictionary-like indexing: result[pkg]."""
+        for p in self.plans:
+            if p.package == package:
+                return p
+        raise KeyError(f"Package '{package}' not found in stage plans.")
+
+    def __contains__(self, package: str) -> bool:
+        """Allows 'pkg in result' checks."""
+        return any(p.package == package for p in self.plans)
+
+    def __iter__(self):
+        """Iterates over plans."""
+        return iter(self.plans)
+
+    def __len__(self) -> int:
+        """Returns count of changed package plans."""
+        return len(self.plans)
+
+    def __bool__(self) -> bool:
+        """Returns True if any packages have changes."""
+        return bool(self.plans)
+
+    def get(self, package: str, default: Any = None) -> Optional[PackageStagePlan]:
+        """Dictionary-like get accessor."""
+        for p in self.plans:
+            if p.package == package:
+                return p
+        return default
+
+    def keys(self) -> List[str]:
+        """Returns package names with changes."""
+        return [p.package for p in self.plans]
+
+    def values(self) -> List[PackageStagePlan]:
+        """Returns package stage plans."""
+        return list(self.plans)
+
+    def items(self) -> List[Tuple[str, PackageStagePlan]]:
+        """Returns (package, plan) tuples."""
+        return [(p.package, p) for p in self.plans]
+
+    def format_text(self) -> str:
+        """Formats the stage result for human-readable terminal output."""
+        if not self.plans:
+            return "No changes staged. All files are up-to-date."
+        return "\n".join(plan.format_text() for plan in self.plans)
 
 
 @dataclass
@@ -170,8 +271,12 @@ class PackageUninstallPlan(SerializableModel):
     hooks_to_trigger: List[str] = field(default_factory=list)
 
     @property
+    def deleted(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
+
+    @property
     def removed(self) -> List[PlannedFileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.REMOVE_DEPLOYED]
+        return self.deleted
 
     @property
     def restored(self) -> List[PlannedFileAction]:

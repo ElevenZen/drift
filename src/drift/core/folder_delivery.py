@@ -14,8 +14,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union
 
 from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
 from .exceptions import InstallCollisionError
+from .folder_diff import FolderDiff
 from .serialization import SerializableModel
-from ..utils.file_inspect import contents_differ, file_mode_differs, tree_files
+from ..utils.file_inspect import contents_differ, permissions_differ, tree_files
 from ..utils.file_ops import (
     copy_file,
     copy_permissions,
@@ -55,7 +56,7 @@ class ActionType(str, Enum):
     # Collisions & Cleanups
     BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
     BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
-    REMOVE_DEPLOYED = "REMOVE_DEPLOYED"    # Deployed file/symlink removed from host
+    DELETE_FILE = "DELETE_FILE"            # Direct file/symlink deletion without backup
 
     # Workflow Notifications
     INFO_MESSAGE = "INFO_MESSAGE"          # Informational message logged during execution
@@ -105,8 +106,8 @@ def format_action_line(action: PlannedFileAction) -> str:
         return f"    🛡️ [BACKUP_OVERWRITE] {action.system_target}{reason_str}"
     elif action.action_type == ActionType.BACKUP_PRUNE:
         return f"    📦 [BACKUP_PRUNE]    {action.system_target}{reason_str}"
-    elif action.action_type == ActionType.REMOVE_DEPLOYED:
-        return f"    🗑️ [REMOVE_DEPLOYED] {action.system_target}{reason_str}"
+    elif action.action_type == ActionType.DELETE_FILE:
+        return f"    🗑️ [DELETE_FILE]    {action.system_target}{reason_str}"
     elif action.action_type == ActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
     return f"    [{action.action_type}] {action.rel_path} -> {action.system_target}{reason_str}"
@@ -127,7 +128,7 @@ def format_action_summary(actions: Sequence[PlannedFileAction]) -> str:
     skipped = [a for a in actions if a.action_type == ActionType.SKIP_IDENTICAL]
     if skipped:
         counts.append(f"{len(skipped)} up-to-date")
-    removed = [a for a in actions if a.action_type == ActionType.REMOVE_DEPLOYED]
+    removed = [a for a in actions if a.action_type == ActionType.DELETE_FILE]
     if removed:
         counts.append(f"{len(removed)} to remove")
     backups = [a for a in actions if a.action_type in (ActionType.BACKUP_OVERWRITE, ActionType.BACKUP_PRUNE)]
@@ -381,7 +382,7 @@ def _inspect_physical_file_leaf(
             reason="File content updated",
         )]
 
-    if file_mode_differs(source_file, system_target):
+    if permissions_differ(source_file, system_target):
         src_mode = oct(source_file.stat().st_mode & 0o777)
         dst_mode = oct(system_target.stat().st_mode & 0o777)
         return [PlannedFileAction(
@@ -607,7 +608,7 @@ def plan_symlink_conversions(
 
         actions.append(
             PlannedFileAction(
-                action_type=ActionType.REMOVE_DEPLOYED,
+                action_type=ActionType.DELETE_FILE,
                 rel_path=rel_file,
                 system_target=system_target,
                 reason="Remove symlink for detach",
@@ -637,7 +638,7 @@ def plan_file_removals(
     ]
     return [
         PlannedFileAction(
-            action_type=ActionType.REMOVE_DEPLOYED,
+            action_type=ActionType.DELETE_FILE,
             rel_path=rel,
             system_target=target,
             reason="Remove deployed file from host",
@@ -645,6 +646,74 @@ def plan_file_removals(
         for rel, target in resolved
         if target.exists() or target.is_symlink()
     ]
+
+
+def plan_actions_from_folder_diff(
+    diff: FolderDiff,
+    source_dir: Path,
+    target_dir: Path,
+) -> List[PlannedFileAction]:
+    """Compiles a FolderDiff into a deterministic sequence of PlannedFileActions."""
+    actions: List[PlannedFileAction] = []
+
+    # 1. Deletions first: cleanly clear obsolete paths to avoid directory/file type collisions
+    for rel in diff.deleted:
+        actions.append(PlannedFileAction(
+            action_type=ActionType.DELETE_FILE,
+            rel_path=rel,
+            system_target=target_dir / rel,
+            reason="Deleted in source",
+        ))
+
+    # 2. Additions
+    for rel in diff.added:
+        src = source_dir / rel
+        dst = target_dir / rel
+        if src.is_dir() and not src.is_symlink():
+            actions.append(PlannedFileAction(
+                action_type=ActionType.ENSURE_DIR,
+                rel_path=rel,
+                system_target=dst,
+                reason="Directory created",
+            ))
+        else:
+            actions.append(PlannedFileAction(
+                action_type=ActionType.CREATE_COPY,
+                rel_path=rel,
+                system_target=dst,
+                source_path=src,
+                reason="New file",
+            ))
+
+    # 3. Modifications
+    for rel in diff.modified:
+        src = source_dir / rel
+        dst = target_dir / rel
+        if src.is_dir() and not src.is_symlink():
+            actions.append(PlannedFileAction(
+                action_type=ActionType.ENSURE_DIR,
+                rel_path=rel,
+                system_target=dst,
+                reason="Directory modified",
+            ))
+        elif rel in diff.permissions_differ:
+            actions.append(PlannedFileAction(
+                action_type=ActionType.UPDATE_PERMISSION,
+                rel_path=rel,
+                system_target=dst,
+                source_path=src,
+                reason="Permissions updated",
+            ))
+        else:
+            actions.append(PlannedFileAction(
+                action_type=ActionType.UPDATE_COPY,
+                rel_path=rel,
+                system_target=dst,
+                source_path=src,
+                reason="Content modified",
+            ))
+
+    return actions
 
 
 # =============================================================================
@@ -719,7 +788,7 @@ def execute_single_action(
         source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
         copy_permissions(source_file, action.system_target, sudo=context.sudo)
 
-    elif action.action_type == ActionType.REMOVE_DEPLOYED:
+    elif action.action_type == ActionType.DELETE_FILE:
         remove(action.system_target, context.sudo)
         try:
             limit_dir = action.system_target.parents[len(action.rel_path.parts) - 1]

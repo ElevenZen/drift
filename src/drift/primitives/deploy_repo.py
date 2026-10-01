@@ -11,10 +11,9 @@ from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
 from ..render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
 from .stage_repo import (
-    run_primitive_4_stage_render_to_install,
     prepare_stage_packages,
     execute_stage_packages,
-    PackageStageChanges,
+    StageResult,
 )
 from .install_repo import (
     run_primitive_5_install,
@@ -246,7 +245,7 @@ def execute_sequential_compile_and_apply(
     failed_step = "Step 3 (Sandbox Staging)"
     try:
         logger.info("   [3/5] Staging rendered changes from render/ to install/ state database ...")
-        package_changes = execute_stage_packages(
+        stage_result = execute_stage_packages(
             workspace_config,
             pkg_metadata=stage_plan.pkg_metadata,
             state_registry=stage_plan.state_registry,
@@ -257,7 +256,7 @@ def execute_sequential_compile_and_apply(
         print_emergency_recovery_card(failed_step, str(e), target_pkgs)
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
-    changed_pkgs = [pkg for pkg, change in package_changes.items() if change.has_changes]
+    changed_pkgs = stage_result.packages_changed
     if reinstall:
         pkgs_to_install = target_pkgs
     elif changed_pkgs:
