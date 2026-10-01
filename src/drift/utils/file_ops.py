@@ -207,6 +207,8 @@ def remove_with_parents(file_path: Path, limit_dir: Optional[Path] = None) -> No
 
 def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     """Copies/recreates a symlink from src to dst pointing to src's readlink target."""
+    if dst.is_dir() and not dst.is_symlink():
+        raise IsADirectoryError(f"Cannot copy symlink to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
     remove(dst, sudo=sudo)
@@ -221,6 +223,8 @@ def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
 
 def create_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
     """Creates a symlink from src to dst, cleaning up any existing file/link."""
+    if dst.is_dir() and not dst.is_symlink():
+        raise IsADirectoryError(f"Cannot create symlink at '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
     remove(dst, sudo=sudo)
@@ -311,7 +315,15 @@ def copy_file(
 
     Uses temp-file + atomic rename to guarantee dst is never left in a partial state.
     Elevates via sudo on POSIX when requested.
+
+    Raises:
+        IsADirectoryError: If src or dst exists and is a concrete directory.
     """
+    if dst.is_dir() and not dst.is_symlink():
+        raise IsADirectoryError(f"Cannot copy file to '{dst}': destination exists and is a directory.")
+    if src.is_dir() and not src.is_symlink():
+        raise IsADirectoryError(f"Cannot copy file from '{src}': source is a directory, not a regular file.")
+
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
 
@@ -321,7 +333,7 @@ def copy_file(
         return
 
     # Mode-only shortcut: content matches but permissions differ
-    if dst.exists() and not dst.is_symlink() and not src.is_symlink() and is_mode_only_change(src, dst):
+    if dst.is_file() and not dst.is_symlink() and not src.is_symlink() and is_mode_only_change(src, dst):
         copy_permissions(src, dst, sudo=sudo)
         return
 
@@ -350,7 +362,13 @@ def write_file(
     sudo: bool = False,
     permission: Optional[int] = None
 ) -> None:
-    """Writes string or bytes content to dst file atomically with directory creation, sudo handling, and permission setting."""
+    """Writes string or bytes content to dst file atomically with directory creation, sudo handling, and permission setting.
+
+    Raises:
+        IsADirectoryError: If dst exists and is a concrete directory.
+    """
+    if dst.is_dir() and not dst.is_symlink():
+        raise IsADirectoryError(f"Cannot write file to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
 
