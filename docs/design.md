@@ -1346,7 +1346,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
         1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `PlannedFileAction`s (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
         2. *Unified Delivery Execution (`execute_package_stage`)*: Dispatches actions to `execute_delivery_actions`, performing physical file deletion, directory creation, file copying, and fast permission synchronization.
         3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
-    - **Staged Transaction Complete**: Updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s.
+    - **Staged Transaction Complete (or Dry-Run Simulation)**: In live execution, updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s. In dry-run mode (`dry_run=True`), compiles and returns the full `StageResult` with zero mutations to `install/` or `state.toml`.
 
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:

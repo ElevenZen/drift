@@ -142,6 +142,7 @@ class StageResult(SerializableModel):
     packages_changed: List[str] = field(default_factory=list)
     plans: List[PackageStagePlan] = field(default_factory=list)
     error_message: Optional[str] = None
+    dry_run: bool = False
 
     @property
     def has_changes(self) -> bool:
@@ -198,7 +199,24 @@ class StageResult(SerializableModel):
     def format_text(self) -> str:
         """Formats the stage result for human-readable terminal output."""
         if not self.plans:
+            if self.dry_run:
+                return "🔍 [DRY-RUN] No changes to stage. All files are up-to-date."
             return "No changes staged. All files are up-to-date."
+        if self.dry_run:
+            lines = [
+                "🔍 [DRY-RUN] Planned Staging Operations (render/ -> install/):",
+                "=" * 60,
+            ]
+            for plan in self.plans:
+                lines.append(plan.format_text())
+                lines.append("")
+            total_actions = sum(len(p.actions) for p in self.plans)
+            lines.append("=" * 60)
+            lines.append(
+                f"✨ [DRY-RUN] Staging simulation completed for {len(self.plans)} package(s). "
+                f"Total planned actions: {total_actions} (zero install/ mutations performed)."
+            )
+            return "\n".join(lines)
         return "\n".join(plan.format_text() for plan in self.plans)
 
 
@@ -354,14 +372,15 @@ class InstallResult(SerializableModel):
     packages: List[PackageInstallResult] = field(default_factory=list)
     error_package: Optional[str] = None
     error_message: Optional[str] = None
+    dry_run: bool = False
 
-    def format_text(self, dry_run: bool = False) -> str:
+    def format_text(self) -> str:
         """Formats the install or simulation results for human-readable output."""
         if not self.packages:
             return "No packages targeted."
 
         lines = []
-        if dry_run:
+        if self.dry_run:
             lines.append("🔍 [DRY-RUN] Package Install Simulation Plan")
             lines.append("=" * 60)
             for pkg_res in self.packages:
@@ -434,6 +453,7 @@ class UninstallResult(SerializableModel):
     detach_mode: bool = False
     packages: List[PackageUninstallResult] = field(default_factory=list)
     error_message: Optional[str] = None
+    dry_run: bool = False
 
     def __iter__(self):
         """Allows iterating over uninstalled package names."""
@@ -446,13 +466,13 @@ class UninstallResult(SerializableModel):
     def uninstalled_packages(self) -> List[str]:
         return [p.package for p in self.packages if p.status == "SUCCESS"]
 
-    def format_text(self, dry_run: bool = False) -> str:
+    def format_text(self) -> str:
         """Formats the uninstallation/detachment results or simulation plan for terminal output."""
         if not self.packages:
             return "No packages targeted."
 
         lines = []
-        if dry_run:
+        if self.dry_run:
             mode_header = "Detachment" if self.detach_mode else "Uninstallation"
             lines.append(f"🔍 [DRY-RUN] Package {mode_header} Simulation Plan")
             lines.append("=" * 60)
@@ -498,6 +518,7 @@ class AdoptResult(SerializableModel):
     status: str = "SUCCESS"  # "SUCCESS", "FAILED"
     packages: List[PackageAdoptResult] = field(default_factory=list)
     error_message: Optional[str] = None
+    dry_run: bool = False
 
     def __iter__(self):
         return iter([p.package for p in self.packages if p.status == "SUCCESS"])

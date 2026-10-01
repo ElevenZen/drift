@@ -809,7 +809,8 @@ fi
         reloaded_registry = load_state_registry(state_file)
         self.assertIn(pkg, reloaded_registry.packages)
         # 4. Formatted plan text is available
-        formatted = res.format_text(dry_run=True)
+        self.assertTrue(res.dry_run)
+        formatted = res.format_text()
         self.assertIn("DRY-RUN", formatted)
         self.assertIn("dry_run_target.txt", formatted)
 

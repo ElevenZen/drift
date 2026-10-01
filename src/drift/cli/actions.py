@@ -244,6 +244,7 @@ def execute_stage(
     force: bool = False,
     json_mode: bool = False,
     no_deps: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
@@ -258,9 +259,16 @@ def execute_stage(
         target_pkgs=package_names,
         force=force,
         no_deps=no_deps,
+        dry_run=dry_run,
     )
     if json_mode:
         print(res.to_json())
+        return
+
+    if dry_run:
+        text = res.format_text()
+        if text:
+            print(text)
         return
 
     if not res:
@@ -305,7 +313,7 @@ def execute_apply(
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text(dry_run=True)
+        text = res.format_text()
         if text:
             print(text)
     if res.status != "SUCCESS":
@@ -404,7 +412,7 @@ def execute_uninstall(
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text(dry_run=True)
+        text = res.format_text()
         if text:
             print(text)
     if res.status != "SUCCESS":

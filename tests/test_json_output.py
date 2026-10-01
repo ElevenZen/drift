@@ -111,8 +111,9 @@ class TestResultModels(unittest.TestCase):
                     plan=plan,
                 )
             ],
+            dry_run=True,
         )
-        dry_run_text = result.format_text(dry_run=True)
+        dry_run_text = result.format_text()
         self.assertIn("[DRY-RUN] Package Install Simulation Plan", dry_run_text)
         self.assertIn("zero host mutations performed", dry_run_text)
 

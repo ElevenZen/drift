@@ -220,6 +220,19 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         # Verify that pkg_a files are copied to install/
         self.assertTrue(os.path.exists(os.path.join(self.drift_root, "install", "pkg_a", "file.txt")))
 
+    def test_cli_stage_dry_run(self) -> None:
+        """Verifies that running 'stage --dry-run' previews changes without modifying install directory."""
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            main(["-C", self.drift_root, "render", "pkg_a"])
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "stage", "pkg_a", "--dry-run"])
+
+        self.assertIn("[DRY-RUN]", stdout.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(self.drift_root, "install", "pkg_a", "file.txt")))
+
     def test_cli_render_commit(self) -> None:
         """Verifies that running 'render-commit' commits sandbox changes."""
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):

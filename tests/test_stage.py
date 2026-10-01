@@ -1552,7 +1552,75 @@ class TestStageDependencies(unittest.TestCase):
         self.assertEqual(d["packages_changed"], ["pkg_a"])
         self.assertEqual(d["plans"][0]["package"], "pkg_a")
 
+        # Test dry-run format_text
+        dry_res = StageResult(packages_changed=["pkg_a"], plans=[plan_a], dry_run=True)
+        self.assertTrue(dry_res.dry_run)
+        dry_text = dry_res.format_text()
+        self.assertIn("[DRY-RUN]", dry_text)
+        self.assertIn("zero install/ mutations performed", dry_text)
+
+        empty_dry = StageResult(dry_run=True)
+        self.assertIn("[DRY-RUN]", empty_dry.format_text())
+
+    def test_execute_stage_packages_dry_run(self) -> None:
+        """Verifies that execute_stage_packages with dry_run=True plans actions without modifying install/ or state.toml."""
+        from drift.config.package_config import PackageConfig
+        from drift.core.state_registry import load_state_registry
+
+        pkg_name = "pkg_a"
+        self._create_render_package(pkg_name)
+        file_path = self.render_dir / pkg_name / "dry_run_test.txt"
+        file_path.write_text("hello dry run stage", encoding="utf-8")
+
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=[pkg_name])
+        res = execute_stage_packages(
+            self.workspace_config,
+            pkg_metadata=plan.pkg_metadata,
+            state_registry=plan.state_registry,
+            ordered_packages=plan.ordered_packages,
+            dry_run=True,
+        )
+
+        self.assertTrue(res.dry_run)
+        self.assertIn(pkg_name, res.packages_changed)
+        self.assertTrue(res[pkg_name].has_changes)
+        # Verify file was NOT copied to install/
+        self.assertFalse((self.install_dir / pkg_name / "dry_run_test.txt").exists())
+
+        # Verify state.toml was NOT updated to "staging" or "staged"
+        registry = load_state_registry(self.install_dir / "state.toml")
+        self.assertNotEqual(registry.get_package_state(pkg_name), "staged")
+        self.assertNotEqual(registry.get_package_state(pkg_name), "staging")
+
+        # Verify dry-run format_text output
+        text = res.format_text()
+        self.assertIn("[DRY-RUN]", text)
+        self.assertIn("zero install/ mutations performed", text)
+
+    def test_run_primitive_4_dry_run(self) -> None:
+        """Verifies that run_primitive_4_stage_render_to_install with dry_run=True leaves files untouched."""
+        from drift.core.state_registry import load_state_registry
+
+        pkg_name = "pkg_a"
+        self._create_render_package(pkg_name)
+        file_path = self.render_dir / pkg_name / "p4_dry_run.txt"
+        file_path.write_text("p4 dry run content", encoding="utf-8")
+
+        res = run_primitive_4_stage_render_to_install(
+            self.workspace_config,
+            target_pkgs=[pkg_name],
+            dry_run=True,
+        )
+
+        self.assertTrue(res.dry_run)
+        self.assertEqual(res.packages_changed, [pkg_name])
+        self.assertFalse((self.install_dir / pkg_name / "p4_dry_run.txt").exists())
+
+        registry = load_state_registry(self.install_dir / "state.toml")
+        self.assertNotEqual(registry.get_package_state(pkg_name), "staged")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

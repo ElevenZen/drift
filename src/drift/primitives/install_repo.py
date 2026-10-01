@@ -745,6 +745,7 @@ def execute_install(
         return InstallResult(
             status="SUCCESS",
             packages=package_results,
+            dry_run=True,
         )
 
     hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
@@ -780,6 +781,7 @@ def execute_install(
     return InstallResult(
         status="SUCCESS",
         packages=results,
+        dry_run=False,
     )
 
 

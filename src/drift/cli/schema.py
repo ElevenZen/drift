@@ -647,6 +647,11 @@ def build_completion_schema() -> CompletionSchema:
                         description="Bypass missing required package dependency errors and proceed with staging",
                         dest="no_deps"
                     ),
+                    OptionSpec(
+                        flags=["--dry-run"],
+                        description="Simulate staging changes from render/ to install/ without modifying files or state registry",
+                        dest="dry_run"
+                    ),
                 ]
             ),
             "apply": CommandSpec(

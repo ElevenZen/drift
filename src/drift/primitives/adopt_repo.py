@@ -1141,7 +1141,7 @@ def run_primitive_adopt_drifts(
         package_names = get_drifted_packages(workspace_config)
         if not package_names:
             logger.info("✨ No drifted packages found in local state database.")
-            return AdoptResult(command="adopt", status="SUCCESS", packages=[])
+            return AdoptResult(command="adopt", status="SUCCESS", packages=[], dry_run=dry_run)
 
     # 2. Process each package
     package_results: List[PackageAdoptResult] = []
@@ -1174,5 +1174,6 @@ def run_primitive_adopt_drifts(
     return AdoptResult(
         command="adopt",
         status="SUCCESS" if all_success else "FAILED",
-        packages=package_results
+        packages=package_results,
+        dry_run=dry_run,
     )

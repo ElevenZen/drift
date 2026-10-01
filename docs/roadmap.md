@@ -110,8 +110,27 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **Pre-Flight Guards & Bypass Flags**: Added `assert_required_package_dependencies_exist`, `assert_no_cyclic_package_dependencies`, and `assert_no_broken_dependencies_on_uninstall`, bypassable via `--no-deps` (`no_deps=True`) and `--force`.
 - **`UninstallConfig` & Ghost Package Purge**: Introduced typed `UninstallConfig`, graceful handling for missing install directories, and automatic ghost package purging from `state.toml` in `drift gc` (Primitive 9).
 
-### 13. Test Suite Expansion & Cleanliness
-- Total passing tests expanded to **961/961 tests OK** with zero warnings, comprehensive coverage across dependency DAG ordering, multiline TOML parsing, error boundaries, reverse uninstallation, and ghost package hygiene.
+### 13. Unified Delivery Engine & Native Linker (`folder_delivery.py`)
+- **Consolidated Delivery Architecture**: Replaced fragmented procedural file deployers and GNU Stow execution with a unified, pure Python delivery engine in [`folder_delivery.py`](../src/drift/core/folder_delivery.py), providing consistent lifecycle semantics across both relative `symlink` projection and atomic physical `copy` modes.
+- **Declarative Action Planning**: Decomposed filesystem mutations into discrete, inspectable actions (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `DELETE_FILE`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `ENSURE_DIR`).
+- **Action Type Consolidation**: Merged `REMOVE_DEPLOYED` into canonical `DELETE_FILE` across action models, formatting utilities, execution handlers, and uninstallation plans.
+- **Native Symlink Pruning & Directory Lifecycle**: Added native directory-tree creation and parent-directory pruning without external binary dependencies.
+
+### 14. High-Performance Permission Synchronization & Mode Differ Consolidation
+- **Granular Permission Detection**: Enhanced `FolderDiff` to isolate mode-only changes into a dedicated sublist during single-pass directory comparison, avoiding expensive redundant byte comparisons.
+- **Dedicated `UPDATE_PERMISSION` Action**: Mismatched file permission bits (`0o777`) on identical content now generate fast, metadata-only `UPDATE_PERMISSION` actions instead of `SKIP_IDENTICAL` or full file rewrites.
+- **Unified Permission Comparison**: Merged duplicate mode checking helpers (`file_mode_differs`) into a canonical `permissions_differ(file1, file2) -> bool` in [`file_inspect.py`](../src/drift/utils/file_inspect.py) operating over POSIX mode bits (`0o777`), fixing non-executable mode bit change detection (`0o644` vs `0o600`).
+- **Dead Code Cleanup**: Removed unused optional arguments (`src_dir`, `dst_dir`, `translate_mode`) from `FolderDiff.is_mode_only_change`.
+
+### 15. Declarative Staging Architecture & Strongly Typed `StageResult` (`stage_repo.py`)
+- **Declarative Stage Planning**: Unified Primitive 4 (`drift stage`) onto the declarative delivery engine with `PackageStagePlan` compiled via `plan_package_stage`, mirroring install and uninstall planning architectures.
+- **Structural Fidelity Invariant**: Preserved 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`) between `render/` and `install/`, mirroring payload files and control plane metadata (`.drift/hooks/`, `.drift_ignore`, `drift_package.toml`).
+- **Dead Code & Field Elimination**: Removed legacy `PackageStageChanges` and unused `deployable_changes` fields.
+- **Strongly Typed `StageResult`**: Replaced raw dictionary returns from `run_primitive_4_stage_render_to_install` and `execute_stage_packages` with `StageResult`, featuring structured properties (`has_changes`, `packages_changed`, `plans`), human-readable terminal formatting (`format_text()`), and complete dictionary-compatible accessors (`keys()`, `values()`, `items()`, `__getitem__`, `__contains__`, `__len__`, `__bool__`).
+- **Zero-Mutation Dry-Run Simulation (`--dry-run`)**: Added `dry_run` support to `execute_stage_packages` and `run_primitive_4_stage_render_to_install` (and CLI `drift stage --dry-run`), allowing users to simulate and inspect planned staging operations without modifying `install/` files or the `state.toml` registry.
+
+### 16. Test Suite Expansion & Cleanliness
+- Total passing tests expanded to **1019/1019 tests OK** with zero warnings, providing complete coverage across declarative staging, staging simulation (`--dry-run`), permission synchronization, unified delivery actions, dependency DAG ordering, multiline TOML parsing, error boundaries, and uninstallation plans.
 
 ---
 

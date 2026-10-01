@@ -611,6 +611,7 @@ def execute_uninstall_packages(
             status="SUCCESS",
             detach_mode=cfg.detach,
             packages=package_results,
+            dry_run=True,
         )
 
     # Save state registry & commit changes in install repo
@@ -629,6 +630,7 @@ def execute_uninstall_packages(
         status="SUCCESS",
         detach_mode=cfg.detach,
         packages=package_results,
+        dry_run=False,
     )
 
 
@@ -650,5 +652,10 @@ def run_primitive_7_uninstall_packages(
     if not plan.packages_to_uninstall:
         if package_names:
             logger.info("Nothing to uninstall.")
-        return UninstallResult(status="SUCCESS", detach_mode=plan.config.detach, packages=[])
+        return UninstallResult(
+            status="SUCCESS",
+            detach_mode=plan.config.detach,
+            packages=[],
+            dry_run=plan.config.dry_run,
+        )
     return execute_uninstall_packages(workspace_config, plan)

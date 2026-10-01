@@ -395,6 +395,7 @@ def handle_stage(
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_deps: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """(Low-Level) Stage compiled sandbox templates from render/ to install/ state database."""
     cli_ctx = _extract_cli_context(ctx)
@@ -407,6 +408,7 @@ def handle_stage(
             force=force,
             json_mode=cli_ctx.json_mode,
             no_deps=no_deps,
+            dry_run=dry_run,
         )
 
 
