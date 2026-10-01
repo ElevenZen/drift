@@ -59,7 +59,7 @@ Pre-flight Assertion Guards:
     - resolve_package_uninstall_order(pkg_dependencies_map)
         * Resolves reverse topological uninstallation order (dependents before prerequisites).
 
-    - resolve_ordered_packages(target_metadata, state_registry, workspace_config, no_deps)
+    - resolve_target_package_order(target_metadata, state_registry, workspace_config, no_deps)
         * Assembles the full dependency universe combining targeted packages with installed packages in StateRegistry.
         * Optionally validates required dependencies exist, resolves topological order, and filters targeted packages.
 
@@ -78,7 +78,7 @@ Layers:
         assert_no_broken_dependencies_on_uninstall
         resolve_package_install_order
         resolve_package_uninstall_order
-        resolve_ordered_packages
+        resolve_target_package_order
 ==============================================================================="""
 
 import shlex
@@ -600,7 +600,7 @@ def resolve_package_uninstall_order(
     return list(reversed(forward_order))
 
 
-def resolve_ordered_packages(
+def resolve_target_package_order(
     target_metadata: Mapping[str, PackageConfig],
     state_registry: StateRegistry,
     workspace_config: WorkspaceConfig,
@@ -631,7 +631,7 @@ def resolve_ordered_packages(
         return []
 
     install_base = workspace_config.install_path
-    will_installed_names = set(target_metadata.keys())
+    will_install_names = set(target_metadata.keys())
     already_installed_names = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
 
     installed_universe = {
@@ -641,7 +641,7 @@ def resolve_ordered_packages(
             else PackageConfig(PackageSectionConfig(name=pkg))
         )
         for pkg in already_installed_names
-        if pkg not in will_installed_names
+        if pkg not in will_install_names
     }
 
     full_universe = {**installed_universe, **target_metadata}
@@ -652,5 +652,5 @@ def resolve_ordered_packages(
         assert_required_package_dependencies_exist(full_deps)
 
     sorted_universe = resolve_package_install_order(full_deps)
-    return list(filter(will_installed_names.__contains__, sorted_universe))
+    return list(filter(will_install_names.__contains__, sorted_universe))
 

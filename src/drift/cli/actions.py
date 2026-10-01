@@ -413,6 +413,10 @@ def execute_uninstall(
     )
     if json_mode:
         print(res.to_json())
+    elif dry_run:
+        text = res.format_text(dry_run=True)
+        if text:
+            print(text)
     if res.status != "SUCCESS":
         raise RuntimeError(res.error_message or "Package uninstallation failed.")
 
@@ -642,7 +646,7 @@ def execute_health(
     json_mode: bool = False,
     verbose: bool = False,
     timeout: Optional[int] = None,
-    from_stage: Union[str, Any] = "install"
+    from_stage: Union[str, PackageStage] = PackageStage.INSTALL,
 ) -> None:
     """Core function to run package health check probes, shared by both CLI backends."""
     prepare_cli_environment(drift_root)
@@ -711,7 +715,7 @@ def execute_hook(
     package_name: str,
     hook_name: str,
     json_mode: bool = False,
-    from_stage: Optional[Union[str, Any]] = None
+    from_stage: Optional[Union[str, PackageStage]] = None,
 ) -> None:
     """Core function to trigger a single package lifecycle hook, shared by both CLI backends."""
     prepare_cli_environment(drift_root)

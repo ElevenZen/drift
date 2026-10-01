@@ -19,33 +19,31 @@ Pipeline Architecture:
                 * assert_no_cross_package_conflicts [from package_assertions]
                 * assert_no_cyclic_package_dependencies [from package_assertions]
             - Universe Construction & Topological Ordering (resolve_package_install_order)
-            -> Returns InstallPlan(pkg_metadata_map, state_registry, discovered_packages, config)
+            - Autonomous Context Construction (PackageInstallContext.from_package)
+            - Declarative Plan Compilation (plan_package_deployment)
+            -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_to_install, config, contexts, package_plans)
 
     2. Single-Package Deployment Execution:
         execute_install_deployment(workspace_config, plan: InstallPlan) [Layer 4]
-            - Iterates over plan.discovered_packages:
-                deploy_one_package_with_error_wrapping [Layer 4]
-                    deploy_one_package [Layer 4]
-                        check_package_deployment_skip [Layer 4]
-                        pkg_config.package_envs context
-                        deploy_one_package_impl [Layer 4]
-                            Target Directory Migration Detection -> cleanup old target & force redeploy
-                            plan_package_deployment [Layer 3] (Pure, inspectable per-path plan)
-                            If dry_run -> return PackageInstallResult(plan=plan) immediately (zero disk mutations)
-                            If no mutations & not redeploy & not first_time -> return SKIPPED (zero disk mutations)
-                            state_registry.set_package_state("installing") & save
-                            trigger pre_install / pre_update hook
-                            state_registry.sync_deployed_files & save
-                            execute_package_deployment [Layer 3] (Applies PlannedFileAction items deterministically)
-                            trigger post_install / post_update hook
-                            update_state_registry_post_deployment [Layer 3]
-                                state_registry.set_package_state("installed") & save
+            - If dry_run -> compiles inspectable result summaries from plan.package_plans (zero host mutations)
+            - Resolves hook flags once per batch (HookExecFlags.resolve)
+            - Iterates over plan.packages_to_install:
+                execute_package_install [Layer 2]
+                    * Skip evaluation (if no mutations and not redeploy)
+                    * with context.package_envs():
+                        execute_package_install_impl [Layer 2]
+                            - state_registry.set_package_state("installing") & save
+                            - trigger pre_install / pre_update hook
+                            - state_registry.sync_deployed_files & save
+                            - execute_package_actions (applies PlannedFileAction items deterministically)
+                            - trigger post_install / post_update hook
+                            - update_state_registry_post_deployment ("installed") & save
             -> Returns Aggregated InstallDeploymentResult
 
     3. Public Composite Primitive Entry Points:
-        run_primitive_5_install_deployment(workspace_config, target_pkgs, options) [Layer 5]
+        run_primitive_5_install_deployment(workspace_config, target_pkgs, options) [Layer 3]
             = prepare_install_deployment >> execute_install_deployment
-        run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 5]
+        run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 3]
             commit_repo_changes (commits state repository changes in install/)
 
     4. Declarative Per-Path Install Planner (plan_package_deployment):
@@ -63,38 +61,25 @@ Pipeline Architecture:
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
-    Layer 1: Atomic Host Actions
-        backup_host_item
-        execute_single_action
-    Layer 2: Single-Path Inspection & Planning Helpers
-        assert_target_dir_outside_drift_root
-        _plan_file_creation
-        _check_symlink_points_to_source
-        _check_has_backed_up_ancestor
-        _inspect_single_ancestor
-        _inspect_ancestor_directories
-        _inspect_symlink_leaf
-        _inspect_physical_file_leaf
-        _inspect_leaf_file
-        _plan_orphan_prune
-        _inspect_orphans
-    Layer 3: Plan Generation & Batch Execution
+    Layer 1: Context & Action Compilation
+        PackageInstallContext
         plan_package_deployment
-        execute_package_deployment
+        execute_package_actions
         update_state_registry_post_deployment
-    Layer 4: Single-Package Pipeline & Pre-flight Validation
-        check_package_deployment_skip
-        deploy_one_package_impl
+    Layer 2: Single-Package Pipeline & Pre-flight Validation
+        execute_package_install_impl
+        execute_package_install
         deploy_one_package
-        deploy_one_package_with_error_wrapping
         assert_packages_deployment_ready
         prepare_install_deployment
         execute_install_deployment
-    Layer 5: Public Primitive Entry Points
+    Layer 3: Public Primitive Entry Points
         run_primitive_5_install_deployment
         run_primitive_6_commit_install_repo
 ===============================================================================
 """
+
+from __future__ import annotations
 
 import os
 import sys
@@ -105,9 +90,10 @@ import datetime
 import shlex
 import collections
 import itertools
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Set, Sequence, Mapping, Iterable
+from typing import Dict, List, Optional, Tuple, Set, Sequence, Mapping, Iterable, Union, Iterator
+from contextlib import contextmanager
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import (
@@ -115,6 +101,7 @@ from ..config.package_config import (
     PackageDependencies,
     PackageSectionConfig,
 )
+from ..config.package_hooks import PackageHooks
 from ..core.constants import (
     LineEnding,
     InstallMethod,
@@ -142,7 +129,7 @@ from .package_assertions import (
     assert_no_cross_package_conflicts,
     assert_no_cyclic_package_dependencies,
     resolve_package_install_order,
-    resolve_ordered_packages,
+    resolve_target_package_order,
 )
 from ..utils.path_utils import (
     resolve_target_path,
@@ -161,9 +148,16 @@ from ..utils.file_ops import (
 )
 from ..utils.process_utils import run_command
 from ..core.sync_ops import backup_file_or_dir_external
-from ..core.result_models import (
+from ..core.folder_deployment import (
+    ActionExecutionContext,
     ActionType,
     PlannedFileAction,
+    plan_folder_deployment,
+    plan_file_removals,
+    execute_deployment_actions,
+    assert_target_dir_outside_drift_root,
+)
+from ..core.result_models import (
     PackageDeploymentPlan,
     PackageInstallResult,
     InstallDeploymentResult,
@@ -192,8 +186,10 @@ class InstallPlan:
     """Pre-flight validated installation plan containing package configurations, config, and state registry."""
     pkg_metadata_map: Dict[str, PackageConfig]
     state_registry: StateRegistry
-    discovered_packages: List[str]
+    packages_to_install: List[str]
     config: InstallConfig
+    contexts: Dict[str, PackageInstallContext] = field(default_factory=dict)
+    package_plans: Dict[str, PackageDeploymentPlan] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -208,6 +204,27 @@ class PackageInstallContext:
     sudo: bool
     is_first_time: bool
     drift_root: Path
+    hooks: PackageHooks = field(default_factory=PackageHooks)
+
+    @property
+    def action_context(self) -> ActionExecutionContext:
+        return ActionExecutionContext(
+            target_dir=self.target_dir,
+            install_pkg_dir=self.install_pkg_dir,
+            backup_pkg_dir=self.backup_pkg_dir,
+            sudo=self.sudo,
+        )
+
+    @contextmanager
+    def package_envs(self) -> Iterator[None]:
+        """Context manager to activate package-specific environment variables for hooks."""
+        if self.hooks and getattr(self.hooks, "_package_config", None):
+            with self.hooks._package_config.package_envs():
+                yield
+        else:
+            from ..utils.env_utils import env_scope
+            with env_scope({"drift_package_name": self.pkg_name}):
+                yield
 
     @classmethod
     def from_package(
@@ -234,439 +251,75 @@ class PackageInstallContext:
             sudo=metadata.package.sudo,
             is_first_time=is_first_time,
             drift_root=workspace_config.drift_root,
+            hooks=metadata.hooks,
         )
 
 
 # =============================================================================
-# Layer 1: Atomic Host Actions
-# =============================================================================
-
-def backup_host_item(
-    context: PackageInstallContext,
-    system_target: Path,
-    subfolder: BackupSubfolder,
-    rel_path: Path,
-    reason: Optional[str] = None,
-    resolve_symlinks: bool = True,
-) -> None:
-    """Safely backs up a host file, symlink, or directory to the package backup directory."""
-    subfolder_str = subfolder.value if isinstance(subfolder, BackupSubfolder) else str(subfolder)
-    backup_rel_path = decode_dot_prefix(rel_path)
-    backup_path = context.backup_pkg_dir / subfolder_str / backup_rel_path
-    if reason:
-        logger.warning(f"🛡️  [BACKUP] {reason} at '{system_target}'")
-    logger.debug(f"   Backing up to: {backup_path}")
-    backup_file_or_dir_external(system_target, backup_path, context.sudo, resolve_symlinks=resolve_symlinks)
-
-
-def execute_single_action(
-    context: PackageInstallContext,
-    action: PlannedFileAction,
-    resolve_symlinks: bool = True,
-) -> None:
-    """Executes a single planned file/directory deployment action on the host system."""
-    if action.action_type == ActionType.BACKUP_OVERWRITE:
-        backup_host_item(
-            context=context,
-            system_target=action.system_target,
-            subfolder=BackupSubfolder.OVERWRITTEN,
-            rel_path=action.rel_path,
-            reason=action.reason,
-            resolve_symlinks=resolve_symlinks,
-        )
-        remove(action.system_target, context.sudo)
-
-    elif action.action_type == ActionType.BACKUP_PRUNE:
-        backup_host_item(
-            context=context,
-            system_target=action.system_target,
-            subfolder=BackupSubfolder.DELETED_FILES,
-            rel_path=action.rel_path,
-            reason=action.reason,
-            resolve_symlinks=resolve_symlinks,
-        )
-        remove(action.system_target, context.sudo)
-
-    elif action.action_type == ActionType.ENSURE_DIR:
-        if action.system_target.is_symlink() or (action.system_target.exists() and not action.system_target.is_dir()):
-            raise NotADirectoryError(
-                f"Cannot ensure directory '{action.system_target}': path exists and is not a directory."
-            )
-        ensure_dir(action.system_target, context.sudo)
-
-    elif action.action_type == ActionType.CREATE_SYMLINK:
-        source_file = context.install_pkg_dir / action.rel_path
-        relative_target = compute_relative_symlink_target(source_file, action.system_target.parent)
-        create_symlink(relative_target, action.system_target, context.sudo)
-
-    elif action.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY):
-        source_file = context.install_pkg_dir / action.rel_path
-        copy_file(source_file, action.system_target, context.sudo)
-
-    elif action.action_type == ActionType.SKIP_IDENTICAL:
-        logger.debug(f"   Skipping '{action.system_target}': already up-to-date")
-
-
-# =============================================================================
-# Layer 2: Single-File Delivery & Conflict Resolution Helpers
-# =============================================================================
-
-def assert_target_dir_outside_drift_root(target_dir: Path, drift_root: Path) -> None:
-    """Guards against deployment into drift_root via direct path or symlink resolution."""
-    abs_drift_root = drift_root.resolve()
-    resolved_target = target_dir.resolve()
-    if is_relative_to(resolved_target, abs_drift_root):
-        raise InstallCollisionError(
-            f"Safety Abort: Target directory '{target_dir}' (resolved to '{resolved_target}') "
-            f"points inside drift workspace root '{drift_root}'. "
-            f"Resolving this automatically is unsafe. Please resolve manually."
-        )
-
-
-def _plan_file_creation(
-    install_method: InstallMethod,
-    rel_file: Path,
-    system_target: Path,
-) -> PlannedFileAction:
-    """Returns CREATE_SYMLINK or CREATE_COPY depending on the package install method."""
-    action_type = ActionType.CREATE_SYMLINK if install_method == InstallMethod.SYMLINK else ActionType.CREATE_COPY
-    return PlannedFileAction(action_type=action_type, rel_path=rel_file, system_target=system_target)
-
-
-def _check_symlink_points_to_source(system_target: Path, source_file: Path) -> bool:
-    """Read-only check returning True if system_target symlink resolves or points to source_file."""
-    try:
-        link_raw = Path(os.readlink(system_target))
-        expected_rel = compute_relative_symlink_target(source_file, system_target.parent)
-        return link_raw == expected_rel or (system_target.parent / link_raw).resolve() == source_file.resolve()
-    except Exception:
-        return False
-
-
-def _inspect_single_ancestor(
-    ancestor_target: Path,
-    rel_path: Path,
-    abs_drift_root: Path,
-) -> List[PlannedFileAction]:
-    """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
-    if not (ancestor_target.exists() or ancestor_target.is_symlink()):
-        return [PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target)]
-
-    if ancestor_target.is_dir() and not ancestor_target.is_symlink():
-        return []
-
-    # Blocked by an internal symlink, foreign symlink, or physical file
-    if ancestor_target.is_symlink():
-        is_internal = False
-        try:
-            is_internal = is_relative_to(ancestor_target.resolve(), abs_drift_root)
-        except Exception:
-            is_internal = False
-        reason = "Internal ancestor symlink conflict" if is_internal else "Symlink blocking directory"
-    else:
-        reason = "File blocking directory"
-
-    return [
-        PlannedFileAction(action_type=ActionType.BACKUP_OVERWRITE, rel_path=rel_path, system_target=ancestor_target, reason=reason),
-        PlannedFileAction(action_type=ActionType.ENSURE_DIR, rel_path=rel_path, system_target=ancestor_target),
-    ]
-
-
-def _check_has_backed_up_ancestor(target: Path, backed_up_targets: Set[Path]) -> bool:
-    """Read-only check returning True if any parent directory of target has been backed up."""
-    return any(parent in backed_up_targets for parent in target.parents)
-
-
-def _inspect_ancestor_directories(
-    context: PackageInstallContext,
-    active_files: Iterable[Path],
-    handled_targets: Set[Path],
-    actions: List[PlannedFileAction],
-) -> Set[Path]:
-    """Inspects parent directories of active files from shallowest to deepest, planning necessary directory recreation or backups."""
-    def _expand_path_ancestors(rel: Path) -> Set[Path]:
-        target_rel = encode_dot_prefix(rel)
-        return {p for p in target_rel.parents if p != Path(".")}
-
-    all_ancestors = {p for rel in active_files for p in _expand_path_ancestors(rel)}
-    sorted_ancestors = sorted(all_ancestors, key=lambda p: len(p.parts))
-    abs_drift_root = context.drift_root.resolve()
-    backed_up_ancestor_targets: Set[Path] = set()
-
-    for p in sorted_ancestors:
-        ancestor_target = context.target_dir / p
-        if ancestor_target in handled_targets:
-            continue
-        handled_targets.add(ancestor_target)
-        rel_path = decode_dot_prefix(p)
-
-        if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
-            actions.append(PlannedFileAction(
-                action_type=ActionType.ENSURE_DIR,
-                rel_path=rel_path,
-                system_target=ancestor_target,
-            ))
-            continue
-
-        res = _inspect_single_ancestor(ancestor_target, rel_path, abs_drift_root)
-        if any(a.action_type == ActionType.BACKUP_OVERWRITE for a in res):
-            backed_up_ancestor_targets.add(ancestor_target)
-        actions.extend(res)
-
-    return backed_up_ancestor_targets
-
-
-def _inspect_symlink_leaf(
-    context: PackageInstallContext,
-    rel_file: Path,
-    system_target: Path,
-    source_file: Path,
-    abs_drift_root: Path,
-) -> List[PlannedFileAction]:
-    """Inspects a host symlink at destination and plans overwrite, skip, or re-link actions."""
-    if not system_target.exists():
-        # Broken symlink
-        return [
-            PlannedFileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
-                reason="Broken symlink collision",
-            ),
-            _plan_file_creation(context.install_method, rel_file, system_target),
-        ]
-
-    # Check if existing symlink already points to source_file
-    if _check_symlink_points_to_source(system_target, source_file):
-        if context.install_method == InstallMethod.SYMLINK:
-            return [PlannedFileAction(
-                action_type=ActionType.SKIP_IDENTICAL,
-                rel_path=rel_file,
-                system_target=system_target,
-                reason="Symlink already points to source",
-            )]
-        # Switching from symlink to copy: backup the existing symlink and create physical copy
-        return [
-            PlannedFileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
-                reason="Replacing symlink with copy",
-            ),
-            PlannedFileAction(
-                action_type=ActionType.CREATE_COPY,
-                rel_path=rel_file,
-                system_target=system_target,
-            ),
-        ]
-
-    # Symlink points elsewhere (internal conflict vs external collision)
-    points_into_drift = False
-    try:
-        points_into_drift = is_relative_to(system_target.resolve(), abs_drift_root)
-    except Exception:
-        points_into_drift = False
-
-    reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
-    return [
-        PlannedFileAction(
-            action_type=ActionType.BACKUP_OVERWRITE,
-            rel_path=rel_file,
-            system_target=system_target,
-            reason=reason,
-        ),
-        _plan_file_creation(context.install_method, rel_file, system_target),
-    ]
-
-
-def _inspect_physical_file_leaf(
-    context: PackageInstallContext,
-    rel_file: Path,
-    system_target: Path,
-    source_file: Path,
-) -> List[PlannedFileAction]:
-    """Inspects a host regular physical file and plans overwrite, update, or skip actions."""
-    if context.install_method == InstallMethod.SYMLINK:
-        return [
-            PlannedFileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
-                reason="Physical file collides with symlink",
-            ),
-            PlannedFileAction(
-                action_type=ActionType.CREATE_SYMLINK,
-                rel_path=rel_file,
-                system_target=system_target,
-            ),
-        ]
-
-    # COPY method
-    if context.is_first_time:
-        return [
-            PlannedFileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
-                rel_path=rel_file,
-                system_target=system_target,
-                reason="Pre-existing file collision",
-            ),
-            PlannedFileAction(
-                action_type=ActionType.CREATE_COPY,
-                rel_path=rel_file,
-                system_target=system_target,
-            ),
-        ]
-
-    from ..utils.file_inspect import contents_differ
-    try:
-        differs = contents_differ(source_file, system_target)
-    except Exception:
-        differs = True
-
-    if differs:
-        return [PlannedFileAction(
-            action_type=ActionType.UPDATE_COPY,
-            rel_path=rel_file,
-            system_target=system_target,
-            reason="File content updated",
-        )]
-
-    return [PlannedFileAction(
-        action_type=ActionType.SKIP_IDENTICAL,
-        rel_path=rel_file,
-        system_target=system_target,
-        reason="File content matches",
-    )]
-
-
-def _inspect_leaf_file(
-    context: PackageInstallContext,
-    rel_file: Path,
-    handled_targets: Set[Path],
-    actions: List[PlannedFileAction],
-    backed_up_ancestor_targets: Set[Path],
-) -> None:
-    """Inspects a single package file against host filesystem state and plans appropriate actions."""
-    rel_file = decode_dot_prefix(rel_file)
-    system_target = resolve_target_path(rel_file, context.target_dir)
-    source_file = context.install_pkg_dir / rel_file
-    handled_targets.add(system_target)
-    abs_drift_root = context.drift_root.resolve()
-
-    if _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets):
-        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
-        return
-
-    target_exists_or_symlink = system_target.exists() or system_target.is_symlink()
-
-    if not target_exists_or_symlink:
-        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
-        return
-
-    if system_target.is_dir() and not system_target.is_symlink():
-        actions.append(PlannedFileAction(
-            action_type=ActionType.BACKUP_OVERWRITE,
-            rel_path=rel_file,
-            system_target=system_target,
-            reason="Directory blocking file",
-        ))
-        actions.append(_plan_file_creation(context.install_method, rel_file, system_target))
-        return
-
-    if system_target.is_symlink():
-        actions.extend(_inspect_symlink_leaf(context, rel_file, system_target, source_file, abs_drift_root))
-        return
-
-    actions.extend(_inspect_physical_file_leaf(context, rel_file, system_target, source_file))
-
-
-def _plan_orphan_prune(
-    context: PackageInstallContext,
-    orphan_rel: Path,
-    reason: str,
-) -> List[PlannedFileAction]:
-    """Inspects an orphaned path on host and plans BACKUP_PRUNE if present."""
-    system_target = resolve_target_path(orphan_rel, context.target_dir)
-    if not (system_target.exists() or system_target.is_symlink()):
-        return []
-
-    decoded_rel = decode_dot_prefix(orphan_rel)
-    return [
-        PlannedFileAction(
-            action_type=ActionType.BACKUP_PRUNE,
-            rel_path=decoded_rel,
-            system_target=system_target,
-            reason=reason,
-        ),
-    ]
-
-
-def _inspect_orphans(
-    context: PackageInstallContext,
-    deployable_files: Sequence[Path],
-    deployed_files: Sequence[Path],
-    actions: List[PlannedFileAction],
-) -> None:
-    """Plans backup and deletion of historical orphaned files."""
-    orphaned_files = sorted(set(deployed_files) - set(deployable_files))
-    for orphaned in orphaned_files:
-        actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
-
-
-# =============================================================================
-# Layer 3: Batch Delivery & Collision Audit
+# Layer 1: Context & Action Compilation
 # =============================================================================
 
 def plan_package_deployment(
     context: PackageInstallContext,
-    deployable_files: Iterable[Path],
-    deployed_files: Iterable[Path] = (),
+    deployable_files: Sequence[Path],
+    deployed_files: Sequence[Path] = (),
+    target_migrated_from: Optional[Path] = None,
 ) -> PackageDeploymentPlan:
     """Pure, read-only planner that inspects package candidate paths and host state to produce a deterministic deployment plan.
 
     Does NOT modify the host filesystem, execute hooks, or touch state.toml.
     """
-    assert_target_dir_outside_drift_root(context.target_dir, context.drift_root)
-
-    deployable_list = list(deployable_files)
-    deployed_list = list(deployed_files)
-
-    actions: List[PlannedFileAction] = []
-    handled_targets: Set[Path] = set()
-
-    active_files = deployable_list
-
-    # 1. Prune historical orphans first
-    _inspect_orphans(
-        context=context,
-        deployable_files=deployable_list,
-        deployed_files=deployed_list,
-        actions=actions,
-    )
-
-    # 2. Inspect ancestor directories shallowest to deepest
-    backed_up_ancestors = _inspect_ancestor_directories(
-        context=context,
-        active_files=active_files,
-        handled_targets=handled_targets,
-        actions=actions,
-    )
-
-    # 3. Inspect leaf files
-    for rel_file in sorted(active_files):
-        _inspect_leaf_file(
-            context=context,
-            rel_file=rel_file,
-            handled_targets=handled_targets,
-            actions=actions,
-            backed_up_ancestor_targets=backed_up_ancestors,
-        )
-
     hooks_to_trigger = (
         ["pre_install", "post_install"]
         if context.is_first_time
         else ["pre_update", "post_update"]
     )
+    actions: List[PlannedFileAction] = []
+
+    # 1. Undeploy from previous location if target directory migrated
+    if target_migrated_from is not None:
+        actions.append(
+            PlannedFileAction(
+                action_type=ActionType.INFO_MESSAGE,
+                rel_path=Path("."),
+                system_target=target_migrated_from,
+                reason=(
+                    f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
+                    f"'{target_migrated_from}' -> '{context.target_dir}'. Undeploying from previous location."
+                ),
+            )
+        )
+        if deployed_files:
+            migration_removals = plan_file_removals(
+                deployed_files=deployed_files,
+                target_dir=target_migrated_from,
+            )
+            actions.extend(migration_removals)
+        active_deployed_files: Iterable[Path] = ()
+    else:
+        active_deployed_files = deployed_files
+
+    # 2. Informational banner indicating package deployment begins
+    actions.append(
+        PlannedFileAction(
+            action_type=ActionType.INFO_MESSAGE,
+            rel_path=Path("."),
+            system_target=context.target_dir,
+            reason=f"🚀 Deploying package: {context.pkg_name}",
+        )
+    )
+
+    # 3. Plan folder deployment actions to current target directory
+    folder_actions = plan_folder_deployment(
+        target_dir=context.target_dir,
+        source_dir=context.install_pkg_dir,
+        install_method=context.install_method,
+        drift_root=context.drift_root,
+        active_files=deployable_files,
+        deployed_files=active_deployed_files,
+        is_first_time=context.is_first_time,
+    )
+    actions.extend(folder_actions)
 
     return PackageDeploymentPlan(
         package=context.pkg_name,
@@ -677,14 +330,20 @@ def plan_package_deployment(
     )
 
 
-def execute_package_deployment(
+def execute_package_actions(
     context: PackageInstallContext,
     plan: PackageDeploymentPlan,
     resolve_symlinks: bool = True,
 ) -> None:
     """Executes all planned actions in deterministic order on the host filesystem."""
-    for action in plan.actions:
-        execute_single_action(context, action, resolve_symlinks=resolve_symlinks)
+    action_ctx = ActionExecutionContext(
+        target_dir=context.target_dir,
+        install_pkg_dir=context.install_pkg_dir,
+        backup_pkg_dir=context.backup_pkg_dir,
+        sudo=context.sudo,
+        resolve_symlinks=resolve_symlinks,
+    )
+    execute_deployment_actions(action_ctx, plan.actions)
 
 
 def update_state_registry_post_deployment(
@@ -693,6 +352,7 @@ def update_state_registry_post_deployment(
     target_directory: Path,
     install_method: InstallMethod,
     deployable_files: Sequence[Path],
+    sudo: bool = False,
 ) -> None:
     """Updates and saves state registry to reflect successful package deployment."""
     now_str = datetime.datetime.now().isoformat()
@@ -706,130 +366,32 @@ def update_state_registry_post_deployment(
         target_directory=target_directory,
         install_method=install_method,
         deployable_files=deployable_files,
+        sudo=sudo,
     )
     state_registry.save()
 
 
 # =============================================================================
-# Layer 4: Single-Package Pipeline & Pre-flight Validation
+# Layer 2: Single-Package Pipeline & Pre-flight Validation
 # =============================================================================
 
-def check_package_deployment_skip(
-    workspace_config: WorkspaceConfig,
+def execute_package_install_impl(
+    context: PackageInstallContext,
+    plan: PackageDeploymentPlan,
     state_registry: StateRegistry,
-    metadata: PackageConfig,
-    config: InstallConfig,
-) -> Optional[PackageInstallResult]:
-    """Inspects package deployment conditions to determine if physical deployment should be skipped.
-
-    Returns:
-        A PackageInstallResult with status="SKIPPED" if the package should be skipped,
-        or None if physical deployment should proceed.
-
-    Raises:
-        PackageInstallDirMissingError: If the package directory does not exist in install/.
-    """
-    pkg = metadata.name
-    install_pkg_dir = workspace_config.install_path / pkg
-    if not install_pkg_dir.is_dir():
-        raise PackageInstallDirMissingError(
-            f"Package installation directory '{install_pkg_dir}' does not exist on disk. "
-            f"Please ensure the package is staged before deploying.",
-            packages=[pkg],
-        )
-
-    if not metadata.package.enable_install:
-        logger.info(f"Skipping package '{pkg}' during deployment (enable_install is False).")
-        return PackageInstallResult(
-            package=pkg,
-            install_method=metadata.get_install_method(workspace_config),
-            target_directory=str(metadata.get_target_directory(workspace_config)),
-            status="SKIPPED",
-            error="enable_install is False",
-        )
-
-    if not config.force and state_registry.is_package_in_midway_state(pkg):
-        assert_packages_not_in_midway_state([pkg], state_registry)
-
-    return None
-
-
-def deploy_one_package_impl(
-    workspace_config: WorkspaceConfig,
-    state_registry: StateRegistry,
-    metadata: PackageConfig,
+    hook_flags: HookExecFlags,
     config: InstallConfig,
 ) -> PackageInstallResult:
-    """Executes deployment planning, lifecycle hooks, file deliveries, and state registry updates."""
-    context = PackageInstallContext.from_package(
-        workspace_config=workspace_config,
-        state_registry=state_registry,
-        metadata=metadata,
-    )
-
-    target_dir = context.target_dir
-    target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)
-
-    if target_migrated_from is not None:
-        logger.info(
-            f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
-            f"'{target_migrated_from}' -> '{target_dir}'. Undeploying from previous location."
-        )
-        old_deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
-        if old_deployed_files and not config.dry_run:
-            from .uninstall_repo import remove_deployed_files
-            remove_deployed_files(
-                pkg=context.pkg_name,
-                deployed_files=old_deployed_files,
-                target_dir=target_migrated_from,
-                sudo=context.sudo,
-            )
-
-    deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
-    deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
-
-    # 1. Pure Planning (Inspect and compile planned actions without mutating state)
-    plan = plan_package_deployment(
-        context=context,
-        deployable_files=deployable_files,
-        deployed_files=deployed_files,
-    )
-
-    if config.dry_run:
-        logger.info(f"🔍 [DRY-RUN] Planned {len(plan.actions)} actions for package '{context.pkg_name}'.")
-        return PackageInstallResult(
-            package=context.pkg_name,
-            install_method=context.install_method,
-            target_directory=str(context.target_dir),
-            plan=plan,
-            is_first_time=context.is_first_time,
-            status="SUCCESS",
-        )
-
-    has_mutations = any(a.action_type != ActionType.SKIP_IDENTICAL for a in plan.actions)
-    if not config.redeploy and not context.is_first_time and not has_mutations and target_migrated_from is None:
-        logger.info(f"Skipping package '{context.pkg_name}' deployment (no changes detected and redeploy is False).")
-        return PackageInstallResult(
-            package=context.pkg_name,
-            install_method=context.install_method,
-            target_directory=str(context.target_dir),
-            plan=plan,
-            is_first_time=False,
-            status="SKIPPED",
-            error="No changes detected and redeploy is False",
-        )
-
-    logger.info(f"🚀 Deploying package: {context.pkg_name}")
+    """Performs state transition, hooks, physical file actions, and registry updates under active package envs."""
     state_registry.set_package_state(context.pkg_name, "installing")
     state_registry.save()
 
-    # 2. Lifecycle Hooks & State registry update
-    hook_flags = HookExecFlags.resolve(config.flags, settings=workspace_config.settings)
+    # 1. Pre-deployment hooks
     try:
         if context.is_first_time:
-            metadata.hooks.trigger_pre_install(flags=hook_flags)
+            context.hooks.trigger_pre_install(flags=hook_flags)
         else:
-            metadata.hooks.trigger_pre_update(flags=hook_flags)
+            context.hooks.trigger_pre_update(flags=hook_flags)
     except HookExecutionError as e:
         if not e.requires_rollback:
             if context.is_first_time:
@@ -840,38 +402,39 @@ def deploy_one_package_impl(
             logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Deployment stopped (no rollback needed).")
         raise
 
-    # Persist the target file manifest to state.toml before physical delivery
+    # 2. Persist the target file manifest to state.toml before physical delivery
     # so that midway file deployment crashes have an authoritative list of files to uninstall/rollback
+    deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
     state_registry.sync_deployed_files(
         pkg=context.pkg_name,
         target_directory=context.target_dir,
         install_method=context.install_method,
         deployable_files=deployable_files,
+        sudo=context.sudo,
     )
     state_registry.save()
 
-    # 3. Physical Deployment Execution
-    execute_package_deployment(
+    # 3. Physical Actions Execution
+    execute_package_actions(
         context=context,
         plan=plan,
         resolve_symlinks=config.resolve_symlinks,
     )
     logger.debug(f"   File delivery completed via {context.install_method}")
 
-    # 4. Post Hooks
+    # 4. Post-deployment hooks
     success = False
     no_rollback_err = False
     try:
         if context.is_first_time:
-            metadata.hooks.trigger_post_install(flags=hook_flags)
+            context.hooks.trigger_post_install(flags=hook_flags)
         else:
-            metadata.hooks.trigger_post_update(flags=hook_flags)
+            context.hooks.trigger_post_update(flags=hook_flags)
         success = True
     except HookExecutionError as e:
         if not e.requires_rollback:
             no_rollback_err = True
             logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
-        # The exception is raised here.
         raise
     finally:
         if success or no_rollback_err:
@@ -881,18 +444,49 @@ def deploy_one_package_impl(
                 target_directory=context.target_dir,
                 install_method=context.install_method,
                 deployable_files=deployable_files,
+                sudo=context.sudo,
             )
 
     logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
 
     return PackageInstallResult(
-        package=context.pkg_name,
-        install_method=context.install_method,
-        target_directory=str(context.target_dir),
         plan=plan,
         is_first_time=context.is_first_time,
         status="SUCCESS",
     )
+
+
+def execute_package_install(
+    context: PackageInstallContext,
+    plan: PackageDeploymentPlan,
+    state_registry: StateRegistry,
+    hook_flags: HookExecFlags,
+    config: InstallConfig,
+) -> PackageInstallResult:
+    """Applies a pre-compiled PackageDeploymentPlan to the host system and updates state registry."""
+    target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, context.target_dir)
+
+    has_mutations = any(
+        a.action_type not in (ActionType.SKIP_IDENTICAL, ActionType.INFO_MESSAGE)
+        for a in plan.actions
+    )
+    if not config.redeploy and not context.is_first_time and not has_mutations and target_migrated_from is None:
+        logger.info(f"Skipping package '{context.pkg_name}' deployment (no changes detected and redeploy is False).")
+        return PackageInstallResult(
+            plan=plan,
+            is_first_time=False,
+            status="SKIPPED",
+            error="No changes detected and redeploy is False",
+        )
+
+    with context.package_envs():
+        return execute_package_install_impl(
+            context=context,
+            plan=plan,
+            state_registry=state_registry,
+            hook_flags=hook_flags,
+            config=config,
+        )
 
 
 def deploy_one_package(
@@ -901,56 +495,45 @@ def deploy_one_package(
     metadata: PackageConfig,
     config: Optional[InstallConfig] = None,
 ) -> PackageInstallResult:
-    """Core function to deploy a single package configuration."""
+    """Executes deployment planning, lifecycle hooks, file deliveries, and state registry updates for a single package."""
     cfg = config if config is not None else InstallConfig()
-
-    skip_res = check_package_deployment_skip(
+    context = PackageInstallContext.from_package(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
+    )
+    assert_packages_install_dirs_exist(workspace_config.install_path, [context.pkg_name])
+
+    target_dir = context.target_dir
+    target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, target_dir)
+
+    deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
+    deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
+
+    # 1. Pure Planning (Inspect and compile planned actions without mutating state)
+    plan = plan_package_deployment(
+        context=context,
+        deployable_files=deployable_files,
+        deployed_files=deployed_files,
+        target_migrated_from=target_migrated_from,
+    )
+
+    if cfg.dry_run:
+        logger.info(f"🔍 [DRY-RUN] Planned {len(plan.actions)} actions for package '{context.pkg_name}'.")
+        return PackageInstallResult(
+            plan=plan,
+            is_first_time=context.is_first_time,
+            status="SUCCESS",
+        )
+
+    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    return execute_package_install(
+        context=context,
+        plan=plan,
+        state_registry=state_registry,
+        hook_flags=hook_flags,
         config=cfg,
     )
-    if skip_res is not None:
-        return skip_res
-
-    with metadata.package_envs():
-        return deploy_one_package_impl(
-            workspace_config=workspace_config,
-            state_registry=state_registry,
-            metadata=metadata,
-            config=cfg,
-        )
-
-
-def deploy_one_package_with_error_wrapping(
-    workspace_config: WorkspaceConfig,
-    state_registry: StateRegistry,
-    metadata: PackageConfig,
-    config: Optional[InstallConfig] = None,
-) -> PackageInstallResult:
-    """Core function to deploy a single package configuration with subcommand error output reporting."""
-    pkg = metadata.name
-    try:
-        return deploy_one_package(
-            workspace_config=workspace_config,
-            state_registry=state_registry,
-            metadata=metadata,
-            config=config,
-        )
-    except subprocess.CalledProcessError as e:
-        stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
-        stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
-        err_msg = (
-            f"Subcommand failed during package '{pkg}' deployment.\n"
-            f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
-            f"Exit Code: {e.returncode}"
-        )
-        if stderr_str.strip():
-            err_msg += f"\nStderr:\n{stderr_str.strip()}"
-        if stdout_str.strip():
-            err_msg += f"\nStdout:\n{stdout_str.strip()}"
-        logger.error(err_msg)
-        raise mark_logged(RuntimeError(err_msg)) from e
 
 
 def assert_packages_deployment_ready(
@@ -1066,7 +649,7 @@ def prepare_install_deployment(
         return InstallPlan(
             pkg_metadata_map={},
             state_registry=state_registry,
-            discovered_packages=[],
+            packages_to_install=[],
             config=cfg,
         )
 
@@ -1082,18 +665,41 @@ def prepare_install_deployment(
     )
 
     # Construct full installable universe and resolve topological action order
-    action_order = resolve_ordered_packages(
+    action_order = resolve_target_package_order(
         target_metadata=pkg_metadata_map,
         state_registry=state_registry,
         workspace_config=workspace_config,
         no_deps=(cfg.force or cfg.no_deps),
     )
 
+    contexts = {
+        pkg: PackageInstallContext.from_package(
+            workspace_config=workspace_config,
+            state_registry=state_registry,
+            metadata=pkg_metadata_map[pkg],
+        )
+        for pkg in action_order
+        if pkg in pkg_metadata_map
+    }
+
+    package_plans = {
+        pkg: plan_package_deployment(
+            context=contexts[pkg],
+            deployable_files=contexts[pkg].ignore_handler.filter_deployable_files(contexts[pkg].install_pkg_dir),
+            deployed_files=state_registry.get_package_deployed_files(pkg),
+            target_migrated_from=state_registry.get_target_migrated_from(pkg, contexts[pkg].target_dir),
+        )
+        for pkg in action_order
+        if pkg in pkg_metadata_map
+    }
+
     return InstallPlan(
         pkg_metadata_map=pkg_metadata_map,
         state_registry=state_registry,
-        discovered_packages=action_order,
+        packages_to_install=action_order,
         config=cfg,
+        contexts=contexts,
+        package_plans=package_plans,
     )
 
 
@@ -1106,20 +712,57 @@ def execute_install_deployment(
     Args:
         workspace_config: The workspace configuration instance.
         plan: Pre-flight validated InstallPlan containing package metadata, state registry,
-              discovered packages, and install config.
+              packages_to_install, contexts, package_plans, and install config.
 
     Returns:
         InstallDeploymentResult with detailed per-package deployment results.
     """
-    results = [
-        deploy_one_package_with_error_wrapping(
-            workspace_config=workspace_config,
-            state_registry=plan.state_registry,
-            metadata=plan.pkg_metadata_map[pkg],
-            config=plan.config,
+    cfg = plan.config
+
+    if cfg.dry_run:
+        logger.info(f"🔍 [DRY-RUN] Simulating deployment for {len(plan.packages_to_install)} package(s).")
+        package_results = [
+            PackageInstallResult(
+                plan=plan.package_plans[pkg],
+                is_first_time=plan.contexts[pkg].is_first_time,
+                status="SUCCESS",
+            )
+            for pkg in plan.packages_to_install
+        ]
+        return InstallDeploymentResult(
+            status="SUCCESS",
+            packages=package_results,
         )
-        for pkg in plan.discovered_packages
-    ]
+
+    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    results: List[PackageInstallResult] = []
+
+    for pkg in plan.packages_to_install:
+        context = plan.contexts[pkg]
+        pkg_plan = plan.package_plans[pkg]
+        try:
+            pkg_res = execute_package_install(
+                context=context,
+                plan=pkg_plan,
+                state_registry=plan.state_registry,
+                hook_flags=hook_flags,
+                config=cfg,
+            )
+            results.append(pkg_res)
+        except subprocess.CalledProcessError as e:
+            stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+            stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
+            err_msg = (
+                f"Subcommand failed during package '{pkg}' deployment.\n"
+                f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
+                f"Exit Code: {e.returncode}"
+            )
+            if stderr_str.strip():
+                err_msg += f"\nStderr:\n{stderr_str.strip()}"
+            if stdout_str.strip():
+                err_msg += f"\nStdout:\n{stdout_str.strip()}"
+            logger.error(err_msg)
+            raise mark_logged(RuntimeError(err_msg)) from e
 
     return InstallDeploymentResult(
         status="SUCCESS",

@@ -22,6 +22,7 @@ from drift.core.result_models import (
     DeployFailure,
     UninstallResult,
     PackageUninstallResult,
+    PackageUninstallPlan,
     GcResult,
     AdoptResult,
     NewPackageResult,
@@ -51,9 +52,6 @@ class TestResultModels(unittest.TestCase):
             hooks_to_trigger=["pre_install", "post_install"],
         )
         pkg_res = PackageInstallResult(
-            package="zsh",
-            install_method=InstallMethod.SYMLINK,
-            target_directory="/home/user",
             plan=plan,
             is_first_time=True
         )
@@ -110,9 +108,6 @@ class TestResultModels(unittest.TestCase):
             status="SUCCESS",
             packages=[
                 PackageInstallResult(
-                    package="zsh",
-                    install_method=InstallMethod.SYMLINK,
-                    target_directory="/home/user",
                     plan=plan,
                 )
             ],
@@ -147,8 +142,8 @@ class TestResultModels(unittest.TestCase):
     def test_uninstall_result_iteration(self) -> None:
         un = UninstallResult(
             packages=[
-                PackageUninstallResult(package="pkg_a", install_method=InstallMethod.SYMLINK, target_directory="/home/test"),
-                PackageUninstallResult(package="pkg_b", install_method=InstallMethod.COPY, target_directory="/home/test", status="FAILED"),
+                PackageUninstallResult(plan=PackageUninstallPlan(package="pkg_a", install_method=InstallMethod.SYMLINK, target_directory="/home/test")),
+                PackageUninstallResult(plan=PackageUninstallPlan(package="pkg_b", install_method=InstallMethod.COPY, target_directory="/home/test"), status="FAILED"),
             ]
         )
         # Verify backward compatibility iteration

@@ -31,37 +31,7 @@ class DiffType(str, Enum):
     PENDING = "pending"    # Diff Δ: render/ -> install/ (Pending Delta)
 
 
-def serialize_for_json(obj: Any) -> Any:
-    """Recursively converts Dataclasses, Paths, Enums, and Sets into standard JSON primitives."""
-    if obj is None or isinstance(obj, (bool, int, float, str)):
-        return obj
-    if isinstance(obj, Path):
-        return obj.as_posix()
-    if isinstance(obj, Enum):
-        return obj.value
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    if isinstance(obj, (list, tuple, set)):
-        return [serialize_for_json(item) for item in obj]
-    if isinstance(obj, dict):
-        return {str(k): serialize_for_json(v) for k, v in obj.items()}
-    if is_dataclass(obj) and not isinstance(obj, type):
-        fields_dict = asdict(obj)
-        return serialize_for_json(fields_dict)
-    return str(obj)
-
-
-@dataclass
-class SerializableModel:
-    """Base dataclass providing automatic dictionary and JSON serialization."""
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Converts model to a JSON-serializable dictionary."""
-        return serialize_for_json(self)  # type: ignore[return-value]
-
-    def to_json(self, indent: int = 2) -> str:
-        """Serializes model to a formatted JSON string."""
-        return json.dumps(self.to_dict(), indent=indent)
+from .serialization import serialize_for_json, SerializableModel
 
 
 # =============================================================================
@@ -122,32 +92,13 @@ class StageResult(SerializableModel):
 
 
 # =============================================================================
-# Primitive 5: Install Deployment & Deployment Plan
-# =============================================================================
-
-class ActionType(str, Enum):
-    """Specific filesystem operation planned or executed during deployment."""
-    # Creations & Updates
-    CREATE_SYMLINK = "CREATE_SYMLINK"
-    CREATE_COPY = "CREATE_COPY"
-    UPDATE_COPY = "UPDATE_COPY"
-    ENSURE_DIR = "ENSURE_DIR"
-
-    # Skips (already matching desired state)
-    SKIP_IDENTICAL = "SKIP_IDENTICAL"
-
-    # Collisions & Cleanups
-    BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
-    BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
-
-
-@dataclass
-class PlannedFileAction(SerializableModel):
-    """Declarative specification of a single file/directory operation on the host system."""
-    action_type: ActionType
-    rel_path: Path
-    system_target: Path
-    reason: Optional[str] = None
+from .folder_deployment import (
+    ActionExecutionContext,
+    ActionType,
+    PlannedFileAction,
+    format_action_line,
+    format_action_summary,
+)
 
 
 @dataclass
@@ -194,59 +145,97 @@ class PackageDeploymentPlan(SerializableModel):
             lines.append("  Planned Actions: (None)")
         else:
             lines.append("  Planned Actions:")
-            for action in self.actions:
-                reason_str = f" ({action.reason})" if action.reason else ""
-                if action.action_type == ActionType.ENSURE_DIR:
-                    lines.append(f"    📁 [ENSURE_DIR]      {action.system_target}")
-                elif action.action_type == ActionType.CREATE_SYMLINK:
-                    lines.append(f"    🔗 [CREATE_SYMLINK]  {action.rel_path} -> {action.system_target}")
-                elif action.action_type == ActionType.CREATE_COPY:
-                    lines.append(f"    📄 [CREATE_COPY]     {action.rel_path} -> {action.system_target}")
-                elif action.action_type == ActionType.UPDATE_COPY:
-                    lines.append(f"    📝 [UPDATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}")
-                elif action.action_type == ActionType.SKIP_IDENTICAL:
-                    lines.append(f"    ⏭️ [SKIP_IDENTICAL]  {action.rel_path} -> {action.system_target}{reason_str}")
-                elif action.action_type == ActionType.BACKUP_OVERWRITE:
-                    lines.append(f"    🛡️ [BACKUP_OVERWRITE] {action.system_target}{reason_str}")
-                elif action.action_type == ActionType.BACKUP_PRUNE:
-                    lines.append(f"    📦 [BACKUP_PRUNE]    {action.system_target}{reason_str}")
-                else:
-                    lines.append(f"    [{action.action_type}] {action.rel_path} -> {action.system_target}{reason_str}")
+            lines.extend(format_action_line(action) for action in self.actions)
 
         if self.hooks_to_trigger:
             hooks_str = ", ".join(self.hooks_to_trigger)
-            lines.append(f"  Lifecycle Hooks: {hooks_str} (skipped during simulation)")
+            lines.append(f"  Lifecycle Hooks: {hooks_str}")
 
-        counts = []
-        if self.created:
-            counts.append(f"{len(self.created)} to create")
-        if self.updated:
-            counts.append(f"{len(self.updated)} to update")
-        if self.skipped:
-            counts.append(f"{len(self.skipped)} up-to-date")
-        backups_count = len(self.overwritten_backups) + len(self.prune_backups)
-        if backups_count:
-            counts.append(f"{backups_count} to backup")
-        if self.pruned:
-            counts.append(f"{len(self.pruned)} to prune")
-        ensured_dirs = [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
-        if ensured_dirs:
-            counts.append(f"{len(ensured_dirs)} directories")
+        lines.append(f"  Summary: {format_action_summary(self.actions)}")
+        return "\n".join(lines)
 
-        summary_str = ", ".join(counts) if counts else "0 actions"
-        lines.append(f"  Summary: {summary_str}")
+
+@dataclass
+class PackageUninstallPlan(SerializableModel):
+    """Structured uninstallation plan detailing all planned filesystem operations and lifecycle hooks."""
+    package: str = ""
+    target_directory: str = ""
+    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    detach_mode: bool = False
+    actions: List[PlannedFileAction] = field(default_factory=list)
+    hooks_to_trigger: List[str] = field(default_factory=list)
+
+    @property
+    def removed(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.REMOVE_DEPLOYED]
+
+    @property
+    def restored(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY) and not self.detach_mode]
+
+    @property
+    def converted(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY and self.detach_mode]
+
+    @property
+    def ensured_dirs(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
+
+    def format_text(self) -> str:
+        """Formats the uninstallation plan for human-readable terminal output."""
+        lines = [f"📦 Package '{self.package}':"]
+        lines.append(f"  Target: {self.target_directory}")
+        mode_label = "detach (convert to host copies)" if self.detach_mode else "uninstall"
+        lines.append(f"  Mode: {mode_label}")
+
+        if not self.actions:
+            lines.append("  Planned Actions: (None - directory missing or no deployed files)")
+        else:
+            lines.append("  Planned Actions:")
+            lines.extend(format_action_line(action) for action in self.actions)
+
+        if self.hooks_to_trigger:
+            hooks_str = ", ".join(self.hooks_to_trigger)
+            lines.append(f"  Lifecycle Hooks: {hooks_str}")
+
+        summary_parts = []
+        if self.ensured_dirs:
+            summary_parts.append(f"{len(self.ensured_dirs)} directories")
+        if self.removed:
+            summary_parts.append(f"{len(self.removed)} to remove")
+        if self.restored:
+            summary_parts.append(f"{len(self.restored)} to restore")
+        if self.converted:
+            summary_parts.append(f"{len(self.converted)} to convert to host copies")
+        lines.append(f"  Summary: {', '.join(summary_parts) if summary_parts else '0 actions'}")
         return "\n".join(lines)
 
 
 @dataclass
 class PackageInstallResult(SerializableModel):
-    package: str
-    install_method: InstallMethod
-    target_directory: str
     plan: PackageDeploymentPlan = field(default_factory=PackageDeploymentPlan)
     is_first_time: bool = False
     status: str = "SUCCESS"
     error: Optional[str] = None
+
+    @property
+    def package(self) -> str:
+        return self.plan.package
+
+    @property
+    def install_method(self) -> InstallMethod:
+        return self.plan.install_method
+
+    @property
+    def target_directory(self) -> str:
+        return self.plan.target_directory
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data["package"] = self.package
+        data["install_method"] = self.install_method.value if isinstance(self.install_method, Enum) else self.install_method
+        data["target_directory"] = self.target_directory
+        return data
 
 
 @dataclass
@@ -297,15 +286,36 @@ class RestoredBackup(SerializableModel):
 
 @dataclass
 class PackageUninstallResult(SerializableModel):
-    package: str
-    install_method: InstallMethod
-    target_directory: str
-    detach_mode: bool = False
+    plan: PackageUninstallPlan = field(default_factory=PackageUninstallPlan)
     removed_files: List[str] = field(default_factory=list)
     converted_symlinks: List[str] = field(default_factory=list)
     restored_backups: List[RestoredBackup] = field(default_factory=list)
     status: str = "SUCCESS"
     error: Optional[str] = None
+
+    @property
+    def package(self) -> str:
+        return self.plan.package
+
+    @property
+    def install_method(self) -> InstallMethod:
+        return self.plan.install_method
+
+    @property
+    def target_directory(self) -> str:
+        return self.plan.target_directory
+
+    @property
+    def detach_mode(self) -> bool:
+        return self.plan.detach_mode
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data["package"] = self.package
+        data["install_method"] = self.install_method.value if isinstance(self.install_method, Enum) else self.install_method
+        data["target_directory"] = self.target_directory
+        data["detach_mode"] = self.detach_mode
+        return data
 
 
 @dataclass
@@ -326,6 +336,35 @@ class UninstallResult(SerializableModel):
     @property
     def uninstalled_packages(self) -> List[str]:
         return [p.package for p in self.packages if p.status == "SUCCESS"]
+
+    def format_text(self, dry_run: bool = False) -> str:
+        """Formats the uninstallation/detachment results or simulation plan for terminal output."""
+        if not self.packages:
+            return "No packages targeted."
+
+        lines = []
+        if dry_run:
+            mode_header = "Detachment" if self.detach_mode else "Uninstallation"
+            lines.append(f"🔍 [DRY-RUN] Package {mode_header} Simulation Plan")
+            lines.append("=" * 60)
+            for pkg_res in self.packages:
+                lines.append(pkg_res.plan.format_text())
+                lines.append("")
+            total_actions = sum(len(p.plan.actions) for p in self.packages)
+            lines.append("=" * 60)
+            lines.append(
+                f"✨ [DRY-RUN] Simulation completed for {len(self.packages)} package(s). "
+                f"Total planned actions: {total_actions} (zero host mutations performed)."
+            )
+        else:
+            action_desc = "Detached" if self.detach_mode else "Uninstalled"
+            lines.append(f"✨ {action_desc} Summary:")
+            for pkg_res in self.packages:
+                status_icon = "✨" if pkg_res.status == "SUCCESS" else "❌"
+                lines.append(f"  {status_icon} Package '{pkg_res.package}': {pkg_res.status}")
+                if pkg_res.error:
+                    lines.append(f"     Error: {pkg_res.error}")
+        return "\n".join(lines)
 
 
 # =============================================================================

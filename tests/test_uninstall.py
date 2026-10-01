@@ -11,12 +11,18 @@ from drift.primitives.uninstall_repo import (
     run_primitive_7_uninstall_packages,
     UninstallConfig,
     UninstallPlan,
+    PackageUninstallContext,
+    plan_package_uninstall,
+    execute_package_uninstall,
     prepare_uninstall_packages,
     execute_uninstall_packages,
     uninstall_missing_package,
     assert_packages_uninstall_ready,
 )
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod
+from drift.core.folder_deployment import ActionType
+from drift.core.result_models import PackageUninstallPlan
+from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod, BackupSubfolder
 
 class TestUninstall(unittest.TestCase):
     def setUp(self):
@@ -662,18 +668,183 @@ fi
         pkg_backup = self.backup_dir / "pkg_ghost"
         pkg_backup.mkdir(parents=True, exist_ok=True)
 
-        res = uninstall_missing_package(
+        ctx = PackageUninstallContext.from_package_state(
             workspace_config=self.workspace_config,
             pkg="pkg_ghost",
             pkg_state=pkg_state,
-            dry_run=False,
             detach=False,
+        )
+        plan = plan_package_uninstall(ctx)
+        res = uninstall_missing_package(
+            context=ctx,
+            plan=plan,
+            dry_run=False,
         )
         self.assertEqual(res.package, "pkg_ghost")
         self.assertEqual(res.status, "SUCCESS")
         self.assertEqual(res.removed_files, [])
         # Empty backup dir should have been pruned
         self.assertFalse(pkg_backup.exists())
+
+    def test_uninstall_plan_compilation_standard(self):
+        """Verifies plan_package_uninstall compiles declarative removal, message, and restoration actions."""
+        pkg = "pkg_plan_test"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        backup_pkg_overwritten = self.backup_dir / pkg / "overwritten"
+        backup_pkg_overwritten.mkdir(parents=True, exist_ok=True)
+
+        # Setup backup file to restore
+        (backup_pkg_overwritten / "nested").mkdir(parents=True, exist_ok=True)
+        (backup_pkg_overwritten / "nested" / "backup.txt").write_text("restored backup", encoding="utf-8")
+
+        # Setup deployed host files to be removed
+        (self.system_target_dir / "tools").mkdir(parents=True, exist_ok=True)
+        (self.system_target_dir / "app.conf").write_text("deployed content", encoding="utf-8")
+        (self.system_target_dir / "tools" / "cli.sh").write_text("deployed content", encoding="utf-8")
+
+        # Context
+        context = PackageUninstallContext(
+            pkg_name=pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.SYMLINK,
+            deployed_files=[Path("app.conf"), Path("tools/cli.sh")],
+            sudo=False,
+            install_pkg_dir=install_pkg_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            drift_root=self.drift_root,
+            detach=False,
+        )
+
+        plan = plan_package_uninstall(context)
+        self.assertEqual(plan.package, pkg)
+        self.assertEqual(len(plan.removed), 2)
+        self.assertTrue(any(a.action_type == ActionType.REMOVE_DEPLOYED and a.rel_path == Path("app.conf") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.REMOVE_DEPLOYED and a.rel_path == Path("tools/cli.sh") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.INFO_MESSAGE for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("nested") for a in plan.actions))
+        self.assertEqual(len(plan.restored), 1)
+        self.assertEqual(plan.restored[0].rel_path, Path("nested/backup.txt"))
+        self.assertIn("to remove", plan.format_text())
+        self.assertIn("to restore", plan.format_text())
+
+    def test_uninstall_backup_restore_with_nested_ancestor_creation(self):
+        """Verifies uninstallation restores nested backups even if parent directories are missing or blocked."""
+        pkg = "pkg_nested_restore"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        backup_pkg_overwritten = self.backup_dir / pkg / "overwritten" / "deeply" / "nested"
+        backup_pkg_overwritten.mkdir(parents=True, exist_ok=True)
+        (backup_pkg_overwritten / "restored.conf").write_text("deeply nested config", encoding="utf-8")
+
+        # Host has a blocking file where 'deeply' directory needs to be
+        blocking_file = self.system_target_dir / "deeply"
+        blocking_file.write_text("I am a file blocking the directory", encoding="utf-8")
+
+        context = PackageUninstallContext(
+            pkg_name=pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[],
+            sudo=False,
+            install_pkg_dir=install_pkg_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            drift_root=self.drift_root,
+            detach=False,
+        )
+
+        plan = plan_package_uninstall(context)
+        # Should plan BACKUP_OVERWRITE on the blocking file, ENSURE_DIR, then CREATE_COPY
+        self.assertTrue(any(a.action_type == ActionType.BACKUP_OVERWRITE and a.rel_path == Path("deeply") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("deeply") for a in plan.actions))
+        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.rel_path == Path("deeply/nested") for a in plan.actions))
+        self.assertEqual(len(plan.restored), 1)
+
+        # Execute uninstallation
+        res = execute_package_uninstall(context, plan, hook_flags=HookExecFlags())
+        self.assertEqual(res.status, "SUCCESS")
+        restored_target = self.system_target_dir / "deeply" / "nested" / "restored.conf"
+        self.assertTrue(restored_target.is_file())
+        self.assertEqual(restored_target.read_text(encoding="utf-8"), "deeply nested config")
+
+    def test_uninstall_dry_run_zero_mutations(self):
+        """Verifies dry-run uninstallation performs zero host, registry, or directory mutations and returns structured plan."""
+        pkg = "pkg_dry_run_test"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg}"\n', encoding="utf-8"
+        )
+        deployed_file = self.system_target_dir / "dry_run_target.txt"
+        deployed_file.write_text("important deployed file", encoding="utf-8")
+
+        # Setup state
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state(pkg, "installed")
+        registry.sync_deployed_files(
+            pkg,
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployable_files=[Path("dry_run_target.txt")],
+        )
+        save_state_registry(registry)
+
+        # Pre-commit so git repo is clean
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            [pkg],
+            config=UninstallConfig(dry_run=True),
+        )
+
+        self.assertEqual(res.status, "SUCCESS")
+        # 1. Host file must NOT be removed
+        self.assertTrue(deployed_file.exists())
+        # 2. Package install directory must NOT be deleted
+        self.assertTrue(pkg_install_dir.exists())
+        # 3. State registry must STILL contain the package
+        reloaded_registry = load_state_registry(state_file)
+        self.assertIn(pkg, reloaded_registry.packages)
+        # 4. Formatted plan text is available
+        formatted = res.format_text(dry_run=True)
+        self.assertIn("DRY-RUN", formatted)
+        self.assertIn("dry_run_target.txt", formatted)
+
+    def test_uninstall_preserves_sudo_from_state_registry(self):
+        """Verifies uninstallation uses recorded sudo privilege from state registry even if package config changed."""
+        pkg = "pkg_sudo_test"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        # In drift_package.toml on disk, sudo is False
+        (pkg_install_dir / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f'[package]\nname = "{pkg}"\nsudo = false\n', encoding="utf-8"
+        )
+
+        # In state registry, sudo was recorded as True during deployment
+        state = PackageState(
+            state="installed",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[Path("file.txt")],
+            sudo=True,
+        )
+
+        from drift.config.package_config import PackageConfig
+        pkg_config = PackageConfig.from_install_dir(pkg_install_dir, self.workspace_config)
+        self.assertFalse(pkg_config.package.sudo)
+
+        context = PackageUninstallContext.from_package_state(
+            workspace_config=self.workspace_config,
+            pkg=pkg,
+            pkg_state=state,
+            pkg_config=pkg_config,
+            detach=False,
+        )
+        self.assertTrue(context.sudo)
+        self.assertTrue(context.action_context.sudo)
 
 
 if __name__ == "__main__":

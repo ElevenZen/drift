@@ -168,7 +168,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
 *   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
-*   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_ordered_packages`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
+*   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
 *   **Mechanism**: Computes exactly which files and packages require redeployment. Directly deletes removed files from `install/`, copies added/modified files into `install/`, and generates a `PackageStageChanges` object.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
@@ -188,15 +188,23 @@ Locks the deployed configurations and `state.toml` into the local state database
 
 ### Primitive 7: Uninstall Repo Package [High-level: `drift uninstall`]
 Removes or detaches packages from the system using strongly-typed `UninstallConfig(force, dry_run, detach, no_deps, flags)`:
-1.  **Dependency Safeguards & Reverse Topological Order**:
+1.  **Declarative Plan-then-Execute Architecture**:
+    *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
+    *   **Action Execution Context Derivation**: Derives an `ActionExecutionContext` setting `backup_subfolder=BackupSubfolder.DELETED_FILES`, ensuring any pre-existing host files colliding with restored ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store.
+    *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
+        *   *Standard Uninstall*: Compiles `plan_file_removals` (`REMOVE_DEPLOYED`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
+        *   *Detach Mode*: Compiles `plan_symlink_conversions` (`REMOVE_DEPLOYED` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
+    *   **Unified Action Execution (`execute_package_uninstall`)**: Applies planned operations sequentially via `execute_deployment_actions`.
+    *   **Zero-Mutation Dry-Run**: Under `--dry-run`, Drift simulates uninstallation without touching host files, state registry, or executing lifecycle hooks, rendering an inspectable structured summary via `UninstallResult.format_text(dry_run=True)`.
+2.  **Dependency Safeguards & Reverse Topological Order**:
     *   **Pre-Flight Broken Dependency Guard**: Invokes `assert_no_broken_dependencies_on_uninstall` to verify that remaining installed packages do not depend on any targeted packages (bypassed if `force=True` or `no_deps=True`).
     *   **Reverse Topological Order**: Resolves `resolve_package_uninstall_order` so dependent packages are uninstalled before prerequisites, guaranteeing cleanup hooks execute while prerequisite configurations remain intact.
     *   **Graceful Missing Directory Handling**: If a package's directory is missing in `install/`, Drift emits a warning and gracefully removes the record from `state.toml` without crashing.
-2.  **Standard Uninstall Mode (Default)**:
+3.  **Standard Uninstall Mode (Default)**:
     *   **Unlink or Delete**: Unlinks symlinks or deletes physical files.
     *   **Rollback Collision Guard**: Restores original host files backed up in `backup/<package>/overwritten/`.
     *   **Update Registry**: Removes the package from the state database (`install/state.toml`) and commits uninstallation.
-3.  **Detach/Eject Mode (`--detach`)**:
+4.  **Detach/Eject Mode (`--detach`)**:
     *   **Keep Configuration**: Stops managing this package via Drift, but preserves the current configuration files active on the system (e.g. freezing them as permanent configurations).
     *   **Symlink to Copy Conversion**: If the package was installed using `symlink` (symlinking), the engine recursively iterates through the deployed files, removes the symlink, and copies the physical file counterpart from `install/<pkg>/` to the active host target path.
     *   **Backups Kept Intact**: Leaves the user's historical original backups inside `backup/<pkg>/overwritten/` completely untouched (does not restore them).
@@ -947,7 +955,7 @@ Drift enforces a strict separation between read-only validation guards and pure 
 *   [`assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)`](../src/drift/primitives/package_assertions.py):
     *   Read-only guard for uninstallation. Evaluates packages that will remain installed on the system to verify none of them require any of the packages targeted for uninstallation.
     *   Aggregates all broken dependency relationships and raises `ConfigError` unless bypassed via `--force` or `no_deps = true` (CLI: `--no-deps`).
-*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py):
+*   [`resolve_target_package_order(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py):
     *   Centralized resolution helper that constructs the full package universe (already-installed packages from `state.toml` + target batch).
     *   Runs `assert_required_package_dependencies_exist` upfront when `not no_deps`.
     *   Computes and returns the topologically sorted package sequence. If a package directory is missing from `install/`, it gracefully falls back to a default `PackageConfig(PackageSectionConfig(name=pkg))` representation.
@@ -956,7 +964,7 @@ Drift enforces a strict separation between read-only validation guards and pure 
 Inter-package dependencies are orchestrated across every stage of the Drift lifecycle:
 
 *   **Primitive 4: Stage Render to Install**:
-    *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_ordered_packages`, and records the sequence in `StagePlan.ordered_packages`.
+    *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_target_package_order`, and records the sequence in `StagePlan.ordered_packages`.
     *   `execute_stage_packages` stages packages in this exact topological order, preserving update sequence for shared install methods (e.g. `SYMLINK`).
 *   **Primitive 5: Install Repo Deployment**:
     *   `prepare_install_deployment` validates deployment readiness (`assert_packages_deployment_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
@@ -966,6 +974,7 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
     *   Operates using `UninstallConfig(force, dry_run, detach, no_deps, flags)`.
     *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `no_deps`).
     *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
+    *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`REMOVE_DEPLOYED`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
     *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
 *   **Primitive 8: Rollback Recovery**:
     *   Executes a single unified reverse topological sort (`resolve_package_uninstall_order`) across all candidate packages requiring recovery.
@@ -1129,7 +1138,7 @@ Rather than relying on mutating collision routines or monolithic filesystem fold
 *   **Dry-Run Mode (`drift apply --dry-run`)**:
     *   Passes `dry_run=True` to compile and display the complete `PackageDeploymentPlan` with planned actions, action counts, and skipped lifecycle hooks without performing any filesystem mutations.
     *   Supports programmatic consumption via `--json`.
-*   **Execution Phase (`execute_package_deployment`)**:
+*   **Execution Phase (`execute_package_actions`)**:
     *   State mutations strictly follow the pre-computed plan in dependency order: intermediate directory creation, backups, symlink/copy file application, and orphan pruning.
 
 > [!IMPORTANT]
@@ -1352,7 +1361,7 @@ For each redeployable package:
     - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.
-*   **Plan Execution Phase (`execute_package_deployment`)**:
+*   **Plan Execution Phase (`execute_package_actions`)**:
     - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/`, atomic file copying or relative symlink creation, and orphan pruning.
 *   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`.
 *   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.

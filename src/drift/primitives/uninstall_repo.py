@@ -14,14 +14,18 @@ Pipeline Architecture:
                 * Escalation Privilege (assert_can_escalate)
                 * Lifecycle Hook Existence (assert_packages_hooks_exist)
             - Reverse Topological Order Resolution (resolve_package_uninstall_order)
-            -> Returns UninstallPlan(pkg_config_map, packages_to_uninstall, state_registry, ordered_packages, config)
+            - Autonomous Context Construction (PackageUninstallContext.from_package_state)
+            - Declarative Plan Compilation (plan_package_uninstall)
+            -> Returns UninstallPlan(pkg_config_map, packages_to_uninstall, state_registry, ordered_packages, config, contexts, package_plans)
 
-    2. Single-Package Execution & Coordination (State-Mutating):
+    2. Single-Package Execution & Coordination:
         execute_uninstall_packages(workspace_config, plan: UninstallPlan) [Layer 4]
+            - If dry_run -> compiles inspectable result summaries (zero host mutations)
             - Iterates over plan.ordered_packages:
-                * Missing Install Directory -> uninstall_missing_package [Layer 3]
-                * Detach Mode -> detach_one_package [Layer 3]
-                * Standard Uninstall -> uninstall_one_package [Layer 3]
+                execute_package_uninstall [Layer 3]
+                    * Missing Install Directory -> clean_up_package_directories
+                    * Detach Mode -> execute_deployment_actions (removes symlinks, copies concrete files)
+                    * Standard Uninstall -> pre_uninstall hook -> execute_deployment_actions -> post_uninstall hook
             - State Registry & Install Repo Synchronization:
                 * state_registry.remove_package & state_registry.save
                 * run_primitive_6_commit_install_repo
@@ -37,363 +41,67 @@ Layers (ordered bottom-up by dependency):
         filter_uninstallable_packages
         load_package_config_for_uninstall
         clean_up_package_directories
-    Layer 2: File Operation Helpers
-        remove_deployed_files
-        restore_backups
-    Layer 3: Single-Package Execution Handlers
+    Layer 2: Plan Generation & Single-Package Execution Handlers
+        plan_package_uninstall
+        uninstall_missing_package
         detach_one_package
         uninstall_one_package
-        uninstall_missing_package
-    Layer 4: Batch Uninstall Pipelines & Preparation
+        execute_package_uninstall
+    Layer 3: Batch Uninstall Pipelines & Preparation
         UninstallConfig
         UninstallPlan
+        PackageUninstallContext
         assert_packages_uninstall_ready
         prepare_uninstall_packages
         execute_uninstall_packages
-    Layer 5: Public Primitive Entry Point
+    Layer 4: Public Primitive Entry Point
         run_primitive_7_uninstall_packages
 ===============================================================================
 """
 
+from __future__ import annotations
+
 import logging
 import shutil
-from dataclasses import dataclass
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Tuple, Dict, Sequence, Mapping
+from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
-from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
-from ..core.state_registry import load_state_registry, PackageState, StateRegistry
+from ..config.package_hooks import PackageHooks
+from ..config.workspace_config import WorkspaceConfig
+from ..core.constants import (
+    DEFAULT_INSTALL_METHOD,
+    UNINSTALL_HOOK_NAMES,
+    BackupSubfolder,
+    InstallMethod,
+)
+from ..core.folder_deployment import (
+    ActionExecutionContext,
+    ActionType,
+    PlannedFileAction,
+    execute_deployment_actions,
+    plan_backup_restoration,
+    plan_file_removals,
+    plan_symlink_conversions,
+)
+from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, RestoredBackup, UninstallResult
+from ..core.state_registry import PackageState, StateRegistry, load_state_registry
+from ..hooks.lifecycle_hooks import HookExecFlags
+from ..utils.file_ops import prune_empty_parents, remove
+from ..utils.process_utils import assert_can_escalate
 from .package_assertions import (
-    assert_packages_hooks_exist,
     assert_no_broken_dependencies_on_uninstall,
+    assert_packages_hooks_exist,
     resolve_package_uninstall_order,
 )
-from ..utils.process_utils import assert_can_escalate
-from ..utils.file_ops import (
-    remove,
-    prune_empty_parents,
-    copy_tree,
-    move_tree,
-)
-from ..utils.file_inspect import tree_files
-from ..utils.path_utils import resolve_target_path
-from ..core.constants import DEFAULT_INSTALL_METHOD, UNINSTALL_HOOK_NAMES, BackupSubfolder, InstallMethod
-from ..hooks.lifecycle_hooks import HookExecFlags
-from ..core.result_models import PackageUninstallResult, UninstallResult, RestoredBackup
 
 logger = logging.getLogger(__name__)
 
 
 # =====================================================================
-# Layer 1: Pre-flight & Metadata / Cleanup Helpers
-# =====================================================================
-
-def filter_uninstallable_packages(
-    workspace_config: WorkspaceConfig,
-    registry: StateRegistry,
-    package_names: Sequence[str] = (),
-    force: bool = False
-) -> Tuple[Dict[str, PackageState], List[str]]:
-    """
-    Filters which packages are safe to uninstall according to the workspace configuration and registry.
-    Returns (packages_to_uninstall, active_but_rejected_names).
-    Force will allow uninstalling even if the package is still enabled in workspace config.
-    """
-    installed_packages = registry.packages
-
-    if package_names:
-        target_names = list(package_names)
-    else:
-        # If no packages specified, target all installed packages that are NOT enabled in config (orphans)
-        target_names = [pkg for pkg in installed_packages
-                        if not workspace_config.is_package_enabled(pkg)]
-
-    packages_to_uninstall = {}
-    rejected = []
-
-    for pkg in target_names:
-        # Check active status FIRST for safeguard
-        if workspace_config.is_package_enabled(pkg) and not force:
-            rejected.append(pkg)
-            continue
-            
-        if pkg not in installed_packages:
-            logger.warning(f"⚠️  Package '{pkg}' is not registered as installed. Skipping.")
-            continue
-            
-        packages_to_uninstall[pkg] = installed_packages[pkg]
-            
-    return packages_to_uninstall, rejected
-
-
-def load_package_config_for_uninstall(
-    workspace_config: WorkspaceConfig,
-    pkg: str
-) -> PackageConfig:
-    """Loads package configuration from install base, or constructs a default configuration if missing or invalid."""
-    try:
-        return PackageConfig.from_install_dir(workspace_config.install_path / pkg, workspace_config)
-    except Exception as e:
-        logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
-        return PackageConfig(PackageSectionConfig(name=pkg))
-
-
-def clean_up_package_directories(workspace_config: WorkspaceConfig, pkg: str) -> None:
-    """Cleans up the package directory under install_path and empty package directory under backup_path."""
-    # Clean up install/pkg directory
-    install_pkg_dir = workspace_config.install_path / pkg
-    if install_pkg_dir.exists():
-        try:
-            shutil.rmtree(install_pkg_dir)
-        except Exception as e:
-            logger.warning(f"   Failed to clean up install directory {install_pkg_dir}: {e}")
-
-    # Clean up backup/pkg directory if empty
-    backup_pkg_dir = workspace_config.backup_path / pkg
-    prune_empty_parents(backup_pkg_dir, workspace_config.backup_path)
-
-
-# =====================================================================
-# Layer 2: File Operation Helpers
-# =====================================================================
-
-def remove_deployed_files(
-    pkg: str,
-    deployed_files: List[Path],
-    target_dir: Path,
-    sudo: bool,
-    dry_run: bool = False
-) -> List[Tuple[Path, Path]]:
-    """Removes deployed files from the system. Returns list of (rel_file, system_target) tuples for removed files."""
-    removed: List[Tuple[Path, Path]] = []
-    # Sort in reverse to handle nested files/dirs (files before their parent dirs)
-    for rel_file in sorted(deployed_files, reverse=True):
-        system_target = resolve_target_path(rel_file, target_dir)
-        
-        if system_target.exists() or system_target.is_symlink():
-            if dry_run:
-                logger.info(f"🔍 [DRY RUN] Would remove: {system_target}")
-            else:
-                logger.debug(f"   Removing: {system_target}")
-                remove(system_target, sudo)
-                # Cleanup empty parent dirs up to target_dir
-                prune_empty_parents(system_target.parent, target_dir)
-            removed.append((rel_file, system_target))
-    
-    if not dry_run and removed:
-        logger.info(f"🧹 Cleaned up {len(removed)} deployed file(s) for {pkg}")
-    return removed
-
-
-def restore_backups(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    target_dir: Path,
-    sudo: bool,
-    dry_run: bool = False
-) -> List[RestoredBackup]:
-    """Restores backups for a package. Returns list of RestoredBackup records."""
-    restored: List[RestoredBackup] = []
-    backup_pkg_overwritten = workspace_config.backup_path / pkg / BackupSubfolder.OVERWRITTEN.value
-    if not backup_pkg_overwritten.exists():
-        return restored  # No backups to restore
-
-    # We assume we can just move symlinks in the backup without resolving,
-    # so we can safely use tree_files
-    backup_files = tree_files(backup_pkg_overwritten)
-    if not backup_files:
-        return restored  # No backups to restore
-
-    if not dry_run:
-        logger.info(f"🔄 Restoring backups for {pkg}...")
-    
-    for rel_backup in backup_files:
-        src = backup_pkg_overwritten / rel_backup
-        system_target = resolve_target_path(rel_backup, target_dir)
-        
-        if dry_run:
-            logger.info(f"🔍 [DRY RUN] Would restore: {system_target}")
-        else:
-            logger.debug(f"   Restoring: {system_target}")
-            # Use move=True to clean up backup as we restore it
-            move_tree(src, system_target, sudo)
-        restored.append(RestoredBackup(source_backup=str(src), restored_to=str(system_target)))
-    
-    if not dry_run:
-        logger.info(f"✨ Restored {len(restored)} file(s) for {pkg}")
-        # Clean up the 'overwritten' directory if it's now empty
-        prune_empty_parents(backup_pkg_overwritten, workspace_config.backup_path)
-
-    return restored
-
-
-# =====================================================================
-# Layer 3: Single-Package Execution Handlers
-# =====================================================================
-
-def detach_one_package(
-    workspace_config: WorkspaceConfig,
-    pkg_state: PackageState,
-    pkg_config: PackageConfig,
-    dry_run: bool = False,
-) -> PackageUninstallResult:
-    """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
-    pkg = pkg_config.name
-    if dry_run:
-        logger.info(f"🔍 [DRY RUN] Would detach package: {pkg} (replacing symlinks with copies)")
-    else:
-        logger.info(f"🔌 Detaching package: {pkg} (converting to independent system config)")
-
-    target_dir = (
-        pkg_state.target_directory
-        if pkg_state.target_directory is not None
-        else pkg_config.get_target_directory(workspace_config)
-    )
-    sudo = pkg_config.package.sudo
-    converted_symlinks = []
-
-    for rel_file in pkg_state.deployed_files:
-        system_target = resolve_target_path(rel_file, target_dir)
-        if not system_target.is_symlink():
-            continue
-        # Log the file that will be replaced in both dry-run and live modes
-        if dry_run:
-            logger.info(f"🔍 [DRY RUN] Would replace symlink with actual copy: {system_target}")
-            converted_symlinks.append(str(rel_file))
-            continue
-        src_file = workspace_config.install_path / pkg / rel_file
-        if not src_file.is_file():
-            logger.error(f"❌ Source file not found in install/ directory for package '{pkg}': {src_file}")
-            continue
-        logger.info(f"   Replacing symlink with actual copy: {system_target}")
-        remove(system_target, sudo)
-        system_target.parent.mkdir(parents=True, exist_ok=True)
-        copy_tree(src_file, system_target, sudo)
-        converted_symlinks.append(str(rel_file))
-
-    if not dry_run:
-        logger.info(f"🔌 Successfully detached and converted {pkg} files to independent configurations on the host.")
-        clean_up_package_directories(workspace_config, pkg)
-
-    return PackageUninstallResult(
-        package=pkg,
-        install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
-        target_directory=str(target_dir),
-        detach_mode=True,
-        removed_files=[],
-        converted_symlinks=converted_symlinks,
-        restored_backups=[],
-        status="SUCCESS",
-    )
-
-
-def uninstall_one_package(
-    workspace_config: WorkspaceConfig,
-    pkg_state: PackageState,
-    pkg_config: PackageConfig,
-    dry_run: bool = False,
-    flags: Optional[HookExecFlags] = None,
-) -> PackageUninstallResult:
-    """Orchestrates standard uninstallation of a single package.
-
-    Note:
-        Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only
-        triggered if the package configuration file ('drift_package.toml') is available
-        in the install/<pkg>/ directory.
-    """
-    pkg = pkg_config.name
-    if dry_run:
-        logger.info(f"🔍 [DRY RUN] Would uninstall package: {pkg}")
-    else:
-        logger.info(f"🗑️  Uninstalling package: {pkg}")
-
-    install_pkg_dir = workspace_config.install_path / pkg
-    target_dir = (
-        pkg_state.target_directory
-        if pkg_state.target_directory is not None
-        else pkg_config.get_target_directory(workspace_config)
-    )
-    sudo = pkg_config.package.sudo
-    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
-
-    # Check uninstall hook files exist before attempting uninstallation
-    if not dry_run and not hook_flags.no_hooks:
-        pkg_config.hooks.assert_hooks_exist(install_pkg_dir, is_source=False, hook_names=UNINSTALL_HOOK_NAMES)
-
-    with pkg_config.package_envs():
-        # 1. Trigger pre_uninstall hook (only if drift_package.toml is available)
-        if not dry_run and pkg_config.hooks.pre_uninstall:
-            pkg_config.hooks.trigger_pre_uninstall(
-                flags=hook_flags
-            )
-
-        # 2. Remove deployed files
-        removed = remove_deployed_files(pkg, pkg_state.deployed_files, target_dir, sudo, dry_run=dry_run)
-
-        # 3. Restore backups
-        restored = restore_backups(workspace_config, pkg, target_dir, sudo, dry_run=dry_run)
-
-        if not dry_run:
-            # 4. Trigger post_uninstall hook (only if drift_package.toml is available, CWD is install_pkg_dir)
-            if pkg_config.hooks.post_uninstall:
-                pkg_config.hooks.trigger_post_uninstall(
-                    flags=hook_flags
-                )
-            clean_up_package_directories(workspace_config, pkg)
-
-        return PackageUninstallResult(
-            package=pkg,
-            install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
-            target_directory=str(target_dir),
-            detach_mode=False,
-            removed_files=[str(rel) for rel, _ in removed],
-            converted_symlinks=[],
-            restored_backups=restored,
-            status="SUCCESS",
-        )
-
-
-def uninstall_missing_package(
-    workspace_config: WorkspaceConfig,
-    pkg: str,
-    pkg_state: PackageState,
-    dry_run: bool = False,
-    detach: bool = False,
-) -> PackageUninstallResult:
-    """Handles uninstallation and cleanup for a package whose directory is missing in the install repository.
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        pkg: Name of the missing package.
-        pkg_state: Recorded PackageState from state registry.
-        dry_run: If True, simulates actions without modifying the filesystem.
-        detach: Whether uninstallation was requested in detach mode.
-
-    Returns:
-        PackageUninstallResult indicating successful cleanup of missing package record.
-    """
-    logger.warning(
-        f"⚠️  Package directory not found in install repository for '{pkg}'. "
-        f"Removing entry from state registry."
-    )
-    if not dry_run:
-        clean_up_package_directories(workspace_config, pkg)
-
-    return PackageUninstallResult(
-        package=pkg,
-        install_method=pkg_state.install_method or DEFAULT_INSTALL_METHOD,
-        target_directory=str(pkg_state.target_directory or ""),
-        detach_mode=detach,
-        removed_files=[],
-        converted_symlinks=[],
-        restored_backups=[],
-        status="SUCCESS",
-    )
-
-
-# =====================================================================
-# Layer 4: Batch Uninstall Pipelines & Preparation
+# Uninstall Data Structures & Contexts
 # =====================================================================
 
 @dataclass
@@ -407,6 +115,78 @@ class UninstallConfig:
 
 
 @dataclass(frozen=True)
+class PackageUninstallContext:
+    """Encapsulates resolved package metadata and filesystem paths for uninstallation operations."""
+    pkg_name: str
+    target_dir: Path
+    install_method: InstallMethod
+    deployed_files: List[Path]
+    sudo: bool
+    install_pkg_dir: Path
+    backup_pkg_dir: Path
+    drift_root: Path
+    hooks: Optional[PackageHooks] = None
+    detach: bool = False
+    is_missing_install_dir: bool = False
+
+    @property
+    def action_context(self) -> ActionExecutionContext:
+        return ActionExecutionContext(
+            target_dir=self.target_dir,
+            install_pkg_dir=self.install_pkg_dir,
+            backup_pkg_dir=self.backup_pkg_dir,
+            sudo=self.sudo,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+        )
+
+    @contextmanager
+    def package_envs(self) -> Iterator[None]:
+        """Context manager to activate package-specific environment variables for hooks."""
+        if self.hooks and getattr(self.hooks, "_package_config", None):
+            with self.hooks._package_config.package_envs():
+                yield
+        else:
+            from ..utils.env_utils import env_scope
+            with env_scope({"drift_package_name": self.pkg_name}):
+                yield
+
+    @classmethod
+    def from_package_state(
+        cls,
+        workspace_config: WorkspaceConfig,
+        pkg: str,
+        pkg_state: PackageState,
+        pkg_config: Optional[PackageConfig] = None,
+        detach: bool = False,
+    ) -> "PackageUninstallContext":
+        install_pkg_dir = workspace_config.install_path / pkg
+        is_missing = not install_pkg_dir.is_dir()
+        target_dir = (
+            pkg_state.target_directory
+            if pkg_state.target_directory is not None
+            else (pkg_config.get_target_directory(workspace_config) if pkg_config else Path("/"))
+        )
+        # Sudo resolution: prefer state registry (authoritative historical deployment), fallback to pkg_config
+        sudo = pkg_state.sudo if pkg_state.sudo else (pkg_config.package.sudo if pkg_config else False)
+        install_method = pkg_state.install_method or DEFAULT_INSTALL_METHOD
+        hooks = pkg_config.hooks if pkg_config and not is_missing else None
+
+        return cls(
+            pkg_name=pkg,
+            target_dir=target_dir,
+            install_method=install_method,
+            deployed_files=list(pkg_state.deployed_files),
+            sudo=sudo,
+            install_pkg_dir=install_pkg_dir,
+            backup_pkg_dir=workspace_config.backup_path / pkg,
+            drift_root=workspace_config.drift_root,
+            hooks=hooks,
+            detach=detach,
+            is_missing_install_dir=is_missing,
+        )
+
+
+@dataclass(frozen=True)
 class UninstallPlan:
     """Pre-flight validated uninstallation plan containing package configurations and state registry."""
     pkg_config_map: Dict[str, PackageConfig]
@@ -414,7 +194,247 @@ class UninstallPlan:
     state_registry: StateRegistry
     ordered_packages: List[str]
     config: UninstallConfig
+    contexts: Dict[str, PackageUninstallContext] = field(default_factory=dict)
+    package_plans: Dict[str, PackageUninstallPlan] = field(default_factory=dict)
 
+
+# =====================================================================
+# Layer 1: Pre-flight & Metadata / Cleanup Helpers
+# =====================================================================
+
+def filter_uninstallable_packages(
+    workspace_config: WorkspaceConfig,
+    registry: StateRegistry,
+    package_names: Sequence[str] = (),
+    force: bool = False,
+) -> Tuple[Dict[str, PackageState], List[str]]:
+    """Filters which packages are safe to uninstall according to the workspace configuration and registry.
+
+    Returns (packages_to_uninstall, active_but_rejected_names).
+    Force will allow uninstalling even if the package is still enabled in workspace config.
+    """
+    installed_packages = registry.packages
+
+    if package_names:
+        target_names = list(package_names)
+    else:
+        # If no packages specified, target all installed packages that are NOT enabled in config (orphans)
+        target_names = [pkg for pkg in installed_packages if not workspace_config.is_package_enabled(pkg)]
+
+    packages_to_uninstall = {}
+    rejected = []
+
+    for pkg in target_names:
+        # Check active status FIRST for safeguard
+        if workspace_config.is_package_enabled(pkg) and not force:
+            rejected.append(pkg)
+            continue
+
+        if pkg not in installed_packages:
+            logger.warning(f"⚠️  Package '{pkg}' is not registered as installed. Skipping.")
+            continue
+
+        packages_to_uninstall[pkg] = installed_packages[pkg]
+
+    return packages_to_uninstall, rejected
+
+
+def load_package_config_for_uninstall(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+) -> PackageConfig:
+    """Loads package configuration from install base, or constructs a default configuration if missing or invalid."""
+    try:
+        return PackageConfig.from_install_dir(workspace_config.install_path / pkg, workspace_config)
+    except Exception as e:
+        logger.warning(f"   Failed to load package config for '{pkg}': {e}. Using defaults.")
+        return PackageConfig(PackageSectionConfig(name=pkg))
+
+
+def clean_up_package_directories(context: PackageUninstallContext) -> None:
+    """Cleans up the package directory under install_path and empty package directory under backup_path."""
+    if context.install_pkg_dir.exists():
+        try:
+            shutil.rmtree(context.install_pkg_dir)
+        except Exception as e:
+            logger.warning(f"   Failed to clean up install directory {context.install_pkg_dir}: {e}")
+
+    prune_empty_parents(context.backup_pkg_dir, context.backup_pkg_dir.parent)
+
+
+# =====================================================================
+# Layer 2: Plan Generation & Single-Package Execution Handlers
+# =====================================================================
+
+def plan_package_uninstall(
+    context: PackageUninstallContext,
+) -> PackageUninstallPlan:
+    """Compiles a deterministic PackageUninstallPlan without modifying host files or registry."""
+    actions: List[PlannedFileAction] = []
+    hooks_to_trigger: List[str] = []
+
+    if context.is_missing_install_dir:
+        return PackageUninstallPlan(
+            package=context.pkg_name,
+            target_directory=str(context.target_dir),
+            install_method=context.install_method,
+            detach_mode=context.detach,
+            actions=[],
+            hooks_to_trigger=[],
+        )
+
+    if context.detach:
+        actions.extend(
+            plan_symlink_conversions(
+                deployed_files=context.deployed_files,
+                target_dir=context.target_dir,
+                install_pkg_dir=context.install_pkg_dir,
+                drift_root=context.drift_root,
+            )
+        )
+    else:
+        # Standard uninstall: hooks + file removals + backup restoration
+        if context.hooks and (context.hooks.pre_uninstall or context.hooks.post_uninstall):
+            if context.hooks.pre_uninstall:
+                hooks_to_trigger.append("pre_uninstall")
+            if context.hooks.post_uninstall:
+                hooks_to_trigger.append("post_uninstall")
+
+        actions.extend(
+            plan_file_removals(
+                deployed_files=context.deployed_files,
+                target_dir=context.target_dir,
+            )
+        )
+        backup_overwritten = context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value
+        actions.extend(
+            plan_backup_restoration(
+                backup_overwritten_dir=backup_overwritten,
+                target_dir=context.target_dir,
+                drift_root=context.drift_root,
+            )
+        )
+
+    return PackageUninstallPlan(
+        package=context.pkg_name,
+        target_directory=str(context.target_dir),
+        install_method=context.install_method,
+        detach_mode=context.detach,
+        actions=actions,
+        hooks_to_trigger=hooks_to_trigger,
+    )
+
+
+def uninstall_missing_package(
+    context: PackageUninstallContext,
+    plan: PackageUninstallPlan,
+    dry_run: bool = False,
+) -> PackageUninstallResult:
+    """Handles uninstallation and cleanup for a package whose directory is missing in the install repository."""
+    if not dry_run:
+        logger.warning(
+            f"⚠️  Package directory not found in install repository for '{context.pkg_name}'. "
+            f"Removing entry from state registry."
+        )
+        clean_up_package_directories(context)
+    return PackageUninstallResult(
+        plan=plan,
+        removed_files=[],
+        converted_symlinks=[],
+        restored_backups=[],
+        status="SUCCESS",
+    )
+
+
+def detach_one_package(
+    context: PackageUninstallContext,
+    plan: PackageUninstallPlan,
+    dry_run: bool = False,
+) -> PackageUninstallResult:
+    """Decouples/detaches a single package from Drift, replacing symlinks with physical copies."""
+    converted = [str(a.rel_path) for a in plan.converted]
+    if not dry_run:
+        logger.info(f"🔌 Detaching package: {context.pkg_name} (converting to independent system config)")
+        execute_deployment_actions(context.action_context, plan.actions)
+        logger.info(f"🔌 Successfully detached and converted {context.pkg_name} files to independent configurations on the host.")
+        clean_up_package_directories(context)
+    return PackageUninstallResult(
+        plan=plan,
+        removed_files=[],
+        converted_symlinks=converted,
+        restored_backups=[],
+        status="SUCCESS",
+    )
+
+
+def uninstall_one_package(
+    context: PackageUninstallContext,
+    plan: PackageUninstallPlan,
+    hook_flags: HookExecFlags,
+    dry_run: bool = False,
+) -> PackageUninstallResult:
+    """Orchestrates standard uninstallation of a single package."""
+    removed = [str(a.rel_path) for a in plan.removed]
+    restored = [
+        RestoredBackup(
+            source_backup=str(a.source_path or (context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value / a.rel_path)),
+            restored_to=str(a.system_target),
+        )
+        for a in plan.restored
+    ]
+    if not dry_run:
+        logger.info(f"🗑️  Uninstalling package: {context.pkg_name}")
+        with context.package_envs():
+            # 1. Pre-uninstall hook
+            if context.hooks and context.hooks.pre_uninstall:
+                context.hooks.trigger_pre_uninstall(flags=hook_flags)
+
+            # 2. Execute plan actions (removes deployed files + recreates directories + copies restored backups)
+            execute_deployment_actions(context.action_context, plan.actions)
+
+            # 3. Clean up restored backup files from backup store
+            backup_overwritten = context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value
+            if backup_overwritten.is_dir():
+                for a in plan.restored:
+                    backup_file = a.source_path or (backup_overwritten / a.rel_path)
+                    if backup_file.exists():
+                        remove(backup_file, context.sudo)
+                prune_empty_parents(backup_overwritten, context.backup_pkg_dir)
+
+            # 4. Post-uninstall hook
+            if context.hooks and context.hooks.post_uninstall:
+                context.hooks.trigger_post_uninstall(flags=hook_flags)
+
+        clean_up_package_directories(context)
+
+    return PackageUninstallResult(
+        plan=plan,
+        removed_files=removed,
+        converted_symlinks=[],
+        restored_backups=restored,
+        status="SUCCESS",
+    )
+
+
+def execute_package_uninstall(
+    context: PackageUninstallContext,
+    plan: PackageUninstallPlan,
+    hook_flags: HookExecFlags,
+    dry_run: bool = False,
+) -> PackageUninstallResult:
+    """Applies planned actions deterministically to host and returns PackageUninstallResult."""
+    if context.is_missing_install_dir:
+        return uninstall_missing_package(context, plan, dry_run=dry_run)
+
+    if context.detach:
+        return detach_one_package(context, plan, dry_run=dry_run)
+
+    return uninstall_one_package(context, plan, hook_flags=hook_flags, dry_run=dry_run)
+
+
+# =====================================================================
+# Layer 3: Batch Uninstall Pipelines & Preparation
+# =====================================================================
 
 def assert_packages_uninstall_ready(
     workspace_config: WorkspaceConfig,
@@ -424,13 +444,6 @@ def assert_packages_uninstall_ready(
     config: UninstallConfig,
 ) -> None:
     """Pre-flight checks for dependencies, sudo permissions, and uninstall hooks before uninstallation.
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        packages_to_uninstall: Mapping of package names to recorded PackageState for uninstallation targets.
-        pkg_config_map: Mapping of package names to loaded PackageConfig.
-        state_registry: Active StateRegistry instance.
-        config: UninstallConfig containing flags and execution modes.
 
     Raises:
         ConfigError: If removing targeted packages breaks dependencies of remaining installed packages.
@@ -458,7 +471,10 @@ def assert_packages_uninstall_ready(
 
     # 2. Host and hook pre-checks (skipped in dry-run)
     if not config.dry_run:
-        needs_sudo = any(pkg_cfg.package.sudo for pkg_cfg in pkg_config_map.values())
+        needs_sudo = any(
+            (state.sudo or (pkg_config_map[pkg].package.sudo if pkg in pkg_config_map else False))
+            for pkg, state in packages_to_uninstall.items()
+        )
         if needs_sudo:
             assert_can_escalate()
 
@@ -478,24 +494,10 @@ def prepare_uninstall_packages(
 ) -> UninstallPlan:
     """Discovers, validates, and prepares packages for uninstallation or detachment.
 
-    Runs pre-flight assertion guards (safeguards, dependency integrity, sudo escalation, hook existence)
-    and computes topologically sorted uninstallation order (reverse of installation order).
+    Runs pre-flight assertion guards (safeguards, dependency integrity, sudo escalation, hook existence),
+    computes topologically sorted uninstallation order (reverse of installation order), compiles autonomous
+    PackageUninstallContext objects, and generates declarative PackageUninstallPlan structures.
     Does NOT modify the filesystem, remove deployed files, or mutate the state registry.
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        package_names: Specific package name(s) to uninstall, or empty sequence for all orphans.
-        config: Optional UninstallConfig controlling uninstallation behavior.
-
-    Returns:
-        UninstallPlan containing validated package configs, packages to uninstall, state registry,
-        ordered packages, and resolved config.
-
-    Raises:
-        RuntimeError: If targeted packages are active/enabled in workspace config and force is False.
-        ConfigError: If removing targeted packages breaks dependencies of remaining installed packages.
-        SubprocessError: If sudo escalation is required but unavailable.
-        HookMissingError: If any configured uninstall hook files are missing.
     """
     cfg = config if config is not None else UninstallConfig()
 
@@ -542,12 +544,31 @@ def prepare_uninstall_packages(
     uninstall_deps = {pkg: meta.package.dependencies for pkg, meta in pkg_config_map.items()}
     ordered_packages = resolve_package_uninstall_order(uninstall_deps)
 
+    # 6. Build autonomous contexts and compile uninstallation plans
+    contexts = {
+        pkg: PackageUninstallContext.from_package_state(
+            workspace_config=workspace_config,
+            pkg=pkg,
+            pkg_state=packages_to_uninstall[pkg],
+            pkg_config=pkg_config_map.get(pkg),
+            detach=cfg.detach,
+        )
+        for pkg in ordered_packages
+    }
+
+    package_plans = {
+        pkg: plan_package_uninstall(contexts[pkg])
+        for pkg in ordered_packages
+    }
+
     return UninstallPlan(
         pkg_config_map=pkg_config_map,
         packages_to_uninstall=packages_to_uninstall,
         state_registry=state_registry,
         ordered_packages=ordered_packages,
         config=cfg,
+        contexts=contexts,
+        package_plans=package_plans,
     )
 
 
@@ -557,61 +578,51 @@ def execute_uninstall_packages(
 ) -> UninstallResult:
     """Executes uninstallation or detachment of packages according to the validated UninstallPlan.
 
-    Handles missing package directory cleanup, physical file removal, backup restoration,
-    state registry updates, and Git state commits.
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        plan: The validated UninstallPlan containing packages, registry, configs, and order.
-
-    Returns:
-        UninstallResult containing details of uninstalled packages.
+    In dry_run mode, compiles inspectable result models with zero host or registry mutations.
     """
     cfg = plan.config
-    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
     package_results: List[PackageUninstallResult] = []
     successfully_uninstalled: List[str] = []
 
+    if cfg.dry_run:
+        logger.info(f"🔍 [DRY-RUN] Simulating uninstallation for {len(plan.ordered_packages)} package(s).")
+
+    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+
     for pkg in plan.ordered_packages:
-        pkg_state = plan.packages_to_uninstall[pkg]
-        pkg_config = plan.pkg_config_map[pkg]
+        ctx = plan.contexts[pkg]
+        pkg_plan = plan.package_plans[pkg]
 
-        # Graceful handling for targeted packages whose directory is missing in install repo
-        if not (workspace_config.install_path / pkg).is_dir():
-            pkg_res = uninstall_missing_package(
-                workspace_config=workspace_config,
-                pkg=pkg,
-                pkg_state=pkg_state,
-                dry_run=cfg.dry_run,
-                detach=cfg.detach,
-            )
-        elif cfg.detach:
-            pkg_res = detach_one_package(
-                workspace_config, pkg_state, pkg_config, dry_run=cfg.dry_run
-            )
-        else:
-            pkg_res = uninstall_one_package(
-                workspace_config, pkg_state, pkg_config, dry_run=cfg.dry_run, flags=hook_flags
-            )
+        pkg_res = execute_package_uninstall(
+            context=ctx,
+            plan=pkg_plan,
+            hook_flags=hook_flags,
+            dry_run=cfg.dry_run,
+        )
+        package_results.append(pkg_res)
 
-        if pkg_res.status == "SUCCESS":
+        if not cfg.dry_run and pkg_res.status == "SUCCESS":
             successfully_uninstalled.append(pkg)
-            if not cfg.dry_run:
-                plan.state_registry.remove_package(pkg)
-            package_results.append(pkg_res)
+            plan.state_registry.remove_package(pkg)
+
+    if cfg.dry_run:
+        return UninstallResult(
+            status="SUCCESS",
+            detach_mode=cfg.detach,
+            packages=package_results,
+        )
 
     # Save state registry & commit changes in install repo
-    if not cfg.dry_run:
-        if successfully_uninstalled:
-            plan.state_registry.save()
-            from .install_repo import run_primitive_6_commit_install_repo
-            action_name = "Detach" if cfg.detach else "Uninstall"
-            pkg_word = "package" if len(successfully_uninstalled) == 1 else "packages"
-            commit_msg = f"{action_name}: Removed {pkg_word} {', '.join(successfully_uninstalled)}"
-            run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
-            logger.info(f"✨ Successfully {action_name.lower()}ed {len(successfully_uninstalled)} {pkg_word}!")
-        else:
-            logger.info("Nothing was uninstalled.")
+    if successfully_uninstalled:
+        plan.state_registry.save()
+        from .install_repo import run_primitive_6_commit_install_repo
+        action_name = "Detach" if cfg.detach else "Uninstall"
+        pkg_word = "package" if len(successfully_uninstalled) == 1 else "packages"
+        commit_msg = f"{action_name}: Removed {pkg_word} {', '.join(successfully_uninstalled)}"
+        run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
+        logger.info(f"✨ Successfully {action_name.lower()}ed {len(successfully_uninstalled)} {pkg_word}!")
+    else:
+        logger.info("Nothing was uninstalled.")
 
     return UninstallResult(
         status="SUCCESS",
@@ -621,7 +632,7 @@ def execute_uninstall_packages(
 
 
 # =====================================================================
-# Layer 5: Public Primitive Entry Point
+# Layer 4: Public Primitive Entry Point
 # =====================================================================
 
 def run_primitive_7_uninstall_packages(
@@ -629,21 +640,7 @@ def run_primitive_7_uninstall_packages(
     package_names: Sequence[str] = (),
     config: Optional[UninstallConfig] = None,
 ) -> UninstallResult:
-    """Uninstalls or detaches one or more packages from the system (Primitive 7).
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        package_names: Specific package name(s) to uninstall, or empty/omitted to uninstall all orphans.
-        config: Optional UninstallConfig controlling uninstallation behavior.
-
-    Returns:
-        UninstallResult containing details of uninstalled packages.
-
-    Note:
-        Package uninstall lifecycle hooks (pre_uninstall and post_uninstall) are only
-        triggered if the package configuration file ('drift_package.toml') is available
-        in the install/<pkg>/ directory.
-    """
+    """Uninstalls or detaches one or more packages from the system (Primitive 7)."""
     plan = prepare_uninstall_packages(
         workspace_config=workspace_config,
         package_names=package_names,

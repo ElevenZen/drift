@@ -17,6 +17,7 @@ class PackageState:
     last_deployed: Optional[str] = None
     install_method: Optional[InstallMethod] = None
     deployed_files: List[Path] = field(default_factory=list)
+    sudo: bool = False
 
 
 class StateRegistry:
@@ -114,6 +115,7 @@ class StateRegistry:
         target_directory: Path,
         install_method: InstallMethod,
         deployable_files: Iterable[Path] = (),
+        sudo: bool = False,
     ) -> None:
         """Updates the target directory, install method, and deployed_files manifest list for a package in the state registry.
 
@@ -122,6 +124,7 @@ class StateRegistry:
             target_directory: Target directory on host system.
             install_method: Method used to install package ('copy', 'symlink').
             deployable_files: Full iterable of deployable files in the package.
+            sudo: Whether the package is installed with root escalation.
 
         Raises:
             KeyError: If pkg is not registered in the state registry.
@@ -132,6 +135,7 @@ class StateRegistry:
         self.packages[pkg].target_directory = Path(target_directory)
         self.packages[pkg].install_method = install_method
         self.packages[pkg].deployed_files = sorted(Path(x) for x in deployable_files)
+        self.packages[pkg].sudo = sudo
 
     def remove_package(self, pkg: str) -> None:
         if pkg in self.packages:
@@ -236,12 +240,14 @@ def load_state_registry(filepath: Path) -> StateRegistry:
             deployed_files = []
             if isinstance(deployed_files_raw, list):
                 deployed_files = [Path(x) for x in deployed_files_raw]
+            sudo = bool(v.get("sudo", False))
             packages[str(pkg)] = PackageState(
                 state=state,
                 target_directory=target_directory,
                 last_deployed=last_deployed,
                 install_method=install_method,
-                deployed_files=deployed_files
+                deployed_files=deployed_files,
+                sudo=sudo,
             )
         return StateRegistry(packages, state_file=filepath)
     except Exception:
@@ -268,5 +274,7 @@ def save_state_registry(registry: StateRegistry) -> None:
         if pkg_state.deployed_files:
             list_items = ", ".join(f'"{x}"' for x in pkg_state.deployed_files)
             lines.append(f'deployed_files = [{list_items}]')
+        if pkg_state.sudo:
+            lines.append("sudo = true")
         lines.append("")  # Empty line separator
     filepath.write_text("\n".join(lines), encoding="utf-8")

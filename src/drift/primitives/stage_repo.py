@@ -81,7 +81,7 @@ from .package_assertions import (
     assert_packages_not_in_midway_state,
     assert_no_cyclic_package_dependencies,
     resolve_package_install_order,
-    resolve_ordered_packages,
+    resolve_target_package_order,
 )
 
 logger = logging.getLogger(__name__)
@@ -415,7 +415,7 @@ def prepare_stage_packages(
     )
 
     # 4. Resolve topological order over universe, filtered to targeted packages
-    ordered_packages = resolve_ordered_packages(
+    ordered_packages = resolve_target_package_order(
         target_metadata=pkg_metadata,
         state_registry=state_registry,
         workspace_config=workspace_config,

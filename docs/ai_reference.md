@@ -62,6 +62,21 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/utils/file_utils.py): Deletes a file or directory safely (with `sudo` if configured).
 *   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
+### [`core/folder_deployment.py`](../src/drift/core/folder_deployment.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
+*   [`ActionType`](../src/drift/core/folder_deployment.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `REMOVE_DEPLOYED`, `INFO_MESSAGE`).
+*   [`PlannedFileAction`](../src/drift/core/folder_deployment.py): Dataclass representing a discrete single-file/directory host operation (`action_type`, `rel_path`, `source_path`, `system_target`, `detail`).
+*   [`ActionExecutionContext`](../src/drift/core/folder_deployment.py): Execution context encapsulating `target_dir`, `install_pkg_dir`, `backup_pkg_dir`, `sudo`, `resolve_symlinks`, and `backup_subfolder` (`OVERWRITTEN` or `DELETED_FILES`).
+*   [`PackageDeploymentPlan`](../src/drift/core/result_models.py) & [`PackageUninstallPlan`](../src/drift/core/result_models.py): Strongly-typed dataclass containers for planned package actions, supporting `.format_text(dry_run=False)` summaries.
+*   [`plan_folder_deployment(source_dir, target_dir, install_method, deployable_files, deployed_files=()) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file deployment actions.
+*   [`plan_backup_restoration(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles backup restoration into discrete `INFO_MESSAGE`, `ENSURE_DIR`, and `CREATE_COPY` actions with intermediate ancestor collision detection via `plan_folder_deployment`.
+*   [`plan_file_removals(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles `REMOVE_DEPLOYED` actions for deployed host items.
+*   [`plan_symlink_conversions(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles `REMOVE_DEPLOYED` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
+*   [`execute_deployment_actions(context, actions) -> None`](../src/drift/core/folder_deployment.py): Unified sequential executor applying planned file and backup actions to the host system.
+*   [`execute_single_action(context, action) -> None`](../src/drift/core/folder_deployment.py): Executes an individual planned file action.
+*   [`backup_host_item(target_path, rel_path, context) -> None`](../src/drift/core/folder_deployment.py): Backs up existing host items before overwrite or pruning into the configured `backup_subfolder`.
+*   [`format_action_line(action) -> str`](../src/drift/core/folder_deployment.py) & [`format_action_summary(counts) -> str`](../src/drift/core/folder_deployment.py): Formatting helpers generating uniform action logs and summaries.
+*   [`serialize_for_json(obj) -> Any`](../src/drift/core/serialization.py) & [`SerializableModel`](../src/drift/core/serialization.py): Decoupled serialization primitives eliminating circular imports between models and deployment planners.
+
 ### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules Lineage)
 *   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/core/ignore.py): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
 *   [`ignore.match_path(rel_path) -> bool`](../src/drift/core/ignore.py): Evaluates PCRE regex patterns (2-group matching, hardcoded `.drift/` exclusion).
@@ -70,7 +85,7 @@ This document provides a concise, high-density architecture reference, primitive
 ### [`core/state_registry.py`](../src/drift/core/state_registry.py) (State Database & Manifests)
 *   [`load_state_registry(path) -> StateRegistry`](../src/drift/core/state_registry.py): Loads `install/state.toml`.
 *   [`registry.set_package_state(pkg, state, last_deployed=None)`](../src/drift/core/state_registry.py): Updates package state (`"installed"`, `"staging"`, `"installing"`, `"staged"`).
-*   [`registry.sync_deployed_files(pkg, target_directory, install_method, deployable_files=())`](../src/drift/core/state_registry.py): Updates target directory, install method, and deployed files manifest.
+*   [`registry.sync_deployed_files(pkg, target_directory, install_method, deployable_files=(), sudo=False)`](../src/drift/core/state_registry.py): Updates target directory, install method, deployed files manifest, and persists `sudo` privilege.
 *   [`registry.get_target_migrated_from(pkg, current_target) -> Optional[Path]`](../src/drift/core/state_registry.py): Detects if package is migrating to a new destination.
 *   [`registry.build_destination_ownership_map(exclude_packages=None) -> Dict[Path, str]`](../src/drift/core/state_registry.py): Builds destination ownership mapping across installed packages.
 *   [`registry.remove_package(pkg)`](../src/drift/core/state_registry.py): Unregisters package from `state.toml`.
@@ -107,21 +122,25 @@ This document provides a concise, high-density architecture reference, primitive
 ### [`primitives/stage_repo.py`](../src/drift/primitives/stage_repo.py), [`primitives/install_repo.py`](../src/drift/primitives/install_repo.py) & [`primitives/package_assertions.py`](../src/drift/primitives/package_assertions.py)
 *   [`prepare_stage_packages(workspace_config, target_pkgs, force) -> StagePlan`](../src/drift/primitives/stage_repo.py): Read-only pre-flight assertion and staging plan preparation with topological dependency ordering.
 *   [`execute_stage_packages(workspace_config, pkg_metadata, state_registry, ordered_packages) -> Dict[str, PackageStageChanges]`](../src/drift/primitives/stage_repo.py): State-mutating physical file staging from `render/` to `install/`.
-*   [`prepare_install_deployment(workspace_config, target_pkgs=(), config=None) -> InstallPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, cross-package conflict validation, and topological dependency ordering.
-*   [`plan_package_deployment(context, deployable_files, deployed_files=()) -> PackageDeploymentPlan`](../src/drift/primitives/install_repo.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed planned actions (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `ENSURE_DIR`).
-*   [`execute_package_deployment(context, plan, resolve_symlinks) -> None`](../src/drift/primitives/install_repo.py): State-mutating physical delivery applying planned file and backup operations to the host system.
-*   [`execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`](../src/drift/primitives/install_repo.py): Orchestrates per-package planning and physical deployment of configurations to host system target paths.
+*   [`prepare_install_deployment(workspace_config, target_pkgs=(), config=None) -> InstallPlan`](../src/drift/primitives/install_repo.py): Read-only pre-flight readiness checks, permission audit, cross-package conflict validation, context creation, and declarative deployment plan compilation with topological dependency ordering.
+*   [`PackageInstallContext`](../src/drift/primitives/install_repo.py): Strongly-typed install context with `.action_context` property and `.hooks`.
+*   [`execute_package_actions(context, plan, resolve_symlinks=True)`](../src/drift/primitives/install_repo.py): Executes planned file actions in deterministic order on the host filesystem.
+*   [`execute_package_install_impl(context, plan, state_registry, hook_flags, config) -> PackageInstallResult`](../src/drift/primitives/install_repo.py): Performs state transitions, lifecycle hooks, physical file actions, and registry updates under active package envs.
+*   [`execute_package_install(context, plan, state_registry, hook_flags, config) -> PackageInstallResult`](../src/drift/primitives/install_repo.py): Evaluates skip conditions and activates scoped package envs before dispatching to `execute_package_install_impl`.
+*   [`execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`](../src/drift/primitives/install_repo.py): Orchestrates batch physical deployment or simulates zero-mutation dry-run across all planned packages.
 *   [`assert_required_package_dependencies_exist(pkg_dependencies_map, universe_names=None)`](../src/drift/primitives/package_assertions.py): Read-only guard raising `ConfigError` if any declared dependency does not exist in the package universe.
 *   [`assert_no_cyclic_package_dependencies(pkg_dependencies_map)`](../src/drift/primitives/package_assertions.py): Read-only DAG assertion guard raising `ConfigError` strictly on cycles.
 *   [`resolve_package_install_order(pkg_dependencies_map) -> List[str]`](../src/drift/primitives/package_assertions.py): Pure topological sort resolving prerequisite installation order over the package universe (absent dependencies pruned).
 *   [`resolve_package_uninstall_order(pkg_dependencies_map) -> List[str]`](../src/drift/primitives/package_assertions.py): Pure reverse topological sort resolving uninstallation order (dependents uninstalled before prerequisites).
 *   [`assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)`](../src/drift/primitives/package_assertions.py): Read-only pre-flight assertion guard verifying that removing target packages does not break dependencies of remaining installed packages.
-*   [`resolve_ordered_packages(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py): Assembles full package universe and resolves topologically sorted action order for staging and installation.
+*   [`resolve_target_package_order(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py): Assembles full package universe and resolves topologically sorted action order for staging and installation.
 
 ### [`primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) & [`primitives/rollback_repo.py`](../src/drift/primitives/rollback_repo.py)
 *   [`UninstallConfig(force=False, dry_run=False, detach=False, no_deps=False, flags=None)`](../src/drift/primitives/uninstall_repo.py): Configuration options controlling package uninstallation behavior.
-*   [`prepare_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallPlan`](../src/drift/primitives/uninstall_repo.py): Read-only pre-flight safeguard checks, dependency integrity validation, and uninstallation plan preparation with reverse topological dependency ordering.
-*   [`execute_uninstall_packages(workspace_config, plan) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): State-mutating physical file removal, backup restoration, missing package directory cleanup, and install repository state synchronization.
+*   [`PackageUninstallContext(pkg_name, target_dir, install_method, deployed_files, sudo, install_pkg_dir, backup_pkg_dir, drift_root, hooks=None, detach=False, is_missing_install_dir=False)`](../src/drift/primitives/uninstall_repo.py): Minimal uninstallation domain context with derived `.action_context` (using `DELETED_FILES` backup subfolder) and scoped `.package_envs()`.
+*   [`prepare_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallPlan`](../src/drift/primitives/uninstall_repo.py): Read-only pre-flight safeguard checks, dependency integrity validation, context creation, and plan assembly with reverse topological dependency ordering.
+*   [`execute_package_uninstall(context, plan, hook_flags, dry_run=False) -> PackageUninstallResult`](../src/drift/primitives/uninstall_repo.py): Dispatches uninstallation, detachment, or missing package cleanup for a single package.
+*   [`execute_uninstall_packages(workspace_config, plan) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): Executes package uninstallation plans (or simulates zero-mutation dry-run), updates state registry, and purges missing package directories.
 *   [`run_primitive_7_uninstall_packages(workspace_config, package_names=(), config=None) -> UninstallResult`](../src/drift/primitives/uninstall_repo.py): Orchestrates uninstallation or detachment of packages by preparing and executing `UninstallPlan`.
 *   [`run_primitive_8_rollback_recovery(workspace_config, target_pkgs=(), force=False, flags=None) -> RollbackResult`](../src/drift/primitives/rollback_repo.py): Recovers from aborted deployments in unified reverse topological order across committed redeployments and uncommitted first-time installs.
 
@@ -166,8 +185,9 @@ This document provides a concise, high-density architecture reference, primitive
     *   Hardcoded exclusions: `.drift/` internal control plane is never deployed to the host.
 4.  **Collision Guard & Safety**:
     *   **Canonical Workspace Root Boundary**: Target directory must be absolute and cannot resolve into or equal `drift_root` (`target_dir.resolve()` vs `drift_root.resolve()`), raising `InstallCollisionError`.
-    *   **Decoupled Per-Path Planning**: Replaced monolithic folder comparison with a pure, read-only planner (`plan_package_deployment`). Inspects ancestor directories and leaf files without host mutations, supporting `--dry-run`.
+    *   **Decoupled Per-Path Planning**: Replaced monolithic folder comparison with pure, read-only planners (`plan_folder_deployment`, `plan_package_uninstall`). Inspects ancestor directories and leaf files without host mutations, supporting `--dry-run`.
     *   **Host Collisions & Dotfile Translation**: Colliding pre-existing files, conflicting external symlinks, and broken links are safely backed up to `backup/<pkg>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and orphans to `backup/<pkg>/deleted_files/`.
+    *   **Isolated Backup Restoration Store**: When restoring backups during uninstallation, ancestor collisions are safely backed up to `deleted_files/` to prevent corrupting the active `overwritten/` backup store.
 5.  **Sentinel Drift Alignment Guard**:
     *   If `reverse-sync` leaves uncommitted changes in `install/` repo (host drift), deployer **halts immediately** to prevent silent overwrites. User must `drift adopt` or `drift deploy --force` (which commits a drift snapshot into `install/` history before overwriting).
 6.  **CLI Privilege & Sudo Guard**:

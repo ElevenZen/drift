@@ -37,7 +37,7 @@ from drift.primitives.package_assertions import (
     assert_no_broken_dependencies_on_uninstall,
     resolve_package_install_order,
     resolve_package_uninstall_order,
-    resolve_ordered_packages,
+    resolve_target_package_order,
 )
 
 
@@ -548,12 +548,12 @@ class TestPackageAssertions(unittest.TestCase):
             remaining_metadata=remaining,
         )
 
-    def test_resolve_ordered_packages_empty(self) -> None:
+    def test_resolve_target_package_order_empty(self) -> None:
         registry = StateRegistry()
-        res = resolve_ordered_packages({}, registry, self.workspace_config)
+        res = resolve_target_package_order({}, registry, self.workspace_config)
         self.assertEqual(res, [])
 
-    def test_resolve_ordered_packages_with_installed_and_pruning(self) -> None:
+    def test_resolve_target_package_order_with_installed_and_pruning(self) -> None:
         # Create an installed package recorded in state registry
         meta_installed = PackageConfig(
             PackageSectionConfig(name="pkg_base")
@@ -577,14 +577,14 @@ class TestPackageAssertions(unittest.TestCase):
             )
         )
 
-        res = resolve_ordered_packages(
+        res = resolve_target_package_order(
             target_metadata={"pkg_app": meta_target},
             state_registry=registry,
             workspace_config=self.workspace_config,
         )
         self.assertEqual(res, ["pkg_app"])
 
-    def test_resolve_ordered_packages_missing_deps_guard_and_bypass(self) -> None:
+    def test_resolve_target_package_order_missing_deps_guard_and_bypass(self) -> None:
         registry = StateRegistry()
         meta_target = PackageConfig(
             PackageSectionConfig(
@@ -597,7 +597,7 @@ class TestPackageAssertions(unittest.TestCase):
 
         # By default (no_deps=False), raises ConfigError
         with self.assertRaises(ConfigError) as ctx:
-            resolve_ordered_packages(
+            resolve_target_package_order(
                 target_metadata={"pkg_app": meta_target},
                 state_registry=registry,
                 workspace_config=self.workspace_config,
@@ -606,7 +606,7 @@ class TestPackageAssertions(unittest.TestCase):
         self.assertIn("non_existent_dep", str(ctx.exception))
 
         # With no_deps=True, bypasses missing check and prunes
-        res = resolve_ordered_packages(
+        res = resolve_target_package_order(
             target_metadata={"pkg_app": meta_target},
             state_registry=registry,
             workspace_config=self.workspace_config,
