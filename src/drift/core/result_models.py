@@ -92,7 +92,7 @@ class StageResult(SerializableModel):
 
 
 # =============================================================================
-from .folder_deployment import (
+from .folder_delivery import (
     ActionExecutionContext,
     ActionType,
     PlannedFileAction,
@@ -117,6 +117,10 @@ class PackageInstallPlan(SerializableModel):
     @property
     def updated(self) -> List[PlannedFileAction]:
         return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
+
+    @property
+    def permissions_updated(self) -> List[PlannedFileAction]:
+        return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
 
     @property
     def skipped(self) -> List[PlannedFileAction]:

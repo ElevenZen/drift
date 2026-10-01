@@ -24,8 +24,8 @@ Pipeline Architecture:
             - Iterates over plan.ordered_packages:
                 execute_package_uninstall [Layer 3]
                     * Missing Install Directory -> clean_up_package_directories
-                    * Detach Mode -> execute_deployment_actions (removes symlinks, copies concrete files)
-                    * Standard Uninstall -> pre_uninstall hook -> execute_deployment_actions -> post_uninstall hook
+                    * Detach Mode -> execute_delivery_actions (removes symlinks, copies concrete files)
+                    * Standard Uninstall -> pre_uninstall hook -> execute_delivery_actions -> post_uninstall hook
             - State Registry & Install Repo Synchronization:
                 * state_registry.remove_package & state_registry.save
                 * run_primitive_6_commit_install_repo
@@ -77,11 +77,11 @@ from ..core.constants import (
     BackupSubfolder,
     InstallMethod,
 )
-from ..core.folder_deployment import (
+from ..core.folder_delivery import (
     ActionExecutionContext,
     ActionType,
     PlannedFileAction,
-    execute_deployment_actions,
+    execute_delivery_actions,
     plan_backup_restoration,
     plan_file_removals,
     plan_symlink_conversions,
@@ -355,7 +355,7 @@ def detach_one_package(
     converted = [str(a.rel_path) for a in plan.converted]
     if not dry_run:
         logger.info(f"🔌 Detaching package: {context.pkg_name} (converting to independent system config)")
-        execute_deployment_actions(context.action_context, plan.actions)
+        execute_delivery_actions(context.action_context, plan.actions)
         logger.info(f"🔌 Successfully detached and converted {context.pkg_name} files to independent configurations on the host.")
         clean_up_package_directories(context)
     return PackageUninstallResult(
@@ -390,7 +390,7 @@ def uninstall_one_package(
                 context.hooks.trigger_pre_uninstall(flags=hook_flags)
 
             # 2. Execute plan actions (removes deployed files + recreates directories + copies restored backups)
-            execute_deployment_actions(context.action_context, plan.actions)
+            execute_delivery_actions(context.action_context, plan.actions)
 
             # 3. Clean up restored backup files from backup store
             backup_overwritten = context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value

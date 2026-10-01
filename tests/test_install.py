@@ -56,7 +56,11 @@ from drift.primitives.install_repo import (
         PackageInstallContext,
         assert_packages_install_ready,
 )
-from drift.core.folder_deployment import execute_single_action
+from drift.core.folder_delivery import (
+        execute_single_action,
+        format_action_line,
+        format_action_summary,
+)
 from drift.core.result_models import (
         ActionType,
         PlannedFileAction,
@@ -2236,7 +2240,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_valid.is_symlink())
         self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_link.txt").resolve())
 
-    @patch("drift.core.folder_deployment.create_symlink")
+    @patch("drift.core.folder_delivery.create_symlink")
     def test_execute_single_action_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
         """Verifies execute_single_action and plan_package_install skip recreating symlink if target already points to source."""
         from drift.core.ignore import DriftIgnore
@@ -3050,6 +3054,64 @@ class TestInstallRepo(unittest.TestCase):
         # State was never set to installing
         registry = load_state_registry(self.install_dir / "state.toml")
         self.assertIsNone(registry.get_package_state(pkg))
+
+    def test_plan_and_execute_update_permission_action(self) -> None:
+        """Verifies plan_package_install plans UPDATE_PERMISSION when file content matches but permissions differ,
+        and execute_package_actions updates host file permissions."""
+        from drift.core.ignore import DriftIgnore
+
+        pkg = "pkg_perm_test"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        src_file = pkg_install_dir / "script.sh"
+        src_file.write_text("#!/bin/sh\necho hello\n", encoding="utf-8")
+        src_file.chmod(0o755)
+
+        system_target = self.system_target_dir / "script.sh"
+        self.system_target_dir.mkdir(parents=True, exist_ok=True)
+        system_target.write_text("#!/bin/sh\necho hello\n", encoding="utf-8")
+        system_target.chmod(0o644)
+
+        context = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=False,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_install(context=context, deployable_files=[Path("script.sh")])
+        self.assertEqual(len(plan.permissions_updated), 1)
+        self.assertEqual(len(plan.created), 0)
+        self.assertEqual(len(plan.updated), 0)
+        self.assertEqual(len(plan.skipped), 0)
+
+        action = plan.permissions_updated[0]
+        self.assertEqual(action.action_type, ActionType.UPDATE_PERMISSION)
+        self.assertIn("Permissions differ", action.reason or "")
+
+        formatted_line = format_action_line(action)
+        self.assertIn("[UPDATE_PERMISSION]", formatted_line)
+
+        summary = format_action_summary(plan.actions)
+        self.assertIn("1 permissions to update", summary)
+
+        # Execute actions
+        execute_package_actions(context, plan)
+
+        # Verify host permissions updated
+        self.assertEqual(system_target.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(system_target.read_text(encoding="utf-8"), "#!/bin/sh\necho hello\n")
+
+        # Second plan should now be SKIP_IDENTICAL
+        plan2 = plan_package_install(context=context, deployable_files=[Path("script.sh")])
+        self.assertEqual(len(plan2.permissions_updated), 0)
+        self.assertEqual(len(plan2.skipped), 1)
+        self.assertEqual(plan2.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
 
 
 class TestInstallDependencies(unittest.TestCase):

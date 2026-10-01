@@ -148,13 +148,13 @@ from ..utils.file_ops import (
 )
 from ..utils.process_utils import run_command
 from ..core.sync_ops import backup_file_or_dir_external
-from ..core.folder_deployment import (
+from ..core.folder_delivery import (
     ActionExecutionContext,
     ActionType,
     PlannedFileAction,
-    plan_folder_deployment,
+    plan_folder_delivery,
     plan_file_removals,
-    execute_deployment_actions,
+    execute_delivery_actions,
     assert_target_dir_outside_drift_root,
 )
 from ..core.result_models import (
@@ -309,8 +309,8 @@ def plan_package_install(
         )
     )
 
-    # 3. Plan folder deployment actions to current target directory
-    folder_actions = plan_folder_deployment(
+    # 3. Plan folder delivery actions to current target directory
+    folder_actions = plan_folder_delivery(
         target_dir=context.target_dir,
         source_dir=context.install_pkg_dir,
         install_method=context.install_method,
@@ -343,7 +343,7 @@ def execute_package_actions(
         sudo=context.sudo,
         resolve_symlinks=resolve_symlinks,
     )
-    execute_deployment_actions(action_ctx, plan.actions)
+    execute_delivery_actions(action_ctx, plan.actions)
 
 
 def update_state_registry_post_install(

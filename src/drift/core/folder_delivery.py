@@ -1,4 +1,4 @@
-"""Core Folder Deployment Engine.
+"""Core Folder Delivery Engine.
 
 Provides unified filesystem action planning, ancestor directory conflict resolution,
 and deterministic execution across package installation, uninstallation, backup restoration,
@@ -15,9 +15,10 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union
 from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
 from .exceptions import InstallCollisionError
 from .serialization import SerializableModel
-from ..utils.file_inspect import contents_differ, tree_files
+from ..utils.file_inspect import contents_differ, file_mode_differs, tree_files
 from ..utils.file_ops import (
     copy_file,
+    copy_permissions,
     create_symlink,
     ensure_dir,
     prune_empty_parents,
@@ -40,11 +41,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 class ActionType(str, Enum):
-    """Specific filesystem operation planned or executed during deployment."""
+    """Specific filesystem operation planned or executed during delivery."""
     # Creations & Updates
     CREATE_SYMLINK = "CREATE_SYMLINK"
     CREATE_COPY = "CREATE_COPY"
     UPDATE_COPY = "UPDATE_COPY"
+    UPDATE_PERMISSION = "UPDATE_PERMISSION"
     ENSURE_DIR = "ENSURE_DIR"
 
     # Skips (already matching desired state)
@@ -95,6 +97,8 @@ def format_action_line(action: PlannedFileAction) -> str:
         return f"    📄 [CREATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}"
     elif action.action_type == ActionType.UPDATE_COPY:
         return f"    📝 [UPDATE_COPY]     {action.rel_path} -> {action.system_target}{reason_str}"
+    elif action.action_type == ActionType.UPDATE_PERMISSION:
+        return f"    🔒 [UPDATE_PERMISSION] {action.rel_path} -> {action.system_target}{reason_str}"
     elif action.action_type == ActionType.SKIP_IDENTICAL:
         return f"    ⏭️ [SKIP_IDENTICAL]  {action.rel_path} -> {action.system_target}{reason_str}"
     elif action.action_type == ActionType.BACKUP_OVERWRITE:
@@ -117,6 +121,9 @@ def format_action_summary(actions: Sequence[PlannedFileAction]) -> str:
     updated = [a for a in actions if a.action_type == ActionType.UPDATE_COPY]
     if updated:
         counts.append(f"{len(updated)} to update")
+    permissions = [a for a in actions if a.action_type == ActionType.UPDATE_PERMISSION]
+    if permissions:
+        counts.append(f"{len(permissions)} permissions to update")
     skipped = [a for a in actions if a.action_type == ActionType.SKIP_IDENTICAL]
     if skipped:
         counts.append(f"{len(skipped)} up-to-date")
@@ -140,7 +147,7 @@ def format_action_summary(actions: Sequence[PlannedFileAction]) -> str:
 # =============================================================================
 
 def assert_target_dir_outside_drift_root(target_dir: Path, drift_root: Path) -> None:
-    """Guards against deployment into drift_root via direct path or symlink resolution."""
+    """Guards against delivery into drift_root via direct path or symlink resolution."""
     abs_drift_root = drift_root.resolve()
     resolved_target = target_dir.resolve()
     if is_relative_to(resolved_target, abs_drift_root):
@@ -374,6 +381,17 @@ def _inspect_physical_file_leaf(
             reason="File content updated",
         )]
 
+    if file_mode_differs(source_file, system_target):
+        src_mode = oct(source_file.stat().st_mode & 0o777)
+        dst_mode = oct(system_target.stat().st_mode & 0o777)
+        return [PlannedFileAction(
+            action_type=ActionType.UPDATE_PERMISSION,
+            rel_path=rel_file,
+            system_target=system_target,
+            source_path=source_file,
+            reason=f"Permissions differ ({dst_mode} -> {src_mode})",
+        )]
+
     return [PlannedFileAction(
         action_type=ActionType.SKIP_IDENTICAL,
         rel_path=rel_file,
@@ -466,7 +484,7 @@ def _inspect_orphans(
 # High-Level Planning Functions
 # =============================================================================
 
-def plan_folder_deployment(
+def plan_folder_delivery(
     target_dir: Path,
     source_dir: Path,
     install_method: InstallMethod,
@@ -475,7 +493,7 @@ def plan_folder_deployment(
     deployed_files: Iterable[Path] = (),
     is_first_time: bool = False,
 ) -> List[PlannedFileAction]:
-    """Plans declarative filesystem operations for deploying source_dir to target_dir."""
+    """Plans declarative filesystem operations for delivering source_dir to target_dir."""
     assert_target_dir_outside_drift_root(target_dir, drift_root)
     actions: List[PlannedFileAction] = []
     handled_targets: Set[Path] = set()
@@ -518,7 +536,7 @@ def plan_backup_restoration(
 ) -> List[PlannedFileAction]:
     """Plans declarative actions for safely restoring historical backups to target_dir.
 
-    Evaluates intermediate directories and leaf targets using full folder deployment
+    Evaluates intermediate directories and leaf targets using full folder delivery
     planning with InstallMethod.COPY, ensuring non-colliding backup restoration.
     """
     assert_target_dir_outside_drift_root(target_dir, drift_root)
@@ -538,7 +556,7 @@ def plan_backup_restoration(
         )
     ]
 
-    restore_actions = plan_folder_deployment(
+    restore_actions = plan_folder_delivery(
         target_dir=target_dir,
         source_dir=backup_overwritten_dir,
         install_method=InstallMethod.COPY,
@@ -656,7 +674,7 @@ def execute_single_action(
     context: ActionExecutionContext,
     action: PlannedFileAction,
 ) -> None:
-    """Executes a single planned file/directory deployment action on the host system."""
+    """Executes a single planned file/directory delivery action on the host system."""
     if action.action_type == ActionType.BACKUP_OVERWRITE:
         backup_host_item(
             backup_pkg_dir=context.backup_pkg_dir,
@@ -697,6 +715,10 @@ def execute_single_action(
         source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
         copy_file(source_file, action.system_target, context.sudo)
 
+    elif action.action_type == ActionType.UPDATE_PERMISSION:
+        source_file = action.source_path if action.source_path else (context.install_pkg_dir / action.rel_path)
+        copy_permissions(source_file, action.system_target, sudo=context.sudo)
+
     elif action.action_type == ActionType.REMOVE_DEPLOYED:
         remove(action.system_target, context.sudo)
         try:
@@ -713,11 +735,11 @@ def execute_single_action(
             logger.info(action.reason)
 
 
-def execute_deployment_actions(
+def execute_delivery_actions(
     context: ActionExecutionContext,
     actions: Sequence[PlannedFileAction],
 ) -> None:
-    """Deterministically executes a sequence of planned deployment actions on the host system."""
+    """Deterministically executes a sequence of planned delivery actions on the host system."""
     for action in actions:
         execute_single_action(context, action)
 

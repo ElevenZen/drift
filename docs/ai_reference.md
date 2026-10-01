@@ -62,19 +62,19 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/utils/file_utils.py): Deletes a file or directory safely (with `sudo` if configured).
 *   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
-### [`core/folder_deployment.py`](../src/drift/core/folder_deployment.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
-*   [`ActionType`](../src/drift/core/folder_deployment.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `REMOVE_DEPLOYED`, `INFO_MESSAGE`).
-*   [`PlannedFileAction`](../src/drift/core/folder_deployment.py): Dataclass representing a discrete single-file/directory host operation (`action_type`, `rel_path`, `source_path`, `system_target`, `detail`).
-*   [`ActionExecutionContext`](../src/drift/core/folder_deployment.py): Execution context encapsulating `target_dir`, `install_pkg_dir`, `backup_pkg_dir`, `sudo`, `resolve_symlinks`, and `backup_subfolder` (`OVERWRITTEN` or `DELETED_FILES`).
+### [`core/folder_delivery.py`](../src/drift/core/folder_delivery.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
+*   [`ActionType`](../src/drift/core/folder_delivery.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `REMOVE_DEPLOYED`, `INFO_MESSAGE`).
+*   [`PlannedFileAction`](../src/drift/core/folder_delivery.py): Dataclass representing a discrete single-file/directory host operation (`action_type`, `rel_path`, `source_path`, `system_target`, `detail`).
+*   [`ActionExecutionContext`](../src/drift/core/folder_delivery.py): Execution context encapsulating `target_dir`, `install_pkg_dir`, `backup_pkg_dir`, `sudo`, `resolve_symlinks`, and `backup_subfolder` (`OVERWRITTEN` or `DELETED_FILES`).
 *   [`PackageInstallPlan`](../src/drift/core/result_models.py) & [`PackageUninstallPlan`](../src/drift/core/result_models.py): Strongly-typed dataclass containers for planned package actions, supporting `.format_text(dry_run=False)` summaries.
-*   [`plan_folder_deployment(source_dir, target_dir, install_method, deployable_files, deployed_files=()) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file deployment actions.
-*   [`plan_backup_restoration(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles backup restoration into discrete `INFO_MESSAGE`, `ENSURE_DIR`, and `CREATE_COPY` actions with intermediate ancestor collision detection via `plan_folder_deployment`.
-*   [`plan_file_removals(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles `REMOVE_DEPLOYED` actions for deployed host items.
-*   [`plan_symlink_conversions(context) -> List[PlannedFileAction]`](../src/drift/core/folder_deployment.py): Compiles `REMOVE_DEPLOYED` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
-*   [`execute_deployment_actions(context, actions) -> None`](../src/drift/core/folder_deployment.py): Unified sequential executor applying planned file and backup actions to the host system.
-*   [`execute_single_action(context, action) -> None`](../src/drift/core/folder_deployment.py): Executes an individual planned file action.
-*   [`backup_host_item(target_path, rel_path, context) -> None`](../src/drift/core/folder_deployment.py): Backs up existing host items before overwrite or pruning into the configured `backup_subfolder`.
-*   [`format_action_line(action) -> str`](../src/drift/core/folder_deployment.py) & [`format_action_summary(counts) -> str`](../src/drift/core/folder_deployment.py): Formatting helpers generating uniform action logs and summaries.
+*   [`plan_folder_delivery(source_dir, target_dir, install_method, deployable_files, deployed_files=()) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file delivery actions.
+*   [`plan_backup_restoration(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles backup restoration into discrete `INFO_MESSAGE`, `ENSURE_DIR`, and `CREATE_COPY` actions with intermediate ancestor collision detection via `plan_folder_delivery`.
+*   [`plan_file_removals(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `REMOVE_DEPLOYED` actions for deployed host items.
+*   [`plan_symlink_conversions(context) -> List[PlannedFileAction]`](../src/drift/core/folder_delivery.py): Compiles `REMOVE_DEPLOYED` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
+*   [`execute_delivery_actions(context, actions) -> None`](../src/drift/core/folder_delivery.py): Unified sequential executor applying planned file and backup actions to the host system.
+*   [`execute_single_action(context, action) -> None`](../src/drift/core/folder_delivery.py): Executes an individual planned file action.
+*   [`backup_host_item(target_path, rel_path, context) -> None`](../src/drift/core/folder_delivery.py): Backs up existing host items before overwrite or pruning into the configured `backup_subfolder`.
+*   [`format_action_line(action) -> str`](../src/drift/core/folder_delivery.py) & [`format_action_summary(counts) -> str`](../src/drift/core/folder_delivery.py): Formatting helpers generating uniform action logs and summaries.
 *   [`serialize_for_json(obj) -> Any`](../src/drift/core/serialization.py) & [`SerializableModel`](../src/drift/core/serialization.py): Decoupled serialization primitives eliminating circular imports between models and deployment planners.
 
 ### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules Lineage)
@@ -185,7 +185,7 @@ This document provides a concise, high-density architecture reference, primitive
     *   Hardcoded exclusions: `.drift/` internal control plane is never deployed to the host.
 4.  **Collision Guard & Safety**:
     *   **Canonical Workspace Root Boundary**: Target directory must be absolute and cannot resolve into or equal `drift_root` (`target_dir.resolve()` vs `drift_root.resolve()`), raising `InstallCollisionError`.
-    *   **Decoupled Per-Path Planning**: Replaced monolithic folder comparison with pure, read-only planners (`plan_folder_deployment`, `plan_package_uninstall`). Inspects ancestor directories and leaf files without host mutations, supporting `--dry-run`.
+    *   **Decoupled Per-Path Planning**: Replaced monolithic folder comparison with pure, read-only planners (`plan_folder_delivery`, `plan_package_uninstall`). Inspects ancestor directories and leaf files without host mutations, supporting `--dry-run`.
     *   **Host Collisions & Dotfile Translation**: Colliding pre-existing files, conflicting external symlinks, and broken links are safely backed up to `backup/<pkg>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and orphans to `backup/<pkg>/deleted_files/`.
     *   **Isolated Backup Restoration Store**: When restoring backups during uninstallation, ancestor collisions are safely backed up to `deleted_files/` to prevent corrupting the active `overwritten/` backup store.
 5.  **Sentinel Drift Alignment Guard**:

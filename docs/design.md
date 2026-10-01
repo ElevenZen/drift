@@ -194,7 +194,7 @@ Removes or detaches packages from the system using strongly-typed `UninstallConf
     *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
         *   *Standard Uninstall*: Compiles `plan_file_removals` (`REMOVE_DEPLOYED`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
         *   *Detach Mode*: Compiles `plan_symlink_conversions` (`REMOVE_DEPLOYED` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
-    *   **Unified Action Execution (`execute_package_uninstall`)**: Applies planned operations sequentially via `execute_deployment_actions`.
+    *   **Unified Action Execution (`execute_package_uninstall`)**: Applies planned operations sequentially via `execute_delivery_actions`.
     *   **Zero-Mutation Dry-Run**: Under `--dry-run`, Drift simulates uninstallation without touching host files, state registry, or executing lifecycle hooks, rendering an inspectable structured summary via `UninstallResult.format_text(dry_run=True)`.
 2.  **Dependency Safeguards & Reverse Topological Order**:
     *   **Pre-Flight Broken Dependency Guard**: Invokes `assert_no_broken_dependencies_on_uninstall` to verify that remaining installed packages do not depend on any targeted packages (bypassed if `force=True` or `no_deps=True`).
