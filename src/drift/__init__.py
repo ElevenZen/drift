@@ -160,7 +160,6 @@ from .core import (
 from .utils import (
     expand_path,
     is_relative_to,
-    resolve_target_path,
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,

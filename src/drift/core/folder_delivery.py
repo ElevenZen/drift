@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Union
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
 from .exceptions import InstallCollisionError
@@ -30,7 +30,6 @@ from ..utils.path_utils import (
     decode_dot_prefix,
     encode_dot_prefix,
     is_relative_to,
-    resolve_target_path,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,22 +86,48 @@ class DeliveryInspectionContext:
     is_first_time: bool
     backup_pkg_dir: Optional[Path]
     backup_subfolder: BackupSubfolder
+    reverse_mode: bool = False
 
     @property
     def abs_drift_root(self) -> Path:
         """Returns pre-resolved absolute Path to drift workspace root."""
         return self.drift_root.resolve()
 
-    def resolve_backup_path(self, rel_path: Path) -> Optional[Path]:
+    def resolve_backup_path(
+        self,
+        rel_path: Path,
+        subfolder: Optional[BackupSubfolder] = None,
+    ) -> Optional[Path]:
         """Resolves the backup destination path for a relative path if backup_pkg_dir is configured."""
         if not self.backup_pkg_dir:
             return None
+        target_subfolder = subfolder if subfolder is not None else self.backup_subfolder
         subfolder_str = (
-            self.backup_subfolder.value
-            if isinstance(self.backup_subfolder, BackupSubfolder)
-            else str(self.backup_subfolder)
+            target_subfolder.value
+            if isinstance(target_subfolder, BackupSubfolder)
+            else str(target_subfolder)
         )
         return self.backup_pkg_dir / subfolder_str / decode_dot_prefix(rel_path)
+
+    def translate_target_rel_path(self, rel_path: Path) -> Path:
+        """Translates relative path to its relative target Path representation respecting reverse_mode."""
+        return decode_dot_prefix(rel_path) if self.reverse_mode else encode_dot_prefix(rel_path)
+
+    def translate_source_rel_path(self, rel_path: Path) -> Path:
+        """Translates relative path to its relative source Path representation respecting reverse_mode."""
+        return encode_dot_prefix(rel_path) if self.reverse_mode else decode_dot_prefix(rel_path)
+
+    def translate_target_path(self, rel_path: Path) -> Path:
+        """Translates relative path to its absolute/prefixed target_dir Path respecting reverse_mode."""
+        return self.target_dir / self.translate_target_rel_path(rel_path)
+
+    def translate_source_path(self, rel_path: Path) -> Path:
+        """Translates relative path to its absolute/prefixed source_dir Path respecting reverse_mode."""
+        return self.source_dir / self.translate_source_rel_path(rel_path)
+
+    def translate_path(self, rel_path: Path) -> Tuple[Path, Path]:
+        """Translates a relative file path to (source_file, system_target) respecting reverse_mode."""
+        return self.translate_source_path(rel_path), self.translate_target_path(rel_path)
 
 
 # =============================================================================
@@ -183,9 +208,34 @@ def assert_target_dir_outside_drift_root(target_dir: Path, drift_root: Path) -> 
         )
 
 
-def _expand_path_ancestors(rel: Path) -> Set[Path]:
-    target_rel = encode_dot_prefix(rel)
+def _expand_path_ancestors(rel: Path, context: DeliveryInspectionContext) -> Set[Path]:
+    target_rel = context.translate_target_rel_path(rel)
     return {p for p in target_rel.parents if p != Path(".")}
+
+
+def _plan_backup_or_delete(
+    context: DeliveryInspectionContext,
+    target: Path,
+    rel_path: Path,
+    reason: Optional[str] = None,
+    is_orphan: bool = False,
+) -> FileAction:
+    """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_FILE when absent."""
+    subfolder = BackupSubfolder.DELETED_FILES if is_orphan else None
+    backup_dst = context.resolve_backup_path(rel_path, subfolder=subfolder)
+    if backup_dst:
+        action_type = FileActionType.BACKUP_PRUNE if is_orphan else FileActionType.BACKUP_OVERWRITE
+        return FileAction(
+            action_type=action_type,
+            src_path=target,
+            dst_path=backup_dst,
+            reason=reason,
+        )
+    return FileAction(
+        action_type=FileActionType.DELETE_FILE,
+        dst_path=target,
+        reason=reason,
+    )
 
 
 def _inspect_single_ancestor(
@@ -211,9 +261,8 @@ def _inspect_single_ancestor(
     else:
         reason = "File blocking directory"
 
-    backup_dst = context.resolve_backup_path(rel_path)
     return [
-        FileAction(action_type=FileActionType.BACKUP_OVERWRITE, src_path=ancestor_target, dst_path=backup_dst, reason=reason),
+        _plan_backup_or_delete(context, ancestor_target, rel_path, reason=reason),
         FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=ancestor_target),
     ]
 
@@ -230,7 +279,7 @@ def inspect_ancestor_directories(
     actions: List[FileAction],
 ) -> Set[Path]:
     """Inspects parent directories of deployable files from shallowest to deepest, planning necessary directory recreation or backups."""
-    all_ancestors = {p for rel in deployable_files for p in _expand_path_ancestors(rel)}
+    all_ancestors = {p for rel in deployable_files for p in _expand_path_ancestors(rel, context)}
     sorted_ancestors = sorted(all_ancestors, key=lambda p: len(p.parts))
     backed_up_ancestor_targets: Set[Path] = set()
 
@@ -239,7 +288,7 @@ def inspect_ancestor_directories(
         if ancestor_target in handled_targets:
             continue
         handled_targets.add(ancestor_target)
-        rel_path = decode_dot_prefix(p)
+        rel_path = p if context.reverse_mode else decode_dot_prefix(p)
 
         if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
             actions.append(FileAction(
@@ -253,7 +302,7 @@ def inspect_ancestor_directories(
             ancestor_target=ancestor_target,
             rel_path=rel_path,
         )
-        if any(a.action_type == FileActionType.BACKUP_OVERWRITE for a in res):
+        if any(a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.DELETE_FILE) for a in res):
             backed_up_ancestor_targets.add(ancestor_target)
         actions.extend(res)
 
@@ -293,18 +342,13 @@ def _inspect_symlink_leaf(
     source_file: Path,
 ) -> List[FileAction]:
     """Inspects a host symlink at destination and plans overwrite, skip, or re-link actions."""
-    backup_dst = context.resolve_backup_path(rel_file)
     if not system_target.exists():
         # Broken symlink
         return [
-            FileAction(
-                action_type=FileActionType.BACKUP_OVERWRITE,
-                src_path=system_target,
-                dst_path=backup_dst,
-                reason="Broken symlink collision",
-            ),
+            _plan_backup_or_delete(context, system_target, rel_file, reason="Broken symlink collision"),
             _plan_file_creation(context, source_file, system_target),
         ]
+
 
     # Check if existing symlink already points to source_file
     if _check_symlink_points_to_source(system_target, source_file):
@@ -315,14 +359,9 @@ def _inspect_symlink_leaf(
                 dst_path=system_target,
                 reason="Symlink already points to source",
             )]
-        # Switching from symlink to copy: backup the existing symlink and create physical copy
+        # Switching from symlink to copy: backup or delete existing symlink and create physical copy
         return [
-            FileAction(
-                action_type=FileActionType.BACKUP_OVERWRITE,
-                src_path=system_target,
-                dst_path=backup_dst,
-                reason="Replacing symlink with copy",
-            ),
+            _plan_backup_or_delete(context, system_target, rel_file, reason="Replacing symlink with copy"),
             FileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=source_file,
@@ -339,12 +378,7 @@ def _inspect_symlink_leaf(
 
     reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
     return [
-        FileAction(
-            action_type=FileActionType.BACKUP_OVERWRITE,
-            src_path=system_target,
-            dst_path=backup_dst,
-            reason=reason,
-        ),
+        _plan_backup_or_delete(context, system_target, rel_file, reason=reason),
         _plan_file_creation(context, source_file, system_target),
     ]
 
@@ -356,15 +390,15 @@ def _inspect_physical_file_leaf(
     source_file: Path,
 ) -> List[FileAction]:
     """Inspects a host regular physical file and plans overwrite, update, or skip actions."""
-    backup_dst = context.resolve_backup_path(rel_file)
+    if source_file.is_symlink():
+        return [
+            _plan_backup_or_delete(context, system_target, rel_file, reason="Type changed between symlink and file"),
+            _plan_file_creation(context, source_file, system_target),
+        ]
+
     if context.install_method == InstallMethod.SYMLINK:
         return [
-            FileAction(
-                action_type=FileActionType.BACKUP_OVERWRITE,
-                src_path=system_target,
-                dst_path=backup_dst,
-                reason="Physical file collides with symlink",
-            ),
+            _plan_backup_or_delete(context, system_target, rel_file, reason="Physical file collides with symlink"),
             FileAction(
                 action_type=FileActionType.CREATE_SYMLINK,
                 src_path=source_file,
@@ -375,12 +409,7 @@ def _inspect_physical_file_leaf(
     # COPY method
     if context.is_first_time:
         return [
-            FileAction(
-                action_type=FileActionType.BACKUP_OVERWRITE,
-                src_path=system_target,
-                dst_path=backup_dst,
-                reason="Pre-existing file collision",
-            ),
+            _plan_backup_or_delete(context, system_target, rel_file, reason="Pre-existing file collision"),
             FileAction(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=source_file,
@@ -419,40 +448,48 @@ def _inspect_physical_file_leaf(
     )]
 
 
-def _inspect_leaf_file(
+def _inspect_resolved_leaf_file(
     context: DeliveryInspectionContext,
     rel_file: Path,
+    source_file: Path,
+    system_target: Path,
     handled_targets: Set[Path],
     actions: List[FileAction],
     backed_up_ancestor_targets: Set[Path],
 ) -> None:
-    """Inspects a single package file against host filesystem state and plans appropriate actions."""
-    rel_file = decode_dot_prefix(rel_file)
-    system_target = resolve_target_path(rel_file, context.target_dir)
-    source_file = context.source_dir / rel_file
-    handled_targets.add(system_target)
+    """Inspects resolved source against system target and plans delivery actions."""
+    # 1. Source and target are identical
+    if source_file == system_target:
+        actions.append(FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=source_file,
+            dst_path=system_target,
+            reason="Source and target are identical",
+        ))
+        return
 
+    # 2. Ancestor directory backed up / recreated or target does not exist yet
     if _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets):
         actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
     target_exists_or_symlink = system_target.exists() or system_target.is_symlink()
-
     if not target_exists_or_symlink:
         actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
+    # 3. Target is concrete directory blocking a leaf file
     if is_concrete_dir(system_target):
-        backup_dst = context.resolve_backup_path(rel_file)
-        actions.append(FileAction(
-            action_type=FileActionType.BACKUP_OVERWRITE,
-            src_path=system_target,
-            dst_path=backup_dst,
+        actions.append(_plan_backup_or_delete(
+            context,
+            system_target,
+            rel_file,
             reason="Directory blocking file",
         ))
         actions.append(_plan_file_creation(context, source_file, system_target))
         return
 
+    # 4. Target is a symlink
     if system_target.is_symlink():
         actions.extend(_inspect_symlink_leaf(
             context=context,
@@ -462,6 +499,7 @@ def _inspect_leaf_file(
         ))
         return
 
+    # 5. Regular physical file inspection
     actions.extend(_inspect_physical_file_leaf(
         context=context,
         rel_file=rel_file,
@@ -470,26 +508,81 @@ def _inspect_leaf_file(
     ))
 
 
+def _inspect_leaf_file(
+    context: DeliveryInspectionContext,
+    rel_file: Path,
+    handled_targets: Set[Path],
+    actions: List[FileAction],
+    backed_up_ancestor_targets: Set[Path],
+) -> None:
+    """Translates paths, handles symlinks and host deletions, then delegates to _inspect_resolved_leaf_file."""
+    source_file, system_target = context.translate_path(rel_file)
+    handled_targets.add(system_target)
+
+    # Handle symlinks
+    if source_file.is_symlink():
+        try:
+            resolved_src = source_file.resolve()
+            is_broken = not resolved_src.exists()
+        except Exception:
+            resolved_src = None
+            is_broken = True
+
+        if is_broken:
+            if system_target.exists() or system_target.is_symlink():
+                actions.append(_plan_backup_or_delete(
+                    context,
+                    system_target,
+                    rel_file,
+                    reason="Broken symlink on host" if context.reverse_mode else "Broken symlink collision",
+                ))
+            return
+
+        assert resolved_src is not None, "Resolved source symlink should not be None after successful resolve"
+        if resolved_src.is_dir():
+            raise InstallCollisionError(
+                f"Invalid deployable leaf file '{source_file}': symlink points to directory '{resolved_src}'. "
+                "Deployable leaf files cannot be symlinks to directories."
+            )
+
+        if resolved_src == system_target or (system_target.exists() and resolved_src == system_target.resolve()):
+            source_file = system_target
+        else:
+            source_file = resolved_src
+
+    elif context.reverse_mode and not source_file.exists():
+        # Physical file deleted on host
+        if system_target.exists() or system_target.is_symlink():
+            actions.append(_plan_backup_or_delete(
+                context,
+                system_target,
+                rel_file,
+                reason="File deleted on host",
+            ))
+        return
+
+    # Delegate concrete resolved paths to inner core
+    _inspect_resolved_leaf_file(
+        context=context,
+        rel_file=rel_file,
+        source_file=source_file,
+        system_target=system_target,
+        handled_targets=handled_targets,
+        actions=actions,
+        backed_up_ancestor_targets=backed_up_ancestor_targets,
+    )
+
+
 def _plan_orphan_prune(
     context: DeliveryInspectionContext,
     orphan_rel: Path,
     reason: str,
 ) -> List[FileAction]:
-    """Inspects an orphaned path on host and plans BACKUP_PRUNE if present."""
-    system_target = resolve_target_path(orphan_rel, context.target_dir)
+    """Inspects an orphaned path on target and plans BACKUP_PRUNE or DELETE_FILE if present."""
+    system_target = context.translate_target_path(orphan_rel)
     if not (system_target.exists() or system_target.is_symlink()):
         return []
-
-    decoded_rel = decode_dot_prefix(orphan_rel)
-    backup_dst = (context.backup_pkg_dir / BackupSubfolder.DELETED_FILES.value / decoded_rel) if context.backup_pkg_dir else None
-    return [
-        FileAction(
-            action_type=FileActionType.BACKUP_PRUNE,
-            src_path=system_target,
-            dst_path=backup_dst,
-            reason=reason,
-        )
-    ]
+    return [_plan_backup_or_delete(context, system_target, orphan_rel, reason=reason, is_orphan=True)]
 
 
 def _inspect_orphans(
@@ -497,8 +590,14 @@ def _inspect_orphans(
     deployable_files: Iterable[Path],
     deployed_files: Iterable[Path],
 ) -> List[FileAction]:
-    """Plans BACKUP_PRUNE actions for historical deployed files missing in candidate package."""
-    orphaned_files = sorted(set(deployed_files) - set(deployable_files))
+    """Plans BACKUP_PRUNE or DELETE_FILE actions for historical deployed files missing in candidate package."""
+    if context.reverse_mode:
+        deployable_norm = {decode_dot_prefix(p) for p in deployable_files}
+        deployed_norm = {decode_dot_prefix(p) for p in deployed_files}
+        orphaned_files = sorted(deployed_norm - deployable_norm)
+    else:
+        orphaned_files = sorted(set(deployed_files) - set(deployable_files))
+
     actions: List[FileAction] = []
     for orphaned in orphaned_files:
         actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
@@ -515,7 +614,8 @@ def plan_folder_delivery(
     deployed_files: Iterable[Path] = (),
 ) -> List[FileAction]:
     """Plans declarative filesystem operations for delivering source_dir to target_dir."""
-    assert_target_dir_outside_drift_root(context.target_dir, context.drift_root)
+    if not context.reverse_mode:
+        assert_target_dir_outside_drift_root(context.target_dir, context.drift_root)
     actions: List[FileAction] = []
     handled_targets: Set[Path] = set()
 
@@ -597,14 +697,14 @@ def plan_symlink_conversions(
     symlinks_to_convert = [
         rel_file
         for rel_file in deployed_files
-        if resolve_target_path(rel_file, target_dir).is_symlink()
+        if (target_dir / encode_dot_prefix(rel_file)).is_symlink()
     ]
     if not symlinks_to_convert:
         return []
 
     actions: List[FileAction] = []
     for rel_file in symlinks_to_convert:
-        system_target = resolve_target_path(rel_file, target_dir)
+        system_target = target_dir / encode_dot_prefix(rel_file)
         src_file = install_pkg_dir / rel_file
         if not src_file.is_file():
             logger.warning(f"Source file not found in install/ repository: {src_file}")
@@ -635,7 +735,7 @@ def plan_file_removals(
 ) -> List[FileAction]:
     """Inspects deployed files on the host and plans removal in reverse order."""
     resolved = [
-        resolve_target_path(rel, target_dir)
+        target_dir / encode_dot_prefix(rel)
         for rel in sorted(deployed_files, reverse=True)
     ]
     return [
@@ -749,7 +849,7 @@ def execute_single_action(
 
     elif action.action_type in (FileActionType.CREATE_COPY, FileActionType.UPDATE_COPY):
         if action.src_path and action.dst_path:
-            copy_file(action.src_path, action.dst_path, context.sudo)
+            copy_file(action.src_path, action.dst_path, context.sudo, follow_symlinks=context.resolve_symlinks)
 
     elif action.action_type == FileActionType.UPDATE_PERMISSION:
         if action.src_path and action.dst_path:

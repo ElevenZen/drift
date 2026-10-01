@@ -131,7 +131,6 @@ from .package_assertions import (
     resolve_target_package_order,
 )
 from ..utils.process_utils import run_command
-from ..utils.path_utils import resolve_target_path
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.folder_delivery import (
     FileActionExecutionContext,

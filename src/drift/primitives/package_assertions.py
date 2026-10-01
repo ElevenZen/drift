@@ -116,7 +116,7 @@ from ..core.exceptions import (
     TargetPermissionError,
 )
 from ..utils.git_utils import has_uncommitted_modifications
-from ..utils.path_utils import is_relative_to, resolve_target_path
+from ..utils.path_utils import is_relative_to, encode_dot_prefix
 from ..utils.file_ops import assert_writable
 from ..utils.env_utils import topological_sort
 
@@ -374,7 +374,7 @@ def _gather_package_destination_targets(
     target_dir = metadata.get_target_directory(workspace_config)
 
     return [
-        (rel_file, resolve_target_path(rel_file, target_dir))
+        (rel_file, target_dir / encode_dot_prefix(rel_file))
         for rel_file in deployable_files
     ]
 

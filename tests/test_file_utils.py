@@ -10,7 +10,6 @@ from unittest.mock import patch, MagicMock
 from drift.core.constants import set_test_mode
 from drift.utils.path_utils import (
     is_relative_to,
-    resolve_target_path,
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,
@@ -113,17 +112,6 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(is_diff_candidate(Path("sub_dir/valid.txt"), base_dir=self.root))
         self.assertFalse(is_diff_candidate(Path("sub_dir"), base_dir=self.root))
         self.assertFalse(is_diff_candidate(Path("sub_dir/.DS_Store"), base_dir=self.root))
-
-    def test_resolve_system_target(self) -> None:
-        base = self.root / "target"
-        rel_path1 = Path("dot-config/nvim/init.lua")
-        rel_path2 = Path("normal_dir/file.txt")
-
-        res1 = resolve_target_path(rel_path1, base)
-        res2 = resolve_target_path(rel_path2, base)
-
-        self.assertEqual(res1, base / ".config" / "nvim" / "init.lua")
-        self.assertEqual(res2, base / "normal_dir" / "file.txt")
 
     def test_translate_dot_prefixes(self) -> None:
         """Verifies encode_dot_prefix converts 'dot-' to leading '.', skips 'dot-'/'dot-.',

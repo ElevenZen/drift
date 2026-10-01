@@ -3,7 +3,6 @@
 from .path_utils import (
     expand_path,
     is_relative_to,
-    resolve_target_path,
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,
@@ -128,7 +127,6 @@ from .python_hook_utils import (
 __all__ = [
     "expand_path",
     "is_relative_to",
-    "resolve_target_path",
     "encode_dot_prefix",
     "decode_dot_prefix",
     "relative_path_between",

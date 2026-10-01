@@ -9,7 +9,6 @@ for tilde expansion). They operate on path representations only.
 
     expand_path(path_input) — Expands ~, $VAR, %VAR% in path strings.
     is_relative_to(path, other) — Polyfill for Path.is_relative_to (Python <3.9).
-    resolve_target_path(relative_path, relative_base) — Applies dot-prefix + env expansion.
     encode_dot_prefix(relative_path) — Converts 'dot-config' → '.config' in path segments.
     decode_dot_prefix(relative_path) — Converts '.config' → 'dot-config' in path segments.
     relative_path_between(from_dir, to_path) — Computes relative path between two absolute paths.
@@ -89,13 +88,6 @@ def is_relative_to(path: Path, other: Path) -> bool:
         return True
     except ValueError:
         return False
-
-
-def resolve_target_path(relative_path: Path, relative_base: Path) -> Path:
-    """Applies dot-prefix translation and env expansion to compose a target path."""
-    translated_path = encode_dot_prefix(relative_path)
-    target_path = expand_path(relative_base)
-    return target_path / translated_path
 
 
 def encode_dot_prefix(relative_path: Path) -> Path:

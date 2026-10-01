@@ -49,7 +49,7 @@ Two deployment methods with different event ordering semantics — symlink conte
 
 ### 3. Modular Decomposition of `file_utils.py`
 Monolithic `file_utils.py` was decomposed into single-responsibility, functionally pure utility modules:
-- [`path_utils.py`](src/drift/utils/path_utils.py): Pure path manipulations (`expand_path`, `resolve_target_path`, `encode_dot_prefix`, `decode_dot_prefix`, `relative_path_between`, `is_relative_to`).
+- [`path_utils.py`](src/drift/utils/path_utils.py): Pure path manipulations (`expand_path`, `encode_dot_prefix`, `decode_dot_prefix`, `relative_path_between`, `is_relative_to`).
 - [`file_inspect.py`](src/drift/utils/file_inspect.py): Read-only inspection (`is_binary_file`, `file_hash`, `normalize_newlines`, `contents_differ`, `permissions_differ`, `is_mode_only_change`, `tree_files`, `is_temp_file`, `is_concrete_dir`, `is_diff_candidate`, `find_symlink_ancestor`).
 - [`file_ops.py`](src/drift/utils/file_ops.py): Destructive file operations with unified elevation (`copy_file`, `copy_symlink`, `copy_permissions`, `write_file`, `remove`, `remove_with_parents`, `copy_tree`, `move_tree`, `create_symlink`, `ensure_dir`, `assert_writable`, `prune_empty_parents`, `clear_readonly`).
 

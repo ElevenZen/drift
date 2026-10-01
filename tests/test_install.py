@@ -15,6 +15,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
     InstallMethod,
+    BackupSubfolder,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.package_config import PackageConfig, PackageSectionConfig
@@ -41,7 +42,6 @@ from drift.config.package_config import (
     PackageDependency,
 )
 from drift.primitives.install_repo import (
-        resolve_target_path,
         run_primitive_5_install,
         prepare_install,
         execute_install,
@@ -207,20 +207,6 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIsNone(default_state.last_deployed)
         self.assertIsNone(default_state.install_method)
         self.assertEqual(default_state.deployed_files, [])
-
-    def test_resolve_system_target(self) -> None:
-        """Verifies resolves system targets correctly, translating dot- prefixes to dot."""
-        # Simple file resolution
-        resolved = resolve_target_path(Path("dot-bashrc"), self.system_target_dir)
-        self.assertEqual(resolved, self.system_target_dir / ".bashrc")
-
-        # Nested folder and file resolution
-        resolved = resolve_target_path(Path("dot-config/nvim/dot-init.lua"), self.system_target_dir)
-        self.assertEqual(resolved, self.system_target_dir / ".config" / "nvim" / ".init.lua")
-
-        # Non-prefixed parts remain untouched
-        resolved = resolve_target_path(Path("regular_dir/regular_file.txt"), self.system_target_dir)
-        self.assertEqual(resolved, self.system_target_dir / "regular_dir" / "regular_file.txt")
 
     def test_install_symlink_incremental_deployment(self) -> None:
         """Verifies symlink incremental file-by-file manual symlinking deployment."""
@@ -3142,6 +3128,36 @@ class TestInstallRepo(unittest.TestCase):
         # Test resolve_backup_path (encodes hidden dot to dot- prefix in backup store)
         backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"))
         self.assertEqual(backup_path, self.backup_dir / pkg / "overwritten" / "dot-app.conf")
+        deleted_backup_path = delivery_ctx.resolve_backup_path(Path(".app.conf"), subfolder=BackupSubfolder.DELETED_FILES)
+        self.assertEqual(deleted_backup_path, self.backup_dir / pkg / "deleted_files" / "dot-app.conf")
+
+        # Test path translations in normal mode
+        self.assertEqual(delivery_ctx.translate_target_rel_path(Path("dot-config/app.conf")), Path(".config/app.conf"))
+        self.assertEqual(delivery_ctx.translate_source_rel_path(Path(".config/app.conf")), Path("dot-config/app.conf"))
+        self.assertEqual(delivery_ctx.translate_target_path(Path("dot-config/app.conf")), self.system_target_dir / ".config/app.conf")
+        self.assertEqual(delivery_ctx.translate_source_path(Path("dot-config/app.conf")), pkg_install_dir / "dot-config/app.conf")
+        src_file, dst_file = delivery_ctx.translate_path(Path("dot-config/app.conf"))
+        self.assertEqual(src_file, pkg_install_dir / "dot-config/app.conf")
+        self.assertEqual(dst_file, self.system_target_dir / ".config/app.conf")
+
+        # Test path translations in reverse mode
+        rev_ctx = DeliveryInspectionContext(
+            target_dir=pkg_install_dir,
+            source_dir=self.system_target_dir,
+            drift_root=Path("/nonexistent"),
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=True,
+        )
+        self.assertEqual(rev_ctx.translate_target_rel_path(Path(".config/app.conf")), Path("dot-config/app.conf"))
+        self.assertEqual(rev_ctx.translate_source_rel_path(Path("dot-config/app.conf")), Path(".config/app.conf"))
+        self.assertEqual(rev_ctx.translate_target_path(Path(".config/app.conf")), pkg_install_dir / "dot-config/app.conf")
+        self.assertEqual(rev_ctx.translate_source_path(Path(".config/app.conf")), self.system_target_dir / ".config/app.conf")
+        rev_src_file, rev_dst_file = rev_ctx.translate_path(Path(".config/app.conf"))
+        self.assertEqual(rev_src_file, self.system_target_dir / ".config/app.conf")
+        self.assertEqual(rev_dst_file, pkg_install_dir / "dot-config/app.conf")
 
         # Test plan_folder_delivery directly with DeliveryInspectionContext
         actions = plan_folder_delivery(
@@ -3153,6 +3169,100 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions[0].action_type, FileActionType.CREATE_SYMLINK)
         self.assertEqual(actions[0].src_path, pkg_install_dir / "app.conf")
         self.assertEqual(actions[0].dst_path, self.system_target_dir / "app.conf")
+
+    def test_delivery_inspection_reverse_mode_symlink_semantics(self) -> None:
+        """Verifies reverse_mode symlink handling: skip identical drift links, delete broken links, error on dir links, compare external file links."""
+        pkg = "pkg_rev_symlinks"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        repo_file = pkg_install_dir / "dot-bashrc"
+        repo_file.write_text("export FOO=1\n", encoding="utf-8")
+
+        rev_ctx = DeliveryInspectionContext(
+            target_dir=pkg_install_dir,
+            source_dir=self.system_target_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=True,
+        )
+
+        # 1. Host symlink pointing to repo target -> SKIP_IDENTICAL
+        host_link = self.system_target_dir / ".bashrc"
+        host_link.symlink_to(repo_file)
+        actions = plan_folder_delivery(
+            context=rev_ctx,
+            deployable_files=[Path(".bashrc")],
+            deployed_files=[Path(".bashrc")],
+        )
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action_type, FileActionType.SKIP_IDENTICAL)
+        self.assertEqual(actions[0].reason, "Source and target are identical")
+        host_link.unlink()
+
+        # 2. Host broken symlink -> DELETE_FILE in repo
+        host_link.symlink_to(self.system_target_dir / "nonexistent_target")
+        actions_broken = plan_folder_delivery(
+            context=rev_ctx,
+            deployable_files=[Path(".bashrc")],
+            deployed_files=[Path(".bashrc")],
+        )
+        self.assertEqual(len(actions_broken), 1)
+        self.assertEqual(actions_broken[0].action_type, FileActionType.DELETE_FILE)
+        self.assertEqual(actions_broken[0].dst_path, repo_file)
+        self.assertEqual(actions_broken[0].reason, "Broken symlink on host")
+        host_link.unlink()
+
+        # 3. Host symlink pointing to a directory -> raises InstallCollisionError
+        some_dir = self.system_target_dir / "some_dir"
+        some_dir.mkdir(parents=True, exist_ok=True)
+        host_link.symlink_to(some_dir)
+        with self.assertRaises(InstallCollisionError) as ctx:
+            plan_folder_delivery(
+                context=rev_ctx,
+                deployable_files=[Path(".bashrc")],
+                deployed_files=[Path(".bashrc")],
+            )
+        self.assertIn("cannot be symlinks to directories", str(ctx.exception))
+        host_link.unlink()
+
+        # 4. Host symlink pointing to an external file -> compares content
+        ext_file = self.system_target_dir / "external.conf"
+        ext_file.write_text("export FOO=2\n", encoding="utf-8")
+        host_link.symlink_to(ext_file)
+        actions_ext = plan_folder_delivery(
+            context=rev_ctx,
+            deployable_files=[Path(".bashrc")],
+            deployed_files=[Path(".bashrc")],
+        )
+        self.assertEqual(len(actions_ext), 1)
+        self.assertEqual(actions_ext[0].action_type, FileActionType.UPDATE_COPY)
+        self.assertEqual(actions_ext[0].src_path, ext_file)
+        self.assertEqual(actions_ext[0].dst_path, repo_file)
+        host_link.unlink()
+
+        # 5. Normal mode: Deployable symlink in repo pointing to a directory -> raises InstallCollisionError
+        normal_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=False,
+        )
+        repo_dir_link = pkg_install_dir / "link_to_dir"
+        repo_dir_link.symlink_to(some_dir)
+        with self.assertRaises(InstallCollisionError) as ctx:
+            plan_folder_delivery(
+                context=normal_ctx,
+                deployable_files=[Path("link_to_dir")],
+                deployed_files=(),
+            )
+        self.assertIn("cannot be symlinks to directories", str(ctx.exception))
 
 
 class TestInstallDependencies(unittest.TestCase):

@@ -9,12 +9,10 @@ from ..core.constants import MANAGED_CONFIG_FILES
 from ..core.ignore import DriftIgnore, IgnoreHandler
 from ..utils.path_utils import (
     is_relative_to,
-    resolve_target_path,
     encode_dot_prefix,
     decode_dot_prefix,
 )
 from ..utils.file_ops import remove
-from ..utils.file_inspect import is_concrete_dir
 from ..core.folder_diff import compare_folders
 from ..core.sync_ops import reverse_sync_file_or_dir
 from ..config.package_config import PackageConfig
@@ -100,7 +98,7 @@ def record_synced_target(
 ) -> None:
     """Records synced system target and its leaf files into drifted_files and synced_files."""
     system_target = target_dir_path / target_rel
-    if is_concrete_dir(system_target):
+    if system_target.is_dir():
         for leaf in _collect_leaf_paths(system_target):
             child_target_rel = leaf.relative_to(target_dir_path) if leaf != target_dir_path else target_rel
             child_repo_rel = decode_dot_prefix(child_target_rel)
@@ -125,7 +123,7 @@ def record_deleted_repo_target(
 ) -> None:
     """Records deleted repo counterpart and its leaf files into drifted_files and synced_files."""
     repo_file = install_pkg_dir / repo_rel
-    if is_concrete_dir(repo_file):
+    if repo_file.is_dir():
         for leaf in _collect_leaf_paths(repo_file):
             child_repo_rel = leaf.relative_to(install_pkg_dir) if leaf != install_pkg_dir else repo_rel
             child_target_rel = encode_dot_prefix(child_repo_rel)
@@ -182,7 +180,7 @@ def sync_tracked_files(
                 ignore_handler=ignore_handler
             )
             record_synced_target(target_rel, target_dir_path, drifted_files, synced_files, ignore_handler=ignore_handler)
-            if is_concrete_dir(system_target):
+            if system_target.is_dir():
                 if repo_rel != Path("") and repo_rel != Path("."):
                     synced_ancestors.add(repo_rel)
         else:
@@ -212,7 +210,7 @@ def sync_tracked_files(
         )
         record_synced_target(target_rel, target_dir_path, drifted_files, synced_files, ignore_handler=ignore_handler)
         system_target = target_dir_path / target_rel
-        if is_concrete_dir(system_target):
+        if system_target.is_dir():
             if repo_rel != Path("") and repo_rel != Path("."):
                 synced_ancestors.add(repo_rel)
 
@@ -234,7 +232,7 @@ def sync_tracked_files(
                 ignore_handler=ignore_handler
             )
             record_synced_target(target_rel, target_dir_path, drifted_files, synced_files, ignore_handler=ignore_handler)
-            if is_concrete_dir(system_target):
+            if system_target.is_dir():
                 if repo_rel != Path("") and repo_rel != Path("."):
                     synced_ancestors.add(repo_rel)
 
@@ -317,7 +315,7 @@ def sync_single_fcd(
             ignore_handler=ignore_handler
         )
         record_synced_target(full_target_rel, target_dir_path, drifted_files, synced_files, ignore_handler=ignore_handler)
-        if is_concrete_dir(system_item):
+        if system_item.is_dir():
             if sub_rel != Path("") and sub_rel != Path("."):
                 synced_added_ancestors.add(sub_rel)
 

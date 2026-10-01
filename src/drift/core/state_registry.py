@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional, List, Mapping, Tuple, Iterable, Any
 from ..utils.toml_utils import parse_toml
+from ..utils.path_utils import encode_dot_prefix
 from .exceptions import ConfigError
 from .constants import MIDWAY_TRANSACTION_STATES, ROLLBACK_ELIGIBLE_STATES, InstallMethod
 
@@ -86,7 +87,6 @@ class StateRegistry:
         Resolves each package's deployed_files relative to its recorded target_directory.
         Optionally excludes packages in `exclude_packages` (e.g. packages currently being redeployed).
         """
-        from ..utils.path_utils import resolve_target_path
         exclude_set = set(exclude_packages) if exclude_packages is not None else set()
         ownership_map: Dict[Path, str] = {}
         for pkg, pkg_state in self.packages.items():
@@ -94,7 +94,7 @@ class StateRegistry:
                 continue
             if pkg_state.state == "installed" and pkg_state.target_directory is not None:
                 for rel_file in pkg_state.deployed_files:
-                    dst = resolve_target_path(rel_file, pkg_state.target_directory)
+                    dst = pkg_state.target_directory / encode_dot_prefix(rel_file)
                     ownership_map[dst] = pkg
         return ownership_map
 
