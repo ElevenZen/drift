@@ -43,24 +43,24 @@ from drift.config.package_config import (
 from drift.primitives.stage_repo import PackageStageChanges
 from drift.primitives.install_repo import (
         resolve_target_path,
-        run_primitive_5_install_deployment,
-        prepare_install_deployment,
-        execute_install_deployment,
+        run_primitive_5_install,
+        prepare_install,
+        execute_install,
         InstallPlan,
-        plan_package_deployment,
+        plan_package_install,
         execute_package_actions,
         execute_package_install,
         execute_package_install_impl,
-        deploy_one_package,
+        install_one_package,
         InstallConfig,
         PackageInstallContext,
-        assert_packages_deployment_ready,
+        assert_packages_install_ready,
 )
 from drift.core.folder_deployment import execute_single_action
 from drift.core.result_models import (
         ActionType,
         PlannedFileAction,
-        PackageDeploymentPlan,
+        PackageInstallPlan,
 )
 from drift.utils.path_utils import compute_relative_symlink_target
 from drift.primitives.package_assertions import (
@@ -237,7 +237,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("content of bashrc")
 
         # Run deployment
-        run_primitive_5_install_deployment(
+        run_primitive_5_install(
             self.workspace_config,
             [pkg],
         )
@@ -278,7 +278,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("pre-existing user content")
 
         # Run deployment
-        run_primitive_5_install_deployment(
+        run_primitive_5_install(
             self.workspace_config,
             [pkg],
         )
@@ -333,7 +333,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("colliding user file")
 
         # Run first-time deployment
-        run_primitive_5_install_deployment(
+        run_primitive_5_install(
             self.workspace_config,
             [pkg],
         )
@@ -354,7 +354,7 @@ class TestInstallRepo(unittest.TestCase):
         with open(hook_marker, "r", encoding="utf-8") as f:
             self.assertEqual(f.read().strip(), "hook installed")
 
-        # Simulation 2: Update/Redeploy (bypasses collision guard, triggers post_update)
+        # Simulation 2: Update/Reinstall (bypasses collision guard, triggers post_update)
         # Modify content in install/
         with open(os.path.join(pkg_install_dir, "test.txt"), "w", encoding="utf-8") as f:
             f.write("updated hello copy")
@@ -367,7 +367,7 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(hook_marker)
 
         # Run update deployment
-        run_primitive_5_install_deployment(
+        run_primitive_5_install(
             self.workspace_config,
             [pkg],
         )
@@ -401,7 +401,7 @@ class TestInstallRepo(unittest.TestCase):
         src_file.write_text("actual content", encoding="utf-8")
 
         # 3. Run deployment
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # 4. Verify the target is a regular file, NOT a symlink
         target_file = self.system_target_dir / "real_file.txt"
@@ -575,7 +575,7 @@ class TestInstallRepo(unittest.TestCase):
 
     def test_lifecycle_hooks_receive_package_envs(self) -> None:
         """Verifies that lifecycle hooks receive drift_package_name, drift_package_target_dir, and drift_package_install_method in env."""
-        from drift.primitives.install_repo import deploy_one_package
+        from drift.primitives.install_repo import install_one_package
         from drift.core.state_registry import StateRegistry
 
         pkg = "pkg_env_hooks"
@@ -617,7 +617,7 @@ class TestInstallRepo(unittest.TestCase):
 
         meta = PackageConfig.from_install_dir(self.install_dir / pkg, self.workspace_config)
         with patch("drift.hooks.lifecycle_hooks.run_command", side_effect=mock_run_cmd):
-            deploy_one_package(
+            install_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=meta,
@@ -660,7 +660,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("ignore_me.txt\n")
 
         # Run full deployment (no package_changes passed)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # Verify results
         kept_file = os.path.join(self.system_target_dir, "keep.txt")
@@ -705,7 +705,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Now, attempting to deploy should raise a RuntimeError containing "Safety Abort"
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_5_install_deployment(
+            run_primitive_5_install(
                 self.workspace_config,
                 [pkg],
             )
@@ -741,7 +741,7 @@ class TestInstallRepo(unittest.TestCase):
         os.symlink(fake_drift_dest, nested_target_symlink)
 
         # Deploy
-        run_primitive_5_install_deployment(
+        run_primitive_5_install(
             self.workspace_config,
             [pkg],
         )
@@ -763,7 +763,7 @@ class TestInstallRepo(unittest.TestCase):
         )
 
     def test_run_full_symlink_deployment(self) -> None:
-        """Verifies that plan_package_deployment and execute_package_actions link deployable files natively."""
+        """Verifies that plan_package_install and execute_package_actions link deployable files natively."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_full"
         pkg_install_dir = self.install_dir / pkg
@@ -787,7 +787,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=deployable_files,
         )
@@ -836,7 +836,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("pre-existing on target")
 
         # Execute deployment
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # 1. The ignored_file.txt should be ignored.
         self.assertTrue(system_file.exists())
@@ -870,7 +870,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("second file")
 
         # First deployment (registers both file1.txt and file2.txt in state.toml)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # Verify both files are deployed
         system_file1 = self.system_target_dir / "file1.txt"
@@ -888,7 +888,7 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(os.path.join(pkg_install_dir, "file2.txt"))
 
         # Re-run standalone deployment (without package_changes)
-        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
         self.assertEqual([str(a.rel_path) for a in res2.packages[0].plan.prune_backups], ["file2.txt"])
 
@@ -931,7 +931,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("second symlink file")
 
         # Deploy first time using symlink
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # Verify links are deployed
         system_file1 = self.system_target_dir / "file1.txt"
@@ -943,7 +943,7 @@ class TestInstallRepo(unittest.TestCase):
         os.remove(os.path.join(pkg_install_dir, "file2.txt"))
 
         # Re-run standalone deployment
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # 3. Assert the stale symlink was successfully pruned/deleted from the host target
         self.assertFalse(os.path.exists(system_file2))
@@ -1004,7 +1004,7 @@ class TestInstallRepo(unittest.TestCase):
         os.symlink(nonexistent_external_file, system_external_broken)
 
         # Execute deployment
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # 2. Assertions:
         # - The internal symlink was deleted without backup:
@@ -1046,7 +1046,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Execute deployment and assert InstallCollisionError
         with self.assertRaises(InstallCollisionError) as ctx:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
         # 2. Setup config with target_directory INSIDE drift_root (e.g. self.drift_root / "polluted_dir")
@@ -1062,7 +1062,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Execute deployment and assert InstallCollisionError
         with self.assertRaises(InstallCollisionError) as ctx:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
         self.assertIn("cannot be inside or equal to the drift workspace root", str(ctx.exception))
 
     def test_run_primitive_6_commit_install_repo(self) -> None:
@@ -1160,7 +1160,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Attempt to deploy - should fail due to hook
         with self.assertRaises(RuntimeError):
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
 
         # Check state.toml
         state_file = os.path.join(self.install_dir, "state.toml")
@@ -1193,7 +1193,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Attempt to deploy - should abort with Safety Abort
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
         
         self.assertIn("Safety Abort", str(ctx.exception))
         self.assertIn("Package(s) in midway transaction state", str(ctx.exception))
@@ -1201,7 +1201,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(ctx.exception.packages, [pkg])
 
         # Attempt with force=True - should proceed (and succeed here)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg], config=InstallConfig(force=True))
+        run_primitive_5_install(self.workspace_config, [pkg], config=InstallConfig(force=True))
         
         # Verify success after force
         registry = load_state_registry(Path(state_file))
@@ -1229,7 +1229,7 @@ class TestInstallRepo(unittest.TestCase):
             f.write("deployed static content")
 
         # Run deployment
-        run_primitive_5_install_deployment(self.workspace_config, [pkg_name])
+        run_primitive_5_install(self.workspace_config, [pkg_name])
 
         # Verify output target file exists under system target dir (name preserved, files copied)
         target_file = self.system_target_dir / "static.txt"
@@ -1261,7 +1261,7 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        res_disabled = run_primitive_5_install_deployment(
+        res_disabled = run_primitive_5_install(
             workspace_config=self.workspace_config,
             target_pkgs=[pkg_disabled],
             config=InstallConfig(resolve_symlinks=True, force=False),
@@ -1272,7 +1272,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertNotEqual(reloaded.get_package_state(pkg_disabled), "installing")
 
         # Also verify that force=True does NOT bypass enable_install=False
-        res_forced = run_primitive_5_install_deployment(
+        res_forced = run_primitive_5_install(
             workspace_config=self.workspace_config,
             target_pkgs=[pkg_disabled],
             config=InstallConfig(resolve_symlinks=True, force=True),
@@ -1292,7 +1292,7 @@ class TestInstallRepo(unittest.TestCase):
             )
         )
         with self.assertRaises(PackageInstallDirMissingError) as cm:
-            deploy_one_package(
+            install_one_package(
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=metadata_missing,
@@ -1336,7 +1336,7 @@ class TestInstallRepo(unittest.TestCase):
         # Render -> Stage -> Install
         render_package(self.workspace_config, pkg_src)
         run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
 
         # Assert:
         # A. Hook executed and wrote marker file
@@ -1394,7 +1394,7 @@ class TestInstallRepo(unittest.TestCase):
         system_rogue.symlink_to(drift_internal_target)
 
         # 4. Execute install deployment
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # 5. Assertions:
@@ -1438,7 +1438,7 @@ class TestInstallRepo(unittest.TestCase):
         system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
 
         # Execute full deployment
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1474,7 +1474,7 @@ class TestInstallRepo(unittest.TestCase):
         system_file_a.symlink_to(pkg_install_dir / "file_b.txt")
 
         # Execute deployment modifying file_a.txt
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1510,7 +1510,7 @@ class TestInstallRepo(unittest.TestCase):
         system_dir = self.system_target_dir / "my_dir"
         system_dir.symlink_to(drift_internal_dir)
 
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1568,7 +1568,7 @@ class TestInstallRepo(unittest.TestCase):
         system_file.symlink_to(external_file)
 
         # Run deployment update
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert:
@@ -1604,7 +1604,7 @@ class TestInstallRepo(unittest.TestCase):
         sub_dir.mkdir(parents=True, exist_ok=True)
         (sub_dir / "tool.sh").write_text("#!/bin/bash\necho hi", encoding="utf-8")
 
-        res1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res1 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res1.status, "SUCCESS")
 
         host_config = self.system_target_dir / "config.json"
@@ -1620,7 +1620,7 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
 
         # Assert:
@@ -1659,7 +1659,7 @@ class TestInstallRepo(unittest.TestCase):
         nested_dir.mkdir(parents=True, exist_ok=True)
         (nested_dir / "data.txt").write_text("data payload 1\n", encoding="utf-8")
 
-        res1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res1 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res1.status, "SUCCESS")
 
         host_settings = self.system_target_dir / "settings.ini"
@@ -1677,7 +1677,7 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{self.system_target_dir}"
         """, encoding="utf-8")
 
-        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
 
         # Assert:
@@ -1715,7 +1715,7 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / "app.conf").write_text("hello", encoding="utf-8")
 
         with self.assertRaises(FileNotFoundError) as cm:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
         self.assertIn("missing.sh", str(cm.exception))
 
     def test_install_fails_if_hook_file_is_directory_in_install(self) -> None:
@@ -1737,11 +1737,11 @@ class TestInstallRepo(unittest.TestCase):
         post_install = "drift_hooks/hook_dir"
         """, encoding="utf-8")
         with self.assertRaises(HookMissingError) as cm:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg])
+            run_primitive_5_install(self.workspace_config, [pkg])
         self.assertIn("not a regular file", str(cm.exception))
 
-    def test_plan_package_deployment_detects_internal_symlink_conflicts(self) -> None:
-        """Verifies plan_package_deployment detects internal ancestor symlinks and leaf symlink collisions."""
+    def test_plan_package_install_detects_internal_symlink_conflicts(self) -> None:
+        """Verifies plan_package_install detects internal ancestor symlinks and leaf symlink collisions."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_find_conflicts"
         pkg_install_dir = self.install_dir / pkg
@@ -1778,7 +1778,7 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("nested/app.conf"), Path("root.conf")],
         )
@@ -1821,7 +1821,7 @@ class TestInstallRepo(unittest.TestCase):
         system_target = self.system_target_dir / "sub_dir"
         system_target.symlink_to(fake_drift_dest)
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("sub_dir/file.txt")],
         )
@@ -1869,7 +1869,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("a/b/c.txt")],
         )
@@ -1936,7 +1936,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("dot-config/nvim/lua/init.lua")],
         )
@@ -2002,7 +2002,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("a/b/c/deep.txt"), Path("a/sibling.txt")],
         )
@@ -2048,7 +2048,7 @@ class TestInstallRepo(unittest.TestCase):
         rel_to_install = os.path.relpath(pkg_install_dir / "valid_file.txt", self.system_target_dir)
         os.symlink(rel_to_install, system_target)
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("valid_file.txt")],
         )
@@ -2104,7 +2104,7 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("nested/app.conf"), Path("root.conf")],
         )
@@ -2148,7 +2148,7 @@ class TestInstallRepo(unittest.TestCase):
             is_first_time=True,
             drift_root=self.workspace_config.drift_root,
         )
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("file.txt")],
         )
@@ -2183,7 +2183,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
         with self.assertRaises(InstallCollisionError) as cm:
-            plan_package_deployment(
+            plan_package_install(
                 context=context,
                 deployable_files=[],
             )
@@ -2221,7 +2221,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("conflicting_link.txt"), Path("valid_link.txt")],
         )
@@ -2238,7 +2238,7 @@ class TestInstallRepo(unittest.TestCase):
 
     @patch("drift.core.folder_deployment.create_symlink")
     def test_execute_single_action_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
-        """Verifies execute_single_action and plan_package_deployment skip recreating symlink if target already points to source."""
+        """Verifies execute_single_action and plan_package_install skip recreating symlink if target already points to source."""
         from drift.core.ignore import DriftIgnore
         pkg = "pkg_symlink_skip"
         pkg_install_dir = self.install_dir / pkg
@@ -2262,7 +2262,7 @@ class TestInstallRepo(unittest.TestCase):
         )
 
         # 1. Target does not exist -> plan creates CREATE_SYMLINK action
-        plan1 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
+        plan1 = plan_package_install(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan1.created), 1)
         self.assertEqual(plan1.created[0].action_type, ActionType.CREATE_SYMLINK)
         execute_single_action(context.action_context, plan1.created[0])
@@ -2274,7 +2274,7 @@ class TestInstallRepo(unittest.TestCase):
         mock_create_symlink.reset_mock()
 
         # 2. Target already exists and points to src_file -> plan creates SKIP_IDENTICAL action
-        plan2 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
+        plan2 = plan_package_install(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan2.skipped), 1)
         self.assertEqual(plan2.skipped[0].action_type, ActionType.SKIP_IDENTICAL)
         execute_single_action(context.action_context, plan2.skipped[0])
@@ -2286,7 +2286,7 @@ class TestInstallRepo(unittest.TestCase):
         other_file.write_text("other", encoding="utf-8")
         os.symlink(other_file, system_target)
 
-        plan3 = plan_package_deployment(context=context, deployable_files=[Path("app.conf")])
+        plan3 = plan_package_install(context=context, deployable_files=[Path("app.conf")])
         self.assertEqual(len(plan3.overwritten_backups), 1)
         self.assertEqual(len(plan3.created), 1)
         for act in plan3.actions:
@@ -2379,7 +2379,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(backup_file.read_text(encoding="utf-8"), "orphan content to be pruned")
 
     def test_plan_and_execute_orphan_reconciliation(self) -> None:
-        """Verifies plan_package_deployment plans single BACKUP_PRUNE for orphaned files and execution deletes them."""
+        """Verifies plan_package_install plans single BACKUP_PRUNE for orphaned files and execution deletes them."""
         pkg = "pkg_orphan_reconcile"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -2402,7 +2402,7 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("keep.txt")],
             deployed_files=[Path("keep.txt"), Path("old_deleted.txt")],
@@ -2425,7 +2425,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(backup_file.read_text(encoding="utf-8"), "historical orphan content")
 
     def test_full_copy_deployment_translates_dot_prefixes(self) -> None:
-        """Verifies full copy deployment (initial deploy and full redeploy) translates dot- prefixes to leading dots."""
+        """Verifies full copy deployment (initial deploy and full reinstall) translates dot- prefixes to leading dots."""
         pkg = "pkg_copy_dot"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -2443,7 +2443,7 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_install_dir / "normal.txt").write_text("plain text\n", encoding="utf-8")
 
         # Run full deployment (no package_changes provided -> triggers run_full_copy_deployment)
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Verify translated paths exist on target
@@ -2463,8 +2463,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / "dot-bashrc").exists())
         self.assertFalse((self.system_target_dir / "dot-config").exists())
 
-    def test_plan_package_deployment_accepts_generators(self) -> None:
-        """Verifies plan_package_deployment accepts unmaterialized generator expressions."""
+    def test_plan_package_install_accepts_generators(self) -> None:
+        """Verifies plan_package_install accepts unmaterialized generator expressions."""
         from drift.core.ignore import DriftIgnore
 
         context = PackageInstallContext(
@@ -2482,7 +2482,7 @@ class TestInstallRepo(unittest.TestCase):
         deployable_gen = (Path(f"file_{i}.txt") for i in [1, 2])
         deployed_gen = (Path(f"file_{i}.txt") for i in [1, 2, 3])
 
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=deployable_gen,
             deployed_files=deployed_gen,
@@ -2522,7 +2522,7 @@ class TestInstallRepo(unittest.TestCase):
 
         # Run deployment with dry_run=True
         cfg = InstallConfig(dry_run=True)
-        result = run_primitive_5_install_deployment(self.workspace_config, [pkg], config=cfg)
+        result = run_primitive_5_install(self.workspace_config, [pkg], config=cfg)
 
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual(len(result.packages), 1)
@@ -2578,7 +2578,7 @@ class TestInstallRepo(unittest.TestCase):
         host_secret.write_text("existing host secret", encoding="utf-8")
 
         # Deploy package
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res.status, "SUCCESS")
 
         # Assert backups in backup/<pkg>/overwritten/ use 'dot-' prefixes (not leading dots)
@@ -2592,9 +2592,9 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(backup_secret.read_text(encoding="utf-8"), "existing host secret")
         self.assertFalse((self.backup_dir / pkg / "overwritten" / ".config").exists())
 
-        # 2. Orphan removal: simulate deleting dot-bashrc from package, then redeploying
+        # 2. Orphan removal: simulate deleting dot-bashrc from package, then reinstalling
         (pkg_install_dir / "dot-bashrc").unlink()
-        res2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
 
         # Assert orphan backup in backup/<pkg>/deleted_files/ uses 'dot-' prefix
@@ -2651,7 +2651,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(ctx.exception.packages, ["pkg_a", "pkg_b", "pkg_c"])
         self.assertEqual(len(ctx.exception.conflicts), 2)
 
-    def test_cross_package_inter_package_conflict_excludes_redeploying_package(self) -> None:
+    def test_cross_package_inter_package_conflict_excludes_reinstalling_package(self) -> None:
         """Verifies that inter-package conflicts exclude packages in the current deployment batch and report external collisions."""
         # 1. Setup pkg_installed and deploy it
         pkg_inst = "pkg_installed"
@@ -2667,14 +2667,14 @@ class TestInstallRepo(unittest.TestCase):
         (pkg_inst_dir / "dot-app" / "app.conf").write_text("installed app conf", encoding="utf-8")
         self.workspace_config.packages_enable[pkg_inst] = True
 
-        run_primitive_5_install_deployment(self.workspace_config, [pkg_inst])
+        run_primitive_5_install(self.workspace_config, [pkg_inst])
 
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg_inst), "installed")
 
-        # 2. Redeploy pkg_inst alone - should NOT conflict with itself
-        res = run_primitive_5_install_deployment(self.workspace_config, [pkg_inst])
+        # 2. Reinstall pkg_inst alone - should NOT conflict with itself
+        res = run_primitive_5_install(self.workspace_config, [pkg_inst])
         self.assertEqual(res.status, "SUCCESS")
 
         # 3. Setup pkg_new attempting to claim the same destination
@@ -2692,7 +2692,7 @@ class TestInstallRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg_new] = True
 
         with self.assertRaises(CrossPackageCollisionError) as ctx:
-            run_primitive_5_install_deployment(self.workspace_config, [pkg_new])
+            run_primitive_5_install(self.workspace_config, [pkg_new])
 
         err_msg = str(ctx.exception)
         self.assertIn("Cross-package destination conflicts detected (1 collision(s)):", err_msg)
@@ -2722,7 +2722,7 @@ class TestInstallRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
 
         # Initial deployment to target_1
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
         self.assertTrue((target_1 / "file1.txt").is_file())
         self.assertTrue((target_1 / "sub" / "file2.txt").is_file())
 
@@ -2740,11 +2740,11 @@ class TestInstallRepo(unittest.TestCase):
         target_directory = "{target_2}"
         """, encoding="utf-8")
 
-        # Deploy with redeploy=False (migration automatically forces full deployment to target_2)
-        res_mig = run_primitive_5_install_deployment(
+        # Deploy with reinstall=False (migration automatically forces full deployment to target_2)
+        res_mig = run_primitive_5_install(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(redeploy=False)
+            config=InstallConfig(reinstall=False)
         )
         self.assertEqual(res_mig.status, "SUCCESS")
 
@@ -2762,7 +2762,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(registry_migrated.get_target_migrated_from(pkg, target_2), None)
 
     def test_target_directory_migration_dry_run_and_planning(self) -> None:
-        """Verifies plan_package_deployment and dry-run accurately plan migration undeployment without host mutations."""
+        """Verifies plan_package_install and dry-run accurately plan migration undeployment without host mutations."""
         target_1 = self.system_target_dir / "target_mig_1"
         target_2 = self.system_target_dir / "target_mig_2"
         target_1.mkdir(parents=True, exist_ok=True)
@@ -2781,7 +2781,7 @@ class TestInstallRepo(unittest.TestCase):
         self.workspace_config.packages_enable[pkg] = True
 
         # Deploy initially to target_1
-        run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        run_primitive_5_install(self.workspace_config, [pkg])
         self.assertTrue((target_1 / "config.conf").is_file())
 
         # Update package config to target_2
@@ -2793,7 +2793,7 @@ class TestInstallRepo(unittest.TestCase):
         """, encoding="utf-8")
 
         # Dry-run deployment
-        res_dry = run_primitive_5_install_deployment(
+        res_dry = run_primitive_5_install(
             self.workspace_config,
             [pkg],
             config=InstallConfig(dry_run=True),
@@ -2939,8 +2939,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(ownership_ex_a[target_b / "main.py"], "pkg_b")
         self.assertEqual(registry.get_file_owner(target_b / "main.py"), "pkg_b")
 
-    def test_prepare_and_execute_install_deployment_pipeline(self) -> None:
-        """Verifies prepare_install_deployment returns InstallPlan and execute_install_deployment deploys it."""
+    def test_prepare_and_execute_install_pipeline(self) -> None:
+        """Verifies prepare_install returns InstallPlan and execute_install executes it."""
         pkg = "pkg_copy"
         install_pkg_dir = self.install_dir / pkg
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -2953,7 +2953,7 @@ class TestInstallRepo(unittest.TestCase):
         (install_pkg_dir / "app.conf").write_text("setting = 1\n", encoding="utf-8")
 
         # 1. Prepare phase
-        plan = prepare_install_deployment(self.workspace_config, [pkg])
+        plan = prepare_install(self.workspace_config, [pkg])
         self.assertIsInstance(plan, InstallPlan)
         self.assertEqual(plan.packages_to_install, [pkg])
         self.assertIn(pkg, plan.pkg_metadata_map)
@@ -2967,7 +2967,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / "app.conf").exists())
 
         # 2. Execute phase
-        result = execute_install_deployment(self.workspace_config, plan=plan)
+        result = execute_install(self.workspace_config, plan=plan)
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual(len(result.packages), 1)
         self.assertEqual(result.packages[0].package, pkg)
@@ -3004,7 +3004,7 @@ class TestInstallRepo(unittest.TestCase):
             state_registry=registry,
             metadata=meta,
         )
-        plan = plan_package_deployment(
+        plan = plan_package_install(
             context=context,
             deployable_files=[Path("test.conf")],
         )
@@ -3025,8 +3025,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(reloaded.get_package_state(pkg), "installed")
         self.assertIn("test.conf", [str(p) for p in reloaded.get_package_deployed_files(pkg)])
 
-    def test_prepare_install_deployment_preflight_guard_failure(self) -> None:
-        """Verifies prepare_install_deployment runs pre-flight checks and aborts before touching host system."""
+    def test_prepare_install_preflight_guard_failure(self) -> None:
+        """Verifies prepare_install runs pre-flight checks and aborts before touching host system."""
         pkg = "pkg_copy"
         install_pkg_dir = self.install_dir / pkg
         install_pkg_dir.mkdir(parents=True, exist_ok=True)
@@ -3042,7 +3042,7 @@ class TestInstallRepo(unittest.TestCase):
         (install_pkg_dir / "app.conf").write_text("setting = 1\n", encoding="utf-8")
 
         with self.assertRaises(HookMissingError) as ctx:
-            prepare_install_deployment(self.workspace_config, [pkg])
+            prepare_install(self.workspace_config, [pkg])
 
         self.assertEqual(ctx.exception.packages, [pkg])
         # Host system was never touched
@@ -3053,7 +3053,7 @@ class TestInstallRepo(unittest.TestCase):
 
 
 class TestInstallDependencies(unittest.TestCase):
-    """Tests for package dependency ordering, validation, and DAG resolution during install deployment."""
+    """Tests for package dependency ordering, validation, and DAG resolution during install."""
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -3105,7 +3105,7 @@ class TestInstallDependencies(unittest.TestCase):
         (pkg_dir / f"file_{pkg_name}.txt").write_text(f"content for {pkg_name}", encoding="utf-8")
         self.workspace_config.packages_enable[pkg_name] = True
 
-    def test_assert_packages_deployment_ready_with_full_universe_deps(self) -> None:
+    def test_assert_packages_install_ready_with_full_universe_deps(self) -> None:
         self._create_install_package("pkg_a")
         self._create_install_package("pkg_b")
         metadata = {
@@ -3116,7 +3116,7 @@ class TestInstallDependencies(unittest.TestCase):
         hook_flags = HookExecFlags.resolve(None, settings=self.workspace_config.settings)
 
         # 1. full_universe_deps=None skips dependency DAG validation
-        assert_packages_deployment_ready(
+        assert_packages_install_ready(
             workspace_config=self.workspace_config,
             discovered_packages=["pkg_a", "pkg_b"],
             pkg_metadata_map=metadata,
@@ -3130,7 +3130,7 @@ class TestInstallDependencies(unittest.TestCase):
             "pkg_a": PackageDependencies(items=[]),
             "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
         }
-        assert_packages_deployment_ready(
+        assert_packages_install_ready(
             workspace_config=self.workspace_config,
             discovered_packages=["pkg_a", "pkg_b"],
             pkg_metadata_map=metadata,
@@ -3145,7 +3145,7 @@ class TestInstallDependencies(unittest.TestCase):
             "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
         }
         with self.assertRaises(ConfigError) as ctx:
-            assert_packages_deployment_ready(
+            assert_packages_install_ready(
                 workspace_config=self.workspace_config,
                 discovered_packages=["pkg_a", "pkg_b"],
                 pkg_metadata_map=metadata,
@@ -3155,19 +3155,19 @@ class TestInstallDependencies(unittest.TestCase):
             )
         self.assertIn("Cyclic package dependency detected", str(ctx.exception))
 
-    def test_prepare_install_deployment_topological_ordering(self) -> None:
+    def test_prepare_install_topological_ordering(self) -> None:
         self._create_install_package("pkg_c", dependencies=["pkg_b"])
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
         self._create_install_package("pkg_a", dependencies=[])
 
-        plan = prepare_install_deployment(self.workspace_config)
+        plan = prepare_install(self.workspace_config)
         self.assertEqual(plan.packages_to_install, ["pkg_a", "pkg_b", "pkg_c"])
 
-        result = execute_install_deployment(self.workspace_config, plan=plan)
+        result = execute_install(self.workspace_config, plan=plan)
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual([p.package for p in result.packages], ["pkg_a", "pkg_b", "pkg_c"])
 
-    def test_prepare_install_deployment_targeted_prerequisite_subset(self) -> None:
+    def test_prepare_install_targeted_prerequisite_subset(self) -> None:
         self._create_install_package("pkg_c", dependencies=["pkg_b"])
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
         self._create_install_package("pkg_a", dependencies=[])
@@ -3178,10 +3178,10 @@ class TestInstallDependencies(unittest.TestCase):
         registry.save()
 
         # Target only pkg_c and pkg_a, while pkg_b is already installed
-        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_c", "pkg_a"])
+        plan = prepare_install(self.workspace_config, target_pkgs=["pkg_c", "pkg_a"])
         self.assertEqual(plan.packages_to_install, ["pkg_a", "pkg_c"])
 
-    def test_prepare_install_deployment_with_disabled_installed_prerequisite(self) -> None:
+    def test_prepare_install_with_disabled_installed_prerequisite(self) -> None:
         # pkg_a is installed on machine, but has enable_install = false in its config
         self._create_install_package("pkg_a")
         (self.install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
@@ -3195,10 +3195,10 @@ class TestInstallDependencies(unittest.TestCase):
         # pkg_b depends on pkg_a and is enabled
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
-        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
+        plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.packages_to_install, ["pkg_b"])
 
-    def test_prepare_install_deployment_with_missing_installed_dir(self) -> None:
+    def test_prepare_install_with_missing_installed_dir(self) -> None:
         # pkg_a is recorded in state.toml as installed, but its directory is missing from install/
         registry = load_state_registry(self.install_dir / "state.toml")
         registry.set_package_state("pkg_a", "installed")
@@ -3207,18 +3207,18 @@ class TestInstallDependencies(unittest.TestCase):
         # pkg_b depends on pkg_a
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
-        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
+        plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.packages_to_install, ["pkg_b"])
 
-    def test_prepare_install_deployment_missing_required_dependency(self) -> None:
+    def test_prepare_install_missing_required_dependency(self) -> None:
         self._create_install_package("pkg_b", dependencies=["missing_pkg"])
         with self.assertRaises(ConfigError) as ctx:
-            prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
+            prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertIn("missing_pkg", str(ctx.exception))
 
-    def test_prepare_install_deployment_optional_dependency_pruned(self) -> None:
+    def test_prepare_install_optional_dependency_pruned(self) -> None:
         self._create_install_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
-        plan = prepare_install_deployment(self.workspace_config, target_pkgs=["pkg_b"])
+        plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.packages_to_install, ["pkg_b"])
 
 

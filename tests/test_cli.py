@@ -558,8 +558,28 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                 _, kwargs = mock_action.call_args
                 self.assertTrue(kwargs.get("dry_run"), f"Argparse apply with {flag} did not pass dry_run=True")
 
+    def test_cli_reinstall_flags_across_backends(self) -> None:
+        """Verifies that --reinstall and -r flags on deploy and apply pass reinstall=True."""
+        from drift.cli import run_argparse_cli
+
+        for cmd, handler_target in [("deploy", "execute_deploy"), ("apply", "execute_apply")]:
+            for flag in ["--reinstall", "-r"]:
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        main(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Typer {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("reinstall"), f"Typer {cmd} with {flag} did not pass reinstall=True")
+
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        run_argparse_cli(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Argparse {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("reinstall"), f"Argparse {cmd} with {flag} did not pass reinstall=True")
+
     def test_cli_apply_dry_run(self) -> None:
-        """Verifies that running 'apply --dry-run' prints the deployment plan and leaves target unmodified."""
+        """Verifies that running 'apply --dry-run' prints the install plan and leaves target unmodified."""
         pkg_path = os.path.join(self.src_dir, "pkg_a")
         target_dir = os.path.join(self.temp_dir.name, "system_home_dry")
         os.makedirs(target_dir, exist_ok=True)
@@ -581,7 +601,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             main(["-C", self.drift_root, "apply", "--dry-run", "pkg_a"])
 
         output = stdout.getvalue()
-        self.assertIn("[DRY-RUN] Package Deployment Simulation Plan", output)
+        self.assertIn("[DRY-RUN] Package Install Simulation Plan", output)
         self.assertIn("Package 'pkg_a':", output)
         self.assertIn("[CREATE_SYMLINK]", output)
         self.assertIn("1 to create", output)

@@ -160,7 +160,7 @@ target_directory = "{self.system_target_dir}"
         ).stdout
         self.assertEqual(snapshot_content, "Modified on host system directly!")
 
-    @patch("drift.primitives.deploy_repo.execute_install_deployment")
+    @patch("drift.primitives.deploy_repo.execute_install")
     def test_deploy_pipeline_midway_crash_prints_recovery_card(self, mock_install) -> None:
         """Verifies that midway crashes during stage 2 capture, print recovery blocks, and abort."""
         mock_install.side_with_err = PermissionError("Permission Denied: mock error")
@@ -337,9 +337,9 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(state_registry.get_package_state("pkg_a"), "installing")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
+        from drift.primitives.install_repo import run_primitive_5_install, InstallConfig
         with self.assertRaises(RuntimeError) as ctx2:
-            run_primitive_5_install_deployment(
+            run_primitive_5_install(
                 workspace_config=self.workspace_config,
                 target_pkgs=["pkg_a"],
                 config=InstallConfig(resolve_symlinks=True, force=False),
@@ -387,15 +387,15 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(res2.status, "SUCCESS")
         self.assertEqual(res2.deployed_packages, [])
 
-    def test_deploy_pipeline_with_redeploy_flag(self) -> None:
-        """Verifies that passing redeploy=True forces redeployment even when zero stage changes exist."""
+    def test_deploy_pipeline_with_reinstall_flag(self) -> None:
+        """Verifies that passing reinstall=True forces reinstallation even when zero stage changes exist."""
         # 1. Initial deploy
         res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         self.assertEqual(res1.status, "SUCCESS")
 
-        # 2. Second deploy with redeploy=True
+        # 2. Second deploy with reinstall=True
         res2 = run_primitive_deploy_pipeline(
-            self.workspace_config, packages_to_deploy=["pkg_a"], redeploy=True
+            self.workspace_config, packages_to_deploy=["pkg_a"], reinstall=True
         )
         self.assertEqual(res2.status, "SUCCESS")
         self.assertEqual(len(res2.deployed_packages), 1)
@@ -563,12 +563,12 @@ target_directory = "{self.system_target_dir}"
             set_test_mode(True, enable_logging=False)
 
         # 4. Running full deploy repairs and restores package config file in install/
-        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], redeploy=True)
+        res = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"], reinstall=True)
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists())
 
     def test_deploy_step4a_prepare_failure_for_copy_package_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails for COPY packages, rollback IS triggered to clean uncommitted install state."""
+        """When prepare_install fails for COPY packages, rollback IS triggered to clean uncommitted install state."""
         # 1. Initial successful deployment of copy package
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         reg = load_state_registry(self.state_file)
@@ -578,14 +578,14 @@ target_directory = "{self.system_target_dir}"
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / "file.txt").write_text("modified content", encoding="utf-8")
 
-        # 3. Deploy update with prepare_install_deployment failing on target permission
+        # 3. Deploy update with prepare_install failing on target permission
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -609,7 +609,7 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(rollback_res.status, "SUCCESS")
 
     def test_deploy_step4a_prepare_failure_for_symlink_package_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails for SYMLINK packages, rollback IS triggered."""
+        """When prepare_install fails for SYMLINK packages, rollback IS triggered."""
         # 1. Set pkg_a to symlink in source config and deploy initially
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -626,14 +626,14 @@ target_directory = "{self.system_target_dir}"
         # 2. Modify package file so staging detects changes and proceeds to Step 4
         (pkg_dir / "file.txt").write_text("symlink modified content", encoding="utf-8")
 
-        # 3. Deploy update with prepare_install_deployment failing on pre-flight: should trigger rollback due to symlinks
+        # 3. Deploy update with prepare_install failing on pre-flight: should trigger rollback due to symlinks
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -652,7 +652,7 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
     def test_deploy_step4a_prepare_failure_for_symlink_with_generic_error_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails with a generic error (no packages attribute) and package is SYMLINK, rollback is triggered."""
+        """When prepare_install fails with a generic error (no packages attribute) and package is SYMLINK, rollback is triggered."""
         # 1. Configure pkg_a as SYMLINK and initial deploy
         pkg_dir = self.source_dir / "pkg_a"
         (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
@@ -666,14 +666,14 @@ target_directory = "{self.system_target_dir}"
         # 2. Modify file so changes are detected
         (self.source_dir / "pkg_a" / "file.txt").write_text("updated", encoding="utf-8")
 
-        # 3. Patch prepare_install_deployment to raise generic error without packages attribute
+        # 3. Patch prepare_install to raise generic error without packages attribute
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=RuntimeError("Generic unexpected failure"),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -690,21 +690,21 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
     def test_deploy_step4a_prepare_failure_for_copy_with_generic_error_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails with a generic error for COPY packages, rollback IS triggered."""
+        """When prepare_install fails with a generic error for COPY packages, rollback IS triggered."""
         # 1. Initial deployment of copy package
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
         # 2. Modify file so changes are detected
         (self.source_dir / "pkg_a" / "file.txt").write_text("updated", encoding="utf-8")
 
-        # 3. Patch prepare_install_deployment to raise generic error without packages attribute
+        # 3. Patch prepare_install to raise generic error without packages attribute
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=RuntimeError("Generic unexpected failure"),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -750,14 +750,14 @@ target_directory = "{self.system_target_dir}"
         (pkg_a_dir / "file.txt").write_text("symlink modified", encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("copy modified", encoding="utf-8")
 
-        # Deploy both, but prepare_install_deployment fails on pkg_b (the COPY package!)
+        # Deploy both, but prepare_install fails on pkg_b (the COPY package!)
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -805,7 +805,7 @@ target_directory = "{self.system_target_dir}"
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Collision on pkg_b", packages=["pkg_b"]),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(
@@ -822,19 +822,19 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
     def test_deploy_step4a_prepare_failure_for_first_time_package_triggers_rollback(self) -> None:
-        """When prepare_install_deployment fails for first-time installed package, rollback IS triggered to clean install directory."""
+        """When prepare_install fails for first-time installed package, rollback IS triggered to clean install directory."""
         # 1. State registry is initially empty (pkg_a has never been deployed)
         reg = load_state_registry(self.state_file)
         self.assertIsNone(reg.get_package_install_method("pkg_a"))
 
-        # 2. Deploy for the first time, but prepare_install_deployment fails on pre-flight
+        # 2. Deploy for the first time, but prepare_install fails on pre-flight
         import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
         try:
             with patch(
-                "drift.primitives.deploy_repo.prepare_install_deployment",
+                "drift.primitives.deploy_repo.prepare_install",
                 side_effect=TargetPermissionError("Target directory not writable", packages=["pkg_a"]),
             ):
                 res = run_primitive_deploy_pipeline_with_error_handling(

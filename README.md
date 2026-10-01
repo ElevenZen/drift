@@ -573,7 +573,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
 | `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
-| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `--redeploy`, `--no-hooks`). |
+| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `-r`/`--reinstall`, `--no-hooks`). |
 | `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
 | `drift uninstall <pkgs>` | Removes symlinked/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
@@ -727,11 +727,11 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
   ```
   This allows you to safely place your configuration files on disk while iterating on hook scripts in `src/<pkg>/` with full 6-tier environment variables and host facts injected.
 
-### 7. Forcing Full Redeployment (`--redeploy`)
-* **Q**: Why was package deployment skipped, and how do I force redeployment of all packages and lifecycle hooks?
-* **A**: Drift optimizes deploy cycles by inspecting staging outputs (`installed_files`, hook scripts, and `drift_package.toml`). If a package has no stage changes, Drift skips deploying it. To force a full redeployment of all packages and execute their lifecycle hooks regardless of changes, pass **`--redeploy`**:
+### 7. Forcing Full Reinstallation (`-r` / `--reinstall`)
+* **Q**: Why was package deployment skipped, and how do I force reinstallation of all packages and lifecycle hooks?
+* **A**: Drift optimizes deploy cycles by inspecting staging outputs (`installed_files`, hook scripts, and `drift_package.toml`). If a package has no stage changes, Drift skips deploying it. To force a full reinstallation of all packages and execute their lifecycle hooks regardless of changes, pass **`-r`** or **`--reinstall`**:
   ```bash
-  drift deploy --redeploy
+  drift deploy -r
   ```
 
 ### 8. Inspecting Full Exception Stack Traces (`--trace` vs `--raw-errors`)

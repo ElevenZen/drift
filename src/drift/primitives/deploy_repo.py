@@ -17,9 +17,9 @@ from .stage_repo import (
     PackageStageChanges,
 )
 from .install_repo import (
-    run_primitive_5_install_deployment,
-    prepare_install_deployment,
-    execute_install_deployment,
+    run_primitive_5_install,
+    prepare_install,
+    execute_install,
     InstallPlan,
     run_primitive_6_commit_install_repo,
     InstallConfig,
@@ -168,7 +168,7 @@ def execute_sequential_compile_and_apply(
     target_pkgs: List[str],
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_deps: bool = False,
 ) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
     """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
@@ -258,7 +258,7 @@ def execute_sequential_compile_and_apply(
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
     changed_pkgs = [pkg for pkg, change in package_changes.items() if change.has_changes]
-    if redeploy:
+    if reinstall:
         pkgs_to_install = target_pkgs
     elif changed_pkgs:
         pkgs_to_install = changed_pkgs
@@ -266,10 +266,20 @@ def execute_sequential_compile_and_apply(
         logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
         return [], completed_steps
 
+    # NOTE [Stage Delta Filter & Reinstall Bridge]:
+    # Stage 3 (stage_repo) tracks modifications across ALL files in render/<pkg>/ vs install/<pkg>/,
+    # including non-deployable control plane files (.drift/hooks/*, .drift/drift_package.toml).
+    # Consequently, changed_pkgs accurately reflects whether anything in the package was updated.
+    # However, Primitive 5's internal change-detection (plan_package_install) only inspects physical
+    # deployable files against host state. If a staging change only affected non-deployable files (e.g.
+    # an updated lifecycle hook script or altered hook flags), Primitive 5 would see 0 host mutations
+    # and skip the package unless reinstall=True.
+    # Therefore, we pass reinstall=True to ensure that all packages filtered as changed by staging are
+    # fully processed by Primitive 5 (ensuring hooks execute and state updates).
     install_config = InstallConfig(
         resolve_symlinks=True,
         force=force,
-        redeploy=True,
+        reinstall=True,
         flags=hook_flags,
         no_deps=no_deps,
     )
@@ -277,7 +287,7 @@ def execute_sequential_compile_and_apply(
     # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
     failed_step = "Step 4 (Deployment Pre-flight)"
     try:
-        install_plan = prepare_install_deployment(
+        install_plan = prepare_install(
             workspace_config,
             target_pkgs=pkgs_to_install,
             config=install_config,
@@ -292,7 +302,7 @@ def execute_sequential_compile_and_apply(
     pkgs_install_label = ", ".join(pkgs_to_install)
     try:
         logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
-        install_res = execute_install_deployment(
+        install_res = execute_install(
             workspace_config,
             plan=install_plan,
         )
@@ -348,7 +358,7 @@ def run_primitive_deploy_pipeline(
     packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_deps: bool = False,
 ) -> DeployResult:
     """Main deployment pipeline controller running Sentinel Drift checking and sequential compile/apply.
@@ -358,10 +368,10 @@ def run_primitive_deploy_pipeline(
         packages_to_deploy: Specific package name(s) to deploy, or empty/omitted for all active packages.
         force: If True, bypasses the Sentinel Drift check (capturing and committing a drift snapshot
             in install/ before overwriting) and passes force to Primitive 4 (staging) and Primitive 5
-            (install deployment) to bypass midway failed state checks and uncommitted modification safeguards.
+            (install) to bypass midway failed state checks and uncommitted modification safeguards.
             Note: Does NOT bypass 'enable_install = false' package configurations.
         flags: Optional HookExecFlags controlling hook execution options.
-        redeploy: If True, forces full redeployment of all requested packages regardless of staging delta.
+        reinstall: If True, forces full reinstallation of all requested packages regardless of staging delta.
         no_deps: If True, bypasses missing required package dependency checks.
 
     Returns:
@@ -393,7 +403,7 @@ def run_primitive_deploy_pipeline(
         target_pkgs,
         force=force,
         flags=flags,
-        redeploy=redeploy,
+        reinstall=reinstall,
         no_deps=no_deps,
     )
 
@@ -426,7 +436,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
     packages_to_deploy: Sequence[str] = (),
     force: bool = False,
     flags: Optional[HookExecFlags] = None,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_deps: bool = False,
 ) -> DeployResult:
     """Executes the deployment pipeline, catching exceptions and returning a structured DeployResult.
@@ -447,7 +457,7 @@ def run_primitive_deploy_pipeline_with_error_handling(
             packages_to_deploy=packages_to_deploy,
             force=force,
             flags=flags,
-            redeploy=redeploy,
+            reinstall=reinstall,
             no_deps=no_deps,
         )
     except Exception as e:

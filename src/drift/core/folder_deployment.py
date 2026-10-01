@@ -723,7 +723,7 @@ def execute_deployment_actions(
 
 
 def __getattr__(name: str):
-    if name in ("PackageDeploymentPlan", "PackageUninstallPlan"):
-        from .result_models import PackageDeploymentPlan, PackageUninstallPlan
-        return PackageDeploymentPlan if name == "PackageDeploymentPlan" else PackageUninstallPlan
+    if name in ("PackageInstallPlan", "PackageUninstallPlan"):
+        from .result_models import PackageInstallPlan, PackageUninstallPlan
+        return PackageInstallPlan if name == "PackageInstallPlan" else PackageUninstallPlan
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -20,7 +20,7 @@ Requires a healthy workspace (calls assert_workspace_healthy):
   execute_render          -> P2  run_primitive_2_render_packages
   execute_render_commit   -> P3  run_primitive_3_commit_render_repo
   execute_stage           -> P4  run_primitive_4_stage_render_to_install
-  execute_apply           -> P5  run_primitive_5_install_deployment
+  execute_apply           -> P5  run_primitive_5_install
   execute_install_commit  -> P6  run_primitive_6_commit_install_repo
   execute_uninstall       -> P7  run_primitive_7_uninstall_packages
   execute_rollback        -> P8  run_primitive_8_rollback_recovery
@@ -286,27 +286,27 @@ def execute_apply(
     drift_root: Path,
     package_names: Sequence[str] = (),
     force: bool = False,
-    redeploy: bool = False,
+    reinstall: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
     no_deps: bool = False,
     dry_run: bool = False,
 ) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
-    from ..primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
+    from ..primitives.install_repo import run_primitive_5_install, InstallConfig
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="apply")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    res = run_primitive_5_install_deployment(
+    res = run_primitive_5_install(
         workspace_config=workspace_config,
         target_pkgs=package_names,
         config=InstallConfig(
             resolve_symlinks=True,
             force=force,
-            redeploy=redeploy,
+            reinstall=reinstall,
             flags=flags,
             no_deps=no_deps,
             dry_run=dry_run,
@@ -578,7 +578,7 @@ def execute_deploy(
     force: bool = False,
     json_mode: bool = False,
     no_hooks: bool = False,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_deps: bool = False,
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
@@ -594,7 +594,7 @@ def execute_deploy(
         packages_to_deploy=package_names,
         force=force,
         flags=flags,
-        redeploy=redeploy,
+        reinstall=reinstall,
         no_deps=no_deps,
     )
     if json_mode:

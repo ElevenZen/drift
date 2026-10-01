@@ -102,8 +102,8 @@ from .folder_deployment import (
 
 
 @dataclass
-class PackageDeploymentPlan(SerializableModel):
-    """Structured deployment plan detailing all planned filesystem operations and lifecycle hooks."""
+class PackageInstallPlan(SerializableModel):
+    """Structured install plan detailing all planned filesystem operations and lifecycle hooks."""
     package: str = ""
     target_directory: str = ""
     install_method: InstallMethod = DEFAULT_INSTALL_METHOD
@@ -213,7 +213,7 @@ class PackageUninstallPlan(SerializableModel):
 
 @dataclass
 class PackageInstallResult(SerializableModel):
-    plan: PackageDeploymentPlan = field(default_factory=PackageDeploymentPlan)
+    plan: PackageInstallPlan = field(default_factory=PackageInstallPlan)
     is_first_time: bool = False
     status: str = "SUCCESS"
     error: Optional[str] = None
@@ -239,7 +239,7 @@ class PackageInstallResult(SerializableModel):
 
 
 @dataclass
-class InstallDeploymentResult(SerializableModel):
+class InstallResult(SerializableModel):
     command: str = "apply"
     status: str = "SUCCESS"  # "SUCCESS", "FAILED"
     packages: List[PackageInstallResult] = field(default_factory=list)
@@ -247,13 +247,13 @@ class InstallDeploymentResult(SerializableModel):
     error_message: Optional[str] = None
 
     def format_text(self, dry_run: bool = False) -> str:
-        """Formats the deployment or simulation results for human-readable output."""
+        """Formats the install or simulation results for human-readable output."""
         if not self.packages:
             return "No packages targeted."
 
         lines = []
         if dry_run:
-            lines.append("🔍 [DRY-RUN] Package Deployment Simulation Plan")
+            lines.append("🔍 [DRY-RUN] Package Install Simulation Plan")
             lines.append("=" * 60)
             for pkg_res in self.packages:
                 lines.append(pkg_res.plan.format_text())
@@ -265,7 +265,7 @@ class InstallDeploymentResult(SerializableModel):
                 f"Total planned actions: {total_actions} (zero host mutations performed)."
             )
         else:
-            lines.append("✨ Deployment Summary:")
+            lines.append("✨ Install Summary:")
             for pkg_res in self.packages:
                 status_icon = "✨" if pkg_res.status == "SUCCESS" else "❌"
                 lines.append(f"  {status_icon} Package '{pkg_res.package}': {pkg_res.status}")

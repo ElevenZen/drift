@@ -342,8 +342,8 @@ class TestRollback(unittest.TestCase):
         self.assertEqual(reloaded.get_package_state("pkg_a"), "installed")
 
     @patch("drift.primitives.rollback_repo.rollback_uninstalled_first_time_package")
-    @patch("drift.primitives.rollback_repo.rollback_redeploy_committed_package")
-    def test_rollback_unified_reverse_topological_order(self, mock_redeploy, mock_uninstall) -> None:
+    @patch("drift.primitives.rollback_repo.rollback_reinstall_committed_package")
+    def test_rollback_unified_reverse_topological_order(self, mock_reinstall, mock_uninstall) -> None:
         """Verifies rollback executes in unified reverse topological order across mixed committed and first-time packages."""
         # Setup:
         # pkg_a is committed in HEAD (setUp already committed pkg_a)
@@ -372,7 +372,7 @@ class TestRollback(unittest.TestCase):
         save_state_registry(registry)
 
         call_order = []
-        mock_redeploy.side_effect = lambda ws, pkg, flags=None: call_order.append(("redeploy", pkg))
+        mock_reinstall.side_effect = lambda ws, pkg, flags=None: call_order.append(("reinstall", pkg))
         mock_uninstall.side_effect = lambda ws, pkg, flags=None: call_order.append(("uninstall", pkg))
 
         ws_cfg = WorkspaceConfig(
@@ -387,11 +387,11 @@ class TestRollback(unittest.TestCase):
         self.assertEqual(res.status, "SUCCESS")
 
         # Dependency chain: pkg_c -> pkg_b -> pkg_a
-        # Unified reverse topological rollback order must be: pkg_c (uninstall) -> pkg_b (uninstall) -> pkg_a (redeploy)
+        # Unified reverse topological rollback order must be: pkg_c (uninstall) -> pkg_b (uninstall) -> pkg_a (reinstall)
         expected_calls = [
             ("uninstall", "pkg_c"),
             ("uninstall", "pkg_b"),
-            ("redeploy", "pkg_a"),
+            ("reinstall", "pkg_a"),
         ]
         self.assertEqual(call_order, expected_calls)
 

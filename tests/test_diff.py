@@ -78,13 +78,13 @@ class TestDiff(unittest.TestCase):
         
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
         
         # 2. Drift System
@@ -105,13 +105,13 @@ class TestDiff(unittest.TestCase):
         
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
         
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
         
         # 2. Modify Template (Ready to be staged/deployed)
@@ -132,14 +132,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Modify drift_package.toml in src/
@@ -171,14 +171,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy and commit
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # Verify 1:1 structural fidelity: render and install trees are identical
@@ -251,14 +251,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Modify Template
@@ -283,14 +283,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Modify Template so diff exists
@@ -312,14 +312,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Add editor temp files in install and render
@@ -354,14 +354,14 @@ class TestDiff(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.core.result_models import DiffType
 
         # 1. Full Deploy
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # 2. Add editor temp files in install/

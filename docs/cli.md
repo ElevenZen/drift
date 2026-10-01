@@ -15,7 +15,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`add`** | `drift add <pkg> <paths...> [-n] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [--redeploy] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
 | **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
@@ -29,7 +29,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`render-commit`** | `drift render-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit compiled sandbox changes. |
 | **`reverse-sync`** | `drift reverse-sync [packages...] [--json]` | *(Low-Level)* Pull active system configuration changes into `install/`. |
 | **`stage`** | `drift stage [packages...] [-f] [--no-deps] [--json]` | *(Low-Level)* Stage compiled sandbox templates into `install/` state DB. |
-| **`apply`** | `drift apply [packages...] [-f] [-n] [--no-deps] [--no-hooks] [--json]` | *(Low-Level)* Apply state database configurations to host filesystem or preview deployment plan. |
+| **`apply`** | `drift apply [packages...] [-f] [-n] [-r\|--reinstall] [--no-deps] [--no-hooks] [--json]` | *(Low-Level)* Apply state database configurations to host filesystem or preview deployment plan. |
 | **`install-commit`** | `drift install-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit deployed configurations in `install/`. |
 | **`hook`** | `drift hook <pkg> <hook_name> [--json]` | *(Low-Level)* Directly trigger a specific package lifecycle hook script. |
 
@@ -125,13 +125,13 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [--redeploy] [--no-deps] [--no-hooks] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [--no-deps] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 *   **Command Options**:
     - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active packages.
     - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`installing` in `install/state.toml`), bypasses uncommitted modifications safeguards in `install/`, and automatically ignores missing required package dependencies. *(Note: Does **not** bypass `enable_install = false`).*
-    - `--redeploy`: Force full redeployment of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `--redeploy` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
+    - `-r / --reinstall`: Force full reinstallation of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `-r` or `--reinstall` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `--no-deps`: Bypasses missing required package dependency checks during topological ordering and staging.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
@@ -166,7 +166,7 @@ Reverts failed midway deployments and restores system files to the last committe
 *   **Mechanism (Primitive 8)**:
     1.  Resets `install/` database for target packages to the last clean HEAD commit.
     2.  Resets `install/state.toml` back to HEAD.
-    3.  Performs a **Full Redeploy** restoring physical target system files.
+    3.  Performs a **Full Reinstall** restoring physical target system files.
     4.  Restores state registry entries back to `"installed"`.
 
 ---
@@ -299,7 +299,14 @@ For advanced continuous integration, scripting, and pipeline automation:
 2.  **`drift render-commit [packages...] -m "message" [--json]`**: Stages and commits compiled sandbox changes (`Primitive 3`).
 3.  **`drift reverse-sync [packages...] [--json]`**: Pulls live host configuration changes into `install/` (`Primitive 1`).
 4.  **`drift stage [packages...] [--force] [--no-deps] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`). Pass `--force` to bypass midway failed state checks and uncommitted modifications in `install/` *(does not bypass `enable_install = false`)*. Pass `--no-deps` to bypass missing prerequisite checks.
-5.  **`drift apply [packages...] [--force] [-n] [--no-deps] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`). Pass `-n / --dry-run` to simulate deployment and preview the inspectable deployment plan without modifying the host filesystem or executing hooks. Pass `--force` to bypass midway failed state checks in `install/state.toml` *(does not bypass `enable_install = false`)*. Pass `--no-deps` to bypass missing prerequisite checks.
+5.  **`drift apply [packages...] [--force] [-n] [-r|--reinstall] [--no-deps] [--no-hooks] [--json]`**: Deploys `install/` state to host paths (`Primitive 5`).
+    - `-n / --dry-run`: Simulates deployment and previews the inspectable deployment plan without modifying the host filesystem or executing lifecycle hooks.
+    - `-r / --reinstall`: Forces full reinstallation and lifecycle hook execution regardless of change status.
+      > [!NOTE]
+      > **Non-Deployable Files & Standalone `apply` Pitfall**: Primitive 5's change-detection is purely host-driven: its planner evaluates discrepancies between deployable payload files in `install/<pkg>/` and target host filesystem state. It has no independent awareness of non-deployable control-plane modifications (such as edits to `.drift/hooks/*`, `drift_package.toml`, or `.drift_ignore`). If only a lifecycle hook script or package config was updated while deployable files on the host remain identical, `drift apply` without `-r` will skip the package and bypass hook execution. Always supply `-r / --reinstall` when running standalone `drift apply` after modifying lifecycle hooks or package configurations directly in `install/`. (The high-level `drift deploy` pipeline handles this automatically by tracking staging deltas and passing `reinstall=True` to changed packages).
+    - `--force / -f`: Bypasses midway failed state checks (`staging` / `installing` in `install/state.toml`). *(Does not bypass `enable_install = false`)*.
+    - `--no-deps`: Bypasses missing prerequisite dependency checks during topological ordering.
+    - `--no-hooks / --no-hook`: Bypasses executing lifecycle hooks (`pre_install`, `post_install`, etc.).
 6.  **`drift install-commit [packages...] -m "message" [--json]`**: Commits deployed configurations inside `install/` (`Primitive 6`).
 7.  **`drift hook <package> <hook-name> [--json]`**: Directly executes a specific lifecycle hook script for a single package.
 

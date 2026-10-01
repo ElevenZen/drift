@@ -188,7 +188,7 @@ def handle_deploy(
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
     no_hooks: bool = False,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_deps: bool = False,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
@@ -202,7 +202,7 @@ def handle_deploy(
             force=force,
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
-            redeploy=redeploy,
+            reinstall=reinstall,
             no_deps=no_deps,
         )
 
@@ -414,7 +414,7 @@ def handle_apply(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
     force: bool = False,
-    redeploy: bool = False,
+    reinstall: bool = False,
     no_hooks: bool = False,
     no_deps: bool = False,
     dry_run: bool = False,
@@ -428,7 +428,7 @@ def handle_apply(
             drift_root,
             pkgs,
             force=force,
-            redeploy=redeploy,
+            reinstall=reinstall,
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
             no_deps=no_deps,

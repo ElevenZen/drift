@@ -78,21 +78,21 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **Zero Backward Compatibility Burden**: Removed obsolete property wrappers (`packages`, `render_engine_config`, `drift_root_path`, `env_default`, `secrets`) and table parser shims across config classes.
 
 ### 7. Modular Package Assertion Guards & Batch Error Aggregation
-- **Dedicated Assertion Module**: Extracted domain validation predicates and invariant guards into [`package_assertions.py`](../src/drift/primitives/package_assertions.py) (`assert_packages_hooks_exist`, `assert_packages_not_in_midway_state`, `assert_packages_install_dirs_exist`, `assert_packages_target_dirs_valid`, `assert_packages_target_dirs_writable`, `assert_no_cross_package_conflicts`, `assert_packages_stage_ready`, `assert_packages_deployment_ready`).
+- **Dedicated Assertion Module**: Extracted domain validation predicates and invariant guards into [`package_assertions.py`](../src/drift/primitives/package_assertions.py) (`assert_packages_hooks_exist`, `assert_packages_not_in_midway_state`, `assert_packages_install_dirs_exist`, `assert_packages_target_dirs_valid`, `assert_packages_target_dirs_writable`, `assert_no_cross_package_conflicts`, `assert_packages_stage_ready`, `assert_packages_install_ready`).
 - **Standardized `packages` Attribute on Exceptions**: All assertion exceptions now carry a typed `packages: Sequence[str]` field (`HookMissingError`, `MidwayTransactionError`, `PackageInstallDirMissingError`, `TargetPermissionError`, `ConfigError`, `InstallCollisionError`, `CrossPackageCollisionError`).
 - **Streamlined Collision Hierarchy**: Refactored `CrossPackageCollisionError` to inherit directly from `InstallCollisionError` with unified `packages` reporting and eliminated legacy aliases.
 - **Batch Error Collection**: Assertion guards audit the entire package batch, aggregating all conflicting or failing package entries before raising a single unified exception.
 
 ### 8. Two-Phase Primitive 5 Decomposition & Generic Topological Sorting
-- **Primitive 5 Decomposition**: Deconstructed monolithic `run_primitive_5_install_deployment` into two discrete, inspectable sub-stages:
-  - `prepare_install_deployment(workspace_config, target_pkgs=(), config=None) -> InstallPlan`: Read-only pre-flight audit validating hook readiness, directory permissions, and cross-package path collisions.
-  - `execute_install_deployment(workspace_config, plan) -> InstallDeploymentResult`: State-mutating execution phase handling backups, physical deployment, hooks, and state registry tracking.
+- **Primitive 5 Decomposition**: Deconstructed monolithic `run_primitive_5_install` into two discrete, inspectable sub-stages:
+  - `prepare_install(workspace_config, target_pkgs=(), config=None) -> InstallPlan`: Read-only pre-flight audit validating hook readiness, directory permissions, and cross-package path collisions.
+  - `execute_install(workspace_config, plan) -> InstallResult`: State-mutating execution phase handling backups, physical deployment, hooks, and state registry tracking.
 - **Strongly Typed Deployment Plans**: Introduced `InstallPlan` and `PackageInstallContext` dataclass models.
-- **Redundant Loading Elimination**: Refactored `deploy_one_package_with_error_wrapping` and `deploy_one_package` to accept `PackageConfig` instances directly instead of repeatedly parsing from `install/`.
+- **Redundant Loading Elimination**: Refactored `install_one_package_with_error_wrapping` and `install_one_package` to accept `PackageConfig` instances directly instead of repeatedly parsing from `install/`.
 - **Generic Kahn's Algorithm Topological Sort**: Extracted pure, generic `topological_sort[T](graph: Mapping[T, Set[T]], ...)` into [`env_utils.py`](../src/drift/utils/env_utils.py) and streamlined `resolve_env_references` to accept `Mapping[str, str]` without redundant allocations.
 
 ### 9. Full-Staged Rollback Scope & Rollback-Eligible State Hygiene
-- **Full Staged Batch Rollback Guarantee**: When Step 4a (`prepare_install_deployment`) fails, all packages staged in Step 3b (`pkgs_to_install`) are designated for rollback. Rolling back all staged packages cleans the uncommitted `install/` Git working tree for both `SYMLINK` and `COPY` packages, permanently preventing subsequent false `🛡️ System drift detected` aborts.
+- **Full Staged Batch Rollback Guarantee**: When Step 4a (`prepare_install`) fails, all packages staged in Step 3b (`pkgs_to_install`) are designated for rollback. Rolling back all staged packages cleans the uncommitted `install/` Git working tree for both `SYMLINK` and `COPY` packages, permanently preventing subsequent false `🛡️ System drift detected` aborts.
 - **Crash Locks vs. Rollback-Eligible State Separation**:
   - `MIDWAY_TRANSACTION_STATES` (`{"staging", "installing"}`): Represents in-flight crashing states where disk mutations were interrupted.
   - `ROLLBACK_ELIGIBLE_STATES` (`{"staging", "staged", "installing"}`): Defines uncommitted transaction states eligible for `drift rollback` without requiring `--force`.

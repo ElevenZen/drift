@@ -113,8 +113,8 @@ class TestErrorStacking(unittest.TestCase):
         self.assertIn("❌ [CRITICAL] Step 1 (Template Rendering) failed. Error: 'unexpected_system_dict_key'", logs)
 
     @patch("drift.primitives.deploy_repo.run_primitive_6_commit_install_repo")
-    @patch("drift.primitives.deploy_repo.execute_install_deployment")
-    @patch("drift.primitives.deploy_repo.prepare_install_deployment")
+    @patch("drift.primitives.deploy_repo.execute_install")
+    @patch("drift.primitives.deploy_repo.prepare_install")
     @patch("drift.primitives.deploy_repo.execute_stage_packages")
     @patch("drift.primitives.deploy_repo.prepare_stage_packages")
     @patch("drift.primitives.deploy_repo.run_primitive_3_commit_render_repo")

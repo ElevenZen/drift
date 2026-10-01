@@ -51,14 +51,14 @@ class TestStatus(unittest.TestCase):
         # 1. Initial render, stage, apply
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         from drift.render.render_package import run_primitive_3_commit_render_repo
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
         
         # 2. Run status
@@ -80,12 +80,12 @@ class TestStatus(unittest.TestCase):
         # Initial state setup
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
         
         # 1. Modify src (Template Status A should become MODIFIED after status runs render)
@@ -139,13 +139,13 @@ class TestStatus(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
 
         # Initial full deployment and clean state
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # Clean check
@@ -173,12 +173,12 @@ class TestStatus(unittest.TestCase):
 
         from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment, run_primitive_6_commit_install_repo
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
 
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
 
         # Run status with list_only=True

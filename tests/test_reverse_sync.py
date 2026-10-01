@@ -590,7 +590,7 @@ class TestReverseSync(unittest.TestCase):
         """Verifies end-to-end FCD lifecycle under symlink deployment:
         deploy symlink -> create wild file on host -> reverse-sync -> deploy update.
         """
-        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install
         pkg = "pkg_fcd_symlink_lifecycle"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -608,7 +608,7 @@ class TestReverseSync(unittest.TestCase):
         (pkg_install_dir / "plugins" / "base.plugin").write_text("base plugin", encoding="utf-8")
 
         # 1. Initial symlink deployment
-        res_dep1 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res_dep1 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res_dep1.status, "SUCCESS")
 
         # 2. Host app dynamically creates a new plugin file
@@ -628,7 +628,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual((pkg_install_dir / "plugins" / "dynamic.plugin").read_text(encoding="utf-8"), "dynamic plugin")
 
         # 4. Subsequent symlink deployment succeeds without collision errors
-        res_dep2 = run_primitive_5_install_deployment(self.workspace_config, [pkg])
+        res_dep2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res_dep2.status, "SUCCESS")
 
     def test_reverse_sync_tracked_dot_prefix_files_modification_and_deletion(self) -> None:

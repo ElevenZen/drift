@@ -337,8 +337,9 @@ def build_completion_schema() -> CompletionSchema:
                         description="Forcefully deploy and bypass system drift sentinel safeguards"
                     ),
                     OptionSpec(
-                        flags=["--redeploy"],
-                        description="Force full redeployment of all packages, bypassing stage change skipping"
+                        flags=["-r", "--reinstall"],
+                        description="Force full reinstallation of all packages, bypassing stage change skipping",
+                        dest="reinstall",
                     ),
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
@@ -671,8 +672,9 @@ def build_completion_schema() -> CompletionSchema:
                         description="Simulate deployment planning without modifying host filesystem or executing hooks",
                     ),
                     OptionSpec(
-                        flags=["--redeploy"],
-                        description="Force full redeployment of all packages, bypassing change skipping",
+                        flags=["-r", "--reinstall"],
+                        description="Force full reinstallation, bypassing host change skipping (required to execute hooks when only non-deployable files changed)",
+                        dest="reinstall",
                     ),
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],

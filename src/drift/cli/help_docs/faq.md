@@ -99,16 +99,16 @@ drift hook <pkg> <hook> --from src -v
 
 ---
 
-### Q10: Why did `drift deploy` skip deploying a package, and how do I force redeployment?
+### Q10: Why did `drift deploy` skip deploying a package, and how do I force reinstallation?
 **Situation**: You ran `drift deploy`, but the deployment output says `⏭️  Skipping deploy for unchanged package` and skips executing lifecycle hooks or file copies.  
-**Solution**: Pass **`--redeploy`** to bypass stage change skipping:
+**Solution**: Pass **`--reinstall`** to bypass stage change skipping:
 ```bash
-drift deploy --redeploy
+drift deploy --reinstall
 # Or for a specific package:
-drift deploy <pkg> --redeploy
+drift deploy <pkg> --reinstall
 ```
 *   **Why**: Drift optimizes deploy cycles by analyzing whether staging produced any modifications in `installed_files`, hook scripts, or `drift_package.toml`. If stage outputs are unchanged, deployment is safely skipped.
-*   **When to use `--redeploy`**: Use `--redeploy` when you need to re-execute deployment lifecycle hooks (`pre/post_install` or `pre/post_update`) or re-apply physical host files even when template outputs haven't changed.
+*   **When to use `--reinstall`**: Use `--reinstall` when you need to re-execute deployment lifecycle hooks (`pre/post_install` or `pre/post_update`) or re-apply physical host files even when template outputs haven't changed.
 
 ---
 

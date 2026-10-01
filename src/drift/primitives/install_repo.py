@@ -1,4 +1,4 @@
-"""Primitive 5: Install Deployment (install/ -> active host system) & Primitive 6: Commit Install Repo.
+"""Primitive 5: Install (install/ -> active host system) & Primitive 6: Commit Install Repo.
 
 ===============================================================================
 Architecture & Call Chain Overview
@@ -6,10 +6,10 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_install_deployment(workspace_config, target_pkgs, config) [Layer 4]
+        prepare_install(workspace_config, target_pkgs, config) [Layer 4]
             - Package Discovery & Selection (filter_install_packages_by_target)
             - Metadata Resolution (PackageConfig.from_install_dir)
-            - Pre-flight Readiness (assert_packages_deployment_ready [Layer 4])
+            - Pre-flight Readiness (assert_packages_install_ready [Layer 4])
                 * assert_can_escalate (if any target requires sudo)
                 * assert_packages_install_dirs_exist
                 * assert_packages_not_in_midway_state (if not force)
@@ -20,16 +20,16 @@ Pipeline Architecture:
                 * assert_no_cyclic_package_dependencies [from package_assertions]
             - Universe Construction & Topological Ordering (resolve_package_install_order)
             - Autonomous Context Construction (PackageInstallContext.from_package)
-            - Declarative Plan Compilation (plan_package_deployment)
+            - Declarative Plan Compilation (plan_package_install)
             -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_to_install, config, contexts, package_plans)
 
-    2. Single-Package Deployment Execution:
-        execute_install_deployment(workspace_config, plan: InstallPlan) [Layer 4]
+    2. Single-Package Installation Execution:
+        execute_install(workspace_config, plan: InstallPlan) [Layer 4]
             - If dry_run -> compiles inspectable result summaries from plan.package_plans (zero host mutations)
             - Resolves hook flags once per batch (HookExecFlags.resolve)
             - Iterates over plan.packages_to_install:
                 execute_package_install [Layer 2]
-                    * Skip evaluation (if no mutations and not redeploy)
+                    * Skip evaluation (if no mutations and not reinstall)
                     * with context.package_envs():
                         execute_package_install_impl [Layer 2]
                             - state_registry.set_package_state("installing") & save
@@ -37,17 +37,17 @@ Pipeline Architecture:
                             - state_registry.sync_deployed_files & save
                             - execute_package_actions (applies PlannedFileAction items deterministically)
                             - trigger post_install / post_update hook
-                            - update_state_registry_post_deployment ("installed") & save
-            -> Returns Aggregated InstallDeploymentResult
+                            - update_state_registry_post_install ("installed") & save
+            -> Returns Aggregated InstallResult
 
     3. Public Composite Primitive Entry Points:
-        run_primitive_5_install_deployment(workspace_config, target_pkgs, options) [Layer 3]
-            = prepare_install_deployment >> execute_install_deployment
+        run_primitive_5_install(workspace_config, target_pkgs, options) [Layer 3]
+            = prepare_install >> execute_install
         run_primitive_6_commit_install_repo(workspace_config, commit_message, target_pkgs) [Layer 3]
             commit_repo_changes (commits state repository changes in install/)
 
-    4. Declarative Per-Path Install Planner (plan_package_deployment):
-        Pure read-only pre-deployment audit inspecting candidate paths shallowest to deepest:
+    4. Declarative Per-Path Install Planner (plan_package_install):
+        Pure read-only pre-install audit inspecting candidate paths shallowest to deepest:
         - Canonical Target Boundary: Verifies target_dir.resolve() does not point into drift_root.resolve().
         - Ancestor Directory Guard: Deduplicates intermediate target directory checks; detects files or internal
           symlinks blocking required directories, planning BACKUP_OVERWRITE and ENSURE_DIR.
@@ -63,18 +63,18 @@ Pipeline Architecture:
 Layers (ordered bottom-up by dependency):
     Layer 1: Context & Action Compilation
         PackageInstallContext
-        plan_package_deployment
+        plan_package_install
         execute_package_actions
-        update_state_registry_post_deployment
+        update_state_registry_post_install
     Layer 2: Single-Package Pipeline & Pre-flight Validation
         execute_package_install_impl
         execute_package_install
-        deploy_one_package
-        assert_packages_deployment_ready
-        prepare_install_deployment
-        execute_install_deployment
+        install_one_package
+        assert_packages_install_ready
+        prepare_install
+        execute_install
     Layer 3: Public Primitive Entry Points
-        run_primitive_5_install_deployment
+        run_primitive_5_install
         run_primitive_6_commit_install_repo
 ===============================================================================
 """
@@ -158,24 +158,24 @@ from ..core.folder_deployment import (
     assert_target_dir_outside_drift_root,
 )
 from ..core.result_models import (
-    PackageDeploymentPlan,
+    PackageInstallPlan,
     PackageInstallResult,
-    InstallDeploymentResult,
+    InstallResult,
 )
 
 logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Deployment Data Structures
+# Installation Data Structures
 # =============================================================================
 
 @dataclass
 class InstallConfig:
-    """Options controlling package deployment behavior."""
+    """Options controlling package installation behavior."""
     resolve_symlinks: bool = True
     force: bool = False
-    redeploy: bool = False
+    reinstall: bool = False
     dry_run: bool = False
     no_deps: bool = False
     flags: Optional[HookExecFlags] = None
@@ -189,7 +189,7 @@ class InstallPlan:
     packages_to_install: List[str]
     config: InstallConfig
     contexts: Dict[str, PackageInstallContext] = field(default_factory=dict)
-    package_plans: Dict[str, PackageDeploymentPlan] = field(default_factory=dict)
+    package_plans: Dict[str, PackageInstallPlan] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -259,13 +259,13 @@ class PackageInstallContext:
 # Layer 1: Context & Action Compilation
 # =============================================================================
 
-def plan_package_deployment(
+def plan_package_install(
     context: PackageInstallContext,
     deployable_files: Sequence[Path],
     deployed_files: Sequence[Path] = (),
     target_migrated_from: Optional[Path] = None,
-) -> PackageDeploymentPlan:
-    """Pure, read-only planner that inspects package candidate paths and host state to produce a deterministic deployment plan.
+) -> PackageInstallPlan:
+    """Pure, read-only planner that inspects package candidate paths and host state to produce a deterministic install plan.
 
     Does NOT modify the host filesystem, execute hooks, or touch state.toml.
     """
@@ -299,13 +299,13 @@ def plan_package_deployment(
     else:
         active_deployed_files = deployed_files
 
-    # 2. Informational banner indicating package deployment begins
+    # 2. Informational banner indicating package install begins
     actions.append(
         PlannedFileAction(
             action_type=ActionType.INFO_MESSAGE,
             rel_path=Path("."),
             system_target=context.target_dir,
-            reason=f"🚀 Deploying package: {context.pkg_name}",
+            reason=f"🚀 Installing package: {context.pkg_name}",
         )
     )
 
@@ -321,7 +321,7 @@ def plan_package_deployment(
     )
     actions.extend(folder_actions)
 
-    return PackageDeploymentPlan(
+    return PackageInstallPlan(
         package=context.pkg_name,
         target_directory=str(context.target_dir),
         install_method=context.install_method,
@@ -332,7 +332,7 @@ def plan_package_deployment(
 
 def execute_package_actions(
     context: PackageInstallContext,
-    plan: PackageDeploymentPlan,
+    plan: PackageInstallPlan,
     resolve_symlinks: bool = True,
 ) -> None:
     """Executes all planned actions in deterministic order on the host filesystem."""
@@ -346,7 +346,7 @@ def execute_package_actions(
     execute_deployment_actions(action_ctx, plan.actions)
 
 
-def update_state_registry_post_deployment(
+def update_state_registry_post_install(
     state_registry: StateRegistry,
     pkg: str,
     target_directory: Path,
@@ -354,7 +354,7 @@ def update_state_registry_post_deployment(
     deployable_files: Sequence[Path],
     sudo: bool = False,
 ) -> None:
-    """Updates and saves state registry to reflect successful package deployment."""
+    """Updates and saves state registry to reflect successful package installation."""
     now_str = datetime.datetime.now().isoformat()
     state_registry.set_package_state(
         pkg,
@@ -377,7 +377,7 @@ def update_state_registry_post_deployment(
 
 def execute_package_install_impl(
     context: PackageInstallContext,
-    plan: PackageDeploymentPlan,
+    plan: PackageInstallPlan,
     state_registry: StateRegistry,
     hook_flags: HookExecFlags,
     config: InstallConfig,
@@ -386,7 +386,7 @@ def execute_package_install_impl(
     state_registry.set_package_state(context.pkg_name, "installing")
     state_registry.save()
 
-    # 1. Pre-deployment hooks
+    # 1. Pre-install hooks
     try:
         if context.is_first_time:
             context.hooks.trigger_pre_install(flags=hook_flags)
@@ -399,11 +399,11 @@ def execute_package_install_impl(
             else:
                 state_registry.set_package_state(context.pkg_name, "installed")
             state_registry.save()
-            logger.error(f"❌ Pre-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Deployment stopped (no rollback needed).")
+            logger.error(f"❌ Pre-install hook '{e.hook_name}' failed for package '{context.pkg_name}'. Installation stopped (no rollback needed).")
         raise
 
     # 2. Persist the target file manifest to state.toml before physical delivery
-    # so that midway file deployment crashes have an authoritative list of files to uninstall/rollback
+    # so that midway file installation crashes have an authoritative list of files to uninstall/rollback
     deployable_files = context.ignore_handler.filter_deployable_files(context.install_pkg_dir)
     state_registry.sync_deployed_files(
         pkg=context.pkg_name,
@@ -422,7 +422,7 @@ def execute_package_install_impl(
     )
     logger.debug(f"   File delivery completed via {context.install_method}")
 
-    # 4. Post-deployment hooks
+    # 4. Post-install hooks
     success = False
     no_rollback_err = False
     try:
@@ -434,11 +434,11 @@ def execute_package_install_impl(
     except HookExecutionError as e:
         if not e.requires_rollback:
             no_rollback_err = True
-            logger.error(f"❌ Post-deployment hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
+            logger.error(f"❌ Post-install hook '{e.hook_name}' failed for package '{context.pkg_name}'. Files remain installed (no rollback needed).")
         raise
     finally:
         if success or no_rollback_err:
-            update_state_registry_post_deployment(
+            update_state_registry_post_install(
                 state_registry=state_registry,
                 pkg=context.pkg_name,
                 target_directory=context.target_dir,
@@ -447,7 +447,7 @@ def execute_package_install_impl(
                 sudo=context.sudo,
             )
 
-    logger.info(f"✨ Package '{context.pkg_name}' deployed successfully.")
+    logger.info(f"✨ Package '{context.pkg_name}' installed successfully.")
 
     return PackageInstallResult(
         plan=plan,
@@ -458,25 +458,37 @@ def execute_package_install_impl(
 
 def execute_package_install(
     context: PackageInstallContext,
-    plan: PackageDeploymentPlan,
+    plan: PackageInstallPlan,
     state_registry: StateRegistry,
     hook_flags: HookExecFlags,
     config: InstallConfig,
 ) -> PackageInstallResult:
-    """Applies a pre-compiled PackageDeploymentPlan to the host system and updates state registry."""
+    """Applies a pre-compiled PackageInstallPlan to the host system and updates state registry."""
     target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, context.target_dir)
 
     has_mutations = any(
         a.action_type not in (ActionType.SKIP_IDENTICAL, ActionType.INFO_MESSAGE)
         for a in plan.actions
     )
-    if not config.redeploy and not context.is_first_time and not has_mutations and target_migrated_from is None:
-        logger.info(f"Skipping package '{context.pkg_name}' deployment (no changes detected and redeploy is False).")
+    # NOTE [Host Mutation Heuristic & Non-Deployable File Limitation]:
+    # Primitive 5's change-detection is purely host-driven: plan.actions evaluates discrepancies between
+    # install/<pkg>/ deployable payload files and target host filesystem state.
+    # PITFALL / DESIGN BOUNDARY: Primitive 5 has no awareness of non-deployable control-plane changes
+    # (such as modifications to .drift/hooks/*, .drift/drift_package.toml, or .drift/.drift_ignore).
+    # If only a hook script or package config was modified while deployable files on the host remain identical,
+    # has_mutations evaluates to False and Primitive 5 will SKIP the package (and bypass hook execution)
+    # unless config.reinstall is True.
+    # When invoking Primitive 5 via the deploy pipeline ('drift deploy'), deploy_repo bridges this by
+    # filtering changed packages at the staging boundary and setting config.reinstall=True. When invoking
+    # Primitive 5 directly ('drift apply'), callers must supply -r / --reinstall to execute hooks when
+    # only non-deployable package files have changed.
+    if not config.reinstall and not context.is_first_time and not has_mutations and target_migrated_from is None:
+        logger.info(f"Skipping package '{context.pkg_name}' installation (no changes detected and reinstall is False).")
         return PackageInstallResult(
             plan=plan,
             is_first_time=False,
             status="SKIPPED",
-            error="No changes detected and redeploy is False",
+            error="No changes detected and reinstall is False",
         )
 
     with context.package_envs():
@@ -489,13 +501,13 @@ def execute_package_install(
         )
 
 
-def deploy_one_package(
+def install_one_package(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
     config: Optional[InstallConfig] = None,
 ) -> PackageInstallResult:
-    """Executes deployment planning, lifecycle hooks, file deliveries, and state registry updates for a single package."""
+    """Executes installation planning, lifecycle hooks, file deliveries, and state registry updates for a single package."""
     cfg = config if config is not None else InstallConfig()
     context = PackageInstallContext.from_package(
         workspace_config=workspace_config,
@@ -511,7 +523,7 @@ def deploy_one_package(
     deployed_files = state_registry.get_package_deployed_files(context.pkg_name)
 
     # 1. Pure Planning (Inspect and compile planned actions without mutating state)
-    plan = plan_package_deployment(
+    plan = plan_package_install(
         context=context,
         deployable_files=deployable_files,
         deployed_files=deployed_files,
@@ -536,7 +548,7 @@ def deploy_one_package(
     )
 
 
-def assert_packages_deployment_ready(
+def assert_packages_install_ready(
     workspace_config: WorkspaceConfig,
     discovered_packages: Iterable[str],
     pkg_metadata_map: Mapping[str, PackageConfig],
@@ -601,12 +613,12 @@ def assert_packages_deployment_ready(
         assert_no_cyclic_package_dependencies(full_universe_deps)
 
 
-def prepare_install_deployment(
+def prepare_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
     config: Optional[InstallConfig] = None,
 ) -> InstallPlan:
-    """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package conflicts before deployment.
+    """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package conflicts before installation.
 
     Runs pre-flight assertion guards (sudo escalation, install dirs exist, midway transaction state,
     target directory validity, target directory permissions, hook script existence, cross-package collisions).
@@ -614,7 +626,7 @@ def prepare_install_deployment(
 
     Args:
         workspace_config: The workspace configuration instance.
-        target_pkgs: Specific package name(s) to deploy, or empty sequence for all installed packages.
+        target_pkgs: Specific package name(s) to install, or empty sequence for all installed packages.
         config: Optional InstallConfig controlling installation behavior.
 
     Returns:
@@ -628,7 +640,7 @@ def prepare_install_deployment(
 
     state_registry = load_state_registry(state_file)
 
-    # Targeted packages for this deployment
+    # Targeted packages for this installation
     discovered_packages = workspace_config.filter_install_packages_by_target(
         target_packages=target_pkgs or None,
     )
@@ -639,13 +651,13 @@ def prepare_install_deployment(
         for pkg in discovered_packages
     }
 
-    # 2. Filter: Retain only packages enabled for installation/deployment
+    # 2. Filter: Retain only packages enabled for installation
     pkg_metadata_map = {
         pkg: meta for pkg, meta in all_metadata.items()
         if meta.package.enable_install
     }
     if not pkg_metadata_map:
-        logger.info("No active packages are enabled for installation/deployment. Skipping.")
+        logger.info("No active packages are enabled for installation. Skipping.")
         return InstallPlan(
             pkg_metadata_map={},
             state_registry=state_registry,
@@ -654,7 +666,7 @@ def prepare_install_deployment(
         )
 
     # Pre-flight assertions on targeted packages (full_universe_deps=None skips redundant DAG sort)
-    assert_packages_deployment_ready(
+    assert_packages_install_ready(
         workspace_config=workspace_config,
         discovered_packages=list(pkg_metadata_map.keys()),
         pkg_metadata_map=pkg_metadata_map,
@@ -683,7 +695,7 @@ def prepare_install_deployment(
     }
 
     package_plans = {
-        pkg: plan_package_deployment(
+        pkg: plan_package_install(
             context=contexts[pkg],
             deployable_files=contexts[pkg].ignore_handler.filter_deployable_files(contexts[pkg].install_pkg_dir),
             deployed_files=state_registry.get_package_deployed_files(pkg),
@@ -703,10 +715,10 @@ def prepare_install_deployment(
     )
 
 
-def execute_install_deployment(
+def execute_install(
     workspace_config: WorkspaceConfig,
     plan: InstallPlan,
-) -> InstallDeploymentResult:
+) -> InstallResult:
     """Applies validated configuration changes to host system and updates state registry.
 
     Args:
@@ -715,12 +727,12 @@ def execute_install_deployment(
               packages_to_install, contexts, package_plans, and install config.
 
     Returns:
-        InstallDeploymentResult with detailed per-package deployment results.
+        InstallResult with detailed per-package install results.
     """
     cfg = plan.config
 
     if cfg.dry_run:
-        logger.info(f"🔍 [DRY-RUN] Simulating deployment for {len(plan.packages_to_install)} package(s).")
+        logger.info(f"🔍 [DRY-RUN] Simulating installation for {len(plan.packages_to_install)} package(s).")
         package_results = [
             PackageInstallResult(
                 plan=plan.package_plans[pkg],
@@ -729,7 +741,7 @@ def execute_install_deployment(
             )
             for pkg in plan.packages_to_install
         ]
-        return InstallDeploymentResult(
+        return InstallResult(
             status="SUCCESS",
             packages=package_results,
         )
@@ -753,7 +765,7 @@ def execute_install_deployment(
             stderr_str = e.stderr.decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
             stdout_str = e.stdout.decode("utf-8", errors="replace") if isinstance(e.stdout, bytes) else str(e.stdout or "")
             err_msg = (
-                f"Subcommand failed during package '{pkg}' deployment.\n"
+                f"Subcommand failed during package '{pkg}' installation.\n"
                 f"Command: {shlex.join(e.cmd) if isinstance(e.cmd, list) else str(e.cmd)}\n"
                 f"Exit Code: {e.returncode}"
             )
@@ -764,7 +776,7 @@ def execute_install_deployment(
             logger.error(err_msg)
             raise mark_logged(RuntimeError(err_msg)) from e
 
-    return InstallDeploymentResult(
+    return InstallResult(
         status="SUCCESS",
         packages=results,
     )
@@ -774,27 +786,27 @@ def execute_install_deployment(
 # Layer 5: Public Primitive Entry Points
 # =============================================================================
 
-def run_primitive_5_install_deployment(
+def run_primitive_5_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
     config: Optional[InstallConfig] = None,
-) -> InstallDeploymentResult:
+) -> InstallResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
-        target_pkgs: Specific package name(s) to deploy, or empty/omitted for all installed packages.
-        config: Optional InstallConfig controlling deployment behavior (resolve_symlinks, force, redeploy, flags).
+        target_pkgs: Specific package name(s) to install, or empty/omitted for all installed packages.
+        config: Optional InstallConfig controlling install behavior (resolve_symlinks, force, reinstall, flags).
 
     Returns:
-        InstallDeploymentResult with detailed per-package deployment results.
+        InstallResult with detailed per-package install results.
     """
-    plan = prepare_install_deployment(
+    plan = prepare_install(
         workspace_config=workspace_config,
         target_pkgs=target_pkgs,
         config=config,
     )
-    return execute_install_deployment(workspace_config, plan=plan)
+    return execute_install(workspace_config, plan=plan)
 
 
 def run_primitive_6_commit_install_repo(

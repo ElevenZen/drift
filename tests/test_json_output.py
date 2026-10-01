@@ -14,9 +14,9 @@ from drift.core.result_models import (
     NextActionType,
     ActionType,
     PlannedFileAction,
-    PackageDeploymentPlan,
+    PackageInstallPlan,
     PackageInstallResult,
-    InstallDeploymentResult,
+    InstallResult,
     StatusResult,
     DeployResult,
     DeployFailure,
@@ -38,7 +38,7 @@ class TestResultModels(unittest.TestCase):
     """Unit tests for result models and serialization."""
 
     def test_serialization_primitives(self) -> None:
-        plan = PackageDeploymentPlan(
+        plan = PackageInstallPlan(
             package="zsh",
             target_directory="/home/user",
             install_method=InstallMethod.SYMLINK,
@@ -68,8 +68,8 @@ class TestResultModels(unittest.TestCase):
         self.assertEqual(parsed["is_first_time"], True)
         self.assertEqual(parsed["plan"]["actions"][0]["action_type"], "CREATE_SYMLINK")
 
-    def test_deployment_plan_format_text(self) -> None:
-        plan = PackageDeploymentPlan(
+    def test_install_plan_format_text(self) -> None:
+        plan = PackageInstallPlan(
             package="zsh",
             target_directory="/home/user",
             install_method=InstallMethod.SYMLINK,
@@ -104,7 +104,7 @@ class TestResultModels(unittest.TestCase):
         self.assertIn("1 to create", plan_text)
         self.assertIn("1 to backup", plan_text)
 
-        result = InstallDeploymentResult(
+        result = InstallResult(
             status="SUCCESS",
             packages=[
                 PackageInstallResult(
@@ -113,7 +113,7 @@ class TestResultModels(unittest.TestCase):
             ],
         )
         dry_run_text = result.format_text(dry_run=True)
-        self.assertIn("[DRY-RUN] Package Deployment Simulation Plan", dry_run_text)
+        self.assertIn("[DRY-RUN] Package Install Simulation Plan", dry_run_text)
         self.assertIn("zero host mutations performed", dry_run_text)
 
     def test_deploy_failure_model(self) -> None:

@@ -20,7 +20,7 @@ from drift.config.package_hooks import PackageHooks
 from drift.core.ignore import DriftIgnore
 from drift.render.render_package import render_package
 from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-from drift.primitives.install_repo import run_primitive_5_install_deployment, InstallConfig
+from drift.primitives.install_repo import run_primitive_5_install, InstallConfig
 from drift.core.exceptions import ConfigError
 from drift.hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
@@ -221,7 +221,7 @@ post_install = "drift_hooks/post_install.sh"
         self.assertTrue((install_pkg / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "lib" / "common.sh").exists())
 
         # Step C: Deploy package to target
-        deploy_res = run_primitive_5_install_deployment(
+        deploy_res = run_primitive_5_install(
             self.workspace_config,
             target_pkgs=["my_app"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),
@@ -280,7 +280,7 @@ post_install = "drift_hooks/post_install.sh"
         stage_res = run_primitive_4_stage_render_to_install(self.workspace_config)
         self.assertIn("cli_tool", stage_res)
 
-        deploy_res = run_primitive_5_install_deployment(
+        deploy_res = run_primitive_5_install(
             self.workspace_config,
             target_pkgs=["cli_tool"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),
@@ -357,7 +357,7 @@ post_install = "drift_hooks/post_install.sh"
         self.assertFalse((install_pkg / "dotfiles").exists())
 
         # Deploy
-        deploy_res = run_primitive_5_install_deployment(
+        deploy_res = run_primitive_5_install(
             self.workspace_config,
             target_pkgs=["custom_subfolder_pkg"],
             config=InstallConfig(flags=HookExecFlags(streaming=False)),

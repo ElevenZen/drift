@@ -53,7 +53,7 @@ class TestIntegration(unittest.TestCase):
         from drift.primitives.new_package import run_primitive_10_create_new_package
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
         
         pkg = "pkg_symlink"
@@ -67,7 +67,7 @@ class TestIntegration(unittest.TestCase):
         # 2. Render & Stage & Apply
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         
         # Verify deployment
         target_file = self.system_target_dir / "bashrc"
@@ -96,7 +96,7 @@ class TestIntegration(unittest.TestCase):
         from drift.primitives.new_package import run_primitive_10_create_new_package
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
         
         pkg = "pkg_copy"
@@ -113,7 +113,7 @@ class TestIntegration(unittest.TestCase):
         # 3. Full Deployment
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         
         # Verify overwritten and backed up
         backup_file = self.workspace_config.backup_path / pkg / "overwritten" / "config.ini"
@@ -134,7 +134,7 @@ class TestIntegration(unittest.TestCase):
         from drift.primitives.new_package import run_primitive_10_create_new_package
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.workspace_gc import run_primitive_9_purge_workspace_garbage
         
         pkg = "pkg_to_be_orphan"
@@ -146,7 +146,7 @@ class TestIntegration(unittest.TestCase):
         
         run_primitive_2_render_packages(self.workspace_config)
         run_primitive_4_stage_render_to_install(self.workspace_config)
-        run_primitive_5_install_deployment(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
         
         target_file = self.system_target_dir / "orphaned_file.txt"
         self.assertTrue(target_file.exists())
@@ -258,7 +258,7 @@ class TestIntegration(unittest.TestCase):
         import sys
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
-        from drift.primitives.install_repo import run_primitive_5_install_deployment
+        from drift.primitives.install_repo import run_primitive_5_install
         
         pkg = "pkg_templating"
         self.workspace_config.packages_enable[pkg] = True
@@ -285,7 +285,7 @@ class TestIntegration(unittest.TestCase):
         with patch.dict(os.environ, {"USER": "drift_tester"}):
             run_primitive_2_render_packages(self.workspace_config)
             run_primitive_4_stage_render_to_install(self.workspace_config)
-            run_primitive_5_install_deployment(self.workspace_config)
+            run_primitive_5_install(self.workspace_config)
         
         # 4. Verify result
         target_file = self.system_target_dir / "greet.txt"

@@ -15,14 +15,14 @@ Layer 3: Primitive Entry Point
         3. Unified Dependency Resolution:
             resolve_package_uninstall_order (reverse topological order across all rollback targets)
         4. Execute Rollback One-by-One in Reverse Order:
-            If committed package: rollback_redeploy_committed_package [Layer 2]
-                run_primitive_5_install_deployment (force=True, resolve_symlinks=True)
+            If committed package: rollback_reinstall_committed_package [Layer 2]
+                run_primitive_5_install (force=True, resolve_symlinks=True)
             If first-time package: rollback_uninstalled_first_time_package [Layer 2]
                 run_primitive_7_uninstall_packages (force=True)
                 git clean -fd -- <pkg>
         5. Restore State Database:
             git checkout HEAD -- state.toml
-            state_registry.set_package_state("installed") for redeployed packages
+            state_registry.set_package_state("installed") for reinstalled packages
             state_registry.remove_package for uninstalled packages
             state_registry.save
 
@@ -33,7 +33,7 @@ Layers (ordered bottom-up by dependency):
         reset_install_package_to_head
         validate_rollback_packages
     Layer 2: Single-Package Rollback Actions
-        rollback_redeploy_committed_package
+        rollback_reinstall_committed_package
         rollback_uninstalled_first_time_package
     Layer 3: Public Primitive Entry Point
         run_primitive_8_rollback_recovery
@@ -49,7 +49,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.result_models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install_deployment, InstallConfig
+from .install_repo import run_primitive_5_install, InstallConfig
 from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
 from .package_assertions import resolve_package_uninstall_order
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -122,25 +122,25 @@ def validate_rollback_packages(
 # Layer 2: Single-Package Rollback Actions
 # =====================================================================
 
-def rollback_redeploy_committed_package(
+def rollback_reinstall_committed_package(
     workspace_config: WorkspaceConfig,
     pkg: str,
     flags: Optional[HookExecFlags] = None,
 ) -> None:
-    """Executes full package redeployment fallback to restore system files for a single committed package."""
-    logger.info(f"Rollback redeployment for committed package '{pkg}'")
-    install_res = run_primitive_5_install_deployment(
+    """Executes full package reinstallation fallback to restore system files for a single committed package."""
+    logger.info(f"Rollback reinstallation for committed package '{pkg}'")
+    install_res = run_primitive_5_install(
         workspace_config=workspace_config,
         target_pkgs=[pkg],
         config=InstallConfig(
             resolve_symlinks=True,
             force=True,
-            redeploy=True,
+            reinstall=True,
             flags=flags,
         ),
     )
     if install_res.status != "SUCCESS":
-        raise RuntimeError(install_res.error_message or f"Rollback redeployment failed for package '{pkg}'.")
+        raise RuntimeError(install_res.error_message or f"Rollback reinstallation failed for package '{pkg}'.")
 
 
 def rollback_uninstalled_first_time_package(
@@ -223,13 +223,13 @@ def run_primitive_8_rollback_recovery(
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
 
     install_base = workspace_config.install_path
-    packages_to_redeploy: List[str] = []
+    packages_to_reinstall: List[str] = []
     packages_to_uninstall: List[str] = []
 
-    # 3. Classify packages into previously committed (redeployable) vs first-time (uninstallable)
+    # 3. Classify packages into previously committed (reinstallable) vs first-time (uninstallable)
     for pkg in packages_to_rollback:
         if is_package_committed_in_install_head(install_base, pkg):
-            packages_to_redeploy.append(pkg)
+            packages_to_reinstall.append(pkg)
             reset_install_package_to_head(install_base, pkg)
         else:
             packages_to_uninstall.append(pkg)
@@ -247,11 +247,11 @@ def run_primitive_8_rollback_recovery(
     ordered_rollback = resolve_package_uninstall_order(rollback_deps)
 
     # 5. Dispatch rollback actions one-by-one in reverse topological order
-    redeploy_set = set(packages_to_redeploy)
+    reinstall_set = set(packages_to_reinstall)
     for pkg in ordered_rollback:
-        if pkg in redeploy_set:
-            logger.info(f"Executing Full Package Redeploy to restore system files for: {pkg}")
-            rollback_redeploy_committed_package(workspace_config, pkg, flags=flags)
+        if pkg in reinstall_set:
+            logger.info(f"Executing Full Package Reinstall to restore system files for: {pkg}")
+            rollback_reinstall_committed_package(workspace_config, pkg, flags=flags)
         else:
             logger.info(f"Executing uninstallation rollback for first-time package: {pkg}")
             rollback_uninstalled_first_time_package(workspace_config, pkg, flags=flags)
@@ -269,7 +269,7 @@ def run_primitive_8_rollback_recovery(
 
     # Reload registry after checkout to prevent dirty override
     reloaded_registry = load_state_registry(state_file)
-    for pkg in packages_to_redeploy:
+    for pkg in packages_to_reinstall:
         reloaded_registry.set_package_state(pkg, "installed")
     for pkg in packages_to_uninstall:
         reloaded_registry.remove_package(pkg)
@@ -277,8 +277,8 @@ def run_primitive_8_rollback_recovery(
 
     if packages_to_uninstall:
         logger.info(f"🗑️ Cleanly uninstalled failed first-time package(s): {packages_to_uninstall}")
-    if packages_to_redeploy:
-        logger.info(f"✨ Restored previously committed clean state for: {packages_to_redeploy}")
+    if packages_to_reinstall:
+        logger.info(f"✨ Restored previously committed clean state for: {packages_to_reinstall}")
 
     logger.info("✨ Rollback recovery complete.")
     return RollbackResult(
