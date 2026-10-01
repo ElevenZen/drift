@@ -68,7 +68,7 @@ class TestFolderDiffBasic(unittest.TestCase):
         (self.src / "sub" / "sub_new.txt").write_text("sub new", encoding="utf-8")
 
         diff = compare_folders(self.src, self.dst)
-        self.assertEqual(sorted(diff.added), [Path("new.txt"), Path("sub/sub_new.txt")])
+        self.assertEqual(sorted(diff.added), [Path("new.txt"), Path("sub"), Path("sub/sub_new.txt")])
         self.assertEqual(diff.modified, [])
         self.assertEqual(diff.deleted, [])
         self.assertEqual(diff.matches, [])
@@ -79,7 +79,7 @@ class TestFolderDiffBasic(unittest.TestCase):
         (self.dst / "sub" / "sub_orphan.txt").write_text("sub orphan", encoding="utf-8")
 
         diff = compare_folders(self.src, self.dst)
-        self.assertEqual(sorted(diff.deleted), [Path("orphan.txt"), Path("sub/sub_orphan.txt")])
+        self.assertEqual(sorted(diff.deleted), [Path("orphan.txt"), Path("sub"), Path("sub/sub_orphan.txt")])
         self.assertEqual(diff.added, [])
         self.assertEqual(diff.modified, [])
         self.assertEqual(diff.matches, [])
@@ -418,6 +418,34 @@ class TestFolderDiffIgnoreHandler(unittest.TestCase):
         self.assertEqual(diff.deleted, [])
         self.assertEqual(diff.matches, [])
 
+    def test_ignored_directory_with_trailing_slash_rule(self) -> None:
+        """Verifies trailing slash ignore pattern matches actual folder."""
+        ignore = DriftIgnore([r"^/build/"])
+        ignore_src = self.src / "build"
+        ignore_src.mkdir()
+        (ignore_src / "output.bin").write_text("bin", encoding="utf-8")
+
+        diff = compare_folders(self.src, self.dst, ignore_handler=ignore)
+        self.assertEqual(diff.added, [])
+        self.assertEqual(diff.deleted, [])
+
+    def test_ignored_symlink_to_directory_with_trailing_slash_rule(self) -> None:
+        """Verifies trailing slash ignore pattern matches symlink to directory regardless of resolve_symlinks flag."""
+        target = self.base / "real_dir"
+        target.mkdir()
+        (target / "data.txt").write_text("data", encoding="utf-8")
+
+        link_src = self.src / "link_dir"
+        link_src.symlink_to(target)
+
+        ignore = DriftIgnore([r"^/link_dir/"])
+
+        diff_resolve = compare_folders(self.src, self.dst, ignore_handler=ignore, resolve_symlinks=True)
+        self.assertEqual(diff_resolve.added, [])
+
+        diff_raw = compare_folders(self.src, self.dst, ignore_handler=ignore, resolve_symlinks=False)
+        self.assertEqual(diff_raw.added, [])
+
 
 class TestFolderDiffSymlinks(unittest.TestCase):
     """Tests for symlink handling with resolve_symlinks=True and False."""
@@ -538,7 +566,7 @@ class TestFolderDiffSymlinks(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
         self.assertEqual(diff.added, [Path("item")])
-        self.assertEqual(diff.deleted, [Path("item/child.txt")])
+        self.assertEqual(diff.deleted, [Path("item"), Path("item/child.txt")])
         self.assertEqual(diff.modified, [])
 
     def test_resolve_symlinks_true_symlink_dir_vs_symlink_dir(self) -> None:
@@ -582,7 +610,7 @@ class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst)
         self.assertEqual(diff.deleted, [Path("item")])
-        self.assertEqual(diff.added, [Path("item/child.txt")])
+        self.assertEqual(diff.added, [Path("item"), Path("item/child.txt")])
 
     def test_src_dir_dst_symlink_mismatch_resolve_symlinks_false(self) -> None:
         self.src.mkdir(parents=True, exist_ok=True)
@@ -599,7 +627,7 @@ class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst, resolve_symlinks=False)
         self.assertEqual(diff.deleted, [Path("item")])
-        self.assertEqual(diff.added, [Path("item/child.txt")])
+        self.assertEqual(diff.added, [Path("item"), Path("item/child.txt")])
         self.assertEqual(diff.modified, [])
 
     def test_src_file_dst_dir_mismatch(self) -> None:
@@ -614,7 +642,7 @@ class TestFolderDiffTypeMismatchesAndRoots(unittest.TestCase):
 
         diff = compare_folders(self.src, self.dst)
         self.assertEqual(diff.added, [Path("item")])
-        self.assertEqual(diff.deleted, [Path("item/child.txt")])
+        self.assertEqual(diff.deleted, [Path("item"), Path("item/child.txt")])
 
     def test_nonexistent_src_root(self) -> None:
         self.dst.mkdir(parents=True, exist_ok=True)

@@ -159,6 +159,30 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertTrue(ignore2.match_path(Path("file_xyz.txt")))
         self.assertFalse(ignore2.match_path(Path("sub/abc_file.txt")))
 
+    def test_match_path_trailing_slash_only_matches_directories(self) -> None:
+        """Verifies that trailing slash patterns match when is_dir=True, but do not match files when is_dir=False."""
+        # 1. Directory pattern with trailing slash: /cache/
+        ignore = DriftIgnore(["/cache/"])
+        # Should match directory 'cache' when is_dir=True
+        self.assertTrue(ignore.match_path(Path("cache"), is_dir=True))
+        # Should match nested directory 'themes/cache' when is_dir=True
+        self.assertTrue(ignore.match_path(Path("themes/cache"), is_dir=True))
+        # Should NOT match regular file 'cache' or 'themes/cache' when is_dir=False
+        self.assertFalse(ignore.match_path(Path("cache"), is_dir=False))
+        self.assertFalse(ignore.match_path(Path("themes/cache"), is_dir=False))
+        # Files INSIDE cache/ should match because path_with_slash is '/cache/item.txt'
+        self.assertTrue(ignore.match_path(Path("cache/item.txt"), is_dir=False))
+
+        # 2. Anchored root directory pattern: ^/dot-config/cache/
+        ignore_anchored = DriftIgnore(["^/dot-config/cache/"])
+        self.assertTrue(ignore_anchored.match_path(Path("dot-config/cache"), is_dir=True))
+        self.assertFalse(ignore_anchored.match_path(Path("dot-config/cache"), is_dir=False))
+
+        # 3. Simple pattern with trailing slash: themes/
+        ignore_trailing = DriftIgnore(["themes/"])
+        self.assertTrue(ignore_trailing.match_path(Path("themes"), is_dir=True))
+        self.assertFalse(ignore_trailing.match_path(Path("themes"), is_dir=False))
+
     def test_match_path_invalid_regex_logs_warning_and_does_not_crash(self) -> None:
         """Verifies that invalid regex pattern doesn't crash the manager but logs warning."""
         # [invalid pattern (missing closing bracket)
@@ -218,7 +242,7 @@ class TestDriftIgnore(unittest.TestCase):
 
         # 2. Custom duck-typed class satisfying match_path protocol
         class CustomIgnore:
-            def match_path(self, rel_path: Path) -> bool:
+            def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
                 return rel_path.name.endswith(".tmp")
 
         custom_ignore = CustomIgnore()

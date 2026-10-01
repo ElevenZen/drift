@@ -21,11 +21,12 @@ logger = logging.getLogger(__name__)
 class IgnoreHandler(Protocol):
     """Protocol for ignore path matching."""
 
-    def match_path(self, rel_path: Path) -> bool:
+    def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
         """Determines whether a relative path should be ignored.
 
         Args:
             rel_path: Relative Path object to check against ignore rules.
+            is_dir: Whether rel_path represents a directory / folder.
 
         Returns:
             True if the path should be ignored, False otherwise.
@@ -149,10 +150,10 @@ class DriftIgnore(IgnoreHandler):
         return [
             rel_file
             for rel_file in tree_files(install_pkg_dir)
-            if not self.match_path(rel_file)
+            if not self.match_path(rel_file, is_dir=False)
         ]
 
-    def match_path(self, rel_path: Path) -> bool:
+    def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
         """Implements regex ignore matching algorithm on a relative path."""
         # Special exception: always ignore internal drift directories, ignore-related files, and config files
         if rel_path.parts and rel_path.parts[0] == DRIFT_INTERNAL_DIR_NAME:
@@ -164,12 +165,15 @@ class DriftIgnore(IgnoreHandler):
 
         normalized_rel_path = rel_path.as_posix()
         path_with_slash = "/" + normalized_rel_path
+        path_with_trailing_slash = path_with_slash + "/" if is_dir else None
         basename = rel_path.name
 
         # Match Step 1: Check patterns containing '/' against path_with_slash
         for pattern in self.set_with_slash:
             try:
                 if re.search(pattern, path_with_slash):
+                    return True
+                if is_dir and path_with_trailing_slash and re.search(pattern, path_with_trailing_slash):
                     return True
             except re.error as e:
                 logger.warning(f"Invalid regex pattern '{pattern}': {e}")

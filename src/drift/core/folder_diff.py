@@ -19,6 +19,7 @@ class FolderDiff:
         """Checks if a relative path in modified list is a mode-only change (content matches, permissions differ)."""
         return rel_path in self.permissions_differ
 
+
 def compare_folders(
     src_dir: Path,
     dst_dir: Path,
@@ -86,7 +87,7 @@ def compare_folders(
         if translate_mode == "reverse":
             repo_rel = decode_dot_prefix(rel)
 
-        if ignore_handler and ignore_handler.match_path(repo_rel):
+        if ignore_handler and ignore_handler.match_path(repo_rel, is_dir=p_dst.is_dir()):
             return
 
         if p_dst.is_symlink():
@@ -108,8 +109,7 @@ def compare_folders(
             if real_key is None:
                 return
             try:
-                # Error may occur if p_dst is inaccessible directory
-                if not any(p_dst.iterdir()):
+                if rel != Path("") or not any(p_dst.iterdir()):
                     diff.deleted.append(rel)
                 for child in p_dst.iterdir():
                     # Compute dst_rel and then untranslate to get src_rel
@@ -125,7 +125,7 @@ def compare_folders(
         if translate_mode == "reverse":
             repo_rel = decode_dot_prefix(rel)
 
-        if ignore_handler and ignore_handler.match_path(repo_rel):
+        if ignore_handler and ignore_handler.match_path(repo_rel, is_dir=p_src.is_dir()):
             return
 
         if p_src.is_symlink():
@@ -147,8 +147,7 @@ def compare_folders(
             if real_key is None:
                 return
             try:
-                # Error may occur if p_src is inaccessible directory
-                if not any(p_src.iterdir()):
+                if rel != Path("") or not any(p_src.iterdir()):
                     diff.added.append(rel)
                 for child in p_src.iterdir():
                     add_children_as_added(child, rel / child.name, visited)
@@ -286,13 +285,14 @@ def compare_folders(
         repo_rel = rel
         if translate_mode == "reverse":
             repo_rel = decode_dot_prefix(rel)
-            
-        is_src_ignored = ignore_handler and ignore_handler.match_path(repo_rel)
-        if is_src_ignored:
-            return
 
         src_exists = p_src.exists() or p_src.is_symlink()
         dst_exists = p_dst.exists() or p_dst.is_symlink()
+
+        is_dir = p_src.is_dir() if src_exists else p_dst.is_dir()
+        is_src_ignored = ignore_handler and ignore_handler.match_path(repo_rel, is_dir=is_dir)
+        if is_src_ignored:
+            return
 
         if not src_exists and not dst_exists:
             return
@@ -344,7 +344,7 @@ def list_folder_paths(
         if translate_mode == "reverse":
             repo_rel = decode_dot_prefix(rel)
 
-        if ignore_handler and ignore_handler.match_path(repo_rel):
+        if ignore_handler and ignore_handler.match_path(repo_rel, is_dir=p_src.is_dir()):
             return
 
         if p_src.is_symlink() and not resolve_symlinks:
