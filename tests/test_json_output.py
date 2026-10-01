@@ -12,7 +12,7 @@ from drift.cli import main
 from drift.core.result_models import (
     SerializableModel,
     NextActionType,
-    ActionType,
+    FileActionType,
     FileAction,
     PackageInstallPlan,
     PackageInstallResult,
@@ -45,7 +45,7 @@ class TestResultModels(unittest.TestCase):
             install_method=InstallMethod.SYMLINK,
             actions=[
                 FileAction(
-                    action_type=ActionType.CREATE_SYMLINK,
+                    action_type=FileActionType.CREATE_SYMLINK,
                     src_path=Path("/workspace/install/zsh/dot-zshrc"),
                     dst_path=Path("/home/user/.zshrc"),
                 )
@@ -76,16 +76,16 @@ class TestResultModels(unittest.TestCase):
             install_method=InstallMethod.SYMLINK,
             actions=[
                 FileAction(
-                    action_type=ActionType.ENSURE_DIR,
+                    action_type=FileActionType.ENSURE_DIR,
                     dst_path=Path("/home/user/.config"),
                 ),
                 FileAction(
-                    action_type=ActionType.CREATE_SYMLINK,
+                    action_type=FileActionType.CREATE_SYMLINK,
                     src_path=Path("/workspace/install/zsh/dot-zshrc"),
                     dst_path=Path("/home/user/.zshrc"),
                 ),
                 FileAction(
-                    action_type=ActionType.BACKUP_OVERWRITE,
+                    action_type=FileActionType.BACKUP_OVERWRITE,
                     src_path=Path("/home/user/.zshrc"),
                     dst_path=Path("/workspace/backup/zsh/overwritten/dot-zshrc"),
                     reason="Pre-existing file collision",
@@ -159,7 +159,7 @@ class TestResultModels(unittest.TestCase):
             target_base=Path("/home/user"),
             actions=[
                 FileAction(
-                    action_type=ActionType.CREATE_COPY,
+                    action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/home/user/.zshrc"),
                     dst_path=Path("/workspace/src/zsh/dot-zshrc"),
                 )

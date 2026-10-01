@@ -85,7 +85,7 @@ class RenderResult(SerializableModel):
 # =============================================================================
 
 from .folder_delivery import (
-    ActionType,
+    FileActionType,
     FileAction,
     format_action_line,
     format_action_summary,
@@ -100,23 +100,23 @@ class PackageStagePlan(SerializableModel):
 
     @property
     def created(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY]
+        return [a for a in self.actions if a.action_type == FileActionType.CREATE_COPY]
 
     @property
     def updated(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_COPY]
 
     @property
     def permissions_updated(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_PERMISSION]
 
     @property
     def deleted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
+        return [a for a in self.actions if a.action_type == FileActionType.DELETE_FILE]
 
     @property
     def ensured_dirs(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
+        return [a for a in self.actions if a.action_type == FileActionType.ENSURE_DIR]
 
     @property
     def package_name(self) -> str:
@@ -231,31 +231,31 @@ class PackageInstallPlan(SerializableModel):
 
     @property
     def created(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type in (ActionType.CREATE_SYMLINK, ActionType.CREATE_COPY)]
+        return [a for a in self.actions if a.action_type in (FileActionType.CREATE_SYMLINK, FileActionType.CREATE_COPY)]
 
     @property
     def updated(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.UPDATE_COPY]
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_COPY]
 
     @property
     def permissions_updated(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.UPDATE_PERMISSION]
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_PERMISSION]
 
     @property
     def skipped(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.SKIP_IDENTICAL]
+        return [a for a in self.actions if a.action_type == FileActionType.SKIP_IDENTICAL]
 
     @property
     def pruned(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
+        return [a for a in self.actions if a.action_type == FileActionType.BACKUP_PRUNE]
 
     @property
     def overwritten_backups(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.BACKUP_OVERWRITE]
+        return [a for a in self.actions if a.action_type == FileActionType.BACKUP_OVERWRITE]
 
     @property
     def prune_backups(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.BACKUP_PRUNE]
+        return [a for a in self.actions if a.action_type == FileActionType.BACKUP_PRUNE]
 
     def format_text(self) -> str:
         """Formats the deployment plan for human-readable terminal output."""
@@ -290,7 +290,7 @@ class PackageUninstallPlan(SerializableModel):
 
     @property
     def deleted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.DELETE_FILE]
+        return [a for a in self.actions if a.action_type == FileActionType.DELETE_FILE]
 
     @property
     def removed(self) -> List[FileAction]:
@@ -298,15 +298,15 @@ class PackageUninstallPlan(SerializableModel):
 
     @property
     def restored(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY) and not self.detach_mode]
+        return [a for a in self.actions if a.action_type in (FileActionType.CREATE_COPY, FileActionType.UPDATE_COPY) and not self.detach_mode]
 
     @property
     def converted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY and self.detach_mode]
+        return [a for a in self.actions if a.action_type == FileActionType.CREATE_COPY and self.detach_mode]
 
     @property
     def ensured_dirs(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == ActionType.ENSURE_DIR]
+        return [a for a in self.actions if a.action_type == FileActionType.ENSURE_DIR]
 
     def format_text(self) -> str:
         """Formats the uninstallation plan for human-readable terminal output."""
@@ -581,7 +581,7 @@ class AddResourcePlan(SerializableModel):
     @property
     def created(self) -> List[FileAction]:
         """Returns all CREATE_COPY planned actions."""
-        return [a for a in self.actions if a.action_type == ActionType.CREATE_COPY]
+        return [a for a in self.actions if a.action_type == FileActionType.CREATE_COPY]
 
     def __len__(self) -> int:
         return len(self.actions)

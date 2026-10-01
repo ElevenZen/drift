@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 # Action Enums & Context Models
 # =============================================================================
 
-class ActionType(str, Enum):
+class FileActionType(str, Enum):
     """Specific filesystem operation planned or executed during delivery."""
     # Creations & Updates
     CREATE_SYMLINK = "CREATE_SYMLINK"
@@ -64,14 +64,14 @@ class ActionType(str, Enum):
 @dataclass
 class FileAction(SerializableModel):
     """Declarative specification of a single file/directory operation on the host system."""
-    action_type: ActionType
+    action_type: FileActionType
     src_path: Optional[Path] = None
     dst_path: Optional[Path] = None
     reason: Optional[str] = None
 
 
 @dataclass(frozen=True)
-class ActionExecutionContext:
+class FileActionExecutionContext:
     """Encapsulates host filesystem permissions and symlink resolution flags for executing file actions."""
     sudo: bool = False
     resolve_symlinks: bool = True
@@ -112,27 +112,27 @@ class DeliveryInspectionContext:
 def format_action_line(action: FileAction) -> str:
     """Formats a single FileAction into a clean terminal line."""
     reason_str = f" ({action.reason})" if action.reason else ""
-    if action.action_type == ActionType.ENSURE_DIR:
+    if action.action_type == FileActionType.ENSURE_DIR:
         return f"    📁 [ENSURE_DIR]      {action.dst_path}"
-    elif action.action_type == ActionType.CREATE_SYMLINK:
+    elif action.action_type == FileActionType.CREATE_SYMLINK:
         return f"    🔗 [CREATE_SYMLINK]  {action.src_path} -> {action.dst_path}"
-    elif action.action_type == ActionType.CREATE_COPY:
+    elif action.action_type == FileActionType.CREATE_COPY:
         return f"    📄 [CREATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == ActionType.UPDATE_COPY:
+    elif action.action_type == FileActionType.UPDATE_COPY:
         return f"    📝 [UPDATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == ActionType.UPDATE_PERMISSION:
+    elif action.action_type == FileActionType.UPDATE_PERMISSION:
         return f"    🔒 [UPDATE_PERMISSION] {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == ActionType.SKIP_IDENTICAL:
+    elif action.action_type == FileActionType.SKIP_IDENTICAL:
         return f"    ⏭️ [SKIP_IDENTICAL]  {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == ActionType.BACKUP_OVERWRITE:
+    elif action.action_type == FileActionType.BACKUP_OVERWRITE:
         target = action.src_path or action.dst_path
         return f"    🛡️ [BACKUP_OVERWRITE] {target}{reason_str}"
-    elif action.action_type == ActionType.BACKUP_PRUNE:
+    elif action.action_type == FileActionType.BACKUP_PRUNE:
         target = action.src_path or action.dst_path
         return f"    📦 [BACKUP_PRUNE]    {target}{reason_str}"
-    elif action.action_type == ActionType.DELETE_FILE:
+    elif action.action_type == FileActionType.DELETE_FILE:
         return f"    🗑️ [DELETE_FILE]    {action.dst_path}{reason_str}"
-    elif action.action_type == ActionType.INFO_MESSAGE:
+    elif action.action_type == FileActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
     return f"    [{action.action_type}] {action.src_path} -> {action.dst_path}{reason_str}"
 
@@ -140,25 +140,25 @@ def format_action_line(action: FileAction) -> str:
 def format_action_summary(actions: Sequence[FileAction]) -> str:
     """Formats a concise summary string of action counts."""
     counts = []
-    created = [a for a in actions if a.action_type in (ActionType.CREATE_SYMLINK, ActionType.CREATE_COPY)]
+    created = [a for a in actions if a.action_type in (FileActionType.CREATE_SYMLINK, FileActionType.CREATE_COPY)]
     if created:
         counts.append(f"{len(created)} to create")
-    updated = [a for a in actions if a.action_type == ActionType.UPDATE_COPY]
+    updated = [a for a in actions if a.action_type == FileActionType.UPDATE_COPY]
     if updated:
         counts.append(f"{len(updated)} to update")
-    permissions = [a for a in actions if a.action_type == ActionType.UPDATE_PERMISSION]
+    permissions = [a for a in actions if a.action_type == FileActionType.UPDATE_PERMISSION]
     if permissions:
         counts.append(f"{len(permissions)} permissions to update")
-    skipped = [a for a in actions if a.action_type == ActionType.SKIP_IDENTICAL]
+    skipped = [a for a in actions if a.action_type == FileActionType.SKIP_IDENTICAL]
     if skipped:
         counts.append(f"{len(skipped)} up-to-date")
-    removed = [a for a in actions if a.action_type == ActionType.DELETE_FILE]
+    removed = [a for a in actions if a.action_type == FileActionType.DELETE_FILE]
     if removed:
         counts.append(f"{len(removed)} to remove")
-    backups = [a for a in actions if a.action_type in (ActionType.BACKUP_OVERWRITE, ActionType.BACKUP_PRUNE)]
+    backups = [a for a in actions if a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.BACKUP_PRUNE)]
     if backups:
         counts.append(f"{len(backups)} to backup")
-    ensured = [a for a in actions if a.action_type == ActionType.ENSURE_DIR]
+    ensured = [a for a in actions if a.action_type == FileActionType.ENSURE_DIR]
     if ensured:
         counts.append(f"{len(ensured)} directories")
     return ", ".join(counts) if counts else "0 actions"
@@ -195,7 +195,7 @@ def _inspect_single_ancestor(
 ) -> List[FileAction]:
     """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
     if not (ancestor_target.exists() or ancestor_target.is_symlink()):
-        return [FileAction(action_type=ActionType.ENSURE_DIR, dst_path=ancestor_target)]
+        return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=ancestor_target)]
 
     if is_concrete_dir(ancestor_target):
         return []
@@ -213,8 +213,8 @@ def _inspect_single_ancestor(
 
     backup_dst = context.resolve_backup_path(rel_path)
     return [
-        FileAction(action_type=ActionType.BACKUP_OVERWRITE, src_path=ancestor_target, dst_path=backup_dst, reason=reason),
-        FileAction(action_type=ActionType.ENSURE_DIR, dst_path=ancestor_target),
+        FileAction(action_type=FileActionType.BACKUP_OVERWRITE, src_path=ancestor_target, dst_path=backup_dst, reason=reason),
+        FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=ancestor_target),
     ]
 
 
@@ -243,7 +243,7 @@ def inspect_ancestor_directories(
 
         if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
             actions.append(FileAction(
-                action_type=ActionType.ENSURE_DIR,
+                action_type=FileActionType.ENSURE_DIR,
                 dst_path=ancestor_target,
             ))
             continue
@@ -253,7 +253,7 @@ def inspect_ancestor_directories(
             ancestor_target=ancestor_target,
             rel_path=rel_path,
         )
-        if any(a.action_type == ActionType.BACKUP_OVERWRITE for a in res):
+        if any(a.action_type == FileActionType.BACKUP_OVERWRITE for a in res):
             backed_up_ancestor_targets.add(ancestor_target)
         actions.extend(res)
 
@@ -277,7 +277,7 @@ def _plan_file_creation(
     reason: Optional[str] = None,
 ) -> FileAction:
     """Returns CREATE_SYMLINK or CREATE_COPY depending on the package install method."""
-    action_type = ActionType.CREATE_SYMLINK if context.install_method == InstallMethod.SYMLINK else ActionType.CREATE_COPY
+    action_type = FileActionType.CREATE_SYMLINK if context.install_method == InstallMethod.SYMLINK else FileActionType.CREATE_COPY
     return FileAction(
         action_type=action_type,
         src_path=source_file,
@@ -298,7 +298,7 @@ def _inspect_symlink_leaf(
         # Broken symlink
         return [
             FileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
+                action_type=FileActionType.BACKUP_OVERWRITE,
                 src_path=system_target,
                 dst_path=backup_dst,
                 reason="Broken symlink collision",
@@ -310,7 +310,7 @@ def _inspect_symlink_leaf(
     if _check_symlink_points_to_source(system_target, source_file):
         if context.install_method == InstallMethod.SYMLINK:
             return [FileAction(
-                action_type=ActionType.SKIP_IDENTICAL,
+                action_type=FileActionType.SKIP_IDENTICAL,
                 src_path=source_file,
                 dst_path=system_target,
                 reason="Symlink already points to source",
@@ -318,13 +318,13 @@ def _inspect_symlink_leaf(
         # Switching from symlink to copy: backup the existing symlink and create physical copy
         return [
             FileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
+                action_type=FileActionType.BACKUP_OVERWRITE,
                 src_path=system_target,
                 dst_path=backup_dst,
                 reason="Replacing symlink with copy",
             ),
             FileAction(
-                action_type=ActionType.CREATE_COPY,
+                action_type=FileActionType.CREATE_COPY,
                 src_path=source_file,
                 dst_path=system_target,
             ),
@@ -340,7 +340,7 @@ def _inspect_symlink_leaf(
     reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
     return [
         FileAction(
-            action_type=ActionType.BACKUP_OVERWRITE,
+            action_type=FileActionType.BACKUP_OVERWRITE,
             src_path=system_target,
             dst_path=backup_dst,
             reason=reason,
@@ -360,13 +360,13 @@ def _inspect_physical_file_leaf(
     if context.install_method == InstallMethod.SYMLINK:
         return [
             FileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
+                action_type=FileActionType.BACKUP_OVERWRITE,
                 src_path=system_target,
                 dst_path=backup_dst,
                 reason="Physical file collides with symlink",
             ),
             FileAction(
-                action_type=ActionType.CREATE_SYMLINK,
+                action_type=FileActionType.CREATE_SYMLINK,
                 src_path=source_file,
                 dst_path=system_target,
             ),
@@ -376,13 +376,13 @@ def _inspect_physical_file_leaf(
     if context.is_first_time:
         return [
             FileAction(
-                action_type=ActionType.BACKUP_OVERWRITE,
+                action_type=FileActionType.BACKUP_OVERWRITE,
                 src_path=system_target,
                 dst_path=backup_dst,
                 reason="Pre-existing file collision",
             ),
             FileAction(
-                action_type=ActionType.CREATE_COPY,
+                action_type=FileActionType.CREATE_COPY,
                 src_path=source_file,
                 dst_path=system_target,
             ),
@@ -395,7 +395,7 @@ def _inspect_physical_file_leaf(
 
     if differs:
         return [FileAction(
-            action_type=ActionType.UPDATE_COPY,
+            action_type=FileActionType.UPDATE_COPY,
             src_path=source_file,
             dst_path=system_target,
             reason="File content updated",
@@ -405,14 +405,14 @@ def _inspect_physical_file_leaf(
         src_mode = oct(source_file.stat().st_mode & 0o777)
         dst_mode = oct(system_target.stat().st_mode & 0o777)
         return [FileAction(
-            action_type=ActionType.UPDATE_PERMISSION,
+            action_type=FileActionType.UPDATE_PERMISSION,
             src_path=source_file,
             dst_path=system_target,
             reason=f"Permissions differ ({dst_mode} -> {src_mode})",
         )]
 
     return [FileAction(
-        action_type=ActionType.SKIP_IDENTICAL,
+        action_type=FileActionType.SKIP_IDENTICAL,
         src_path=source_file,
         dst_path=system_target,
         reason="File content matches",
@@ -445,7 +445,7 @@ def _inspect_leaf_file(
     if is_concrete_dir(system_target):
         backup_dst = context.resolve_backup_path(rel_file)
         actions.append(FileAction(
-            action_type=ActionType.BACKUP_OVERWRITE,
+            action_type=FileActionType.BACKUP_OVERWRITE,
             src_path=system_target,
             dst_path=backup_dst,
             reason="Directory blocking file",
@@ -484,7 +484,7 @@ def _plan_orphan_prune(
     backup_dst = (context.backup_pkg_dir / BackupSubfolder.DELETED_FILES.value / decoded_rel) if context.backup_pkg_dir else None
     return [
         FileAction(
-            action_type=ActionType.BACKUP_PRUNE,
+            action_type=FileActionType.BACKUP_PRUNE,
             src_path=system_target,
             dst_path=backup_dst,
             reason=reason,
@@ -565,7 +565,7 @@ def plan_backup_restoration(
 
     actions: List[FileAction] = [
         FileAction(
-            action_type=ActionType.INFO_MESSAGE,
+            action_type=FileActionType.INFO_MESSAGE,
             reason="Restoring overwritten backups to host...",
         )
     ]
@@ -612,14 +612,14 @@ def plan_symlink_conversions(
 
         actions.append(
             FileAction(
-                action_type=ActionType.DELETE_FILE,
+                action_type=FileActionType.DELETE_FILE,
                 dst_path=system_target,
                 reason="Remove symlink for detach",
             )
         )
         actions.append(
             FileAction(
-                action_type=ActionType.CREATE_COPY,
+                action_type=FileActionType.CREATE_COPY,
                 src_path=src_file,
                 dst_path=system_target,
                 reason="Replace symlink with copy (detach)",
@@ -640,7 +640,7 @@ def plan_file_removals(
     ]
     return [
         FileAction(
-            action_type=ActionType.DELETE_FILE,
+            action_type=FileActionType.DELETE_FILE,
             dst_path=target,
             reason="Remove deployed file from host",
         )
@@ -660,7 +660,7 @@ def plan_actions_from_folder_diff(
     # 1. Deletions first: cleanly clear obsolete paths to avoid directory/file type collisions
     for rel in sorted(diff.deleted, reverse=True):
         actions.append(FileAction(
-            action_type=ActionType.DELETE_FILE,
+            action_type=FileActionType.DELETE_FILE,
             dst_path=target_dir / rel,
             reason="Deleted in source",
         ))
@@ -671,13 +671,13 @@ def plan_actions_from_folder_diff(
         dst = target_dir / rel
         if is_concrete_dir(src):
             actions.append(FileAction(
-                action_type=ActionType.ENSURE_DIR,
+                action_type=FileActionType.ENSURE_DIR,
                 dst_path=dst,
                 reason="Directory created",
             ))
         else:
             actions.append(FileAction(
-                action_type=ActionType.CREATE_COPY,
+                action_type=FileActionType.CREATE_COPY,
                 src_path=src,
                 dst_path=dst,
                 reason="New file",
@@ -689,20 +689,20 @@ def plan_actions_from_folder_diff(
         dst = target_dir / rel
         if is_concrete_dir(src):
             actions.append(FileAction(
-                action_type=ActionType.ENSURE_DIR,
+                action_type=FileActionType.ENSURE_DIR,
                 dst_path=dst,
                 reason="Directory modified",
             ))
         elif rel in diff.permissions_differ:
             actions.append(FileAction(
-                action_type=ActionType.UPDATE_PERMISSION,
+                action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=src,
                 dst_path=dst,
                 reason="Permissions updated",
             ))
         else:
             actions.append(FileAction(
-                action_type=ActionType.UPDATE_COPY,
+                action_type=FileActionType.UPDATE_COPY,
                 src_path=src,
                 dst_path=dst,
                 reason="Content modified",
@@ -716,11 +716,11 @@ def plan_actions_from_folder_diff(
 # =============================================================================
 
 def execute_single_action(
-    context: ActionExecutionContext,
+    context: FileActionExecutionContext,
     action: FileAction,
 ) -> None:
     """Executes a single planned file/directory delivery action on the host system."""
-    if action.action_type in (ActionType.BACKUP_OVERWRITE, ActionType.BACKUP_PRUNE):
+    if action.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.BACKUP_PRUNE):
         if action.src_path and action.dst_path:
             if action.reason:
                 logger.warning(f"🛡️  [BACKUP] {action.reason} at '{action.src_path}'")
@@ -734,7 +734,7 @@ def execute_single_action(
         if action.src_path:
             remove(action.src_path, context.sudo)
 
-    elif action.action_type == ActionType.ENSURE_DIR:
+    elif action.action_type == FileActionType.ENSURE_DIR:
         if action.dst_path:
             if action.dst_path.is_symlink() or (action.dst_path.exists() and not action.dst_path.is_dir()):
                 raise NotADirectoryError(
@@ -742,33 +742,33 @@ def execute_single_action(
                 )
             ensure_dir(action.dst_path, context.sudo)
 
-    elif action.action_type == ActionType.CREATE_SYMLINK:
+    elif action.action_type == FileActionType.CREATE_SYMLINK:
         if action.src_path and action.dst_path:
             relative_target = compute_relative_symlink_target(action.src_path, action.dst_path.parent)
             create_symlink(relative_target, action.dst_path, context.sudo)
 
-    elif action.action_type in (ActionType.CREATE_COPY, ActionType.UPDATE_COPY):
+    elif action.action_type in (FileActionType.CREATE_COPY, FileActionType.UPDATE_COPY):
         if action.src_path and action.dst_path:
             copy_file(action.src_path, action.dst_path, context.sudo)
 
-    elif action.action_type == ActionType.UPDATE_PERMISSION:
+    elif action.action_type == FileActionType.UPDATE_PERMISSION:
         if action.src_path and action.dst_path:
             copy_permissions(action.src_path, action.dst_path, sudo=context.sudo)
 
-    elif action.action_type == ActionType.DELETE_FILE:
+    elif action.action_type == FileActionType.DELETE_FILE:
         if action.dst_path:
             remove(action.dst_path, context.sudo)
 
-    elif action.action_type == ActionType.SKIP_IDENTICAL:
+    elif action.action_type == FileActionType.SKIP_IDENTICAL:
         logger.debug(f"   Skipping '{action.dst_path}': already up-to-date")
 
-    elif action.action_type == ActionType.INFO_MESSAGE:
+    elif action.action_type == FileActionType.INFO_MESSAGE:
         if action.reason:
             logger.info(action.reason)
 
 
 def execute_delivery_actions(
-    context: ActionExecutionContext,
+    context: FileActionExecutionContext,
     actions: Sequence[FileAction],
 ) -> None:
     """Deterministically executes a sequence of planned delivery actions on the host system."""

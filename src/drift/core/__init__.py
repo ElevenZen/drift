@@ -105,9 +105,9 @@ from .exceptions import (
     is_drift_error,
 )
 from .folder_delivery import (
-    ActionType,
+    FileActionType,
     FileAction,
-    ActionExecutionContext,
+    FileActionExecutionContext,
     DeliveryInspectionContext,
     format_action_line,
     format_action_summary,
@@ -283,9 +283,9 @@ __all__ = [
     "is_drift_error",
     "SerializableModel",
     "NextActionType",
-    "ActionType",
+    "FileActionType",
     "FileAction",
-    "ActionExecutionContext",
+    "FileActionExecutionContext",
     "DeliveryInspectionContext",
     "PackageStagePlan",
     "PackageInstallPlan",

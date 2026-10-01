@@ -134,8 +134,8 @@ from ..utils.process_utils import run_command
 from ..utils.path_utils import resolve_target_path
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.folder_delivery import (
-    ActionExecutionContext,
-    ActionType,
+    FileActionExecutionContext,
+    FileActionType,
     DeliveryInspectionContext,
     FileAction,
     plan_folder_delivery,
@@ -193,8 +193,8 @@ class PackageInstallContext:
     hooks: PackageHooks = field(default_factory=PackageHooks)
 
     @property
-    def action_context(self) -> ActionExecutionContext:
-        return ActionExecutionContext(
+    def file_action_context(self) -> FileActionExecutionContext:
+        return FileActionExecutionContext(
             sudo=self.sudo,
         )
 
@@ -277,7 +277,7 @@ def plan_package_install(
     if target_migrated_from is not None:
         actions.append(
             FileAction(
-                action_type=ActionType.INFO_MESSAGE,
+                action_type=FileActionType.INFO_MESSAGE,
                 reason=(
                     f"🔄 [MIGRATE] Target directory for package '{context.pkg_name}' changed: "
                     f"'{target_migrated_from}' -> '{context.target_dir}'. Undeploying from previous location."
@@ -297,7 +297,7 @@ def plan_package_install(
     # 2. Informational banner indicating package install begins
     actions.append(
         FileAction(
-            action_type=ActionType.INFO_MESSAGE,
+            action_type=FileActionType.INFO_MESSAGE,
             reason=f"🚀 Installing package: {context.pkg_name}",
         )
     )
@@ -325,7 +325,7 @@ def execute_package_actions(
     resolve_symlinks: bool = True,
 ) -> None:
     """Executes all planned actions in deterministic order on the host filesystem."""
-    action_ctx = ActionExecutionContext(
+    action_ctx = FileActionExecutionContext(
         sudo=context.sudo,
         resolve_symlinks=resolve_symlinks,
     )
@@ -453,7 +453,7 @@ def execute_package_install(
     target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, context.target_dir)
 
     has_mutations = any(
-        a.action_type not in (ActionType.SKIP_IDENTICAL, ActionType.INFO_MESSAGE)
+        a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)
         for a in plan.actions
     )
     # NOTE [Host Mutation Heuristic & Non-Deployable File Limitation]:

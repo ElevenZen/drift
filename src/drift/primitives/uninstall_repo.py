@@ -78,8 +78,8 @@ from ..core.constants import (
     InstallMethod,
 )
 from ..core.folder_delivery import (
-    ActionExecutionContext,
-    ActionType,
+    FileActionExecutionContext,
+    FileActionType,
     FileAction,
     execute_delivery_actions,
     plan_backup_restoration,
@@ -131,8 +131,8 @@ class PackageUninstallContext:
     is_missing_install_dir: bool = False
 
     @property
-    def action_context(self) -> ActionExecutionContext:
-        return ActionExecutionContext(
+    def file_action_context(self) -> FileActionExecutionContext:
+        return FileActionExecutionContext(
             sudo=self.sudo,
         )
 
@@ -357,7 +357,7 @@ def detach_one_package(
     ]
     if not dry_run:
         logger.info(f"🔌 Detaching package: {context.pkg_name} (converting to independent system config)")
-        execute_delivery_actions(context.action_context, plan.actions)
+        execute_delivery_actions(context.file_action_context, plan.actions)
         logger.info(f"🔌 Successfully detached and converted {context.pkg_name} files to independent configurations on the host.")
         clean_up_package_directories(context)
     return PackageUninstallResult(
@@ -397,7 +397,7 @@ def uninstall_one_package(
                 context.hooks.trigger_pre_uninstall(flags=hook_flags)
 
             # 2. Execute plan actions (removes deployed files + recreates directories + copies restored backups)
-            execute_delivery_actions(context.action_context, plan.actions)
+            execute_delivery_actions(context.file_action_context, plan.actions)
 
             # 3. Clean up restored backup files from backup store
             backup_overwritten = context.backup_pkg_dir / BackupSubfolder.OVERWRITTEN.value

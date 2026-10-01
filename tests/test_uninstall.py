@@ -19,7 +19,7 @@ from drift.primitives.uninstall_repo import (
     uninstall_missing_package,
     assert_packages_uninstall_ready,
 )
-from drift.core.folder_delivery import ActionType
+from drift.core.folder_delivery import FileActionType
 from drift.core.result_models import PackageUninstallPlan
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod, BackupSubfolder
@@ -719,10 +719,10 @@ fi
         plan = plan_package_uninstall(context)
         self.assertEqual(plan.package, pkg)
         self.assertEqual(len(plan.removed), 2)
-        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "app.conf" for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "tools/cli.sh" for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.INFO_MESSAGE for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "nested" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "app.conf" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.DELETE_FILE and a.dst_path == self.system_target_dir / "tools/cli.sh" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.INFO_MESSAGE for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "nested" for a in plan.actions))
         self.assertEqual(len(plan.restored), 1)
         self.assertEqual(plan.restored[0].dst_path, self.system_target_dir / "nested/backup.txt")
         self.assertIn("to remove", plan.format_text())
@@ -755,9 +755,9 @@ fi
 
         plan = plan_package_uninstall(context)
         # Should plan BACKUP_OVERWRITE on the blocking file, ENSURE_DIR, then CREATE_COPY
-        self.assertTrue(any(a.action_type == ActionType.BACKUP_OVERWRITE and a.src_path == self.system_target_dir / "deeply" for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply" for a in plan.actions))
-        self.assertTrue(any(a.action_type == ActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply/nested" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.BACKUP_OVERWRITE and a.src_path == self.system_target_dir / "deeply" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply" for a in plan.actions))
+        self.assertTrue(any(a.action_type == FileActionType.ENSURE_DIR and a.dst_path == self.system_target_dir / "deeply/nested" for a in plan.actions))
         self.assertEqual(len(plan.restored), 1)
 
         # Execute uninstallation
@@ -796,11 +796,11 @@ fi
         expected_backup_dst = self.backup_dir / pkg / BackupSubfolder.DELETED_FILES.value / "settings.json"
 
         # Verify plan: BACKUP_OVERWRITE of colliding file into deleted_files, then CREATE_COPY of restored file
-        backup_action = next((a for a in plan.actions if a.action_type == ActionType.BACKUP_OVERWRITE and a.src_path == colliding_file), None)
+        backup_action = next((a for a in plan.actions if a.action_type == FileActionType.BACKUP_OVERWRITE and a.src_path == colliding_file), None)
         self.assertIsNotNone(backup_action)
         self.assertEqual(backup_action.dst_path, expected_backup_dst)
 
-        restore_action = next((a for a in plan.actions if a.action_type == ActionType.CREATE_COPY and a.dst_path == colliding_file), None)
+        restore_action = next((a for a in plan.actions if a.action_type == FileActionType.CREATE_COPY and a.dst_path == colliding_file), None)
         self.assertIsNotNone(restore_action)
         self.assertEqual(restore_action.src_path, backup_pkg_overwritten / "settings.json")
 
@@ -892,7 +892,7 @@ fi
             detach=False,
         )
         self.assertTrue(context.sudo)
-        self.assertTrue(context.action_context.sudo)
+        self.assertTrue(context.file_action_context.sudo)
 
 
 if __name__ == "__main__":

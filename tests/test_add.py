@@ -12,7 +12,7 @@ from drift.primitives.add_resource import (
     plan_add_resources,
     AddResourcePlan,
 )
-from drift.core.folder_delivery import ActionType
+from drift.core.folder_delivery import FileActionType
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
@@ -433,7 +433,7 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(len(plan), 1)
 
         action = plan.actions[0]
-        self.assertEqual(action.action_type, ActionType.CREATE_COPY)
+        self.assertEqual(action.action_type, FileActionType.CREATE_COPY)
         self.assertEqual(action.src_path, target_file.resolve())
         self.assertEqual(action.dst_path, pkg_src_dir / "dot-vimrc")
 

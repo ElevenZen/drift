@@ -19,7 +19,7 @@ Pipeline Architecture:
     2. Resource Import Execution (State-Mutating / Simulated):
         execute_add_resources(workspace_config, plan: AddResourcePlan) [Layer 4]
             - If dry_run -> simulates imports, logs operations, performs zero filesystem mutations
-            - If live -> executes execute_delivery_actions with ActionExecutionContext [Layer 3]
+            - If live -> executes execute_delivery_actions with FileActionExecutionContext [Layer 3]
             -> Returns AddResourceResult(command="add", status="SUCCESS", package=plan.package, imported_files=..., dry_run=plan.dry_run, plan=plan)
 
     3. Public Composite Primitive Entry Point:
@@ -56,8 +56,8 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.folder_delivery import (
-    ActionExecutionContext,
-    ActionType,
+    FileActionExecutionContext,
+    FileActionType,
     FileAction,
     execute_delivery_actions,
 )
@@ -217,7 +217,7 @@ def plan_resource_import(
     rel_src = decode_dot_prefix(rel_target)
     dest_path = src_dir_to_render / rel_src
     return FileAction(
-        action_type=ActionType.CREATE_COPY,
+        action_type=FileActionType.CREATE_COPY,
         src_path=src_on_system,
         dst_path=dest_path,
         reason="Resource import",
@@ -344,7 +344,7 @@ def execute_add_resources(
         logger.info(f"📥 Importing: {action.src_path}")
         logger.debug(f"   -> {rel_dest}")
 
-    context = ActionExecutionContext(
+    context = FileActionExecutionContext(
         sudo=False,
         resolve_symlinks=False,
     )

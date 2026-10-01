@@ -70,7 +70,7 @@ from ..config.package_config import (
     PackageSectionConfig,
 )
 from ..core.folder_delivery import (
-    ActionExecutionContext,
+    FileActionExecutionContext,
     execute_delivery_actions,
     plan_actions_from_folder_diff,
     format_action_summary,
@@ -194,7 +194,7 @@ def plan_package_stage(
 # =====================================================================
 
 def execute_package_stage(
-    context: ActionExecutionContext,
+    context: FileActionExecutionContext,
     plan: PackageStagePlan,
 ) -> None:
     """Executes all planned staging actions on the install/ package directory."""
@@ -228,7 +228,7 @@ def stage_modified_packages(
 
     # 3. Apply stage actions to install/ directory for each package with changes
     for pkg, plan in packages_to_stage.items():
-        context = ActionExecutionContext(
+        context = FileActionExecutionContext(
             sudo=False,
             resolve_symlinks=False,
         )

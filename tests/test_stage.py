@@ -906,14 +906,14 @@ class TestStageRepo(unittest.TestCase):
     def test_package_stage_plan_properties(self) -> None:
         """Verifies PackageStagePlan properties and helper methods."""
         from drift.core.result_models import PackageStagePlan
-        from drift.core.folder_delivery import FileAction, ActionType
+        from drift.core.folder_delivery import FileAction, FileActionType
 
         actions = [
-            FileAction(action_type=ActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
-            FileAction(action_type=ActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
-            FileAction(action_type=ActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
-            FileAction(action_type=ActionType.DELETE_FILE, dst_path=Path("/tmp/d.txt")),
-            FileAction(action_type=ActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
+            FileAction(action_type=FileActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
+            FileAction(action_type=FileActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
+            FileAction(action_type=FileActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
+            FileAction(action_type=FileActionType.DELETE_FILE, dst_path=Path("/tmp/d.txt")),
+            FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
         ]
         plan = PackageStagePlan(package="test_pkg", actions=actions)
 
@@ -945,7 +945,7 @@ class TestStageRepo(unittest.TestCase):
     def test_plan_actions_from_folder_diff(self) -> None:
         """Verifies that plan_actions_from_folder_diff compiles FolderDiff into planned actions."""
         from drift.core.folder_diff import FolderDiff
-        from drift.core.folder_delivery import plan_actions_from_folder_diff, ActionType
+        from drift.core.folder_delivery import plan_actions_from_folder_diff, FileActionType
 
         src_dir = self.render_dir / "pkg_diff_test"
         dst_dir = self.install_dir / "pkg_diff_test"
@@ -968,16 +968,16 @@ class TestStageRepo(unittest.TestCase):
         action_map = {a.dst_path.name: a for a in actions}
 
         # 1. Deletions come first
-        self.assertEqual(actions[0].action_type, ActionType.DELETE_FILE)
+        self.assertEqual(actions[0].action_type, FileActionType.DELETE_FILE)
         self.assertEqual(actions[0].dst_path, dst_dir / "deleted.txt")
 
         # 2. Additions: file -> CREATE_COPY, dir -> ENSURE_DIR
-        self.assertEqual(action_map["created.txt"].action_type, ActionType.CREATE_COPY)
-        self.assertEqual(action_map["sub_dir"].action_type, ActionType.ENSURE_DIR)
+        self.assertEqual(action_map["created.txt"].action_type, FileActionType.CREATE_COPY)
+        self.assertEqual(action_map["sub_dir"].action_type, FileActionType.ENSURE_DIR)
 
         # 3. Modifications: content -> UPDATE_COPY, perm-only -> UPDATE_PERMISSION
-        self.assertEqual(action_map["updated.txt"].action_type, ActionType.UPDATE_COPY)
-        self.assertEqual(action_map["perm.txt"].action_type, ActionType.UPDATE_PERMISSION)
+        self.assertEqual(action_map["updated.txt"].action_type, FileActionType.UPDATE_COPY)
+        self.assertEqual(action_map["perm.txt"].action_type, FileActionType.UPDATE_PERMISSION)
 
     def test_stage_hook_or_config_modification_detected(self) -> None:
         """Verifies that modifying hook script or drift_package.toml produces stage changes with has_changes=True."""
@@ -1494,7 +1494,7 @@ class TestStageDependencies(unittest.TestCase):
 
     def test_stage_result_container_and_methods(self) -> None:
         """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
-        from drift.core.folder_delivery import FileAction, ActionType
+        from drift.core.folder_delivery import FileAction, FileActionType
 
         # 1. Empty StageResult
         empty_res = StageResult()
@@ -1514,7 +1514,7 @@ class TestStageDependencies(unittest.TestCase):
             package="pkg_a",
             actions=[
                 FileAction(
-                    action_type=ActionType.CREATE_COPY,
+                    action_type=FileActionType.CREATE_COPY,
                     src_path=Path("/tmp/render/pkg_a/foo.txt"),
                     dst_path=Path("/tmp/install/pkg_a/foo.txt"),
                 )
