@@ -4,31 +4,44 @@
 Architecture & Call Chain Overview
 ===============================================================================
 
-Layer 5: Primitive Entry Point
+Layer 5: Primitive Entry Point & Orchestration
     run_primitive_adopt_drifts(workspace_config, package_names, interactive, accept_conflicts, force, dry_run, flags)
-        1. Discover Drifted Packages:
-            get_drifted_packages [Layer 1]
-        2. Single-Package Processing:
-            adopt_one_package_drifts [Layer 4]
-        3. State Synchronization & Commit:
-            commit_repo_changes (for install/ repo)
-
-Layer 4: Single-Package Drift Adoption
-    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, force, dry_run, flags)
-        1. Pre-stage and Drift Discovery:
-            git add --all <pkg>
-            get_package_drifts [Layer 1]
+        1. Planning:
+            plan_adopt_repo [Layer 5] -> get_package_drifts [Layer 1]
         2. Dry-Run Reporting (if dry_run=True):
             dry_run_adopt [Layer 3]
-        3. Pre-Source Hook:
+        3. Execution:
+            execute_adopt_repo [Layer 5] -> execute_package_adopt [Layer 4]
+        4. State Synchronization & Commit:
+            commit_staged_repo_changes (commits only staged adopted paths in install/ repo)
+
+    plan_adopt_repo(workspace_config, package_names) -> AdoptPlan
+        Builds a multi-package AdoptPlan containing PackageAdoptPlans.
+
+    execute_adopt_repo(workspace_config, plan, interactive, accept_conflicts, force, flags) -> AdoptResult
+        Executes adoption across packages, stages resolved files, and commits staged changes in install/ repo.
+
+Layer 4: Single-Package Drift Adoption & Planning
+    adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, force, dry_run, flags)
+        Coordinates single-package planning and execution.
+        NOTE: adopt_one_package_drifts does NOT commit the install/ repo; it only reconciles source files
+        and stages adopted paths in the install/ index. Committing staged changes is performed at Layer 5
+        orchestration (execute_adopt_repo / commit_staged_repo_changes) or by the caller.
+
+    plan_package_adopt(workspace_config, pkg) -> PackageAdoptPlan
+        Convenience alias for get_package_drifts [Layer 1].
+
+    execute_package_adopt(workspace_config, plan, interactive, accept_conflicts, force, flags) -> PackageAdoptResult
+        1. Pre-Source Hook:
             trigger_pre_source_hook
-        4. Process Drift Categories (Additions, Deletions, Renames, Modifications):
+        2. Process Drift Categories (Additions, Deletions, Renames, Modifications):
             handle_single_addition [Layer 3]
             handle_single_deletion [Layer 3]
-            handle_single_rename [Layer 3]
-            handle_single_modification [Layer 3]
-        5. Unstage Skipped Files:
-            git restore --staged -- <skipped>
+            handle_single_rename [Layer 3] (reads pre-computed patch)
+            handle_single_modification [Layer 3] (reads pre-computed patch)
+        3. Staging Resolved Files:
+            git -C <install_path> add -- <resolved_paths>
+            NOTE: Only successfully adopted files are staged. Does NOT commit the install/ repo.
 
 Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
     handle_single_addition
@@ -93,18 +106,19 @@ import logging
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List, Optional, Tuple, Sequence
+from typing import Dict, List, Optional, Tuple, Sequence, Union
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
 from ..core.constants import DRIFT_IGNORE_FILE_NAME
-from ..core.result_models import AdoptResult, PackageAdoptResult
+from ..core.result_models import AdoptPlan, AdoptResult, PackageAdoptPlan, PackageAdoptResult
 from ..utils.git_utils import (
     get_git_status_porcelain,
     parse_git_status_porcelain,
     has_uncommitted_modifications,
     get_drift_root,
+    commit_staged_repo_changes,
 )
 from ..utils.file_ops import remove, copy_file
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
@@ -171,12 +185,6 @@ def assert_source_file_clean(
         f"👉 Or commit / stash your changes before adopting."
     )
 
-
-def get_package_drifts(install_base: Path, pkg: str) -> Tuple[List[Path], List[Path], List[Path], List[Tuple[Path, Path]]]:
-    """Returns lists of additions, deletions, modifications, and renames relative to the package directory."""
-    diff = parse_git_status_porcelain(install_base, pkg)
-    renames = [(r.old_path, r.new_path) for r in diff.renamed]
-    return sorted(diff.added), sorted(diff.deleted), sorted(diff.modified), sorted(renames, key=lambda x: x[1])
 
 
 def generate_unified_patch(install_base: Path,
@@ -292,6 +300,96 @@ def resolve_source_file_path(
     if match_info:
         return match_info.path
     return None
+
+
+def get_package_drifts(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+) -> PackageAdoptPlan:
+    """Discovers and structures all system drifts for a single package into a PackageAdoptPlan.
+
+    Temporarily stages the package in the install/ repository under a try...finally guard to allow
+    Git rename detection and unified patch pre-computation, immediately restoring the staged index
+    so that the working index remains untouched until explicit execution.
+    """
+    install_base = workspace_config.install_path
+    src_pkg_dir = workspace_config.source_path / pkg
+    render_engines = workspace_config.render_engine_configs
+    try:
+        pkg_config = PackageConfig.from_source_dir(src_pkg_dir, workspace_config)
+        src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
+        render_engines = pkg_config.package_render_engines(workspace_config)
+    except Exception:
+        src_dir_to_render = src_pkg_dir
+
+    install_pkg_dir = install_base / pkg
+
+    # Pre-stage all changes in install repo under pkg subdirectory for rename detection
+    res_add = subprocess.run(
+        ["git", "-C", str(install_base), "add", "--all", pkg],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if res_add.returncode != 0:
+        logger.warning(
+            f"Pre-staging install changes for '{pkg}' exited with code {res_add.returncode}: {res_add.stderr.strip()}"
+        )
+
+    patches: Dict[str, str] = {}
+    try:
+        diff = parse_git_status_porcelain(install_base, pkg)
+        renames = sorted([(r.old_path, r.new_path) for r in diff.renamed], key=lambda x: x[1])
+        additions = sorted(diff.added)
+        deletions = sorted(diff.deleted)
+        modifications = sorted(diff.modified)
+
+        # Pre-compute unified diffs while package is staged in index
+        for rel_mod in modifications:
+            pkg_rel_path = Path(pkg) / rel_mod
+            patch_content = generate_unified_patch(install_base, pkg_rel_path)
+            patches[str(rel_mod)] = patch_content
+
+        for old_rel, new_rel in renames:
+            old_src_file = resolve_source_file_path(render_engines, src_dir_to_render, old_rel)
+            target_name = old_src_file.name if old_src_file else old_rel.name
+            adj_patch = generate_adjusted_patch(
+                install_base=install_base,
+                pkg=pkg,
+                new_rel_path=new_rel,
+                old_rel_path=old_rel,
+                target_src_filename=target_name,
+            )
+            patches[f"{old_rel}->{new_rel}"] = adj_patch
+    finally:
+        # Guarantee unstage in install/ repo so working index remains clean
+        res_rst = subprocess.run(
+            ["git", "-C", str(install_base), "restore", "--staged", "--", pkg],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_rst.returncode != 0:
+            logger.debug(
+                f"Unstaging install changes for '{pkg}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}"
+            )
+
+    return PackageAdoptPlan(
+        package=pkg,
+        src_pkg_dir=src_pkg_dir,
+        src_dir_to_render=src_dir_to_render,
+        install_pkg_dir=install_pkg_dir,
+        render_engines=render_engines,
+        additions=additions,
+        deletions=deletions,
+        modifications=modifications,
+        renames=renames,
+        patches=patches,
+        status="PENDING",
+    )
+
+
+plan_package_adopt = get_package_drifts
 
 
 # =====================================================================
@@ -446,50 +544,45 @@ def fallback_side_by_side(src_file: Path, install_file: Path) -> bool:
 # Layer 3: Single-Item Interactive & Non-Interactive Dispatchers
 # =====================================================================
 
-def dry_run_adopt(
-    render_engines: RenderEngineRegistry,
-    src_dir_to_render: Path,
-    install_base: Path,
-    pkg: str,
-    additions: List[Path],
-    deletions: List[Path],
-    modifications: List[Path],
-    renames: List[Tuple[Path, Path]]
-) -> None:
+def dry_run_adopt(plan: PackageAdoptPlan) -> None:
     """Prints a clear preview of all drift changes and potential conflicts."""
-    logger.info(f"\n🔍 [DRY RUN] Previewing drift adoption for package '{pkg}':")
-    
-    install_pkg_dir = install_base / pkg
+    logger.info(f"\n🔍 [DRY RUN] Previewing drift adoption for package '{plan.package}':")
 
-    if additions:
+    install_base = plan.install_pkg_dir.parent
+
+    if plan.additions:
         logger.info("   [+] Additions (will be copied to source):")
-        for file in additions:
+        for file in plan.additions:
             logger.info(f"       + {file}")
 
-    if deletions:
+    if plan.deletions:
         logger.info("   [-] Deletions (will be removed from source):")
-        for file in deletions:
+        for file in plan.deletions:
             logger.info(f"       - {file}")
 
-    if renames:
+    if plan.renames:
         logger.info("   [R] Renames (will rename the template in source):")
-        for old_file, new_file in renames:
+        for old_file, new_file in plan.renames:
             logger.info(f"       R {old_file} -> {new_file}")
 
-    if modifications:
+    if plan.modifications:
         logger.info("   [~] Modifications:")
-        for file in modifications:
-            src_file = resolve_source_file_path(render_engines, src_dir_to_render, file)
+        for file in plan.modifications:
+            src_file = resolve_source_file_path(plan.render_engines, plan.src_dir_to_render, file)
             if not src_file:
                 logger.info(f"       ~ {file} [Static Overwrite]")
                 continue
-                
+
             # If the resolved source file is templated, check for conflicts
             is_templated = src_file.suffix in [".sh", ".toml", ".json", ".conf"] or ".envst" in src_file.name or ".mustache" in src_file.name
             if is_templated:
-                install_file = install_pkg_dir / file
-                pkg_rel_path = Path(pkg) / file
-                has_conflict = test_file_conflict(src_file, install_file, install_base, pkg_rel_path)
+                patch_content = plan.patches.get(str(file))
+                if patch_content is None:
+                    install_file = plan.install_pkg_dir / file
+                    pkg_rel_path = Path(plan.package) / file
+                    has_conflict = test_file_conflict(src_file, install_file, install_base, pkg_rel_path)
+                else:
+                    has_conflict = check_patch_conflicts(src_file, patch_content)
                 if has_conflict:
                     logger.info(f"       ~ {file} [CONFLICTS with template: {src_file.name}]")
                 else:
@@ -726,7 +819,8 @@ def handle_single_rename(
     new_rel_path: Path,
     interactive: bool,
     accept_conflicts: bool,
-    force: bool = False
+    force: bool = False,
+    precomputed_patch: Optional[str] = None,
 ) -> bool:
     """Handles drift reconciliation for a single file/template rename."""
     # Check if the target already exists in source
@@ -748,13 +842,16 @@ def handle_single_rename(
     has_patch_conflict = False
     if old_src_file and old_src_file.exists():
         assert_source_file_clean(old_src_file, force=force, pkg=pkg)
-        patch_content = generate_adjusted_patch(
-            install_base,
-            pkg,
-            new_rel_path,
-            old_rel_path=old_rel_path,
-            target_src_filename=old_src_file.name
-        )
+        if precomputed_patch is not None:
+            patch_content = precomputed_patch
+        else:
+            patch_content = generate_adjusted_patch(
+                install_base,
+                pkg,
+                new_rel_path,
+                old_rel_path=old_rel_path,
+                target_src_filename=old_src_file.name
+            )
         has_patch_conflict = check_patch_conflicts(old_src_file, patch_content)
     else:
         logger.warning(f"⚠️  Old source file for '{old_rel_path}' not found in package '{pkg}'. Treating as new file addition.")
@@ -918,7 +1015,8 @@ def handle_single_modification(
     rel_path: Path,
     interactive: bool,
     accept_conflicts: bool,
-    force: bool = False
+    force: bool = False,
+    precomputed_patch: Optional[str] = None,
 ) -> bool:
     """Handles drift reconciliation for a single file/template modification."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
@@ -935,7 +1033,10 @@ def handle_single_modification(
     assert_source_file_clean(src_file, force=force, pkg=pkg)
 
     is_templated = ".envst" in src_file.name or ".mustache" in src_file.name
-    patch_content = generate_unified_patch(install_base, pkg_rel_path)
+    if precomputed_patch is not None:
+        patch_content = precomputed_patch
+    else:
+        patch_content = generate_unified_patch(install_base, pkg_rel_path)
 
     # Check if there are content diff hunks in the patch
     has_content_hunks = any(line.startswith("@@") for line in patch_content.splitlines())
@@ -964,141 +1065,106 @@ def handle_single_modification(
 # Layer 4: Single-Package Drift Adoption
 # =====================================================================
 
-def adopt_one_package_drifts(
+def execute_package_adopt(
     workspace_config: WorkspaceConfig,
-    pkg: str,
+    plan: PackageAdoptPlan,
     interactive: bool = False,
     accept_conflicts: bool = False,
     force: bool = False,
-    dry_run: bool = False,
     flags: Optional[HookExecFlags] = None,
 ) -> PackageAdoptResult:
-    """Adopt drifts for a single package according to interactive or non-interactive choices.
+    """Executes adoption for a single PackageAdoptPlan, reconciling source files and staging adopted paths.
 
-    File-level Git cleanliness safeguards are enforced for each target source file before modification.
+    Note:
+        This function stages resolved/adopted files ('git add -- <resolved_paths>') in the install/
+        repository index, but does NOT commit them. Committing staged changes is performed at
+        Layer 5 orchestration (e.g. execute_adopt_repo) or via commit_staged_repo_changes.
     """
-    # Pre-stage all changes in the install repository under the package subdirectory so that git rename detection operates correctly.
-    res_add = subprocess.run(
-        ["git", "-C", str(workspace_config.install_path), "add", "--all", pkg],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if res_add.returncode != 0:
-        logger.warning(f"Pre-staging install changes for '{pkg}' exited with code {res_add.returncode}: {res_add.stderr.strip()}")
-
-    additions, deletions, modifications, renames = get_package_drifts(workspace_config.install_path, pkg)
-    
-    if not additions and not deletions and not modifications and not renames:
-        logger.info(f"✨ Package '{pkg}' has no drifts.")
-        res_rst = subprocess.run(
-            ["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res_rst.returncode != 0:
-            logger.debug(f"Unstaging install changes for clean package '{pkg}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}")
-        return PackageAdoptResult(package=pkg, status="SUCCESS")
-
-    src_pkg_dir = workspace_config.source_path / pkg
-    render_engines = workspace_config.render_engine_configs
-    try:
-        pkg_config = PackageConfig.from_source_dir(src_pkg_dir, workspace_config)
-        src_dir_to_render = pkg_config.get_source_directory_to_render(src_pkg_dir)
-        render_engines = pkg_config.package_render_engines(workspace_config)
-    except Exception:
-        src_dir_to_render = src_pkg_dir
-
-    if dry_run:
-        # In dry-run mode, unstage the index changes so that the install repository working index remains untouched.
-        res_dry = subprocess.run(
-            ["git", "-C", str(workspace_config.install_path), "restore", "--staged", "--", pkg],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res_dry.returncode != 0:
-            logger.debug(f"Dry-run unstage for '{pkg}' exited with code {res_dry.returncode}: {res_dry.stderr.strip()}")
-        dry_run_adopt(render_engines, src_dir_to_render, workspace_config.install_path, pkg, additions, deletions, modifications, renames)
-        return PackageAdoptResult(
-            package=pkg,
-            adopted_additions=[str(p) for p in additions],
-            adopted_deletions=[str(p) for p in deletions],
-            adopted_modifications=[str(p) for p in modifications],
-            adopted_renames=[f"{old} -> {new}" for old, new in renames],
-            status="SUCCESS",
-        )
-
-    install_pkg_dir = workspace_config.install_path / pkg
-    install_base = workspace_config.install_path
+    if not plan.has_drifts:
+        logger.info(f"✨ Package '{plan.package}' has no drifts.")
+        return PackageAdoptResult(package=plan.package, status="SUCCESS")
 
     # Trigger pre_source hook before adopting drifts into source directory
-    trigger_pre_source_hook(workspace_config, pkg, flags=flags)
+    trigger_pre_source_hook(workspace_config, plan.package, flags=flags)
 
     adopted_additions: List[str] = []
     adopted_deletions: List[str] = []
     adopted_renames: List[str] = []
     adopted_modifications: List[str] = []
     skipped_files: List[str] = []
+    resolved_paths: List[Path] = []
 
     # 1. Process Additions
-    for rel_path in additions:
+    for rel_path in plan.additions:
         resolved = handle_single_addition(
-            render_engines, src_pkg_dir, src_dir_to_render, install_pkg_dir,
+            plan.render_engines, plan.src_pkg_dir, plan.src_dir_to_render, plan.install_pkg_dir,
             rel_path, interactive, force=force
         )
         if resolved:
             adopted_additions.append(str(rel_path))
+            resolved_paths.append(rel_path)
         else:
             skipped_files.append(str(rel_path))
 
     # 2. Process Deletions
-    for rel_path in deletions:
+    for rel_path in plan.deletions:
         resolved = handle_single_deletion(
-            render_engines, pkg, src_dir_to_render, rel_path, interactive, force=force
+            plan.render_engines, plan.package, plan.src_dir_to_render, rel_path, interactive, force=force
         )
         if resolved:
             adopted_deletions.append(str(rel_path))
+            resolved_paths.append(rel_path)
         else:
             skipped_files.append(str(rel_path))
 
     # 3. Process Renames
-    for old_rel_path, new_rel_path in renames:
+    for old_rel_path, new_rel_path in plan.renames:
+        patch_content = plan.patches.get(f"{old_rel_path}->{new_rel_path}")
         resolved = handle_single_rename(
-            render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
-            old_rel_path, new_rel_path, interactive, accept_conflicts, force=force
+            plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
+            plan.install_pkg_dir, workspace_config.install_path,
+            old_rel_path, new_rel_path, interactive, accept_conflicts, force=force,
+            precomputed_patch=patch_content,
         )
         if resolved:
             adopted_renames.append(f"{old_rel_path} -> {new_rel_path}")
+            resolved_paths.append(old_rel_path)
+            resolved_paths.append(new_rel_path)
         else:
             skipped_files.append(str(old_rel_path))
             skipped_files.append(str(new_rel_path))
 
     # 4. Process Modifications
-    for rel_path in modifications:
+    for rel_path in plan.modifications:
+        patch_content = plan.patches.get(str(rel_path))
         resolved = handle_single_modification(
-            render_engines, pkg, src_pkg_dir, src_dir_to_render, install_pkg_dir, install_base,
-            rel_path, interactive, accept_conflicts, force=force
+            plan.render_engines, plan.package, plan.src_pkg_dir, plan.src_dir_to_render,
+            plan.install_pkg_dir, workspace_config.install_path,
+            rel_path, interactive, accept_conflicts, force=force,
+            precomputed_patch=patch_content,
         )
         if resolved:
             adopted_modifications.append(str(rel_path))
+            resolved_paths.append(rel_path)
         else:
             skipped_files.append(str(rel_path))
 
-    # Unstage any skipped/failed files so they remain as uncommitted local drift in install/
-    if skipped_files:
-        for rel_path_str in skipped_files:
-            rel_spec = (Path(pkg) / rel_path_str).as_posix()
-            res_rst = subprocess.run([
-                "git", "-C", str(workspace_config.install_path),
-                "restore", "--staged", "--", rel_spec
-            ], capture_output=True, text=True, check=False)
-            if res_rst.returncode != 0:
-                logger.debug(f"Unstaging skipped file '{rel_spec}' exited with code {res_rst.returncode}: {res_rst.stderr.strip()}")
+    # 5. Staging ONLY resolved files in install/ repository
+    if resolved_paths:
+        stage_args = [(Path(plan.package) / p).as_posix() for p in resolved_paths]
+        res_add = subprocess.run(
+            ["git", "-C", str(workspace_config.install_path), "add", "--", *stage_args],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res_add.returncode != 0:
+            logger.warning(
+                f"Staging adopted changes for '{plan.package}' exited with code {res_add.returncode}: {res_add.stderr.strip()}"
+            )
 
     return PackageAdoptResult(
-        package=pkg,
+        package=plan.package,
         adopted_additions=adopted_additions,
         adopted_modifications=adopted_modifications,
         adopted_deletions=adopted_deletions,
@@ -1108,9 +1174,114 @@ def adopt_one_package_drifts(
     )
 
 
+def adopt_one_package_drifts(
+    workspace_config: WorkspaceConfig,
+    pkg: str,
+    interactive: bool = False,
+    accept_conflicts: bool = False,
+    force: bool = False,
+    dry_run: bool = False,
+    flags: Optional[HookExecFlags] = None,
+) -> PackageAdoptResult:
+    """Adopts drifts for a single package using decoupled plan and execution phases.
+
+    Note:
+        adopt_one_package_drifts does NOT commit the install/ repo; it only reconciles source files
+        and stages adopted paths in the install/ repository index. Committing staged changes is
+        the responsibility of Layer 5 orchestration (execute_adopt_repo / run_primitive_adopt_drifts)
+        or explicit commit helpers (commit_staged_repo_changes).
+    """
+    plan = get_package_drifts(workspace_config, pkg)
+    if dry_run:
+        if plan.has_drifts:
+            dry_run_adopt(plan)
+            return PackageAdoptResult(
+                package=pkg,
+                adopted_additions=[str(p) for p in plan.additions],
+                adopted_deletions=[str(p) for p in plan.deletions],
+                adopted_modifications=[str(p) for p in plan.modifications],
+                adopted_renames=[f"{old} -> {new}" for old, new in plan.renames],
+                status="SUCCESS",
+            )
+        else:
+            logger.info(f"✨ Package '{pkg}' has no drifts.")
+            return PackageAdoptResult(package=pkg, status="SUCCESS")
+
+    return execute_package_adopt(
+        workspace_config=workspace_config,
+        plan=plan,
+        interactive=interactive,
+        accept_conflicts=accept_conflicts,
+        force=force,
+        flags=flags,
+    )
+
+
 # =====================================================================
 # Layer 5: Public Primitive Entry Point
 # =====================================================================
+
+def plan_adopt_repo(
+    workspace_config: WorkspaceConfig,
+    package_names: Sequence[str] = (),
+) -> AdoptPlan:
+    """Discovers drifted packages and creates an AdoptPlan containing PackageAdoptPlans."""
+    if not package_names:
+        package_names = get_drifted_packages(workspace_config)
+
+    plans = [
+        get_package_drifts(workspace_config, pkg)
+        for pkg in package_names
+    ]
+    return AdoptPlan(plans=plans)
+
+
+def execute_adopt_repo(
+    workspace_config: WorkspaceConfig,
+    plan: AdoptPlan,
+    interactive: bool = False,
+    accept_conflicts: bool = False,
+    force: bool = False,
+    flags: Optional[HookExecFlags] = None,
+) -> AdoptResult:
+    """Executes adoption for all plans in AdoptPlan, staging adopted files and committing changes."""
+    package_results: List[PackageAdoptResult] = []
+    has_any_adopted = False
+
+    for pkg_plan in plan.plans:
+        pkg_res = execute_package_adopt(
+            workspace_config=workspace_config,
+            plan=pkg_plan,
+            interactive=interactive,
+            accept_conflicts=accept_conflicts,
+            force=force,
+            flags=flags,
+        )
+        package_results.append(pkg_res)
+        if pkg_res.adopted_additions or pkg_res.adopted_deletions or pkg_res.adopted_modifications or pkg_res.adopted_renames:
+            has_any_adopted = True
+
+    # Commit staged adopted changes in install base
+    if has_any_adopted:
+        adopted_pkgs = [
+            p.package for p in package_results
+            if p.adopted_additions or p.adopted_deletions or p.adopted_modifications or p.adopted_renames
+        ]
+        pkg_word = "package" if len(adopted_pkgs) == 1 else "packages"
+        commit_staged_repo_changes(
+            repo_path=workspace_config.install_path,
+            commit_message=f"Adopt: Resolved and locked drifts for {pkg_word} {', '.join(adopted_pkgs)}",
+            repo_name="install repo"
+        )
+
+    all_success = all(p.status == "SUCCESS" for p in package_results) if package_results else True
+    return AdoptResult(
+        command="adopt",
+        status="SUCCESS" if all_success else "FAILED",
+        packages=package_results,
+        dry_run=False,
+    )
+
 
 def run_primitive_adopt_drifts(
     workspace_config: WorkspaceConfig,
@@ -1136,44 +1307,55 @@ def run_primitive_adopt_drifts(
     Returns:
         AdoptResult containing detailed results for all adopted packages.
     """
-    # 1. Discovery
-    if not package_names:
-        package_names = get_drifted_packages(workspace_config)
+    # 1. Planning
+    plan = plan_adopt_repo(workspace_config, package_names=package_names)
+    if not plan.plans or not plan.has_drifts:
         if not package_names:
             logger.info("✨ No drifted packages found in local state database.")
-            return AdoptResult(command="adopt", status="SUCCESS", packages=[], dry_run=dry_run)
-
-    # 2. Process each package
-    package_results: List[PackageAdoptResult] = []
-    for pkg in package_names:
-        pkg_res = adopt_one_package_drifts(
-            workspace_config=workspace_config,
-            pkg=pkg,
-            interactive=interactive,
-            accept_conflicts=accept_conflicts,
-            force=force,
+        else:
+            for p in plan.plans:
+                logger.info(f"✨ Package '{p.package}' has no drifts.")
+        return AdoptResult(
+            command="adopt",
+            status="SUCCESS",
+            packages=[
+                PackageAdoptResult(package=p.package, status="SUCCESS")
+                for p in plan.plans
+            ],
             dry_run=dry_run,
-            flags=flags,
-        )
-        package_results.append(pkg_res)
-
-    resolved_packages = [p.package for p in package_results if p.status == "SUCCESS"]
-
-    # 3. Commit resolved packages in install base
-    if resolved_packages and not dry_run:
-        from ..utils.git_utils import commit_repo_changes
-        pkg_word = "package" if len(resolved_packages) == 1 else "packages"
-        commit_repo_changes(
-            repo_path=workspace_config.install_path,
-            commit_message=f"Adopt: Resolved and locked drifts for {pkg_word} {', '.join(resolved_packages)}",
-            target_pkgs=resolved_packages,
-            repo_name="install repo"
         )
 
-    all_success = all(p.status == "SUCCESS" for p in package_results)
-    return AdoptResult(
-        command="adopt",
-        status="SUCCESS" if all_success else "FAILED",
-        packages=package_results,
-        dry_run=dry_run,
+    # 2. Dry-run Mode
+    if dry_run:
+        package_results: List[PackageAdoptResult] = []
+        for pkg_plan in plan.plans:
+            if pkg_plan.has_drifts:
+                dry_run_adopt(pkg_plan)
+                package_results.append(PackageAdoptResult(
+                    package=pkg_plan.package,
+                    adopted_additions=[str(p) for p in pkg_plan.additions],
+                    adopted_deletions=[str(p) for p in pkg_plan.deletions],
+                    adopted_modifications=[str(p) for p in pkg_plan.modifications],
+                    adopted_renames=[f"{old} -> {new}" for old, new in pkg_plan.renames],
+                    status="SUCCESS",
+                ))
+            else:
+                logger.info(f"✨ Package '{pkg_plan.package}' has no drifts.")
+                package_results.append(PackageAdoptResult(package=pkg_plan.package, status="SUCCESS"))
+
+        return AdoptResult(
+            command="adopt",
+            status="SUCCESS",
+            packages=package_results,
+            dry_run=True,
+        )
+
+    # 3. Execution
+    return execute_adopt_repo(
+        workspace_config=workspace_config,
+        plan=plan,
+        interactive=interactive,
+        accept_conflicts=accept_conflicts,
+        force=force,
+        flags=flags,
     )

@@ -14,6 +14,7 @@ from drift.utils.git_utils import (
     check_repo_can_commit,
     assert_repo_can_commit,
     check_repo_git_user_synced,
+    commit_staged_repo_changes,
 )
 from drift.utils.process_utils import run_command
 
@@ -157,6 +158,67 @@ class TestGitUtilsUserConfig(unittest.TestCase):
     def test_check_repo_git_user_synced_none_expected(self) -> None:
         """check_repo_git_user_synced returns None when expected values are None."""
         self.assertIsNone(check_repo_git_user_synced(self.repo_dir, expected_name=None, expected_email=None))
+
+
+class TestCommitStagedRepoChanges(unittest.TestCase):
+    """Tests for commit_staged_repo_changes."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo_dir = Path(self.temp_dir.name).resolve() / "test_repo"
+        git_init_repo(self.repo_dir, "test_repo")
+        configure_repo_git_user(self.repo_dir, user_name="Test User", user_email="test@example.com")
+        # Initial commit
+        init_file = self.repo_dir / "init.txt"
+        init_file.write_text("initial", encoding="utf-8")
+        run_command(["git", "-C", str(self.repo_dir), "add", "init.txt"])
+        run_command(["git", "-C", str(self.repo_dir), "commit", "-m", "initial commit"])
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_commit_staged_repo_changes_no_staged_changes(self) -> None:
+        """Returns False when index is clean (nothing staged)."""
+        # Unstaged change exists
+        dirty_file = self.repo_dir / "init.txt"
+        dirty_file.write_text("dirty unstaged", encoding="utf-8")
+
+        head_before = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        committed = commit_staged_repo_changes(self.repo_dir, "Should not commit", "test repo")
+        self.assertFalse(committed)
+
+        head_after = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        self.assertEqual(head_before, head_after)
+
+    def test_commit_staged_repo_changes_with_staged_changes(self) -> None:
+        """Commits only staged changes and returns True."""
+        # Create staged file
+        staged_file = self.repo_dir / "file_staged.txt"
+        staged_file.write_text("staged content", encoding="utf-8")
+        run_command(["git", "-C", str(self.repo_dir), "add", "file_staged.txt"])
+
+        # Create unstaged file
+        unstaged_file = self.repo_dir / "file_unstaged.txt"
+        unstaged_file.write_text("unstaged content", encoding="utf-8")
+
+        head_before = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        committed = commit_staged_repo_changes(self.repo_dir, "Commit staged only", "test repo")
+        self.assertTrue(committed)
+
+        head_after = run_command(["git", "-C", str(self.repo_dir), "rev-parse", "HEAD"], text=True).stdout.strip()
+        self.assertNotEqual(head_before, head_after)
+
+        # Staged file is committed, unstaged file remains untracked
+        res = run_command(["git", "-C", str(self.repo_dir), "status", "--porcelain"], text=True)
+        self.assertIn("?? file_unstaged.txt", res.stdout)
+        self.assertNotIn("file_staged.txt", res.stdout)
+
+    def test_commit_staged_repo_changes_nonexistent_directory(self) -> None:
+        """Raises FileNotFoundError when repo_path does not exist."""
+        nonexistent = self.repo_dir / "nonexistent"
+        with self.assertRaises(FileNotFoundError):
+            commit_staged_repo_changes(nonexistent, "Commit msg", "nonexistent repo")
 
 
 if __name__ == "__main__":

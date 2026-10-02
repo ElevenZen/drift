@@ -216,6 +216,39 @@ def commit_repo_changes(
         raise mark_logged(RuntimeError(f"Failed to commit changes in {repo_name}: {e.stderr}")) from e
 
 
+def commit_staged_repo_changes(
+    repo_path: Path,
+    commit_message: str,
+    repo_name: str = "repository",
+) -> bool:
+    """Commits already-staged changes in a git repository.
+
+    Verifies that changes are present in the staged index ('git diff --cached --quiet')
+    before executing git commit. Never modifies working tree or unstaged files.
+    Returns True if a commit was made, False otherwise.
+    """
+    if not repo_path.exists():
+        raise FileNotFoundError(f"{repo_name} directory does not exist: {repo_path}")
+
+    res = run_command(
+        ["git", "-C", str(repo_path), "diff", "--cached", "--quiet"],
+        text=True,
+        check=False,
+    )
+    if res.returncode == 0:
+        return False
+
+    try:
+        run_command(
+            ["git", "-C", str(repo_path), "commit", "-m", commit_message],
+            text=True,
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to commit staged changes in {repo_name}. Stderr: {e.stderr}")
+        raise mark_logged(RuntimeError(f"Failed to commit staged changes in {repo_name}: {e.stderr}")) from e
+
+
 def is_git_tracked(dir_path: Path) -> bool:
     """Checks if a directory is inside a Git repository."""
     # check=False is intentional: returncode == 0 directly determines git repository presence.

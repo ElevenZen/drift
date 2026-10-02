@@ -147,8 +147,10 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`run_primitive_8_rollback_recovery(workspace_config, target_pkgs=(), force=False, flags=None) -> RollbackResult`](../src/drift/primitives/rollback_repo.py): Recovers from aborted deployments in unified reverse topological order across committed redeployments and uncommitted first-time installs.
 
 ### [`primitives/adopt_repo.py`](../src/drift/primitives/adopt_repo.py) (Bidirectional Drift Adoption & Template Sync)
-*   [`run_primitive_adopt_drifts(workspace_config, package_names, ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Entry point reconciling drifts across packages.
-*   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/primitives/adopt_repo.py): Reconciles single-package additions, deletions, renames, and modifications.
+*   [`plan_adopt_repo(workspace_config, package_names=()) -> AdoptPlan`](../src/drift/primitives/adopt_repo.py): Discovers drifts, temporarily stages packages to detect renames, pre-computes unified patches, and restores index without mutation.
+*   [`execute_adopt_repo(workspace_config, plan, ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Executes adoption across packages, stages resolved files, and commits staged changes in `install/` repo.
+*   [`run_primitive_adopt_drifts(workspace_config, package_names=(), ...) -> AdoptResult`](../src/drift/primitives/adopt_repo.py): Entry point orchestrating planning, dry-run reporting, and execution.
+*   [`adopt_one_package_drifts(workspace_config, pkg, interactive, accept_conflicts, ...) -> PackageAdoptResult`](../src/drift/primitives/adopt_repo.py): Reconciles single-package drifts and stages adopted paths in `install/` index without committing (commits are deferred to Layer 5 orchestration or `commit_staged_repo_changes`).
 *   [`patch_and_edit(src_file, patch_content, install_file, accept_conflicts, open_editor) -> bool`](../src/drift/primitives/adopt_repo.py): Applies patch, syncs permissions, and optionally launches `$EDITOR`.
 *   [`adopt_rename(render_engines, src_dir_to_render, old_rel_path, new_rel_path, ...) -> Path`](../src/drift/primitives/adopt_repo.py): Symmetrically renames template file in `src/` matching engine suffix, applies patch, and syncs permissions.
 *   [`fallback_side_by_side(src_file, install_file) -> bool`](../src/drift/primitives/adopt_repo.py): Visual split-screen diff in `$EDITOR` (`nvim`, `vim`, `code`, `emacs`).

@@ -19,6 +19,7 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.render_engine_config import RenderEngineRegistry
 from drift.hooks.lifecycle_hooks import HookExecFlags
+from drift.core.result_models import PackageAdoptPlan, AdoptPlan
 from drift.primitives.adopt_repo import (
     get_drifted_packages,
     assert_source_file_clean,
@@ -37,6 +38,10 @@ from drift.primitives.adopt_repo import (
     fallback_side_by_side,
     adopt_one_package_drifts,
     run_primitive_adopt_drifts,
+    plan_adopt_repo,
+    execute_adopt_repo,
+    plan_package_adopt,
+    execute_package_adopt,
 )
 
 set_test_mode(True)
@@ -187,11 +192,11 @@ class TestAdopt(unittest.TestCase):
         tracked_file.write_text("modified content", encoding="utf-8")
 
         # Run drift extraction
-        additions, deletions, modifications, renames = get_package_drifts(self.install_dir, pkg)
-        self.assertEqual(additions, [Path("added.txt")])
-        self.assertEqual(deletions, [Path("deleted.txt")])
-        self.assertEqual(modifications, [Path("tracked.txt")])
-        self.assertEqual(renames, [])
+        plan = get_package_drifts(self.workspace_config, pkg)
+        self.assertEqual(plan.additions, [Path("added.txt")])
+        self.assertEqual(plan.deletions, [Path("deleted.txt")])
+        self.assertEqual(plan.modifications, [Path("tracked.txt")])
+        self.assertEqual(plan.renames, [])
 
     def test_get_package_drifts_rename(self) -> None:
         pkg = "pkg_a"
@@ -208,13 +213,13 @@ class TestAdopt(unittest.TestCase):
         subprocess.run(["git", "mv", "pkg_a/old_name.txt", "pkg_a/new_name.txt"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         # Get package drifts
-        additions, deletions, modifications, renames = get_package_drifts(self.install_dir, pkg)
+        plan = get_package_drifts(self.workspace_config, pkg)
 
         # Rename should be detected as a distinct rename branch
-        self.assertEqual(deletions, [])
-        self.assertEqual(additions, [])
-        self.assertEqual(modifications, [])
-        self.assertEqual(renames, [(Path("old_name.txt"), Path("new_name.txt"))])
+        self.assertEqual(plan.deletions, [])
+        self.assertEqual(plan.additions, [])
+        self.assertEqual(plan.modifications, [])
+        self.assertEqual(plan.renames, [(Path("old_name.txt"), Path("new_name.txt"))])
 
     def test_apply_source_patch_clean(self) -> None:
         pkg = "pkg_a"
@@ -833,7 +838,7 @@ class TestAdopt(unittest.TestCase):
         self.assertNotIn(f"M  {pkg_conflict}/server.conf", res.stdout)
 
     def test_adopt_partial_conflict_in_single_package_unstages_and_skips_commit(self) -> None:
-        """Verifies that if one file in a package has a conflict, the entire package is un-staged and not committed."""
+        """Verifies that if one file in a package has a conflict, adopted files are committed while conflicting files remain unstaged."""
         pkg = "pkg_partial"
         src_pkg = self.src_dir / pkg
         src_pkg.mkdir(parents=True, exist_ok=True)
@@ -864,14 +869,18 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [])
         self.assertEqual(resolved.status, "FAILED")
 
-        # HEAD commit in install/ did not change
+        # HEAD commit in install/ DID change because static_file was adopted and committed
         head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=str(self.install_dir), capture_output=True, text=True).stdout.strip()
-        self.assertEqual(head_before, head_after)
+        self.assertNotEqual(head_before, head_after)
+
+        # Clean file was adopted into source and committed in install/
+        self.assertEqual((src_pkg / "static_file.txt").read_text(encoding="utf-8"), "static v2")
 
         # Conflict file is UNSTAGED
         res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
         self.assertIn(f" M {pkg}/template_file.conf", res.stdout)
         self.assertNotIn(f"M  {pkg}/template_file.conf", res.stdout)
+        self.assertNotIn("static_file.txt", res.stdout)
 
     def test_adopt_permission_drift_on_templated_file_applies_cleanly(self) -> None:
         """Verifies that a permission-only drift on a templated file adopts cleanly and commits."""
@@ -1517,7 +1526,123 @@ render_command = "bash -c 'cat %i %s'"
         self.assertEqual(res.status, "SUCCESS")
         self.assertFalse((src_pkg / "del_me.txt").exists())
 
+    def test_plan_adopt_repo_and_execute_adopt_repo(self) -> None:
+        """Verifies decoupled plan_adopt_repo and execute_adopt_repo workflow."""
+        pkg1 = "pkg_plan_1"
+        pkg2 = "pkg_plan_2"
+
+        src_pkg1 = self.src_dir / pkg1
+        src_pkg1.mkdir(parents=True, exist_ok=True)
+        install_pkg1 = self.install_dir / pkg1
+        install_pkg1.mkdir(parents=True, exist_ok=True)
+
+        src_pkg2 = self.src_dir / pkg2
+        src_pkg2.mkdir(parents=True, exist_ok=True)
+        install_pkg2 = self.install_dir / pkg2
+        install_pkg2.mkdir(parents=True, exist_ok=True)
+
+        # Base files
+        (src_pkg1 / "config.txt").write_text("v1\n", encoding="utf-8")
+        (install_pkg1 / "config.txt").write_text("v1\n", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init plan test src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init plan test install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Introduce drifts: modification in pkg1, addition in pkg2
+        (install_pkg1 / "config.txt").write_text("v2_modified\n", encoding="utf-8")
+        (install_pkg2 / "new_tool.sh").write_text("#!/bin/sh\necho hi\n", encoding="utf-8")
+
+        # 1. Plan Phase
+        plan = plan_adopt_repo(self.workspace_config, [pkg1, pkg2])
+        self.assertIsInstance(plan, AdoptPlan)
+        self.assertTrue(plan.has_drifts)
+        self.assertEqual(sorted(plan.drifted_packages), sorted([pkg1, pkg2]))
+
+        plan1 = plan.get_package_plan(pkg1)
+        self.assertIsNotNone(plan1)
+        self.assertEqual(plan1.modifications, [Path("config.txt")])
+        self.assertIn("config.txt", plan1.patches)
+        self.assertIn("v2_modified", plan1.patches["config.txt"])
+
+        plan2 = plan.get_package_plan(pkg2)
+        self.assertIsNotNone(plan2)
+        self.assertEqual(plan2.additions, [Path("new_tool.sh")])
+
+        # Verify staging index in install/ was completely restored during planning
+        res_cached = subprocess.run(
+            ["git", "-C", str(self.install_dir), "diff", "--cached", "--quiet"],
+            capture_output=True
+        )
+        self.assertEqual(res_cached.returncode, 0, "Index should be clean after planning")
+
+        # 2. Execution Phase
+        exec_res = execute_adopt_repo(self.workspace_config, plan, interactive=False)
+        self.assertEqual(exec_res.status, "SUCCESS")
+        self.assertEqual(len(exec_res.packages), 2)
+
+        # Both packages should be successfully adopted in src/
+        self.assertEqual((src_pkg1 / "config.txt").read_text(encoding="utf-8"), "v2_modified\n")
+        self.assertEqual((src_pkg2 / "new_tool.sh").read_text(encoding="utf-8"), "#!/bin/sh\necho hi\n")
+
+        # Working tree in install/ should now be clean and committed
+        status_res = subprocess.run(["git", "-C", str(self.install_dir), "status", "--porcelain"], capture_output=True, text=True)
+        self.assertEqual(status_res.stdout.strip(), "")
+
+    def test_plan_package_adopt_rename_with_precomputed_patch(self) -> None:
+        """Verifies plan_package_adopt correctly precomputes rename patches and execute_package_adopt applies them."""
+        pkg = "pkg_rename_plan"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        initial_content = "line1=apple\nline2=banana\nline3=cherry\nline4=date\nline5=elderberry\n"
+        (src_pkg / "old_name.conf").write_text(initial_content, encoding="utf-8")
+        (install_pkg / "old_name.conf").write_text(initial_content, encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init rename plan src"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init rename plan install"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Perform git rename and modification in install/
+        subprocess.run(["git", "-C", str(self.install_dir), "mv", f"{pkg}/old_name.conf", f"{pkg}/new_name.conf"], check=True)
+        modified_content = "line1=apple\nline2=banana\nline3=cherry_modified\nline4=date\nline5=elderberry\n"
+        (install_pkg / "new_name.conf").write_text(modified_content, encoding="utf-8")
+
+        # Plan single package
+        pkg_plan = plan_package_adopt(self.workspace_config, pkg)
+        self.assertIsInstance(pkg_plan, PackageAdoptPlan)
+        self.assertEqual(pkg_plan.renames, [(Path("old_name.conf"), Path("new_name.conf"))])
+
+        # Patch must be precomputed and stored under "old_name.conf->new_name.conf"
+        patch_key = "old_name.conf->new_name.conf"
+        self.assertIn(patch_key, pkg_plan.patches)
+        self.assertIn("cherry_modified", pkg_plan.patches[patch_key])
+
+        # Index in install/ must be clean (un-staged)
+        res_cached = subprocess.run(
+            ["git", "-C", str(self.install_dir), "diff", "--cached", "--quiet"],
+            capture_output=True
+        )
+        self.assertEqual(res_cached.returncode, 0)
+
+        # Execute
+        result = execute_package_adopt(self.workspace_config, pkg_plan, interactive=False)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual(result.adopted_renames, ["old_name.conf -> new_name.conf"])
+
+        # Source file should be renamed and updated
+        self.assertFalse((src_pkg / "old_name.conf").exists())
+        self.assertTrue((src_pkg / "new_name.conf").exists())
+        self.assertEqual((src_pkg / "new_name.conf").read_text(encoding="utf-8"), modified_content)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

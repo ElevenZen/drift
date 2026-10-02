@@ -6,12 +6,15 @@ import json
 from dataclasses import dataclass, field, is_dataclass, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING
 from datetime import datetime
 from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
 from ..utils.path_utils import is_relative_to
+
+if TYPE_CHECKING:
+    from ..config.render_engine_config import RenderEngineRegistry
 
 
 class NextActionType(str, Enum):
@@ -553,6 +556,49 @@ class UninstallResult(SerializableModel):
 # =============================================================================
 # Primitive 8: Adopt Drifts
 # =============================================================================
+
+@dataclass
+class PackageAdoptPlan(SerializableModel):
+    """Structured plan representing detected system drifts for a single package."""
+    package: str
+    src_pkg_dir: Path
+    src_dir_to_render: Path
+    install_pkg_dir: Path
+    render_engines: RenderEngineRegistry
+    additions: List[Path] = field(default_factory=list)
+    deletions: List[Path] = field(default_factory=list)
+    modifications: List[Path] = field(default_factory=list)
+    renames: List[Tuple[Path, Path]] = field(default_factory=list)
+    patches: Dict[str, str] = field(default_factory=dict)
+    status: str = "PENDING"
+    error: Optional[str] = None
+
+    @property
+    def has_drifts(self) -> bool:
+        return bool(self.additions or self.deletions or self.modifications or self.renames)
+
+    @property
+    def total_drifts(self) -> int:
+        return len(self.additions) + len(self.deletions) + len(self.modifications) + len(self.renames)
+
+
+@dataclass
+class AdoptPlan(SerializableModel):
+    """Structured multi-package drift adoption plan."""
+    plans: List[PackageAdoptPlan] = field(default_factory=list)
+    dry_run: bool = False
+
+    @property
+    def has_drifts(self) -> bool:
+        return any(p.has_drifts for p in self.plans)
+
+    @property
+    def drifted_packages(self) -> List[str]:
+        return [p.package for p in self.plans if p.has_drifts]
+
+    def get_package_plan(self, package: str) -> Optional[PackageAdoptPlan]:
+        return next((p for p in self.plans if p.package == package), None)
+
 
 @dataclass
 class PackageAdoptResult(SerializableModel):
