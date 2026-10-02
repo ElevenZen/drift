@@ -202,6 +202,26 @@ class BackupSubfolder(str, Enum):
     DELETED_FILES = "deleted_files"
 
 
+class DirMode(str, Enum):
+    """Controls directory inclusion in folder comparison and path listing operations."""
+    NO_DIR = "no-dir"
+    ONLY_EMPTY_DIR = "only-empty-dir"
+    ALL_DIRS = "all-dirs"
+
+    @classmethod
+    def from_str(cls, val: Union[str, "DirMode"]) -> "DirMode":
+        """Parses a string or DirMode instance into a DirMode enum member."""
+        if isinstance(val, cls):
+            return val
+        if isinstance(val, str):
+            s = val.strip().lower()
+            for member in cls:
+                if member.value == s:
+                    return member
+        valid_choices = ", ".join(repr(m.value) for m in cls)
+        raise ValueError(f"Invalid dir_mode '{val}'. Must be one of ({valid_choices}).")
+
+
 class ExitCode(IntEnum):
     """Standardized exit codes for the Drift CLI and automated pipeline integration."""
     SUCCESS = 0

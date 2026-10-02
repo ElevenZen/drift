@@ -6,17 +6,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME, set_test_mode
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.core.ignore import DriftIgnore
-from drift.core.sync_ops import reverse_sync_file_or_dir
 from drift.primitives.reverse_sync import (
     run_primitive_1_reverse_sync,
     reverse_sync_package,
-    sync_tracked_files,
-    sync_single_fcd,
-    sync_fully_controlled_dirs,
+    plan_package_reverse_sync,
+    execute_package_reverse_sync,
+    prepare_reverse_sync,
+    execute_reverse_sync_plan,
+    _gather_single_tracked_candidate,
+    gather_tracked_reverse_sync_files,
+    gather_single_fcd_reverse_sync_files,
+    gather_fcd_reverse_sync_files,
     record_sync_result,
 )
 
@@ -258,7 +262,7 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual((test_file / "sub_file.txt").read_text(encoding="utf-8"), "sub file content")
 
     def test_reverse_sync_broken_symlink_copying(self) -> None:
-        """Verifies that broken symlinks on system are copied back as broken symlinks to install/."""
+        """Verifies that if a symlink on the system is broken, its counterpart in install/ is deleted."""
         pkg = "pkg_broken_link"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -282,12 +286,11 @@ class TestReverseSync(unittest.TestCase):
         # Run reverse sync
         run_primitive_1_reverse_sync(self.workspace_config, [pkg])
 
-        # Counterpart in install/ should now be a broken symlink pointing to the same target
-        self.assertTrue(test_file.is_symlink())
-        self.assertEqual(os.readlink(test_file), "non_existent_target_path")
+        # Counterpart in install/ should be deleted when system target is a broken symlink
+        self.assertFalse(test_file.exists())
 
     def test_reverse_sync_fcd_file_and_broken_link_at_root(self) -> None:
-        """Verifies that if an FCD target path is a file or broken symlink (instead of dir), they are synced back."""
+        """Verifies that if an FCD target path is a file it is synced back, while broken symlinks are not created."""
         pkg = "pkg_fcd_root"
         pkg_install_dir = self.install_dir / pkg
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
@@ -317,10 +320,9 @@ class TestReverseSync(unittest.TestCase):
         self.assertTrue(install_file.is_file())
         self.assertEqual(install_file.read_text(encoding="utf-8"), "fcd file content")
 
-        # Verify broken link FCD is synced back
+        # Verify broken link FCD is not copied into install/
         install_link = pkg_install_dir / "broken_link_fcd"
-        self.assertTrue(install_link.is_symlink())
-        self.assertEqual(os.readlink(install_link), "fcd_broken_dest")
+        self.assertFalse(install_link.exists() or install_link.is_symlink())
 
     def test_reverse_sync_missing_target_managed_config_files_not_deleted(self) -> None:
         """Verifies that missing managed config files (drift_package.toml, .drift_ignore) on target system do NOT trigger deletion in install/."""
@@ -501,8 +503,8 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual(synced_theme.read_text(encoding="utf-8"), "body { color: black; }")
 
     def test_reverse_sync_fcd_symlink_preservation(self) -> None:
-        """Verifies that valid and broken symlinks created inside an FCD on host
-        are safely preserved as symlinks when reverse-synced to install/.
+        """Verifies that valid symlinks created inside an FCD on host are synced back
+        while broken symlinks are safely ignored and not copied to install/.
         """
         pkg = "pkg_fcd_symlinks"
         pkg_install_dir = self.install_dir / pkg
@@ -541,8 +543,7 @@ class TestReverseSync(unittest.TestCase):
         synced_broken_link = pkg_install_dir / "plugins" / "broken_ext.so"
 
         self.assertTrue(synced_valid_link.exists() or synced_valid_link.is_symlink())
-        self.assertTrue(synced_broken_link.is_symlink())
-        self.assertEqual(os.readlink(synced_broken_link), "non_existent_binary.so")
+        self.assertFalse(synced_broken_link.exists() or synced_broken_link.is_symlink())
 
     def test_reverse_sync_fcd_selective_directory_filtering(self) -> None:
         """Verifies that only additions in designated FCD directories are reverse-synced,
@@ -728,8 +729,8 @@ class TestReverseSync(unittest.TestCase):
         self.assertEqual(drifted, [".bashrc", ".zshrc"])
         self.assertEqual(synced, ["dot-bashrc", "dot-zshrc"])
 
-    def test_sync_tracked_files_helper_direct(self) -> None:
-        """Directly verifies the sync_tracked_files helper function."""
+    def test_gather_tracked_reverse_sync_files_direct(self) -> None:
+        """Directly verifies gather_tracked_reverse_sync_files helper function."""
         pkg_dir = self.install_dir / "pkg_direct"
         pkg_dir.mkdir(parents=True, exist_ok=True)
         (pkg_dir / "dot-gitconfig").write_text("[user]\n  name = Original\n", encoding="utf-8")
@@ -739,23 +740,17 @@ class TestReverseSync(unittest.TestCase):
         (self.system_target_dir / ".gitconfig").write_text("[user]\n  name = Updated\n", encoding="utf-8")
 
         ignore_handler = DriftIgnore()
-        drifted: list[str] = []
-        synced: list[str] = []
+        deployable, deployed = gather_tracked_reverse_sync_files(
+            install_pkg_dir=pkg_dir,
+            target_dir_path=self.system_target_dir,
+            ignore_handler=ignore_handler,
+        )
 
-        sync_tracked_files(pkg_dir, self.system_target_dir, ignore_handler, drifted, synced)
+        self.assertEqual(sorted(deployable), [Path("deleted.conf"), Path("dot-gitconfig")])
+        self.assertEqual(sorted(deployed), [Path("deleted.conf"), Path("dot-gitconfig")])
 
-        # Assert:
-        # dot-gitconfig updated
-        self.assertEqual((pkg_dir / "dot-gitconfig").read_text(encoding="utf-8"), "[user]\n  name = Updated\n")
-        # deleted.conf removed
-        self.assertFalse((pkg_dir / "deleted.conf").exists())
-        self.assertIn(".gitconfig", drifted)
-        self.assertIn("dot-gitconfig", synced)
-        self.assertIn("deleted.conf", drifted)
-        self.assertIn("deleted.conf", synced)
-
-    def test_sync_fully_controlled_dirs_helpers_direct(self) -> None:
-        """Directly verifies sync_single_fcd and sync_fully_controlled_dirs helper functions."""
+    def test_gather_fcd_reverse_sync_files_direct(self) -> None:
+        """Directly verifies gather_fcd_reverse_sync_files helper function."""
         pkg_dir = self.install_dir / "pkg_fcd_direct"
         pkg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -768,33 +763,72 @@ class TestReverseSync(unittest.TestCase):
         (host_fcd2 / ".wild.json").write_text('{"wild": true}', encoding="utf-8")
 
         ignore_handler = DriftIgnore()
-        drifted: list[str] = []
-        synced: list[str] = []
-
-        sync_fully_controlled_dirs(
+        fcd_deployable, fcd_deployed = gather_fcd_reverse_sync_files(
+            install_pkg_dir=pkg_dir,
+            target_dir_path=self.system_target_dir,
             fully_controlled_dirs=[Path("fcd_one"), Path("dot-fcd_two")],
+            ignore_handler=ignore_handler,
+        )
+
+        self.assertEqual(
+            sorted(fcd_deployable),
+            [Path("dot-fcd_two/dot-wild.json"), Path("fcd_one/extra1.txt")]
+        )
+        self.assertEqual(fcd_deployed, [])
+
+    def test_gather_single_fcd_reverse_sync_files_direct(self) -> None:
+        """Directly verifies gather_single_fcd_reverse_sync_files helper function."""
+        pkg_dir = self.install_dir / "pkg_single_fcd_direct"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "dot-plugins" / "installed.txt").parent.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "dot-plugins" / "installed.txt").write_text("installed", encoding="utf-8")
+
+        host_plugins = self.system_target_dir / ".plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+        (host_plugins / "active.txt").write_text("active", encoding="utf-8")
+
+        ignore_handler = DriftIgnore()
+        deployable, deployed = gather_single_fcd_reverse_sync_files(
+            fcd=Path("dot-plugins"),
             install_pkg_dir=pkg_dir,
             target_dir_path=self.system_target_dir,
             ignore_handler=ignore_handler,
-            drifted_files=drifted,
-            synced_files=synced
         )
 
-        # Assert:
-        self.assertTrue((pkg_dir / "fcd_one" / "extra1.txt").exists())
-        self.assertEqual((pkg_dir / "fcd_one" / "extra1.txt").read_text(encoding="utf-8"), "extra 1")
+        self.assertEqual(deployable, [Path("dot-plugins/active.txt")])
+        self.assertEqual(deployed, [Path("dot-plugins/installed.txt")])
 
-        self.assertTrue((pkg_dir / "dot-fcd_two" / "dot-wild.json").exists())
-        self.assertEqual((pkg_dir / "dot-fcd_two" / "dot-wild.json").read_text(encoding="utf-8"), '{"wild": true}')
+    def test_gather_single_tracked_candidate_direct(self) -> None:
+        """Directly verifies _gather_single_tracked_candidate helper function."""
+        (self.system_target_dir / ".gitconfig").write_text("[user]\n  name = Test\n", encoding="utf-8")
+        ignore_handler = DriftIgnore()
 
-        self.assertIn("fcd_one/extra1.txt", drifted)
-        self.assertIn("fcd_one/extra1.txt", synced)
-        self.assertIn(".fcd_two/.wild.json", drifted)
-        self.assertIn("dot-fcd_two/dot-wild.json", synced)
+        # Regular single file candidate
+        dep, depl = _gather_single_tracked_candidate(
+            rel=Path("dot-gitconfig"),
+            target_dir_path=self.system_target_dir,
+            ignore_handler=ignore_handler,
+        )
+        self.assertEqual(dep, [Path("dot-gitconfig")])
+        self.assertEqual(depl, [Path("dot-gitconfig")])
+
+        # Directory candidate on host
+        host_app = self.system_target_dir / ".app"
+        host_app.mkdir(parents=True, exist_ok=True)
+        (host_app / "sub.json").write_text("{}", encoding="utf-8")
+
+        dep_dir, depl_dir = _gather_single_tracked_candidate(
+            rel=Path("dot-app"),
+            target_dir_path=self.system_target_dir,
+            ignore_handler=ignore_handler,
+        )
+        self.assertEqual(dep_dir, [Path("dot-app/sub.json")])
+        self.assertEqual(depl_dir, [Path("dot-app")])
 
     def test_reverse_sync_package_fcd_with_symlink_to_source(self) -> None:
-        """Verifies that reverse-syncing an FCD directory with additions and a symlink back to repo
-        applies additions before deletions and safely synchronizes the package.
+        """Verifies that reverse-syncing an FCD directory with additions and an anomalous symlink back to repo
+        warns about the circular self-referential symlink, skips recursive duplication, applies additions
+        before deletions, and maintains idempotency across consecutive sync runs.
         """
         pkg = "pkg_fcd_symlink_corner"
         pkg_install_dir = self.install_dir / pkg
@@ -817,15 +851,29 @@ class TestReverseSync(unittest.TestCase):
         (host_plugins / "dynamic.plugin").write_text("dynamic plugin", encoding="utf-8")
         (host_plugins / "link_to_repo").symlink_to(pkg_install_dir / "plugins")
 
-        res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
-        self.assertEqual(res.status, "SUCCESS")
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.core.folder_diff", level="WARNING") as cm:
+                res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+            self.assertEqual(res.status, "SUCCESS")
+            self.assertTrue(any("Circular self-referential directory symlink detected" in log for log in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
 
         # Verify additions synced
         self.assertTrue((pkg_install_dir / "plugins" / "dynamic.plugin").exists())
         self.assertEqual((pkg_install_dir / "plugins" / "dynamic.plugin").read_text(encoding="utf-8"), "dynamic plugin")
 
+        # Verify circular symlink was not recursively duplicated into install repo
+        self.assertFalse((pkg_install_dir / "plugins" / "link_to_repo").exists())
+
+        # Second sync should be idempotent and not create nested directories
+        res2 = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertFalse((pkg_install_dir / "plugins" / "link_to_repo").exists())
+
     def test_reverse_sync_fcd_multi_level_type_changes(self) -> None:
-        """Verifies that FCD reverse sync processes deletions before additions,
+        """Verifies that FCD reverse sync processes additions before deletions,
         seamlessly resolving multi-level type changes (e.g. file replacing a directory tree and vice-versa).
         """
         pkg = "pkg_fcd_type_changes"
@@ -954,6 +1002,75 @@ class TestReverseSync(unittest.TestCase):
         self.assertIn("plugins/my_plugin/nested/init.py", pkg_res.synced_files)
         self.assertIn("plugins/my_plugin/nested/config.json", pkg_res.drifted_files)
         self.assertIn("plugins/my_plugin/nested/config.json", pkg_res.synced_files)
+
+    def test_plan_and_execute_package_reverse_sync_pipeline(self) -> None:
+        """Verifies decoupled planning and execution of package reverse sync."""
+        pkg = "pkg_plan_exec"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = ["config"]
+        """, encoding="utf-8")
+
+        # Initial tracked file
+        (pkg_install_dir / "dot-zshrc").write_text("orig", encoding="utf-8")
+
+        # System modifications:
+        # 1. Tracked file modified on host
+        (self.system_target_dir / ".zshrc").write_text("modified", encoding="utf-8")
+        # 2. Wild addition in FCD
+        (self.system_target_dir / "config").mkdir(parents=True, exist_ok=True)
+        (self.system_target_dir / "config" / "app.conf").write_text("app conf", encoding="utf-8")
+
+        # 1. Pure Plan
+        plan = plan_package_reverse_sync(pkg, self.install_dir, self.workspace_config)
+        self.assertEqual(plan.package, pkg)
+        self.assertEqual(plan.status, "PENDING")
+        self.assertTrue(len(plan.actions) > 0)
+        self.assertEqual(len(plan.created), 1)   # config/app.conf
+        self.assertEqual(len(plan.updated), 1)   # dot-zshrc
+
+        # Verify plan did NOT modify repo filesystem yet
+        self.assertEqual((pkg_install_dir / "dot-zshrc").read_text(encoding="utf-8"), "orig")
+        self.assertFalse((pkg_install_dir / "config" / "app.conf").exists())
+
+        # 2. Execute Plan
+        result = execute_package_reverse_sync(plan, self.install_dir)
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual((pkg_install_dir / "dot-zshrc").read_text(encoding="utf-8"), "modified")
+        self.assertTrue((pkg_install_dir / "config" / "app.conf").exists())
+        self.assertEqual((pkg_install_dir / "config" / "app.conf").read_text(encoding="utf-8"), "app conf")
+
+    def test_prepare_and_execute_reverse_sync_workspace_level(self) -> None:
+        """Verifies workspace-level prepare_reverse_sync and execute_reverse_sync_plan."""
+        pkg = "pkg_ws_plan"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        """, encoding="utf-8")
+
+        (pkg_install_dir / "tracked.txt").write_text("local", encoding="utf-8")
+        (self.system_target_dir / "tracked.txt").write_text("drifted", encoding="utf-8")
+
+        # Workspace prepare
+        ws_plan = prepare_reverse_sync(self.workspace_config, [pkg])
+        self.assertEqual(len(ws_plan.plans), 1)
+        self.assertTrue(ws_plan.has_changes)
+
+        # Workspace execute
+        ws_result = execute_reverse_sync_plan(self.workspace_config, ws_plan)
+        self.assertEqual(ws_result.status, "SUCCESS")
+        self.assertEqual((pkg_install_dir / "tracked.txt").read_text(encoding="utf-8"), "drifted")
 
 
 if __name__ == "__main__":

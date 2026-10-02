@@ -36,7 +36,6 @@ from drift.utils.file_ops import (
 )
 from drift.core.sync_ops import (
     backup_file_or_dir_external,
-    reverse_sync_file_or_dir,
 )
 
 
@@ -397,48 +396,6 @@ class TestFileUtils(unittest.TestCase):
             self.assertFalse(dst_copy.exists())
             mock_run.assert_not_called()
 
-    def test_reverse_sync_file_or_dir_deletion(self) -> None:
-        # If src does not exist, and dst exists, dst should be deleted
-        src = self.root / "nonexistent"
-        dst = self.root / "local_file"
-        dst.touch()
-        self.assertTrue(dst.exists())
-        reverse_sync_file_or_dir(src, dst)
-        self.assertFalse(dst.exists())
-
-    def test_reverse_sync_file_or_dir_directory(self) -> None:
-        # If src is a directory, it should be copied recursively
-        src = self.root / "src_dir"
-        src.mkdir()
-        (src / "child.txt").write_text("child content", encoding="utf-8")
-        
-        dst = self.root / "dst_dir"
-        reverse_sync_file_or_dir(src, dst)
-        
-        self.assertTrue(dst.is_dir())
-        self.assertTrue((dst / "child.txt").exists())
-        self.assertEqual((dst / "child.txt").read_text(encoding="utf-8"), "child content")
-
-    def test_reverse_sync_file_or_dir_file_content_modification(self) -> None:
-        # If src is a file and content differs from dst, dst should be updated
-        src = self.root / "src_file.txt"
-        src.write_text("updated", encoding="utf-8")
-        dst = self.root / "dst_file.txt"
-        dst.write_text("old", encoding="utf-8")
-        
-        reverse_sync_file_or_dir(src, dst)
-        self.assertEqual(dst.read_text(encoding="utf-8"), "updated")
-
-    def test_reverse_sync_file_or_dir_broken_symlink(self) -> None:
-        # If src is a broken symlink, it should be synced as a broken symlink at dst
-        src = self.root / "broken_link"
-        src.symlink_to("non_existent")
-        dst = self.root / "dst_link"
-        
-        reverse_sync_file_or_dir(src, dst)
-        self.assertTrue(dst.is_symlink())
-        self.assertEqual(os.readlink(dst), "non_existent")
-
     def test_copy_symlink(self) -> None:
         # 1. Broken symlink
         src = self.root / "broken_link"
@@ -464,83 +421,6 @@ class TestFileUtils(unittest.TestCase):
         copy_symlink(src, dst_valid)
         self.assertTrue(dst_valid.is_symlink())
         self.assertEqual(os.readlink(dst_valid), "another_non_existent")
-
-    def test_reverse_sync_file_or_dir_valid_symlink(self) -> None:
-        # If src is a valid symlink, it should recursively sync the resolved target content
-        target = self.root / "target.txt"
-        target.write_text("target content", encoding="utf-8")
-        src = self.root / "valid_link"
-        src.symlink_to(target)
-        
-        dst = self.root / "dst_file.txt"
-        
-        reverse_sync_file_or_dir(src, dst)
-        self.assertFalse(dst.is_symlink())
-        self.assertTrue(dst.is_file())
-        self.assertEqual(dst.read_text(encoding="utf-8"), "target content")
-
-    def test_reverse_sync_file_or_dir_empty_sub_directory(self) -> None:
-        """Verifies that an empty sub-folder in src is correctly synced and created at dst."""
-        src = self.root / "src_dir"
-        src.mkdir()
-        empty_sub = src / "empty_sub_folder"
-        empty_sub.mkdir()
-
-        dst = self.root / "dst_dir"
-
-        reverse_sync_file_or_dir(src, dst)
-
-        self.assertTrue(dst.is_dir())
-        self.assertTrue((dst / "empty_sub_folder").is_dir())
-        # Confirm it is empty
-        self.assertEqual(list((dst / "empty_sub_folder").iterdir()), [])
-
-    def test_reverse_sync_file_or_dir_nested_healthy_symlink(self) -> None:
-        """Verifies that a valid symlink deep within a sub-folder resolves and syncs content."""
-        src = self.root / "src_dir"
-        src.mkdir()
-        sub_dir = src / "nested_sub"
-        sub_dir.mkdir()
-
-        # Create a valid symlink target external to the folder structure
-        target_file = self.root / "external_target.txt"
-        target_file.write_text("external content", encoding="utf-8")
-
-        # Create nested valid symlink
-        nested_link = sub_dir / "valid_nested_link"
-        nested_link.symlink_to(target_file)
-
-        dst = self.root / "dst_dir"
-
-        reverse_sync_file_or_dir(src, dst)
-
-        self.assertTrue((dst / "nested_sub").is_dir())
-        dest_file = dst / "nested_sub" / "valid_nested_link"
-        # Since it is a valid symlink, reverse sync copies the actual target physical content back
-        self.assertFalse(dest_file.is_symlink())
-        self.assertTrue(dest_file.is_file())
-        self.assertEqual(dest_file.read_text(encoding="utf-8"), "external content")
-
-    def test_reverse_sync_file_or_dir_nested_broken_symlink(self) -> None:
-        """Verifies that a broken symlink deep within a sub-folder is copied back as a broken symlink."""
-        src = self.root / "src_dir"
-        src.mkdir()
-        sub_dir = src / "nested_sub"
-        sub_dir.mkdir()
-
-        # Create nested broken symlink
-        nested_link = sub_dir / "broken_nested_link"
-        nested_link.symlink_to("nested_non_existent")
-
-        dst = self.root / "dst_dir"
-
-        reverse_sync_file_or_dir(src, dst)
-
-        self.assertTrue((dst / "nested_sub").is_dir())
-        dest_link = dst / "nested_sub" / "broken_nested_link"
-        # It should copy the broken link itself
-        self.assertTrue(dest_link.is_symlink())
-        self.assertEqual(os.readlink(dest_link), "nested_non_existent")
 
     def test_expand_user_and_env(self) -> None:
         from drift.utils.path_utils import expand_path

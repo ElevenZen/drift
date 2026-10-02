@@ -58,6 +58,8 @@ from drift.primitives.install_repo import (
 from drift.core.folder_delivery import (
         DeliveryInspectionContext,
         execute_single_action,
+        execute_delivery_actions,
+        FileActionExecutionContext,
         format_action_line,
         format_action_summary,
         plan_folder_delivery,
@@ -3098,6 +3100,177 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(plan2.skipped), 1)
         self.assertEqual(plan2.skipped[0].action_type, FileActionType.SKIP_IDENTICAL)
 
+    def test_plan_folder_delivery_updates_directory_permissions(self) -> None:
+        """Verifies plan_folder_delivery generates UPDATE_PERMISSION when directory permissions differ,
+        across forward install, reverse sync, and leaf directory deliveries."""
+        pkg = "pkg_dir_perm"
+        pkg_install_dir = self.install_dir / pkg
+        src_dir = pkg_install_dir / "dot-config" / "sub"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        src_file = src_dir / "app.conf"
+        src_file.write_text("hello\n", encoding="utf-8")
+        src_dir.chmod(0o700)
+
+        host_dir = self.system_target_dir / ".config" / "sub"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        host_file = host_dir / "app.conf"
+        host_file.write_text("hello\n", encoding="utf-8")
+        host_dir.chmod(0o755)
+
+        delivery_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.workspace_config.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=self.backup_dir / pkg,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=False,
+        )
+
+        # 1. Forward installation: ancestor directory permissions differ (host 0o755 -> repo 0o700)
+        actions = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("dot-config/sub/app.conf")],
+            deployed_files=(),
+        )
+
+        dir_perm_actions = [
+            a for a in actions
+            if a.action_type == FileActionType.UPDATE_PERMISSION and a.dst_path == host_dir
+        ]
+        self.assertEqual(len(dir_perm_actions), 1)
+        self.assertEqual(dir_perm_actions[0].src_path, src_dir)
+        self.assertIn("Permissions differ", dir_perm_actions[0].reason or "")
+
+        exec_ctx = FileActionExecutionContext(sudo=False, resolve_symlinks=True)
+        execute_delivery_actions(exec_ctx, actions)
+        self.assertEqual(host_dir.stat().st_mode & 0o777, 0o700)
+
+        # 2. Reverse sync: host directory permissions differ (repo 0o755 -> host 0o700)
+        host_dir.chmod(0o700)
+        src_dir.chmod(0o755)
+
+        rev_ctx = DeliveryInspectionContext(
+            target_dir=pkg_install_dir,
+            source_dir=self.system_target_dir,
+            drift_root=self.workspace_config.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=True,
+        )
+
+        rev_actions = plan_folder_delivery(
+            context=rev_ctx,
+            deployable_files=[Path(".config/sub/app.conf")],
+            deployed_files=[Path("dot-config/sub/app.conf")],
+        )
+
+        rev_dir_perm_actions = [
+            a for a in rev_actions
+            if a.action_type == FileActionType.UPDATE_PERMISSION and a.dst_path == src_dir
+        ]
+        self.assertEqual(len(rev_dir_perm_actions), 1)
+        self.assertEqual(rev_dir_perm_actions[0].src_path, host_dir)
+
+        execute_delivery_actions(exec_ctx, rev_actions)
+        self.assertEqual(src_dir.stat().st_mode & 0o777, 0o700)
+
+        # 3. Multi-level ancestor directory permissions differ
+        deep_src = pkg_install_dir / "dot-config" / "level1" / "level2"
+        deep_src.mkdir(parents=True, exist_ok=True)
+        deep_src_file = deep_src / "deep.conf"
+        deep_src_file.write_text("deep\n", encoding="utf-8")
+        (pkg_install_dir / "dot-config" / "level1").chmod(0o750)
+        deep_src.chmod(0o700)
+
+        deep_host = self.system_target_dir / ".config" / "level1" / "level2"
+        deep_host.mkdir(parents=True, exist_ok=True)
+        deep_host_file = deep_host / "deep.conf"
+        deep_host_file.write_text("deep\n", encoding="utf-8")
+        (self.system_target_dir / ".config" / "level1").chmod(0o755)
+        deep_host.chmod(0o755)
+
+        deep_actions = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("dot-config/level1/level2/deep.conf")],
+            deployed_files=(),
+        )
+        deep_perm_actions = [
+            a for a in deep_actions
+            if a.action_type == FileActionType.UPDATE_PERMISSION
+        ]
+        self.assertEqual(len(deep_perm_actions), 2)
+        execute_delivery_actions(exec_ctx, deep_actions)
+        self.assertEqual((self.system_target_dir / ".config" / "level1").stat().st_mode & 0o777, 0o750)
+        self.assertEqual(deep_host.stat().st_mode & 0o777, 0o700)
+
+    def test_plan_folder_delivery_leaf_empty_directory_handling(self) -> None:
+        """Verifies plan_folder_delivery properly handles leaf directories and empty directories across all states:
+        creation (ENSURE_DIR), permission sync (UPDATE_PERMISSION), and file collision replacement (BACKUP + ENSURE_DIR)."""
+        pkg = "pkg_empty_dir_leaf"
+        pkg_install_dir = self.install_dir / pkg
+        empty_dir = pkg_install_dir / "dot-config" / "empty_sub"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+        empty_dir.chmod(0o700)
+
+        delivery_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.SYMLINK,
+            is_first_time=False,
+            backup_pkg_dir=self.backup_dir / pkg,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=False,
+        )
+
+        # 1. Target directory does not exist -> plans ENSURE_DIR for ancestor and leaf
+        actions = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("dot-config/empty_sub")],
+            deployed_files=(),
+        )
+        ensure_actions = [a for a in actions if a.action_type == FileActionType.ENSURE_DIR]
+        self.assertEqual(len(ensure_actions), 2)
+        self.assertEqual(ensure_actions[0].dst_path, self.system_target_dir / ".config")
+        self.assertEqual(ensure_actions[1].dst_path, self.system_target_dir / ".config" / "empty_sub")
+
+        # Execute actions to establish state on system target
+        exec_ctx = FileActionExecutionContext(sudo=False, resolve_symlinks=True)
+        execute_delivery_actions(exec_ctx, actions)
+        target_sub = self.system_target_dir / ".config" / "empty_sub"
+        self.assertTrue(target_sub.is_dir())
+
+        # 2. Target directory exists with differing permissions -> plans UPDATE_PERMISSION
+        target_sub.chmod(0o755)
+        actions_perm = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("dot-config/empty_sub")],
+            deployed_files=(),
+        )
+        perm_actions = [a for a in actions_perm if a.action_type == FileActionType.UPDATE_PERMISSION]
+        self.assertEqual(len(perm_actions), 1)
+        self.assertEqual(perm_actions[0].dst_path, target_sub)
+        self.assertEqual(perm_actions[0].src_path, empty_dir)
+
+        # 3. Target path is blocked by a physical file -> plans BACKUP_OVERWRITE + ENSURE_DIR
+        target_sub.rmdir()
+        target_sub.write_text("file blocking dir\n", encoding="utf-8")
+        actions_collision = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("dot-config/empty_sub")],
+            deployed_files=(),
+        )
+        self.assertEqual(len(actions_collision), 2)
+        self.assertEqual(actions_collision[0].action_type, FileActionType.BACKUP_OVERWRITE)
+        self.assertEqual(actions_collision[0].src_path, target_sub)
+        self.assertEqual(actions_collision[0].reason, "File blocking directory")
+        self.assertEqual(actions_collision[1].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(actions_collision[1].dst_path, target_sub)
+
     def test_delivery_inspection_context_derivation_and_planning(self) -> None:
         """Verifies DeliveryInspectionContext properties, backup routing, and integration with plan_folder_delivery."""
         pkg = "pkg_context_test"
@@ -3171,7 +3344,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions[0].dst_path, self.system_target_dir / "app.conf")
 
     def test_delivery_inspection_reverse_mode_symlink_semantics(self) -> None:
-        """Verifies reverse_mode symlink handling: skip identical drift links, delete broken links, error on dir links, compare external file links."""
+        """Verifies reverse_mode symlink handling: skip identical drift links, delete broken links, handle dir links, compare external file links."""
         pkg = "pkg_rev_symlinks"
         pkg_install_dir = self.install_dir / pkg
         pkg_install_dir.mkdir(parents=True, exist_ok=True)
@@ -3215,17 +3388,21 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions_broken[0].reason, "Broken symlink on host")
         host_link.unlink()
 
-        # 3. Host symlink pointing to a directory -> raises InstallCollisionError
+        # 3. Host symlink pointing to a directory -> resolves colliding repo file and ensures directory
         some_dir = self.system_target_dir / "some_dir"
         some_dir.mkdir(parents=True, exist_ok=True)
         host_link.symlink_to(some_dir)
-        with self.assertRaises(InstallCollisionError) as ctx:
-            plan_folder_delivery(
-                context=rev_ctx,
-                deployable_files=[Path(".bashrc")],
-                deployed_files=[Path(".bashrc")],
-            )
-        self.assertIn("cannot be symlinks to directories", str(ctx.exception))
+        actions_dir_link = plan_folder_delivery(
+            context=rev_ctx,
+            deployable_files=[Path(".bashrc")],
+            deployed_files=[Path(".bashrc")],
+        )
+        self.assertEqual(len(actions_dir_link), 2)
+        self.assertEqual(actions_dir_link[0].action_type, FileActionType.DELETE_FILE)
+        self.assertEqual(actions_dir_link[0].dst_path, repo_file)
+        self.assertEqual(actions_dir_link[0].reason, "File blocking directory")
+        self.assertEqual(actions_dir_link[1].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(actions_dir_link[1].dst_path, repo_file)
         host_link.unlink()
 
         # 4. Host symlink pointing to an external file -> compares content
@@ -3243,7 +3420,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions_ext[0].dst_path, repo_file)
         host_link.unlink()
 
-        # 5. Normal mode: Deployable symlink in repo pointing to a directory -> raises InstallCollisionError
+        # 5. Normal mode: Deployable symlink in repo pointing to a directory -> ENSURE_DIR on host
         normal_ctx = DeliveryInspectionContext(
             target_dir=self.system_target_dir,
             source_dir=pkg_install_dir,
@@ -3256,13 +3433,14 @@ class TestInstallRepo(unittest.TestCase):
         )
         repo_dir_link = pkg_install_dir / "link_to_dir"
         repo_dir_link.symlink_to(some_dir)
-        with self.assertRaises(InstallCollisionError) as ctx:
-            plan_folder_delivery(
-                context=normal_ctx,
-                deployable_files=[Path("link_to_dir")],
-                deployed_files=(),
-            )
-        self.assertIn("cannot be symlinks to directories", str(ctx.exception))
+        actions_norm = plan_folder_delivery(
+            context=normal_ctx,
+            deployable_files=[Path("link_to_dir")],
+            deployed_files=(),
+        )
+        self.assertEqual(len(actions_norm), 1)
+        self.assertEqual(actions_norm[0].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(actions_norm[0].dst_path, self.system_target_dir / "link_to_dir")
 
 
 class TestInstallDependencies(unittest.TestCase):

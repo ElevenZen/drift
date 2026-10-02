@@ -36,6 +36,7 @@ from .constants import (
     InstallMethod,
     DEFAULT_INSTALL_METHOD,
     BackupSubfolder,
+    DirMode,
     ExitCode,
     DEFAULT_DRIFT_IGNORE_CONTENT,
     DEFAULT_IGNORE_PATTERNS,
@@ -126,6 +127,8 @@ from .result_models import (
     PackageStagePlan,
     PackageInstallPlan,
     PackageUninstallPlan,
+    PackageReverseSyncPlan,
+    ReverseSyncPlan,
     PackageReverseSyncResult,
     ReverseSyncResult,
     RenderResult,
@@ -171,11 +174,12 @@ from .state_registry import (
     save_state_registry,
 )
 from .sync_ops import (
-    reverse_sync_file_or_dir,
     backup_file_or_dir_external,
 )
 from .folder_diff import (
     FolderDiff,
+    FolderListingContext,
+    check_circular_dest_symlink,
     compare_folders,
     list_folder_paths,
 )
@@ -216,6 +220,7 @@ __all__ = [
     "InstallMethod",
     "DEFAULT_INSTALL_METHOD",
     "BackupSubfolder",
+    "DirMode",
     "ExitCode",
     "DEFAULT_DRIFT_IGNORE_CONTENT",
     "DEFAULT_IGNORE_PATTERNS",
@@ -290,6 +295,8 @@ __all__ = [
     "PackageStagePlan",
     "PackageInstallPlan",
     "PackageUninstallPlan",
+    "PackageReverseSyncPlan",
+    "ReverseSyncPlan",
     "format_action_line",
     "format_action_summary",
     "PackageReverseSyncResult",
@@ -331,9 +338,10 @@ __all__ = [
     "StateRegistry",
     "load_state_registry",
     "save_state_registry",
-    "reverse_sync_file_or_dir",
     "backup_file_or_dir_external",
     "FolderDiff",
+    "FolderListingContext",
+    "check_circular_dest_symlink",
     "compare_folders",
     "list_folder_paths",
 ]

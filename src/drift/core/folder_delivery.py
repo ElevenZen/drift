@@ -238,23 +238,34 @@ def _plan_backup_or_delete(
     )
 
 
-def _inspect_single_ancestor(
+def _inspect_directory_node(
     context: DeliveryInspectionContext,
-    ancestor_target: Path,
+    target_dir: Path,
+    source_dir: Optional[Path],
     rel_path: Path,
+    has_backed_up_ancestor: bool = False,
 ) -> List[FileAction]:
-    """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
-    if not (ancestor_target.exists() or ancestor_target.is_symlink()):
-        return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=ancestor_target)]
+    """Inspects a directory destination against source directory, planning creation, permissions sync, or collision resolution."""
+    if has_backed_up_ancestor or not (target_dir.exists() or target_dir.is_symlink()):
+        return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir)]
 
-    if is_concrete_dir(ancestor_target):
+    if is_concrete_dir(target_dir):
+        if source_dir is not None and source_dir.is_dir() and permissions_differ(source_dir, target_dir):
+            src_mode = oct(source_dir.stat().st_mode & 0o777)
+            dst_mode = oct(target_dir.stat().st_mode & 0o777)
+            return [FileAction(
+                action_type=FileActionType.UPDATE_PERMISSION,
+                src_path=source_dir,
+                dst_path=target_dir,
+                reason=f"Permissions differ ({dst_mode} -> {src_mode})",
+            )]
         return []
 
     # Blocked by an internal symlink, foreign symlink, or physical file
-    if ancestor_target.is_symlink():
+    if target_dir.is_symlink():
         is_internal = False
         try:
-            is_internal = is_relative_to(ancestor_target.resolve(), context.abs_drift_root)
+            is_internal = is_relative_to(target_dir.resolve(), context.abs_drift_root)
         except Exception:
             is_internal = False
         reason = "Internal ancestor symlink conflict" if is_internal else "Symlink blocking directory"
@@ -262,9 +273,26 @@ def _inspect_single_ancestor(
         reason = "File blocking directory"
 
     return [
-        _plan_backup_or_delete(context, ancestor_target, rel_path, reason=reason),
-        FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=ancestor_target),
+        _plan_backup_or_delete(context, target_dir, rel_path, reason=reason),
+        FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir),
     ]
+
+
+def _inspect_single_ancestor(
+    context: DeliveryInspectionContext,
+    ancestor_target: Path,
+    rel_path: Path,
+    has_backed_up_ancestor: bool = False,
+) -> List[FileAction]:
+    """Inspects a single ancestor directory path and returns necessary directory creation or backup actions."""
+    source_dir_path = context.translate_source_path(rel_path)
+    return _inspect_directory_node(
+        context=context,
+        target_dir=ancestor_target,
+        source_dir=source_dir_path if source_dir_path.is_dir() else None,
+        rel_path=rel_path,
+        has_backed_up_ancestor=has_backed_up_ancestor,
+    )
 
 
 def _check_has_backed_up_ancestor(target: Path, backed_up_targets: Set[Path]) -> bool:
@@ -290,17 +318,12 @@ def inspect_ancestor_directories(
         handled_targets.add(ancestor_target)
         rel_path = p if context.reverse_mode else decode_dot_prefix(p)
 
-        if _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets):
-            actions.append(FileAction(
-                action_type=FileActionType.ENSURE_DIR,
-                dst_path=ancestor_target,
-            ))
-            continue
-
+        has_backed_up = _check_has_backed_up_ancestor(ancestor_target, backed_up_ancestor_targets)
         res = _inspect_single_ancestor(
             context=context,
             ancestor_target=ancestor_target,
             rel_path=rel_path,
+            has_backed_up_ancestor=has_backed_up,
         )
         if any(a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.DELETE_FILE) for a in res):
             backed_up_ancestor_targets.add(ancestor_target)
@@ -508,47 +531,79 @@ def _inspect_resolved_leaf_file(
     ))
 
 
-def _inspect_leaf_file(
+def _resolve_leaf_symlink(
+    context: DeliveryInspectionContext,
+    source_file: Path,
+    system_target: Path,
+    rel_file: Path,
+    actions: List[FileAction],
+) -> Optional[Path]:
+    """Resolves a leaf symlink, plans cleanup for broken symlinks, and returns the resolved Path or None."""
+    try:
+        resolved_src = source_file.resolve()
+        is_broken = not resolved_src.exists()
+    except Exception:
+        resolved_src = None
+        is_broken = True
+
+    if is_broken:
+        if system_target.exists() or system_target.is_symlink():
+            actions.append(_plan_backup_or_delete(
+                context,
+                system_target,
+                rel_file,
+                reason="Broken symlink on host" if context.reverse_mode else "Broken symlink collision",
+            ))
+        return None
+
+    assert resolved_src is not None, "Resolved source symlink should not be None after successful resolve"
+    assert not resolved_src.is_dir(), f"Unexpected directory symlink reached leaf file inspection: '{source_file}' -> '{resolved_src}'"
+
+    if resolved_src == system_target or (system_target.exists() and resolved_src == system_target.resolve()):
+        return system_target
+    return resolved_src
+
+
+def _inspect_leaf(
     context: DeliveryInspectionContext,
     rel_file: Path,
     handled_targets: Set[Path],
     actions: List[FileAction],
     backed_up_ancestor_targets: Set[Path],
 ) -> None:
-    """Translates paths, handles symlinks and host deletions, then delegates to _inspect_resolved_leaf_file."""
+    """Translates paths, handles directories and symlinks, then delegates to _inspect_resolved_leaf_file."""
     source_file, system_target = context.translate_path(rel_file)
+    if system_target in handled_targets:
+        return
     handled_targets.add(system_target)
 
-    # Handle symlinks
+    # 1. Directory or symlink-to-directory inspection
+    if source_file.is_dir():
+        has_backed_up_parent = _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets)
+        dir_actions = _inspect_directory_node(
+            context=context,
+            target_dir=system_target,
+            source_dir=source_file,
+            rel_path=rel_file,
+            has_backed_up_ancestor=has_backed_up_parent,
+        )
+        if any(a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.DELETE_FILE) for a in dir_actions):
+            backed_up_ancestor_targets.add(system_target)
+        actions.extend(dir_actions)
+        return
+
+    # 2. Leaf file symlink resolution
     if source_file.is_symlink():
-        try:
-            resolved_src = source_file.resolve()
-            is_broken = not resolved_src.exists()
-        except Exception:
-            resolved_src = None
-            is_broken = True
-
-        if is_broken:
-            if system_target.exists() or system_target.is_symlink():
-                actions.append(_plan_backup_or_delete(
-                    context,
-                    system_target,
-                    rel_file,
-                    reason="Broken symlink on host" if context.reverse_mode else "Broken symlink collision",
-                ))
+        resolved_leaf = _resolve_leaf_symlink(
+            context=context,
+            source_file=source_file,
+            system_target=system_target,
+            rel_file=rel_file,
+            actions=actions,
+        )
+        if resolved_leaf is None:
             return
-
-        assert resolved_src is not None, "Resolved source symlink should not be None after successful resolve"
-        if resolved_src.is_dir():
-            raise InstallCollisionError(
-                f"Invalid deployable leaf file '{source_file}': symlink points to directory '{resolved_src}'. "
-                "Deployable leaf files cannot be symlinks to directories."
-            )
-
-        if resolved_src == system_target or (system_target.exists() and resolved_src == system_target.resolve()):
-            source_file = system_target
-        else:
-            source_file = resolved_src
+        source_file = resolved_leaf
 
     elif context.reverse_mode and not source_file.exists():
         # Physical file deleted on host
@@ -561,7 +616,7 @@ def _inspect_leaf_file(
             ))
         return
 
-    # Delegate concrete resolved paths to inner core
+    # 3. Delegate concrete resolved paths to inner core
     _inspect_resolved_leaf_file(
         context=context,
         rel_file=rel_file,
@@ -596,10 +651,20 @@ def _inspect_orphans(
         deployed_norm = {decode_dot_prefix(p) for p in deployed_files}
         orphaned_files = sorted(deployed_norm - deployable_norm)
     else:
+        deployable_norm = set(deployable_files)
         orphaned_files = sorted(set(deployed_files) - set(deployable_files))
+
+    deployable_ancestors = {
+        parent
+        for dep in deployable_norm
+        for parent in dep.parents
+        if parent != Path("") and parent != Path(".")
+    }
 
     actions: List[FileAction] = []
     for orphaned in orphaned_files:
+        if orphaned in deployable_ancestors:
+            continue
         actions.extend(_plan_orphan_prune(context, orphaned, f"Orphaned file '{orphaned}' prune"))
     return actions
 
@@ -621,10 +686,7 @@ def plan_folder_delivery(
 
     deployable_file_list = list(deployable_files)
 
-    # 1. Orphan Files Reconciliation
-    actions.extend(_inspect_orphans(context, deployable_file_list, deployed_files))
-
-    # 2. Intermediate Ancestor Directories Inspection
+    # 1. Intermediate Ancestor Directories Inspection
     backed_up_ancestor_targets = inspect_ancestor_directories(
         context=context,
         deployable_files=deployable_file_list,
@@ -632,15 +694,18 @@ def plan_folder_delivery(
         actions=actions,
     )
 
-    # 3. Leaf Files Inspection
+    # 2. Leaf Files Inspection
     for rel_file in deployable_file_list:
-        _inspect_leaf_file(
+        _inspect_leaf(
             context=context,
             rel_file=rel_file,
             handled_targets=handled_targets,
             actions=actions,
             backed_up_ancestor_targets=backed_up_ancestor_targets,
         )
+
+    # 3. Orphan Files Reconciliation (additions before deletions)
+    actions.extend(_inspect_orphans(context, deployable_file_list, deployed_files))
 
     return actions
 
@@ -788,11 +853,20 @@ def plan_actions_from_folder_diff(
         src = source_dir / rel
         dst = target_dir / rel
         if is_concrete_dir(src):
-            actions.append(FileAction(
-                action_type=FileActionType.ENSURE_DIR,
-                dst_path=dst,
-                reason="Directory modified",
-            ))
+            if is_concrete_dir(dst) and permissions_differ(src, dst):
+                src_mode = oct(src.stat().st_mode & 0o777)
+                dst_mode = oct(dst.stat().st_mode & 0o777)
+                actions.append(FileAction(
+                    action_type=FileActionType.UPDATE_PERMISSION,
+                    src_path=src,
+                    dst_path=dst,
+                    reason=f"Permissions differ ({dst_mode} -> {src_mode})",
+                ))
+            else:
+                raise RuntimeError(
+                    f"Impossible state in plan_actions_from_folder_diff: directory '{rel}' was marked as modified, "
+                    f"but source '{src}' and destination '{dst}' do not represent a valid directory permission modification."
+                )
         elif rel in diff.permissions_differ:
             actions.append(FileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
@@ -876,8 +950,4 @@ def execute_delivery_actions(
         execute_single_action(context, action)
 
 
-def __getattr__(name: str):
-    if name in ("PackageInstallPlan", "PackageUninstallPlan"):
-        from .result_models import PackageInstallPlan, PackageUninstallPlan
-        return PackageInstallPlan if name == "PackageInstallPlan" else PackageUninstallPlan
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+

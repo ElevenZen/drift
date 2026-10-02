@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..render.render_package import run_primitive_2_render_packages
 from .reverse_sync import run_primitive_1_reverse_sync
+from ..core.constants import DirMode
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..utils.file_inspect import is_diff_candidate
 from ..utils.git_utils import parse_git_status_porcelain, GitStatusDiff
@@ -50,8 +51,8 @@ def calculate_pending_delta(
 ) -> Tuple[str, Optional[FolderDiff]]:
     """Calculates the pending delta between render/ and install/ for a package."""
     if render_pkg_dir.exists() and install_pkg_dir.exists():
-        diff = compare_folders(render_pkg_dir, install_pkg_dir)
-        # Filter out internally generated synthetic files and concrete directory entries from the pending delta view
+        diff = compare_folders(render_pkg_dir, install_pkg_dir, dir_mode=DirMode.NO_DIR)
+        # Filter out internally generated synthetic files from the pending delta view
         diff.added = [p for p in diff.added if is_diff_candidate(render_pkg_dir / p)]
         diff.modified = [p for p in diff.modified if is_diff_candidate(render_pkg_dir / p) and is_diff_candidate(install_pkg_dir / p)]
         diff.deleted = [p for p in diff.deleted if is_diff_candidate(install_pkg_dir / p)]

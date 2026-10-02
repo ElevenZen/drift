@@ -2,8 +2,10 @@ import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import Optional, List, Tuple, Union, Set
+from .constants import DirMode
 from .ignore import IgnoreHandler
+from ..utils.path_utils import decode_dot_prefix, is_relative_to
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,8 @@ def compare_folders(
     ignore_handler: Optional[IgnoreHandler] = None,
     resolve_symlinks: bool = True,
     translate_mode: Optional[str] = None,
-    src_only: bool = False
+    src_only: bool = False,
+    dir_mode: Union[str, DirMode] = DirMode.ALL_DIRS,
 ) -> FolderDiff:
     """
     Recursively compares src_dir against dst_dir. 
@@ -44,16 +47,25 @@ def compare_folders(
     src_only: If True, only paths that exist in src_dir are checked in dst_dir. 
               Loop 2 (dst items not in src) is skipped.
 
+    dir_mode controls directory inclusion in diff (DirMode enum or string):
+      - Note: dir_mode only affects the 'added' and 'deleted' lists. The 'modified' and 'matches'
+        lists only contain leaf files and symlinks, never directory nodes.
+      - "all-dirs": (default) Files, empty directories, and intermediate directory nodes are returned in added/deleted.
+      - "only-empty-dir": Files and empty directory placeholders are returned in added/deleted.
+      - "no-dir": Only files and symlinks are returned in added/deleted (no directories).
+
     Application Order & Multi-Level Type Changes:
-      - For synchronization into internal state stores (like install/ in stage_repo or reverse-sync),
-        deletions MUST be processed before additions to cleanly clear obsolete paths and resolve
-        multi-level type changes (e.g. file replacing a directory tree or vice-versa).
-      - Ensure destination directories inside internal state stores do not contain symlinks pointing
-        into source directories.
+      - In folder delivery (both forward installation and reverse sync), additions and updates
+        are processed before orphan deletions to prevent race conditions and data loss from symlink aliasing.
+        Multi-level type changes (e.g. file replacing a directory tree or vice-versa) are handled
+        structurally via ancestor directory inspection and leaf node inspection.
+      - Ensure destination directories inside internal state stores do not contain circular symlinks
+        pointing into source directories.
     """
     from ..utils.file_inspect import contents_differ, permissions_differ
     from ..utils.path_utils import encode_dot_prefix, decode_dot_prefix, is_relative_to
 
+    mode = DirMode.from_str(dir_mode)
     diff = FolderDiff()
 
     def _translate(rel: Path) -> Path:
@@ -94,6 +106,7 @@ def compare_folders(
             if not resolve_symlinks:
                 diff.deleted.append(rel)
             else:
+                # resolve and recur
                 try:
                     real_target = p_dst.resolve()
                     if not real_target.exists():
@@ -109,7 +122,10 @@ def compare_folders(
             if real_key is None:
                 return
             try:
-                if rel != Path("") or not any(p_dst.iterdir()):
+                is_empty = not any(p_dst.iterdir())
+                if mode == DirMode.ALL_DIRS and (rel != Path("") or is_empty):
+                    diff.deleted.append(rel)
+                elif mode == DirMode.ONLY_EMPTY_DIR and is_empty:
                     diff.deleted.append(rel)
                 for child in p_dst.iterdir():
                     # Compute dst_rel and then untranslate to get src_rel
@@ -132,6 +148,7 @@ def compare_folders(
             if not resolve_symlinks:
                 diff.added.append(rel)
             else:
+                # resolve and recur
                 try:
                     real_target = p_src.resolve()
                     if not real_target.exists():
@@ -147,7 +164,10 @@ def compare_folders(
             if real_key is None:
                 return
             try:
-                if rel != Path("") or not any(p_src.iterdir()):
+                is_empty = not any(p_src.iterdir())
+                if mode == DirMode.ALL_DIRS and (rel != Path("") or is_empty):
+                    diff.added.append(rel)
+                elif mode == DirMode.ONLY_EMPTY_DIR and is_empty:
                     diff.added.append(rel)
                 for child in p_src.iterdir():
                     add_children_as_added(child, rel / child.name, visited)
@@ -322,59 +342,191 @@ def compare_folders(
     return diff
 
 
+@dataclass(frozen=True)
+class FolderListingContext:
+    """Immutable traversal configuration and filters for list_folder_paths."""
+    root_rel_prefix: Path = Path("")
+    ignore_handler: Optional[IgnoreHandler] = None
+    resolve_symlinks: bool = True
+    translate_mode: Optional[str] = None
+    dir_mode: DirMode = DirMode.ALL_DIRS
+    dest_dir: Optional[Path] = None
+
+
+def check_circular_dest_symlink(
+    symlink_path: Path,
+    dest_dir: Optional[Path],
+    repo_rel: Path,
+) -> bool:
+    """Read-only inspection returning True if symlink_path is an anomalous circular symlink into dest_dir.
+
+    When dest_dir is provided (e.g. install_pkg_dir during reverse-sync) and symlink_path points into dest_dir:
+    - Canonical symlinks: if resolved symlink matches expected counterpart (dest_dir / repo_rel),
+      it represents a standard Drift deployment link and returns False.
+    - Mismatched symlinks: if resolved symlink points into dest_dir but differs from counterpart,
+      it represents an anomalous circular reference (e.g. host subfolder linking back to repo).
+      A prominent warning is logged and returns True so traversal skips it, preventing infinite
+      duplicate nesting across repeated sync operations.
+    """
+    if dest_dir is None or not symlink_path.is_symlink():
+        return False
+
+    try:
+        resolved_symlink = symlink_path.resolve()
+    except Exception:
+        resolved_symlink = symlink_path
+
+    try:
+        if not is_relative_to(resolved_symlink, dest_dir):
+            return False
+
+        expected_counterpart = dest_dir / repo_rel
+        try:
+            expected_counterpart_resolved = expected_counterpart.resolve()
+        except Exception:
+            expected_counterpart_resolved = expected_counterpart
+
+        if resolved_symlink != expected_counterpart_resolved:
+            logger.warning(
+                f"⚠️  [REVERSE-SYNC] Circular self-referential directory symlink detected at '{symlink_path}' "
+                f"(resolves to '{resolved_symlink}' inside destination repository '{dest_dir}', "
+                f"differing from expected counterpart '{expected_counterpart}'). "
+                f"Skipping recursive traversal to prevent duplicate nesting."
+            )
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _traverse_directory_children(
+    dir_path: Path,
+    current_rel: Path,
+    resolved_dir: Path,
+    visited_dirs: Set[Path],
+    collected_paths: List[Path],
+    context: FolderListingContext,
+) -> None:
+    """Safely traverses child entries of a directory, guarding against recursion cycles and collecting empty dirs."""
+    if resolved_dir in visited_dirs:
+        return
+
+    visited_dirs.add(resolved_dir)
+    try:
+        child_entries = list(dir_path.iterdir())
+        if not child_entries and current_rel != context.root_rel_prefix:
+            if context.dir_mode == DirMode.ONLY_EMPTY_DIR:
+                collected_paths.append(current_rel)
+        else:
+            for child_path in child_entries:
+                child_rel = (
+                    current_rel / child_path.name
+                    if current_rel != Path("")
+                    else Path(child_path.name)
+                )
+                _walk_folder_entry(child_path, child_rel, visited_dirs, collected_paths, context)
+    finally:
+        visited_dirs.remove(resolved_dir)
+
+
+def _walk_folder_entry(
+    current_path: Path,
+    current_rel: Path,
+    visited_dirs: Set[Path],
+    collected_paths: List[Path],
+    context: FolderListingContext,
+) -> None:
+    """Inspects a single filesystem entry, classifying it as ignored, leaf, or directory node."""
+    ignore_check_rel = (
+        decode_dot_prefix(current_rel)
+        if context.translate_mode == "reverse"
+        else current_rel
+    )
+
+    if context.ignore_handler and context.ignore_handler.match_path(
+        ignore_check_rel, is_dir=current_path.is_dir()
+    ):
+        return
+
+    if current_path.is_symlink() and not context.resolve_symlinks:
+        collected_paths.append(current_rel)
+        return
+
+    if current_path.is_file() or not current_path.exists():
+        collected_paths.append(current_rel)
+        return
+
+    if current_path.is_dir():
+        if check_circular_dest_symlink(
+            symlink_path=current_path,
+            dest_dir=context.dest_dir,
+            repo_rel=ignore_check_rel,
+        ):
+            return
+
+        try:
+            resolved_dir = current_path.resolve()
+        except Exception:
+            resolved_dir = current_path
+
+        if context.dir_mode == DirMode.ALL_DIRS and current_rel != context.root_rel_prefix:
+            collected_paths.append(current_rel)
+
+        _traverse_directory_children(
+            dir_path=current_path,
+            current_rel=current_rel,
+            resolved_dir=resolved_dir,
+            visited_dirs=visited_dirs,
+            collected_paths=collected_paths,
+            context=context,
+        )
+
+
 def list_folder_paths(
     src_dir: Path,
     base_rel: Optional[Path] = None,
     ignore_handler: Optional[IgnoreHandler] = None,
     resolve_symlinks: bool = True,
-    translate_mode: Optional[str] = None
+    translate_mode: Optional[str] = None,
+    dir_mode: Union[str, DirMode] = DirMode.ALL_DIRS,
+    dest_dir: Optional[Path] = None,
 ) -> List[Path]:
     """
     Recursively lists all relative paths within src_dir.
     If base_rel is provided, paths returned (and matched against ignore_handler)
     are prefixed by base_rel.
+
+    dir_mode controls directory inclusion (DirMode enum or string):
+      - "all-dirs": (default) Files, empty directories, and intermediate directory nodes are returned.
+      - "only-empty-dir": Files and empty directory placeholders are returned.
+      - "no-dir": Only files and symlinks are returned (no directory nodes).
+
+    dest_dir (optional):
+      Destination store boundary (typically install_pkg_dir during reverse-sync).
+      When provided, symlinks resolving into dest_dir are inspected for self-referential loops:
+      - Canonical symlinks: if real_target matches expected counterpart (dest_dir / repo_rel),
+        it represents a standard Drift deployment link and is traversed normally without warning.
+      - Mismatched symlinks: if real_target points into dest_dir but differs from counterpart,
+        it represents an anomalous circular reference (e.g. host subfolder linking back to repo).
+        A prominent warning is logged and recursive traversal is skipped to prevent infinite duplicate
+        nesting across repeated sync operations.
     """
-    from ..utils.path_utils import decode_dot_prefix
+    context = FolderListingContext(
+        root_rel_prefix=base_rel if base_rel is not None else Path(""),
+        ignore_handler=ignore_handler,
+        resolve_symlinks=resolve_symlinks,
+        translate_mode=translate_mode,
+        dir_mode=DirMode.from_str(dir_mode),
+        dest_dir=dest_dir,
+    )
 
-    results: List[Path] = []
-    prefix = base_rel if base_rel is not None else Path("")
-
-    def _walk(p_src: Path, rel: Path, visited: set):
-        repo_rel = rel
-        if translate_mode == "reverse":
-            repo_rel = decode_dot_prefix(rel)
-
-        if ignore_handler and ignore_handler.match_path(repo_rel, is_dir=p_src.is_dir()):
-            return
-
-        if p_src.is_symlink() and not resolve_symlinks:
-            results.append(rel)
-            return
-
-        if p_src.is_file() or not p_src.exists():
-            results.append(rel)
-            return
-
-        if p_src.is_dir():
-            try:
-                real_key = p_src.resolve()
-            except Exception:
-                real_key = p_src
-
-            if real_key in visited:
-                return
-
-            visited.add(real_key)
-            try:
-                children = list(p_src.iterdir())
-                if not children and rel != Path(""):
-                    results.append(rel)
-                else:
-                    for child in children:
-                        child_rel = rel / child.name if rel != Path("") else Path(child.name)
-                        _walk(child, child_rel, visited)
-            finally:
-                visited.remove(real_key)
-
-    _walk(src_dir, prefix, set())
-    return sorted(list(set(results)))
+    collected_paths: List[Path] = []
+    _walk_folder_entry(
+        current_path=src_dir,
+        current_rel=context.root_rel_prefix,
+        visited_dirs=set(),
+        collected_paths=collected_paths,
+        context=context,
+    )
+    return sorted(list(set(collected_paths)))

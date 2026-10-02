@@ -51,6 +51,7 @@ from typing import List, Tuple, Sequence, Iterable
 from ..core.constants import (
     DRIFT_GENERATED_FILES,
     DEFAULT_DIFF_EXCLUDE_PATTERNS,
+    DirMode,
 )
 from ..config.workspace_config import WorkspaceConfig
 from ..core.result_models import DiffType, DiffResult, PackageDiffDetail, FileDiffDetail
@@ -207,7 +208,7 @@ def collect_pending_delta_pairs(
         install_pkg = workspace_config.install_path / pkg
         render_pkg = workspace_config.render_path / pkg
 
-        diff = compare_folders(render_pkg, install_pkg, resolve_symlinks=False)
+        diff = compare_folders(render_pkg, install_pkg, resolve_symlinks=False, dir_mode=DirMode.NO_DIR)
         for rel_f in (f for f in diff.modified if is_diff_candidate(render_pkg / f, ignored_files) and is_diff_candidate(install_pkg / f, ignored_files)):
             pairs.append((install_pkg / rel_f, render_pkg / rel_f))
         for rel_f in (f for f in diff.added if is_diff_candidate(render_pkg / f, ignored_files)):
@@ -254,7 +255,7 @@ def collect_pending_folder_diff_details(
     files: List[FileDiffDetail] = []
 
     if render_pkg.exists() and install_pkg.exists():
-        diff = compare_folders(render_pkg, install_pkg)
+        diff = compare_folders(render_pkg, install_pkg, dir_mode=DirMode.NO_DIR)
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="added")
             for p in diff.added

@@ -7,8 +7,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.core.constants import set_test_mode
-from drift.core.folder_diff import compare_folders, list_folder_paths, FolderDiff
+from drift.core.constants import set_test_mode, DirMode
+from drift.core.folder_diff import (
+    compare_folders,
+    list_folder_paths,
+    FolderDiff,
+    FolderListingContext,
+    check_circular_dest_symlink,
+)
 from drift.core.ignore import DriftIgnore
 
 
@@ -771,8 +777,47 @@ class TestListFolderPaths(unittest.TestCase):
         (self.root / "sub" / "file2.txt").write_text("2", encoding="utf-8")
         (self.root / "empty_dir").mkdir()
 
+        # Default dir_mode is ALL_DIRS (unifying with compare_folders and matching find)
         paths = list_folder_paths(self.root)
+        self.assertEqual(paths, [Path("empty_dir"), Path("file1.txt"), Path("sub"), Path("sub/file2.txt")])
+
+    def test_list_folder_paths_dir_mode_only_empty_dir(self) -> None:
+        (self.root / "file1.txt").write_text("1", encoding="utf-8")
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "file2.txt").write_text("2", encoding="utf-8")
+        (self.root / "empty_dir").mkdir()
+
+        paths = list_folder_paths(self.root, dir_mode="only-empty-dir")
         self.assertEqual(paths, [Path("empty_dir"), Path("file1.txt"), Path("sub/file2.txt")])
+        paths_enum = list_folder_paths(self.root, dir_mode=DirMode.ONLY_EMPTY_DIR)
+        self.assertEqual(paths_enum, [Path("empty_dir"), Path("file1.txt"), Path("sub/file2.txt")])
+
+    def test_list_folder_paths_dir_mode_no_dir(self) -> None:
+        (self.root / "file1.txt").write_text("1", encoding="utf-8")
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "file2.txt").write_text("2", encoding="utf-8")
+        (self.root / "empty_dir").mkdir()
+
+        paths = list_folder_paths(self.root, dir_mode="no-dir")
+        self.assertEqual(paths, [Path("file1.txt"), Path("sub/file2.txt")])
+        paths_enum = list_folder_paths(self.root, dir_mode=DirMode.NO_DIR)
+        self.assertEqual(paths_enum, [Path("file1.txt"), Path("sub/file2.txt")])
+
+    def test_list_folder_paths_dir_mode_all_dirs(self) -> None:
+        (self.root / "file1.txt").write_text("1", encoding="utf-8")
+        (self.root / "sub").mkdir()
+        (self.root / "sub" / "file2.txt").write_text("2", encoding="utf-8")
+        (self.root / "empty_dir").mkdir()
+
+        paths = list_folder_paths(self.root, dir_mode="all-dirs")
+        self.assertEqual(paths, [Path("empty_dir"), Path("file1.txt"), Path("sub"), Path("sub/file2.txt")])
+        paths_enum = list_folder_paths(self.root, dir_mode=DirMode.ALL_DIRS)
+        self.assertEqual(paths_enum, [Path("empty_dir"), Path("file1.txt"), Path("sub"), Path("sub/file2.txt")])
+
+    def test_list_folder_paths_dir_mode_invalid(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            list_folder_paths(self.root, dir_mode="invalid-mode")
+        self.assertIn("Invalid dir_mode", str(ctx.exception))
 
     def test_list_folder_paths_with_base_rel(self) -> None:
         (self.root / "sub").mkdir()
@@ -810,6 +855,59 @@ class TestListFolderPaths(unittest.TestCase):
         # resolve_symlinks=False treats it as a single symlink entry
         paths_unresolved = list_folder_paths(link_dir, base_rel=Path("link_dir"), resolve_symlinks=False)
         self.assertEqual(paths_unresolved, [Path("link_dir")])
+
+        # resolve_symlinks=False with dir_mode=NO_DIR must preserve symlink to directory as a terminal leaf
+        paths_unresolved_no_dir = list_folder_paths(
+            link_dir, base_rel=Path("link_dir"), resolve_symlinks=False, dir_mode=DirMode.NO_DIR
+        )
+        self.assertEqual(paths_unresolved_no_dir, [Path("link_dir")])
+
+        # Walked from parent root with resolve_symlinks=False and dir_mode=NO_DIR
+        paths_from_root = list_folder_paths(
+            self.root, resolve_symlinks=False, dir_mode=DirMode.NO_DIR
+        )
+        self.assertEqual(paths_from_root, [Path("link_dir")])
+
+
+    def test_list_folder_paths_dest_dir_circular_symlink_guard(self) -> None:
+        """Verifies that an anomalous directory symlink resolving into dest_dir differing from
+        its counterpart is warned and skipped, while canonical symlinks are traversed."""
+        dest_dir = self.base / "repo_install"
+        (dest_dir / "plugins" / "base.plugin").parent.mkdir(parents=True, exist_ok=True)
+        (dest_dir / "plugins" / "base.plugin").write_text("base", encoding="utf-8")
+
+        host_plugins = self.root / "plugins"
+        host_plugins.mkdir(parents=True, exist_ok=True)
+        (host_plugins / "dynamic.txt").write_text("dynamic", encoding="utf-8")
+
+        # 1. Circular / mismatched symlink: host/plugins/link_to_repo -> dest_dir/plugins
+        (host_plugins / "link_to_repo").symlink_to(dest_dir / "plugins")
+
+        # 2. Canonical symlink: host/plugins/canonical_sub -> dest_dir/plugins/canonical_sub
+        (dest_dir / "plugins" / "canonical_sub").mkdir(parents=True, exist_ok=True)
+        (dest_dir / "plugins" / "canonical_sub" / "leaf.txt").write_text("leaf", encoding="utf-8")
+        (host_plugins / "canonical_sub").symlink_to(dest_dir / "plugins" / "canonical_sub")
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.core.folder_diff", level="WARNING") as cm:
+                paths = list_folder_paths(
+                    src_dir=host_plugins,
+                    base_rel=Path("plugins"),
+                    dest_dir=dest_dir,
+                    dir_mode="no-dir",
+                )
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # Warning logged for link_to_repo
+        self.assertTrue(any("Circular self-referential directory symlink detected" in log for log in cm.output))
+        # Canonical sub is traversed
+        self.assertIn(Path("plugins/canonical_sub/leaf.txt"), paths)
+        # Normal host file is included
+        self.assertIn(Path("plugins/dynamic.txt"), paths)
+        # Anomalous circular link was skipped
+        self.assertNotIn(Path("plugins/link_to_repo/base.plugin"), paths)
 
 
 class TestFolderDiffCyclicReferences(unittest.TestCase):
@@ -938,6 +1036,201 @@ class TestFolderDiffCyclicReferences(unittest.TestCase):
         self.assertEqual(diff_full.added, [Path("pkg.txt")])
         self.assertIn(Path("root.txt"), diff_full.deleted)
         self.assertIn(Path("render/pkg/pkg.txt"), diff_full.deleted)
+
+
+class TestCompareFoldersDirMode(unittest.TestCase):
+    """Tests for compare_folders dir_mode parameter (DirMode.ALL_DIRS, DirMode.ONLY_EMPTY_DIR, DirMode.NO_DIR)."""
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp_dir.name).resolve()
+        self.src = self.base / "src"
+        self.dst = self.base / "dst"
+        self.src.mkdir(parents=True, exist_ok=True)
+        self.dst.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _setup_hierarchy(self, root: Path) -> None:
+        (root / "root_file.txt").write_text("root", encoding="utf-8")
+        (root / "sub").mkdir(parents=True, exist_ok=True)
+        (root / "sub" / "file.txt").write_text("sub_file", encoding="utf-8")
+        (root / "empty_sub").mkdir(parents=True, exist_ok=True)
+
+    def test_compare_folders_dir_mode_all_dirs(self) -> None:
+        self._setup_hierarchy(self.src)
+        # Added (src has hierarchy, dst is empty)
+        diff = compare_folders(self.src, self.dst, dir_mode=DirMode.ALL_DIRS)
+        self.assertEqual(
+            diff.added,
+            [Path("empty_sub"), Path("root_file.txt"), Path("sub"), Path("sub/file.txt")]
+        )
+        # Deleted (src is empty, dst has hierarchy)
+        diff_rev = compare_folders(self.dst, self.src, dir_mode="all-dirs")
+        self.assertEqual(
+            diff_rev.deleted,
+            [Path("empty_sub"), Path("root_file.txt"), Path("sub"), Path("sub/file.txt")]
+        )
+
+    def test_compare_folders_dir_mode_only_empty_dir(self) -> None:
+        self._setup_hierarchy(self.src)
+        # Added (empty_sub included, intermediate sub excluded)
+        diff = compare_folders(self.src, self.dst, dir_mode=DirMode.ONLY_EMPTY_DIR)
+        self.assertEqual(
+            diff.added,
+            [Path("empty_sub"), Path("root_file.txt"), Path("sub/file.txt")]
+        )
+        # Deleted
+        diff_rev = compare_folders(self.dst, self.src, dir_mode="only-empty-dir")
+        self.assertEqual(
+            diff_rev.deleted,
+            [Path("empty_sub"), Path("root_file.txt"), Path("sub/file.txt")]
+        )
+
+    def test_compare_folders_dir_mode_no_dir(self) -> None:
+        self._setup_hierarchy(self.src)
+        # Added (all directories excluded, only files returned)
+        diff = compare_folders(self.src, self.dst, dir_mode=DirMode.NO_DIR)
+        self.assertEqual(
+            diff.added,
+            [Path("root_file.txt"), Path("sub/file.txt")]
+        )
+        # Deleted
+        diff_rev = compare_folders(self.dst, self.src, dir_mode="no-dir")
+        self.assertEqual(
+            diff_rev.deleted,
+            [Path("root_file.txt"), Path("sub/file.txt")]
+        )
+
+    def test_compare_folders_dir_mode_invalid(self) -> None:
+        with self.assertRaises(ValueError) as ctx:
+            compare_folders(self.src, self.dst, dir_mode="invalid-mode")
+        self.assertIn("Invalid dir_mode", str(ctx.exception))
+
+    def test_compare_folders_single_empty_dir_across_modes(self) -> None:
+        empty_dir = self.base / "empty_standalone"
+        empty_dir.mkdir(parents=True, exist_ok=True)
+        missing_dst = self.base / "nonexistent"
+
+        # ALL_DIRS: empty directory root is returned
+        diff_all = compare_folders(empty_dir, missing_dst, dir_mode=DirMode.ALL_DIRS)
+        self.assertEqual(diff_all.added, [Path("")])
+
+        # ONLY_EMPTY_DIR: empty directory root is returned
+        diff_only = compare_folders(empty_dir, missing_dst, dir_mode=DirMode.ONLY_EMPTY_DIR)
+        self.assertEqual(diff_only.added, [Path("")])
+
+        # NO_DIR: directory is omitted entirely
+        diff_none = compare_folders(empty_dir, missing_dst, dir_mode=DirMode.NO_DIR)
+        self.assertEqual(diff_none.added, [])
+
+    def test_compare_folders_dir_symlink_with_no_dir_unresolved(self) -> None:
+        """Verifies that symlinks pointing to directories are preserved as terminal leaf items
+        when resolve_symlinks=False, even under dir_mode=NO_DIR."""
+        external_dir = self.base / "external_target"
+        external_dir.mkdir(parents=True, exist_ok=True)
+        (external_dir / "target_file.txt").write_text("content", encoding="utf-8")
+
+        # 1. Symlink in src, dst empty
+        (self.src / "link_dir").symlink_to(external_dir)
+        diff_added = compare_folders(
+            self.src, self.dst, resolve_symlinks=False, dir_mode=DirMode.NO_DIR
+        )
+        self.assertEqual(diff_added.added, [Path("link_dir")])
+        self.assertEqual(diff_added.deleted, [])
+
+        # 2. Symlink in dst, src empty
+        diff_deleted = compare_folders(
+            self.dst, self.src, resolve_symlinks=False, dir_mode=DirMode.NO_DIR
+        )
+        self.assertEqual(diff_deleted.deleted, [Path("link_dir")])
+        self.assertEqual(diff_deleted.added, [])
+
+        # 3. Symlink in src replacing physical directory with files in dst
+        (self.dst / "link_dir").mkdir(parents=True, exist_ok=True)
+        (self.dst / "link_dir" / "old.txt").write_text("old", encoding="utf-8")
+        diff_replace = compare_folders(
+            self.src, self.dst, resolve_symlinks=False, dir_mode=DirMode.NO_DIR
+        )
+        self.assertIn(Path("link_dir"), diff_replace.added)
+        self.assertIn(Path("link_dir/old.txt"), diff_replace.deleted)
+
+
+class TestFolderListingHelpers(unittest.TestCase):
+    """Targeted unit tests for extracted helpers: check_circular_dest_symlink and FolderListingContext."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp_dir.name).resolve()
+        self.dest_dir = self.base / "repo_install"
+        self.dest_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_check_circular_dest_symlink_dest_dir_none(self) -> None:
+        file_path = self.base / "regular.txt"
+        file_path.write_text("hello", encoding="utf-8")
+        self.assertFalse(
+            check_circular_dest_symlink(file_path, None, Path("regular.txt"))
+        )
+
+    def test_check_circular_dest_symlink_not_a_symlink(self) -> None:
+        dir_path = self.base / "real_dir"
+        dir_path.mkdir()
+        self.assertFalse(
+            check_circular_dest_symlink(dir_path, self.dest_dir, Path("real_dir"))
+        )
+
+    def test_check_circular_dest_symlink_external_target(self) -> None:
+        external_target = self.base / "external"
+        external_target.mkdir()
+        link_path = self.base / "link"
+        link_path.symlink_to(external_target)
+        self.assertFalse(
+            check_circular_dest_symlink(link_path, self.dest_dir, Path("link"))
+        )
+
+    def test_check_circular_dest_symlink_canonical_target(self) -> None:
+        canonical_target = self.dest_dir / "plugins" / "foo"
+        canonical_target.mkdir(parents=True, exist_ok=True)
+        link_path = self.base / "foo"
+        link_path.symlink_to(canonical_target)
+        self.assertFalse(
+            check_circular_dest_symlink(link_path, self.dest_dir, Path("plugins/foo"))
+        )
+
+    def test_check_circular_dest_symlink_anomalous_loop(self) -> None:
+        repo_sub = self.dest_dir / "plugins"
+        repo_sub.mkdir(parents=True, exist_ok=True)
+        link_path = self.base / "bad_link"
+        link_path.symlink_to(repo_sub)
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.core.folder_diff", level="WARNING") as cm:
+                is_anomalous = check_circular_dest_symlink(
+                    link_path, self.dest_dir, Path("different/path")
+                )
+            self.assertTrue(is_anomalous)
+            self.assertTrue(any("Circular self-referential directory symlink detected" in log for log in cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_folder_listing_context_immutability_and_defaults(self) -> None:
+        ctx = FolderListingContext()
+        self.assertEqual(ctx.root_rel_prefix, Path(""))
+        self.assertIsNone(ctx.ignore_handler)
+        self.assertTrue(ctx.resolve_symlinks)
+        self.assertIsNone(ctx.translate_mode)
+        self.assertEqual(ctx.dir_mode, DirMode.ALL_DIRS)
+        self.assertIsNone(ctx.dest_dir)
+
+        # Frozen dataclass raises FrozenInstanceError on mutation
+        with self.assertRaises((AttributeError, Exception)):
+            ctx.dir_mode = DirMode.NO_DIR  # type: ignore
 
 
 if __name__ == "__main__":

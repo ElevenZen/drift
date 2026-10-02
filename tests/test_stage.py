@@ -979,6 +979,25 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(action_map["updated.txt"].action_type, FileActionType.UPDATE_COPY)
         self.assertEqual(action_map["perm.txt"].action_type, FileActionType.UPDATE_PERMISSION)
 
+        # 4. Directory with differing permissions in modified -> UPDATE_PERMISSION
+        (src_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
+        (dst_dir / "mod_dir").mkdir(parents=True, exist_ok=True)
+        (src_dir / "mod_dir").chmod(0o700)
+        (dst_dir / "mod_dir").chmod(0o755)
+
+        diff_dir_perm = FolderDiff(modified=[Path("mod_dir")])
+        dir_actions = plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
+        self.assertEqual(len(dir_actions), 1)
+        self.assertEqual(dir_actions[0].action_type, FileActionType.UPDATE_PERMISSION)
+        self.assertEqual(dir_actions[0].dst_path, dst_dir / "mod_dir")
+        self.assertIn("Permissions differ", dir_actions[0].reason or "")
+
+        # 5. Directory with matching permissions in modified -> raises RuntimeError
+        (dst_dir / "mod_dir").chmod(0o700)
+        with self.assertRaises(RuntimeError) as ctx:
+            plan_actions_from_folder_diff(diff_dir_perm, src_dir, dst_dir)
+        self.assertIn("Impossible state in plan_actions_from_folder_diff", str(ctx.exception))
+
     def test_stage_hook_or_config_modification_detected(self) -> None:
         """Verifies that modifying hook script or drift_package.toml produces stage changes with has_changes=True."""
         pkg = "pkg_hook_detect"

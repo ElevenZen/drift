@@ -1,73 +1,11 @@
-import sys
-import logging
-import shutil
 from pathlib import Path
-from typing import Optional
 
 from .folder_diff import compare_folders
 from ..utils.file_ops import (
     remove,
     move_tree,
-    copy_file,
-    copy_symlink,
 )
 from ..utils.file_inspect import is_concrete_dir
-from ..utils.process_utils import run_command
-from .constants import MANAGED_CONFIG_FILES, LineEnding
-from .ignore import IgnoreHandler
-
-
-logger = logging.getLogger(__name__)
-
-
-def reverse_sync_file_or_dir(src: Path, dst: Path, ignore_handler: Optional[IgnoreHandler] = None) -> None:
-    """
-    Performs reverse sync for a single file, directory, or link from src (typically on the system)
-    back to dst (typically in the local install state database).
-    The dst directory shall not contain any symlink pointing into src, to avoid infinite loops.
-    As long as the dst lives inside install/, this can be ensured.
-    """
-    diff = compare_folders(src, dst, ignore_handler=ignore_handler, resolve_symlinks=True)
-    
-    # Process deletions
-    for rel_file in diff.deleted:
-        if rel_file.name in MANAGED_CONFIG_FILES:
-            continue
-        target_dst = dst / rel_file if rel_file != Path("") else dst
-        logger.info(f"System Deletion: '{src / rel_file if rel_file != Path('') else src}' is missing. Deleting counterpart '{target_dst}' from install/...")
-        remove(target_dst)
-
-    # Process additions and modifications
-    for rel_file in diff.added + diff.modified:
-        if rel_file.name in MANAGED_CONFIG_FILES:
-            continue
-        target_src = src / rel_file if rel_file != Path("") else src
-        target_dst = dst / rel_file if rel_file != Path("") else dst
-
-        if is_concrete_dir(target_src):
-            target_dst.mkdir(parents=True, exist_ok=True)
-            continue
-
-        is_broken = False
-        if target_src.is_symlink():
-            try:
-                if not target_src.resolve().exists():
-                    is_broken = True
-            except Exception:
-                is_broken = True
-
-        if is_broken or (target_src.is_symlink() and target_src.is_dir()):
-            copy_symlink(target_src, target_dst)
-            continue
-
-        logger.info(f"System Modification: '{target_src}' has drifted. Reverse-copying back to install/...")
-        remove(target_dst)
-        target_dst.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(
-            target_src,
-            target_dst,
-            line_ending=(LineEnding.LF if sys.platform == "win32" else LineEnding.PRESERVE)
-        )
 
 
 def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolve_symlinks: bool = True) -> None:

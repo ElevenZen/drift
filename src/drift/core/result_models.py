@@ -35,9 +35,70 @@ class DiffType(str, Enum):
 from .serialization import serialize_for_json, SerializableModel
 
 
+from .folder_delivery import (
+    FileActionType,
+    FileAction,
+    format_action_line,
+    format_action_summary,
+)
+
+
 # =============================================================================
 # Primitive 1: Reverse-Sync
 # =============================================================================
+
+@dataclass
+class PackageReverseSyncPlan(SerializableModel):
+    """Structured reverse-sync plan detailing planned filesystem operations to sync host back to install/."""
+    package: str = ""
+    target_directory: str = ""
+    actions: List[FileAction] = field(default_factory=list)
+    status: str = "PENDING"  # "PENDING", "SKIPPED", "FAILED"
+    error: Optional[str] = None
+
+    @property
+    def created(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type == FileActionType.CREATE_COPY]
+
+    @property
+    def updated(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_COPY]
+
+    @property
+    def permissions_updated(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type == FileActionType.UPDATE_PERMISSION]
+
+    @property
+    def deleted(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type in (FileActionType.DELETE_FILE, FileActionType.BACKUP_PRUNE)]
+
+    @property
+    def skipped(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type == FileActionType.SKIP_IDENTICAL]
+
+    def format_text(self) -> str:
+        lines = [f"=== Reverse Sync Plan: {self.package} ==="]
+        if self.status != "PENDING":
+            lines.append(f"Status: {self.status}")
+        if self.error:
+            lines.append(f"Error: {self.error}")
+        for action in self.actions:
+            lines.append(format_action_line(action))
+        return "\n".join(lines)
+
+
+@dataclass
+class ReverseSyncPlan(SerializableModel):
+    """Structured reverse-sync plan for multiple packages."""
+    plans: List[PackageReverseSyncPlan] = field(default_factory=list)
+
+    @property
+    def has_changes(self) -> bool:
+        return any(bool(p.created or p.updated or p.permissions_updated or p.deleted) for p in self.plans)
+
+    def format_text(self) -> str:
+        return "\n".join(plan.format_text() for plan in self.plans)
+
 
 @dataclass
 class PackageReverseSyncResult(SerializableModel):
@@ -83,13 +144,6 @@ class RenderResult(SerializableModel):
 # =============================================================================
 # Primitive 4: Stage Render to Install
 # =============================================================================
-
-from .folder_delivery import (
-    FileActionType,
-    FileAction,
-    format_action_line,
-    format_action_summary,
-)
 
 
 @dataclass

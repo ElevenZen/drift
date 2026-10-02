@@ -70,6 +70,7 @@ from ..utils.path_utils import (
     is_relative_to,
 )
 from ..core.ignore import DriftIgnore, IgnoreHandler
+from ..core.constants import DirMode
 from ..core.folder_diff import list_folder_paths
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 
@@ -147,6 +148,7 @@ def resolve_single_import_worklist(
         ignore_handler=scoped_ignore,
         resolve_symlinks=True,
         translate_mode="reverse",
+        dir_mode=DirMode.NO_DIR,
     )
 
     return [

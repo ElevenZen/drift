@@ -22,6 +22,7 @@ from ..core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DirMode,
 )
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
@@ -232,7 +233,7 @@ def render_subfolder_entries(
     from ..core.folder_diff import list_folder_paths
 
     written = written_destinations if written_destinations is not None else {}
-    files = list_folder_paths(src_dir, resolve_symlinks=True)
+    files = list_folder_paths(src_dir, resolve_symlinks=True, dir_mode=DirMode.ONLY_EMPTY_DIR)
     for file in files:
         res = render_package_file_entry(
             rel_path=file,
