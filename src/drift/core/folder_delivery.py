@@ -700,11 +700,20 @@ def _plan_orphan_prune(
     orphan_rel: Path,
     reason: str,
 ) -> List[FileAction]:
-    """Inspects an orphaned path on target and plans BACKUP_PRUNE or DELETE_ITEM if present."""
+    """Inspects an orphaned path on target and plans BACKUP_PRUNE or DELETE_ITEM/DELETE_TREE if present.
+
+    Safety Guard:
+    DELETE_TREE is strictly reserved for reverse_mode (where target is Drift's internal install/
+    state database, ensuring complete removal of deleted directories and .drift_keep stubs).
+    In forward delivery mode, orphan pruning uses DELETE_ITEM (or BACKUP_PRUNE) so that
+    remove_file_or_empty_dir safely preserves any directories on the host that have been populated
+    with user files.
+    """
     system_target = context.translate_target_path(orphan_rel)
     if not (system_target.exists() or system_target.is_symlink()):
         return []
-    return [_plan_backup_or_delete(context, system_target, orphan_rel, reason=reason, is_orphan=True)]
+    is_tree = context.reverse_mode and is_concrete_dir(system_target)
+    return [_plan_backup_or_delete(context, system_target, orphan_rel, reason=reason, is_orphan=True, is_tree=is_tree)]
 
 
 def _inspect_orphans(

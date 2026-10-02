@@ -6,10 +6,25 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME, set_test_mode
+from drift.core.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_KEEP_FILE_NAME,
+    BackupSubfolder,
+    set_test_mode,
+)
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.core.ignore import DriftIgnore
+from drift.core.folder_delivery import (
+    DeliveryInspectionContext,
+    FileActionExecutionContext,
+    FileActionType,
+    InstallMethod,
+    plan_folder_delivery,
+    execute_delivery_actions,
+)
 from drift.primitives.reverse_sync import (
     run_primitive_1_reverse_sync,
     reverse_sync_package,
@@ -1071,6 +1086,144 @@ class TestReverseSync(unittest.TestCase):
         ws_result = execute_reverse_sync_plan(self.workspace_config, ws_plan)
         self.assertEqual(ws_result.status, "SUCCESS")
         self.assertEqual((pkg_install_dir / "tracked.txt").read_text(encoding="utf-8"), "drifted")
+
+    def test_reverse_sync_fcd_empty_dir_creates_keep_file(self) -> None:
+        """Verifies that reverse-syncing an FCD with a newly created empty directory creates .drift_keep in install/."""
+        pkg = "pkg_fcd_empty"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = [".config/my_app"]
+        """, encoding="utf-8")
+
+        # Create FCD directory on host with an empty folder leaf
+        host_fcd = self.system_target_dir / ".config" / "my_app"
+        (host_fcd / "empty_sub").mkdir(parents=True, exist_ok=True)
+
+        # Run reverse sync
+        result = reverse_sync_package(pkg, self.install_dir, self.workspace_config)
+        self.assertEqual(result.status, "SUCCESS")
+
+        # Verify .drift_keep created in install/ state database
+        expected_keep = pkg_install_dir / "dot-config" / "my_app" / "empty_sub" / DRIFT_KEEP_FILE_NAME
+        self.assertTrue(expected_keep.is_file())
+        self.assertEqual(expected_keep.read_bytes(), b"")
+
+        # Verify recorded in synced and drifted files
+        rel_str = str(Path("dot-config") / "my_app" / "empty_sub" / DRIFT_KEEP_FILE_NAME)
+        self.assertIn(rel_str, result.synced_files)
+
+    def test_reverse_sync_fcd_empty_dir_deleted_on_host_prunes_keep_file(self) -> None:
+        """Verifies that when an empty directory in an FCD is deleted on the host, reverse sync removes it via DELETE_TREE."""
+        pkg = "pkg_fcd_del_empty"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = [".config/my_app"]
+        """, encoding="utf-8")
+
+        # Pre-populate install/ with an empty folder tracked by .drift_keep
+        repo_empty_dir = pkg_install_dir / "dot-config" / "my_app" / "old_empty"
+        repo_empty_dir.mkdir(parents=True, exist_ok=True)
+        (repo_empty_dir / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        # On host, create the FCD but omit the empty folder (simulating deletion on host)
+        host_fcd = self.system_target_dir / ".config" / "my_app"
+        host_fcd.mkdir(parents=True, exist_ok=True)
+        (host_fcd / "other_file.txt").write_text("other", encoding="utf-8")
+
+        # Run reverse sync
+        result = reverse_sync_package(pkg, self.install_dir, self.workspace_config)
+        self.assertEqual(result.status, "SUCCESS")
+
+        # Verify the empty folder and .drift_keep are completely pruned in install/
+        self.assertFalse(repo_empty_dir.exists())
+
+    def test_reverse_sync_fcd_empty_dir_populated_prunes_keep_file(self) -> None:
+        """Verifies that when a previously empty folder in an FCD is populated with files on host, .drift_keep is pruned."""
+        pkg = "pkg_fcd_pop_empty"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "{pkg}"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        fully_controlled_dirs = [".config/my_app"]
+        """, encoding="utf-8")
+
+        # Pre-populate install/ with an empty folder tracked by .drift_keep
+        repo_sub = pkg_install_dir / "dot-config" / "my_app" / "sub"
+        repo_sub.mkdir(parents=True, exist_ok=True)
+        (repo_sub / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        # On host, populate the directory with a new file
+        host_sub = self.system_target_dir / ".config" / "my_app" / "sub"
+        host_sub.mkdir(parents=True, exist_ok=True)
+        (host_sub / "new_file.txt").write_text("content", encoding="utf-8")
+
+        # Run reverse sync
+        result = reverse_sync_package(pkg, self.install_dir, self.workspace_config)
+        self.assertEqual(result.status, "SUCCESS")
+
+        # Verify file is synced and .drift_keep is pruned
+        self.assertTrue((repo_sub / "new_file.txt").is_file())
+        self.assertFalse((repo_sub / DRIFT_KEEP_FILE_NAME).exists())
+
+    def test_orphan_prune_forward_mode_preserves_populated_host_directory(self) -> None:
+        """Verifies that in forward mode (reverse_mode=False), orphan pruning uses DELETE_ITEM and preserves populated host dirs."""
+        src_pkg = self.install_dir / "pkg_forward"
+        src_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Host has a directory that was originally deployed as empty, but user later populated with files
+        host_dir = self.system_target_dir / "my_dir"
+        host_dir.mkdir(parents=True, exist_ok=True)
+        user_file = host_dir / "important_user_file.txt"
+        user_file.write_text("do not delete!", encoding="utf-8")
+
+        # Forward delivery context (reverse_mode=False)
+        ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=src_pkg,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=False,
+        )
+
+        # Package now has NO files (deployable_files=[]), so my_dir is an orphan in deployed_files
+        actions = plan_folder_delivery(
+            context=ctx,
+            deployable_files=[],
+            deployed_files=[Path("my_dir")],
+        )
+
+        # Crucial invariant: must plan DELETE_ITEM (or BACKUP), NOT DELETE_TREE!
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action_type, FileActionType.DELETE_ITEM)
+        self.assertEqual(actions[0].dst_path, host_dir)
+
+        # Execute actions
+        exec_ctx = FileActionExecutionContext(sudo=False)
+        execute_delivery_actions(exec_ctx, actions)
+
+        # Crucial invariant: populated directory and user file MUST be preserved!
+        self.assertTrue(host_dir.is_dir())
+        self.assertTrue(user_file.is_file())
+        self.assertEqual(user_file.read_text(encoding="utf-8"), "do not delete!")
 
 
 if __name__ == "__main__":

@@ -14,6 +14,7 @@ from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRIFT_KEEP_FILE_NAME,
     set_test_mode,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
@@ -42,6 +43,8 @@ from drift.primitives.adopt_repo import (
     execute_adopt_repo,
     plan_package_adopt,
     execute_package_adopt,
+    handle_single_addition,
+    handle_single_deletion,
 )
 
 set_test_mode(True)
@@ -1642,6 +1645,282 @@ render_command = "bash -c 'cat %i %s'"
         self.assertFalse((src_pkg / "old_name.conf").exists())
         self.assertTrue((src_pkg / "new_name.conf").exists())
         self.assertEqual((src_pkg / "new_name.conf").read_text(encoding="utf-8"), modified_content)
+
+    def test_get_package_drifts_keep_file_addition_translation(self) -> None:
+        """Verifies that .drift_keep addition in install/ is translated to parent directory addition in adopt plan."""
+        pkg = "pkg_keep_add"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Create an empty directory in install/ with .drift_keep
+        new_dir = install_pkg / "my_empty_folder"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        (new_dir / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        plan = get_package_drifts(self.workspace_config, pkg)
+        self.assertIn(Path("my_empty_folder"), plan.additions)
+        self.assertNotIn(Path("my_empty_folder") / DRIFT_KEEP_FILE_NAME, plan.additions)
+
+    def test_get_package_drifts_keep_file_deletion_translation(self) -> None:
+        """Verifies that .drift_keep deletion in install/ is translated to parent directory deletion in adopt plan."""
+        pkg = "pkg_keep_del"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        # Pre-commit an empty directory with .drift_keep in install/
+        old_dir = install_pkg / "old_empty_folder"
+        old_dir.mkdir(parents=True, exist_ok=True)
+        (old_dir / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src keep del"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install keep del"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Delete the empty folder in install/
+        shutil.rmtree(old_dir)
+
+        plan = get_package_drifts(self.workspace_config, pkg)
+        self.assertIn(Path("old_empty_folder"), plan.deletions)
+        self.assertNotIn(Path("old_empty_folder") / DRIFT_KEEP_FILE_NAME, plan.deletions)
+
+    def test_get_package_drifts_keep_file_rename_split(self) -> None:
+        """Verifies that renaming a .drift_keep file is split into deletion and addition."""
+        pkg = "pkg_keep_rename"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        dir_a = install_pkg / "dir_a"
+        dir_a.mkdir(parents=True, exist_ok=True)
+        (dir_a / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src keep rename"], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install keep rename"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Rename dir_a to dir_b using git mv
+        (install_pkg / "dir_b").mkdir(parents=True, exist_ok=True)
+        subprocess.run(["git", "-C", str(self.install_dir), "mv", f"{pkg}/dir_a/{DRIFT_KEEP_FILE_NAME}", f"{pkg}/dir_b/{DRIFT_KEEP_FILE_NAME}"], check=True)
+        # Unstage so it's a working tree change
+        subprocess.run(["git", "-C", str(self.install_dir), "restore", "--staged", "--", pkg], check=True)
+
+        plan = get_package_drifts(self.workspace_config, pkg)
+        # Renames should NOT contain keep files
+        self.assertEqual(len(plan.renames), 0)
+        # Deletions should have dir_a, additions should have dir_b
+        self.assertIn(Path("dir_a"), plan.deletions)
+        self.assertIn(Path("dir_b"), plan.additions)
+
+    def test_get_package_drifts_corrupt_keep_file_warning(self) -> None:
+        """Verifies that modified keep files log a warning and are stripped from modifications."""
+        pkg = "pkg_corrupt_keep"
+        src_pkg = self.src_dir / pkg
+        src_pkg.mkdir(parents=True, exist_ok=True)
+        install_pkg = self.install_dir / pkg
+        install_pkg.mkdir(parents=True, exist_ok=True)
+
+        keep_file = install_pkg / "my_dir" / DRIFT_KEEP_FILE_NAME
+        keep_file.parent.mkdir(parents=True, exist_ok=True)
+        keep_file.write_bytes(b"")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init install corrupt keep"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Modify keep file to have non-empty content
+        keep_file.write_text("corrupted content", encoding="utf-8")
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.primitives.adopt_repo", level="WARNING") as log_cm:
+                plan = get_package_drifts(self.workspace_config, pkg)
+                self.assertTrue(any("CORRUPT" in msg for msg in log_cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # Must not be listed in modifications
+        self.assertNotIn(Path("my_dir") / DRIFT_KEEP_FILE_NAME, plan.modifications)
+
+    def test_handle_single_addition_empty_dir_non_interactive(self) -> None:
+        """Verifies non-interactive directory addition creates empty directory in src/ without .drift_keep."""
+        pkg = "pkg_add_dir"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("new_empty_folder")
+        install_folder = pkg_install_dir / rel_path
+        install_folder.mkdir(parents=True, exist_ok=True)
+        (install_folder / DRIFT_KEEP_FILE_NAME).write_bytes(b"")
+
+        resolved = handle_single_addition(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            src_pkg_dir,
+            pkg_install_dir,
+            rel_path,
+            interactive=False,
+        )
+        self.assertTrue(resolved)
+
+        # In src/, new_empty_folder must exist as directory, but NOT contain .drift_keep
+        src_folder = src_pkg_dir / rel_path
+        self.assertTrue(src_folder.is_dir())
+        self.assertFalse((src_folder / DRIFT_KEEP_FILE_NAME).exists())
+        self.assertEqual(list(src_folder.iterdir()), [])
+
+    def test_handle_single_addition_empty_dir_preexisting_skips(self) -> None:
+        """Verifies that if target directory already exists in source, directory addition skips cleanly and returns True."""
+        pkg = "pkg_preexist_dir"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("existing_folder")
+        (src_pkg_dir / rel_path).mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / rel_path).mkdir(parents=True, exist_ok=True)
+
+        resolved = handle_single_addition(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            src_pkg_dir,
+            pkg_install_dir,
+            rel_path,
+            interactive=False,
+        )
+        self.assertTrue(resolved)
+
+    def test_handle_single_addition_empty_dir_file_collision(self) -> None:
+        """Verifies that if a regular file with the same name exists in source, directory addition conflicts and returns False."""
+        pkg = "pkg_dir_file_collision"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("collision_name")
+        (src_pkg_dir / rel_path).write_text("file in source", encoding="utf-8")
+        (pkg_install_dir / rel_path).mkdir(parents=True, exist_ok=True)
+
+        resolved = handle_single_addition(
+            self.workspace_config.render_engine_configs,
+            src_pkg_dir,
+            src_pkg_dir,
+            pkg_install_dir,
+            rel_path,
+            interactive=False,
+        )
+        self.assertFalse(resolved)
+
+    def test_handle_single_deletion_empty_dir_non_interactive(self) -> None:
+        """Verifies that deleting an empty directory in source succeeds in non-interactive mode."""
+        pkg = "pkg_del_empty_dir"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("empty_to_delete")
+        src_dir = src_pkg_dir / rel_path
+        src_dir.mkdir(parents=True, exist_ok=True)
+
+        resolved = handle_single_deletion(
+            self.workspace_config.render_engine_configs,
+            pkg,
+            src_pkg_dir,
+            rel_path,
+            interactive=False,
+        )
+        self.assertTrue(resolved)
+        self.assertFalse(src_dir.exists())
+
+    def test_handle_single_deletion_non_empty_dir_non_interactive_discards(self) -> None:
+        """Verifies that deleting a non-empty directory in source discards deletion with warning and preserves files."""
+        pkg = "pkg_del_non_empty_dir"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("non_empty_to_preserve")
+        src_dir = src_pkg_dir / rel_path
+        src_dir.mkdir(parents=True, exist_ok=True)
+        (src_dir / "user_file.txt").write_text("user content", encoding="utf-8")
+
+        # Commit source file so it passes cleanliness guard
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init src non empty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        set_test_mode(True, enable_logging=True)
+        try:
+            with self.assertLogs("drift.primitives.adopt_repo", level="WARNING") as log_cm:
+                resolved = handle_single_deletion(
+                    self.workspace_config.render_engine_configs,
+                    pkg,
+                    src_pkg_dir,
+                    rel_path,
+                    interactive=False,
+                )
+                self.assertTrue(any("DISCARD" in msg for msg in log_cm.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+    def test_handle_single_deletion_non_empty_dir_interactive_options(self) -> None:
+        """Verifies interactive choices for non-empty directory deletion: discard, confirmed delete, and aborted delete."""
+        pkg = "pkg_del_non_empty_interactive"
+        src_pkg_dir = self.src_dir / pkg
+        src_pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        rel_path = Path("interactive_non_empty")
+        src_dir = src_pkg_dir / rel_path
+        src_dir.mkdir(parents=True, exist_ok=True)
+        (src_dir / "file1.txt").write_text("content 1", encoding="utf-8")
+        (src_dir / "file2.txt").write_text("content 2", encoding="utf-8")
+
+        subprocess.run(["git", "add", "."], cwd=str(self.workspace_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init interactive non empty"], cwd=str(self.workspace_path), check=True, capture_output=True)
+
+        # 1. Choice [1]: Discard deletion -> preserves files, returns True
+        with patch("builtins.input", return_value="1"):
+            resolved = handle_single_deletion(
+                self.workspace_config.render_engine_configs,
+                pkg,
+                src_pkg_dir,
+                rel_path,
+                interactive=True,
+            )
+            self.assertTrue(resolved)
+            self.assertTrue(src_dir.is_dir())
+            self.assertTrue((src_dir / "file1.txt").exists())
+
+        # 2. Choice [2] then 'n': Abort deletion -> preserves files, returns False
+        with patch("builtins.input", side_effect=["2", "n"]):
+            resolved = handle_single_deletion(
+                self.workspace_config.render_engine_configs,
+                pkg,
+                src_pkg_dir,
+                rel_path,
+                interactive=True,
+            )
+            self.assertFalse(resolved)
+            self.assertTrue(src_dir.is_dir())
+            self.assertTrue((src_dir / "file1.txt").exists())
+
+        # 3. Choice [2] then 'y': Confirm deletion -> deletes directory and all files, returns True
+        with patch("builtins.input", side_effect=["2", "y"]):
+            resolved = handle_single_deletion(
+                self.workspace_config.render_engine_configs,
+                pkg,
+                src_pkg_dir,
+                rel_path,
+                interactive=True,
+            )
+            self.assertTrue(resolved)
+            self.assertFalse(src_dir.exists())
 
 
 if __name__ == "__main__":

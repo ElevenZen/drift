@@ -75,14 +75,52 @@ def _validate_no_other_ignore_files(package_dir: Path, resolved_path: Optional[P
             )
 
 
+def resolve_deployable_paths_with_empty_dirs(
+    paths: Sequence[Path],
+    ignore_handler: Optional[IgnoreHandler] = None,
+) -> List[Path]:
+    """Transforms raw file paths into deployable paths, converting .drift_keep stubs into empty directory leaf paths.
+
+    1. Filters regular files (excluding .drift_keep and ignored paths).
+    2. Identifies ancestors of regular files.
+    3. Converts .drift_keep stubs whose parent is not an ancestor of regular files into directory leaf paths.
+    4. Validates that the directory parent is not ignored by ignore_handler.
+    """
+    regular_files = [
+        p for p in paths
+        if p.name != DRIFT_KEEP_FILE_NAME
+        and (ignore_handler is None or not ignore_handler.match_path(p, is_dir=False))
+    ]
+    regular_ancestors = {
+        parent
+        for p in regular_files
+        for parent in p.parents
+        if parent != Path(".")
+    }
+    empty_dirs = [
+        p.parent
+        for p in paths
+        if p.name == DRIFT_KEEP_FILE_NAME
+        and p.parent != Path(".")
+        and p.parent not in regular_ancestors
+        and (ignore_handler is None or not ignore_handler.match_path(p.parent, is_dir=True))
+    ]
+    return sorted(regular_files + empty_dirs)
+
+
 class DriftIgnore(IgnoreHandler):
     """Handles parsing and match evaluation of drift ignore patterns."""
 
-    def __init__(self, patterns: Optional[Sequence[str]] = None) -> None:
+    def __init__(
+        self,
+        patterns: Optional[Sequence[str]] = None,
+        ignore_keep_file: bool = True,
+    ) -> None:
         if patterns is None:
             self.patterns = list(DEFAULT_IGNORE_PATTERNS)
         else:
             self.patterns = list(patterns)
+        self.ignore_keep_file = ignore_keep_file
         # Pre-divide patterns depending on whether they contain '/'
         self.set_with_slash = []
         self.set_without_slash = []
@@ -91,6 +129,14 @@ class DriftIgnore(IgnoreHandler):
                 self.set_with_slash.append(pattern)
             else:
                 self.set_without_slash.append(pattern)
+
+    def set_ignore_keep_file(self, ignore: bool) -> None:
+        """Sets whether DRIFT_KEEP_FILE_NAME is ignored by match_path in-place."""
+        self.ignore_keep_file = ignore
+
+    def with_ignore_keep_file(self, ignore: bool) -> "DriftIgnore":
+        """Returns a new DriftIgnore instance with ignore_keep_file set to the given boolean."""
+        return DriftIgnore(patterns=list(self.patterns), ignore_keep_file=ignore)
 
     @staticmethod
     def strip_comments(line: str) -> str:
@@ -155,32 +201,13 @@ class DriftIgnore(IgnoreHandler):
         from ..utils.file_inspect import tree_files
 
         raw_files = tree_files(install_pkg_dir)
-        regular_files = [
-            rel_file
-            for rel_file in raw_files
-            if rel_file.name != DRIFT_KEEP_FILE_NAME
-            and not self.match_path(rel_file, is_dir=False)
-        ]
-
         if not include_empty_dirs:
-            return sorted(regular_files)
+            return sorted([
+                p for p in raw_files
+                if p.name != DRIFT_KEEP_FILE_NAME and not self.match_path(p, is_dir=False)
+            ])
 
-        regular_ancestors = {
-            parent
-            for file_path in regular_files
-            for parent in file_path.parents
-        }
-
-        empty_dirs = [
-            rel_file.parent
-            for rel_file in raw_files
-            if rel_file.name == DRIFT_KEEP_FILE_NAME
-            and rel_file.parent != Path(".")
-            and rel_file.parent not in regular_ancestors
-            and not self.match_path(rel_file.parent, is_dir=True)
-        ]
-
-        return sorted(regular_files + empty_dirs)
+        return resolve_deployable_paths_with_empty_dirs(raw_files, ignore_handler=self)
 
     def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
         """Implements regex ignore matching algorithm on a relative path."""
@@ -189,7 +216,7 @@ class DriftIgnore(IgnoreHandler):
             return True
 
         filename = rel_path.name
-        if filename in MANAGED_CONFIG_FILES or filename == DRIFT_KEEP_FILE_NAME:
+        if filename in MANAGED_CONFIG_FILES or (self.ignore_keep_file and filename == DRIFT_KEEP_FILE_NAME):
             return True
 
         normalized_rel_path = rel_path.as_posix()

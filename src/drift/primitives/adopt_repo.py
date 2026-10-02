@@ -111,7 +111,7 @@ from typing import Dict, List, Optional, Tuple, Sequence, Union
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
-from ..core.constants import DRIFT_IGNORE_FILE_NAME
+from ..core.constants import DRIFT_IGNORE_FILE_NAME, DRIFT_KEEP_FILE_NAME
 from ..core.result_models import AdoptPlan, AdoptResult, PackageAdoptPlan, PackageAdoptResult
 from ..utils.git_utils import (
     get_git_status_porcelain,
@@ -120,7 +120,7 @@ from ..utils.git_utils import (
     get_drift_root,
     commit_staged_repo_changes,
 )
-from ..utils.file_ops import remove_file_or_empty_dir, copy_file
+from ..utils.file_ops import remove_file_or_empty_dir, remove_tree, copy_file, ensure_dir
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 from ..utils.editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
@@ -339,10 +339,45 @@ def get_package_drifts(
     patches: Dict[str, str] = {}
     try:
         diff = parse_git_status_porcelain(install_base, pkg)
-        renames = sorted([(r.old_path, r.new_path) for r in diff.renamed], key=lambda x: x[1])
-        additions = sorted(diff.added)
-        deletions = sorted(diff.deleted)
-        modifications = sorted(diff.modified)
+        raw_renames = sorted([(r.old_path, r.new_path) for r in diff.renamed], key=lambda x: x[1])
+        renames: List[Tuple[Path, Path]] = []
+        raw_additions = list(diff.added)
+        raw_deletions = list(diff.deleted)
+
+        # 1. Split renames involving .drift_keep
+        for old_rel, new_rel in raw_renames:
+            if old_rel.name == DRIFT_KEEP_FILE_NAME or new_rel.name == DRIFT_KEEP_FILE_NAME:
+                raw_deletions.append(old_rel)
+                raw_additions.append(new_rel)
+            else:
+                renames.append((old_rel, new_rel))
+
+        # 2. Sanitize modifications and non-empty keep files
+        modifications: List[Path] = []
+        for rel_mod in diff.modified:
+            if rel_mod.name == DRIFT_KEEP_FILE_NAME:
+                logger.warning(
+                    f"⚠️  [CORRUPT] Unexpected modification of keep file '{rel_mod}'. "
+                    f"'.drift_keep' must always be an empty stub file."
+                )
+                continue
+            modifications.append(rel_mod)
+
+        for rel_add in raw_additions:
+            if rel_add.name == DRIFT_KEEP_FILE_NAME:
+                keep_path = install_pkg_dir / rel_add
+                if keep_path.is_file() and keep_path.stat().st_size > 0:
+                    logger.warning(
+                        f"⚠️  [CORRUPT] Keep file '{rel_add}' is not empty (size={keep_path.stat().st_size} bytes). "
+                        f"'.drift_keep' must always be 0 bytes."
+                    )
+
+        # 3. Translate .drift_keep additions and deletions to parent directories
+        def _translate_keep_to_dir(p: Path) -> Path:
+            return p.parent if p.name == DRIFT_KEEP_FILE_NAME and p.parent != Path(".") else p
+
+        additions = sorted(list({_translate_keep_to_dir(p) for p in raw_additions}))
+        deletions = sorted(list({_translate_keep_to_dir(p) for p in raw_deletions}))
 
         # Pre-compute unified diffs while package is staged in index
         for rel_mod in modifications:
@@ -405,22 +440,28 @@ def _sync_file_mode(src_file: Path, install_file: Path) -> None:
 
 
 def adopt_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
-    """Copies a wild host-side added file into the declarative source folder."""
+    """Copies a wild host-side added file or creates an empty directory in the declarative source folder."""
     dest = pkg_dir / rel_path
-    copy_file(install_pkg_dir / rel_path, dest)
+    src_install = install_pkg_dir / rel_path
+    if src_install.is_dir():
+        ensure_dir(dest)
+    else:
+        copy_file(src_install, dest)
 
 
 def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> None:
-    """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
-    install_file = install_pkg_dir / rel_path
-    if install_file.exists() or install_file.is_symlink():
-        remove_file_or_empty_dir(install_file)
-            
+    """Unlinks the file/directory from install base and registers pattern in .drift_ignore."""
+    install_item = install_pkg_dir / rel_path
+    if install_item.is_dir() and not install_item.is_symlink():
+        remove_tree(install_item)
+    elif install_item.exists() or install_item.is_symlink():
+        remove_file_or_empty_dir(install_item)
+
     install_base = install_pkg_dir.parent
     rel_install_base = Path(install_pkg_dir.name) / rel_path
     # check=False is intentional: file may not be tracked in the git index yet.
     res_rm = subprocess.run(
-        ["git", "-C", str(install_base), "rm", "--cached", "-f", "--", str(rel_install_base)],
+        ["git", "-C", str(install_base), "rm", "-r", "--cached", "-f", "--", str(rel_install_base)],
         capture_output=True,
         text=True,
         check=False,
@@ -430,13 +471,17 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
 
     # Append pattern to .drift_ignore
     ignore_file = pkg_dir / DRIFT_IGNORE_FILE_NAME
-    pattern = rel_path.as_posix()
+    pattern = (rel_path.as_posix() + "/") if install_item.is_dir() else rel_path.as_posix()
     with ignore_file.open("a", encoding="utf-8") as f:
         f.write(f"\n{pattern}\n")
 
 
 def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path, rel_path: Path, pkg: str) -> None:
-    """Symmetrically deletes the corresponding file from declarative source folder."""
+    """Symmetrically deletes the corresponding file or directory from declarative source folder."""
+    src_dir = src_dir_to_render / rel_path
+    if src_dir.is_dir() and not src_dir.is_symlink():
+        remove_tree(src_dir)
+        return
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
         remove_file_or_empty_dir(src_file)
@@ -552,13 +597,15 @@ def dry_run_adopt(plan: PackageAdoptPlan) -> None:
 
     if plan.additions:
         logger.info("   [+] Additions (will be copied to source):")
-        for file in plan.additions:
-            logger.info(f"       + {file}")
+        for item in plan.additions:
+            tag = " (directory)" if (plan.install_pkg_dir / item).is_dir() else ""
+            logger.info(f"       + {item}{tag}")
 
     if plan.deletions:
         logger.info("   [-] Deletions (will be removed from source):")
-        for file in plan.deletions:
-            logger.info(f"       - {file}")
+        for item in plan.deletions:
+            tag = " (directory)" if (plan.src_dir_to_render / item).is_dir() else ""
+            logger.info(f"       - {item}{tag}")
 
     if plan.renames:
         logger.info("   [R] Renames (will rename the template in source):")
@@ -591,66 +638,290 @@ def dry_run_adopt(plan: PackageAdoptPlan) -> None:
                 logger.info(f"       ~ {file} [Static Overwrite of: {src_file.name}]")
 
 
-def handle_single_addition(
-    render_engines: RenderEngineRegistry,
-    src_pkg_dir: Path,       # to locate .drift_ignore
-    src_dir_to_render: Path, # add to this dir
-    install_pkg_dir: Path,   # add from this dir
-    rel_path: Path,          # rel path of the addition
-    interactive: bool,
-    force: bool = False
+def _prompt_addition_collision_interactive(rel_path: Path, incoming_is_dir: bool) -> bool:
+    """Prompts the user when an addition collides with an existing file/directory in source."""
+    incoming_type = "directory" if incoming_is_dir else "file"
+    existing_type = "file" if incoming_is_dir else "directory"
+    print(f"\n⚠️  [CONFLICT] Cannot adopt {incoming_type} '{rel_path}' because a {existing_type} with the same name exists in source!")
+    print("Reconciliation options:")
+    print(f"[1] Discard addition / Restore (removes {incoming_type} on host next deployment)")
+    print(f"[2] Skip {incoming_type}")
+    choice = input("Select option [1-2]: ").strip()
+    return choice == "1"
+
+
+def _prompt_directory_addition_interactive(
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
+    install_pkg_dir: Path,
+    rel_path: Path,
 ) -> bool:
-    """Handles drift reconciliation for a single file addition."""
+    """Interactive menu for adopting an untracked directory addition."""
+    print(f"\nFound untracked directory addition inside Fully-Controlled Directory: {rel_path}")
+    print("Reconciliation options:")
+    print("[1] Adopt directory into source package (creates empty directory)")
+    print("[2] Ignore directory (appends pattern to package .drift_ignore)")
+    print("[3] Discard directory (removes directory on host next deployment)")
+    print("[4] Skip directory")
+    choice = input("Select option [1-4]: ").strip()
+    if choice == "1":
+        adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
+        return True
+    elif choice == "2":
+        ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
+        return True
+    elif choice == "3":
+        return True
+    else:
+        return False
+
+
+def _prompt_file_addition_interactive(
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
+    install_pkg_dir: Path,
+    rel_path: Path,
+) -> bool:
+    """Interactive menu for adopting an untracked file addition."""
+    print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
+    print("Reconciliation options:")
+    print("[1] Adopt and copy into source package")
+    print("[2] Ignore file (appends pattern to package .drift_ignore)")
+    print("[3] Discard file (stages file to install/ database so it is deleted on next deploy)")
+    print("[4] Skip file")
+    choice = input("Select option [1-4]: ").strip()
+    if choice == "1":
+        adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
+        return True
+    elif choice == "2":
+        ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
+        return True
+    elif choice == "3":
+        return True
+    else:
+        return False
+
+
+def _handle_single_directory_addition(
+    render_engines: RenderEngineRegistry,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
+    install_pkg_dir: Path,
+    rel_path: Path,
+    interactive: bool,
+    force: bool = False,
+) -> bool:
+    """Handles adoption of an empty directory addition."""
+    # 1. Pre-existing directory in source: already matches desired state, skip cleanly
+    if (src_dir_to_render / rel_path).is_dir():
+        logger.info(f"Directory '{rel_path}' already exists in source. Skipping addition.")
+        return True
+
+    # 2. File / template collision check
+    if (src_dir_to_render / rel_path).is_file() or resolve_source_file_path(render_engines, src_dir_to_render, rel_path) is not None:
+        if not interactive:
+            logger.error(f"❌ [CONFLICT] Cannot adopt directory '{rel_path}' because a file already exists at that path in source. Skipping.")
+            return False
+        return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=True)
+
+    # 3. Clean directory addition
+    assert_source_file_clean(src_dir_to_render / rel_path, force=force, pkg=install_pkg_dir.name)
+    if not interactive:
+        adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
+        return True
+    return _prompt_directory_addition_interactive(src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path)
+
+
+def _handle_single_file_addition(
+    render_engines: RenderEngineRegistry,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
+    install_pkg_dir: Path,
+    rel_path: Path,
+    interactive: bool,
+    force: bool = False,
+) -> bool:
+    """Handles adoption of a regular file addition."""
+    # 1. Directory collision check
+    if (src_dir_to_render / rel_path).is_dir():
+        if not interactive:
+            logger.error(f"❌ [CONFLICT] Cannot adopt file '{rel_path}' because a directory already exists at that path in source. Skipping.")
+            return False
+        return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=False)
+
+    # 2. Existing file collision check
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if target_existing_src is not None:
         if not interactive:
             logger.error(f"❌ [CONFLICT] Cannot adopt addition '{rel_path}' because the target already exists in source. Skipping.")
             return False
-        else:
-            print(f"\n⚠️  [CONFLICT] Target file '{rel_path}' already exists in source!")
-            print("Reconciliation options:")
-            print("[1] Discard addition / Restore (restores original on host next deployment)")
-            print("[2] Skip file")
-            choice = input("Select option [1-2]: ").strip()
-            if choice == "1":
-                return True
-        return False
+        return _prompt_addition_collision_interactive(rel_path, incoming_is_dir=False)
 
+    # 3. Clean file addition
     target_src_file = src_dir_to_render / rel_path
     assert_source_file_clean(target_src_file, force=force, pkg=install_pkg_dir.name)
-
     if not interactive:
         adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
         return True
+    return _prompt_file_addition_interactive(src_pkg_dir, src_dir_to_render, install_pkg_dir, rel_path)
+
+
+def handle_single_addition(
+    render_engines: RenderEngineRegistry,
+    src_pkg_dir: Path,
+    src_dir_to_render: Path,
+    install_pkg_dir: Path,
+    rel_path: Path,
+    interactive: bool,
+    force: bool = False,
+) -> bool:
+    """Handles drift reconciliation for a single file or directory addition."""
+    if (install_pkg_dir / rel_path).is_dir():
+        return _handle_single_directory_addition(
+            render_engines=render_engines,
+            src_pkg_dir=src_pkg_dir,
+            src_dir_to_render=src_dir_to_render,
+            install_pkg_dir=install_pkg_dir,
+            rel_path=rel_path,
+            interactive=interactive,
+            force=force,
+        )
+    return _handle_single_file_addition(
+        render_engines=render_engines,
+        src_pkg_dir=src_pkg_dir,
+        src_dir_to_render=src_dir_to_render,
+        install_pkg_dir=install_pkg_dir,
+        rel_path=rel_path,
+        interactive=interactive,
+        force=force,
+    )
+
+
+def _prompt_empty_directory_deletion_interactive(
+    render_engines: RenderEngineRegistry,
+    pkg: str,
+    src_dir_to_render: Path,
+    rel_path: Path,
+) -> bool:
+    """Interactive menu for adopting an empty directory deletion."""
+    print(f"\nFound host empty directory deletion: {rel_path}")
+    print("Reconciliation options:")
+    print("[1] Adopt deletion (removes empty directory from source)")
+    print("[2] Discard deletion / Restore (restores directory in next deployment)")
+    print("[3] Skip folder")
+    choice = input("Select option [1-3]: ").strip()
+    if choice == "1":
+        adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
+        return True
+    elif choice == "2":
+        return True
     else:
-        print(f"\nFound untracked file addition inside Fully-Controlled Directory: {rel_path}")
-        print("Reconciliation options:")
-        print("[1] Adopt and copy into source package")
-        print("[2] Ignore file (appends pattern to package .drift_ignore)")
-        print("[3] Discard file (stages file to install/ database so it is deleted on next deploy)")
-        print("[4] Skip file")
-        choice = input("Select option [1-4]: ").strip()
-        if choice == "1":
-            adopt_addition(src_dir_to_render, install_pkg_dir, rel_path)
-            return True
-        elif choice == "2":
-            ignore_addition(src_pkg_dir, install_pkg_dir, rel_path)
-            return True
-        elif choice == "3":
-            return True
-        else:
-            return False
+        return False
 
 
-def handle_single_deletion(
+def _prompt_non_empty_directory_deletion_interactive(
+    render_engines: RenderEngineRegistry,
+    pkg: str,
+    src_dir_to_render: Path,
+    rel_path: Path,
+) -> bool:
+    """Interactive menu for handling a non-empty directory deletion."""
+    src_dir = src_dir_to_render / rel_path
+    print(f"\n⚠️  [NON-EMPTY] Host deleted directory '{rel_path}', but source directory contains files!")
+    contained_items = (
+        sorted(
+            p.relative_to(src_dir).as_posix() + ("/" if p.is_dir() else "")
+            for p in src_dir.rglob("*")
+        )
+        if src_dir.is_dir()
+        else []
+    )
+    if contained_items:
+        print("Existing contents in source directory:")
+        for item in contained_items[:10]:
+            print(f"  - {item}")
+        if len(contained_items) > 10:
+            print(f"  ... and {len(contained_items) - 10} more item(s)")
+
+    print("Reconciliation options:")
+    print("[1] Discard deletion / Restore (preserves source files and restores directory on next deployment)")
+    print("[2] Adopt deletion (⚠️  DANGER: permanently deletes entire directory tree and ALL files from source!)")
+    print("[3] Skip folder")
+    choice = input("Select option [1-3]: ").strip()
+    if choice == "1":
+        return True
+    elif choice == "2":
+        confirm = input(
+            f"⚠️  DANGER: Are you sure you want to permanently delete source directory '{rel_path}' and all {len(contained_items)} item(s)? [y/N]: "
+        ).strip().lower()
+        if confirm in ("y", "yes"):
+            adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
+            return True
+        print("Aborted deletion adoption.")
+        return False
+    else:
+        return False
+
+
+def _prompt_file_deletion_interactive(
+    render_engines: RenderEngineRegistry,
+    pkg: str,
+    src_dir_to_render: Path,
+    rel_path: Path,
+) -> bool:
+    """Interactive menu for adopting a file deletion."""
+    print(f"\nFound host file deletion: {rel_path}")
+    print("Reconciliation options:")
+    print("[1] Adopt deletion (deletes source file/template)")
+    print("[2] Discard deletion / Restore (restores file in next deployment)")
+    print("[3] Skip file")
+    choice = input("Select option [1-3]: ").strip()
+    if choice == "1":
+        adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
+        return True
+    elif choice == "2":
+        return True
+    else:
+        return False
+
+
+def _handle_single_directory_deletion(
     render_engines: RenderEngineRegistry,
     pkg: str,
     src_dir_to_render: Path,
     rel_path: Path,
     interactive: bool,
-    force: bool = False
+    force: bool = False,
 ) -> bool:
-    """Handles drift reconciliation for a single file deletion."""
+    """Handles drift reconciliation for a directory deletion."""
+    is_empty = not any((src_dir_to_render / rel_path).iterdir())
+    assert_source_file_clean(src_dir_to_render / rel_path, pkg=pkg, force=force)
+    if not interactive:
+        if is_empty:
+            adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
+            return True
+        else:
+            logger.warning(
+                f"⚠️  [DISCARD] Cannot adopt directory deletion '{rel_path}' because the source directory is not empty. "
+                f"Discarding deletion (will restore directory on next deploy)."
+            )
+            return True
+    else:
+        if is_empty:
+            return _prompt_empty_directory_deletion_interactive(render_engines, pkg, src_dir_to_render, rel_path)
+        else:
+            return _prompt_non_empty_directory_deletion_interactive(render_engines, pkg, src_dir_to_render, rel_path)
+
+
+def _handle_single_file_deletion(
+    render_engines: RenderEngineRegistry,
+    pkg: str,
+    src_dir_to_render: Path,
+    rel_path: Path,
+    interactive: bool,
+    force: bool = False,
+) -> bool:
+    """Handles drift reconciliation for a file deletion."""
     target_existing_src = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if target_existing_src is None:
         if not interactive:
@@ -660,24 +931,39 @@ def handle_single_deletion(
         return True
 
     assert_source_file_clean(target_existing_src, pkg=pkg, force=force)
-
     if not interactive:
         adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
         return True
-    else:
-        print(f"\nFound host file deletion: {rel_path}")
-        print("Reconciliation options:")
-        print("[1] Adopt deletion (deletes source file/template)")
-        print("[2] Discard deletion / Restore (restores file in next deployment)")
-        print("[3] Skip file")
-        choice = input("Select option [1-3]: ").strip()
-        if choice == "1":
-            adopt_deletion(render_engines, src_dir_to_render, rel_path, pkg=pkg)
-            return True
-        elif choice == "2":
-            return True
-        else:
-            return False
+    return _prompt_file_deletion_interactive(render_engines, pkg, src_dir_to_render, rel_path)
+
+
+def handle_single_deletion(
+    render_engines: RenderEngineRegistry,
+    pkg: str,
+    src_dir_to_render: Path,
+    rel_path: Path,
+    interactive: bool,
+    force: bool = False,
+) -> bool:
+    """Handles drift reconciliation for a single file or directory deletion."""
+    target_src = src_dir_to_render / rel_path
+    if target_src.is_dir() and not target_src.is_symlink():
+        return _handle_single_directory_deletion(
+            render_engines=render_engines,
+            pkg=pkg,
+            src_dir_to_render=src_dir_to_render,
+            rel_path=rel_path,
+            interactive=interactive,
+            force=force,
+        )
+    return _handle_single_file_deletion(
+        render_engines=render_engines,
+        pkg=pkg,
+        src_dir_to_render=src_dir_to_render,
+        rel_path=rel_path,
+        interactive=interactive,
+        force=force,
+    )
 
 
 def handle_rename_non_interactive(

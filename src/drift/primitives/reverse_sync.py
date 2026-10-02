@@ -40,9 +40,9 @@ from typing import List, Optional, Sequence, Set, Tuple
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..core.constants import MANAGED_CONFIG_FILES, STATE_REGISTRY_FILE_NAME, DirMode
+from ..core.constants import STATE_REGISTRY_FILE_NAME, DirMode
 from ..core.folder_diff import list_folder_paths
-from ..core.ignore import DriftIgnore
+from ..core.ignore import DriftIgnore, resolve_deployable_paths_with_empty_dirs
 from ..core.state_registry import StateRegistry, load_state_registry
 from ..core.folder_delivery import (
     DeliveryInspectionContext,
@@ -84,7 +84,7 @@ def is_under_any_fcd(rel: Path, fully_controlled_dirs: Sequence[Path]) -> bool:
 
 def _check_has_synced_ancestor(rel: Path, synced_ancestors: Set[Path]) -> bool:
     """Read-only check returning True if any parent directory of rel has already been synced."""
-    return any(parent in synced_ancestors for parent in rel.parents if parent != Path("") and parent != Path("."))
+    return any(parent in synced_ancestors for parent in rel.parents if parent != Path("."))
 
 
 def _collect_leaf_paths(root: Path) -> List[Path]:
@@ -120,6 +120,7 @@ def _record_actions_in_results(
                 FileActionType.CREATE_COPY,
                 FileActionType.UPDATE_COPY,
                 FileActionType.UPDATE_PERMISSION,
+                FileActionType.CREATE_KEEP_FILE,
             )
             or action.action_type in DELETE_ACTION_TYPES
         ) and action.dst_path is not None:
@@ -150,11 +151,7 @@ def _gather_single_tracked_candidate(
             dir_mode=DirMode.NO_DIR,
             dest_dir=install_pkg_dir,
         )
-        deployable = [
-            decode_dot_prefix(p)
-            for p in paths
-            if decode_dot_prefix(p).name not in MANAGED_CONFIG_FILES
-        ]
+        deployable = [decode_dot_prefix(p) for p in paths]
         return deployable, [rel]
     return [rel], [rel]
 
@@ -184,8 +181,7 @@ def gather_tracked_reverse_sync_files(
     filtered = [
         decode_dot_prefix(p)
         for p in candidates
-        if p.name not in MANAGED_CONFIG_FILES
-        and not is_under_any_fcd(p, fully_controlled_dirs)
+        if not is_under_any_fcd(p, fully_controlled_dirs)
         and not ignore_handler.match_path(decode_dot_prefix(p), is_dir=False)
     ]
 
@@ -223,31 +219,24 @@ def gather_single_fcd_reverse_sync_files(
         ignore_handler=ignore_handler,
         resolve_symlinks=True,
         translate_mode="reverse",
-        dir_mode=DirMode.NO_DIR,
+        dir_mode=DirMode.ONLY_EMPTY_DIR,
         dest_dir=install_pkg_dir,
     )
-    deployable = [
-        decode_dot_prefix(p)
-        for p in host_paths
-        if decode_dot_prefix(p).name not in MANAGED_CONFIG_FILES
-    ]
+    deployable = [decode_dot_prefix(p) for p in host_paths]
 
     # 2. Repo deployed files (no symlinks inside install/ package state)
     deployed: List[Path] = []
     if repo_fcd_path.exists() or repo_fcd_path.is_symlink():
+        repo_ignore = ignore_handler.with_ignore_keep_file(False)
         repo_paths = list_folder_paths(
             src_dir=repo_fcd_path,
             base_rel=decode_dot_prefix(fcd),
-            ignore_handler=ignore_handler,
+            ignore_handler=repo_ignore,
             resolve_symlinks=False,
             translate_mode=None,
             dir_mode=DirMode.NO_DIR,
         )
-        deployed = [
-            p
-            for p in repo_paths
-            if p.name not in MANAGED_CONFIG_FILES
-        ]
+        deployed = resolve_deployable_paths_with_empty_dirs(repo_paths, ignore_handler=ignore_handler)
 
     return deployable, deployed
 
