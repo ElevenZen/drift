@@ -152,10 +152,15 @@ Unconditionally pulls the current host configuration state into the `install/` s
 
 2.  **Scoped Fully-Controlled Directories (`sync_fully_controlled_dirs`)**:
     *   For directories configured under `fully_controlled_dirs` (FCD), comparisons are scoped strictly to those specific subdirectories (e.g. `~/.config/nvim`), reverse-syncing any wild/untracked files or deletions without traversing the rest of the host filesystem.
+    *   **Empty Folder Reverse-Sync**: Scans host FCDs with `DirMode.ONLY_EMPTY_DIR` to discover wild empty directories, planning `FileActionType.CREATE_KEEP_FILE` to create `<rel_dir>/.drift_keep` in `install/<package>/`.
+    *   **Sentinel Stub Pruning**: When a previously empty directory is populated with child files on the host, ancestor directory inspection generates `FileActionType.DELETE_ITEM` to prune the obsolete `.drift_keep` stub from `install/`.
+    *   **Deleted Directory Tree Pruning**: In reverse mode (`reverse_mode=True`), orphan pruning generates `FileActionType.DELETE_TREE` in `install/` to purge the deleted directory tree from the staging database.
 
 ### Primitive 2: Render (`src/` $\rightarrow$ `render/` [Low-level: `drift render`])
 *   **Pre-Flight Requirements & Probe Check (Zero-Cost Skipping Before Render)**:
     Before compiling any templates or intermediate input files, Drift evaluates declarative `[requirements]` (OS, CPU architecture, Linux distro, required binaries in `$PATH`, environment variables, and LAN IP/CIDR) and the dynamic `probe` hook. If host requirements are not met, the package is immediately and gracefully skipped (`status = "SKIPPED"`). No template engines are invoked, no intermediate input files are rendered, and no files are written to `render/<pkg>/`, allowing remaining active packages to proceed cleanly.
+*   **Empty Folder Sentinel Generation**:
+    Scans the package with `DirMode.ONLY_EMPTY_DIR`. For each empty directory in `src/`, [`render_or_copy_file`](../src/drift/primitives/render_package.py) creates a 0-byte `.drift_keep` sentinel file inside the rendered target directory in `render/<pkg>/`, allowing Git to track empty folder hierarchies.
 *   **Lifecycle Hook Triggers**: Triggers `pre_source` before reading source templates and `post_render` hook upon successful compilation.
 *   **Intermediate Lifecycle Isolation**: Routes source scripts from `src/<pkg>/drift_hooks/` to internal sandbox directory `render/<pkg>/.drift/hooks/`, keeping them strictly isolated from host deployments.
 *   **Render Collision Detection (Strict Error)**:
@@ -167,9 +172,9 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
-*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
+*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`), including `.drift_keep` stub files. No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
 *   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
-*   **Mechanism**: Compiles a declarative staging plan (`PackageStagePlan`) detailing operations (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`) via single-pass folder comparison between `render/` and `install/`. Synchronizes files using the unified delivery engine.
+*   **Mechanism**: Compiles a declarative staging plan (`PackageStagePlan`) detailing operations (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`) via single-pass folder comparison between `render/` and `install/`. Synchronizes files using the unified delivery engine.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
 
@@ -178,6 +183,8 @@ Applies changes to the physical active system across a two-phase architecture:
 *   **Pre-Flight Inspection (`prepare_install`)**: Validates readiness guards (`assert_packages_install_ready`), verifies hook file existence, checks escalation privileges, audits cross-package path collisions, and resolves prerequisite topological deploy order (`InstallPlan`).
 *   **Execution Phase (`execute_install`)**: Deploys prerequisites first using strongly-typed `InstallConfig(force, dry_run, flags, no_deps)`.
 *   **Collision Guard & Planning (`plan_package_install`)**: Pure read-only per-path planner compiling inspectable `PackageInstallPlan`. Backs up colliding physical files to `backup/<package>/overwritten/` with `dot-` prefix translation (`decode_dot_prefix`), and historical orphans to `backup/<package>/deleted_files/`.
+*   **Empty Folder Deployment**: [`filter_deployable_files`](../src/drift/core/ignore.py) with `include_empty_dirs=True` records empty directory leaf nodes into `deployed_files` (translating `.drift_keep` into its parent folder). Empty directories are deployed as concrete directories via `FileActionType.CREATE_DIR` (`mkdir -p`) and never symlinked. Empty directories are excluded from cross-package conflict assertions (`include_empty_dirs=False`), allowing multiple packages to share folder hierarchies.
+*   **Privilege & State Recording**: Deploys files with root escalation if `sudo = true` is configured in `drift_package.toml`. The `sudo` boolean, target directory, install method, and `deployed_files` manifest are atomically updated in `install/state.toml`.
 *   **Hooks**: Triggers `pre_install` / `pre_update` before deployment, and `post_install` / `post_update` after successful deployment (skipped during `--dry-run`).
 *   **State Machine**: Sets the package state to **`"installing"`** (transient guard) at the start, and transitions to **`"installed"`** (final state) upon successful completion (skipped during `--dry-run`).
 *   **Symlink Mode**: Deploys relative symlinks from host target paths to `install/<pkg>/` via Drift's native linker.
@@ -192,8 +199,8 @@ Removes or detaches packages from the system using strongly-typed `UninstallConf
     *   **Context Gathering (`PackageUninstallContext`)**: Gathers domain-level parameters (`pkg_name`, `target_dir`, `install_method`, `deployed_files`, `sudo`, `install_pkg_dir`, `backup_pkg_dir`, `drift_root`, `hooks`, `detach`, `is_missing_install_dir`) directly from `StateRegistry` without retaining heavy `PackageConfig` instances. The recorded `sudo` privilege is preserved from `state.toml`, guaranteeing consistent elevated permissions even if the package config in `install/` was altered or missing.
     *   **Action Execution Context Derivation**: Derives an `FileActionExecutionContext` carrying execution flags (`sudo`, `resolve_symlinks`). Backup restoration collision paths are planned directly into `deleted_files/` via `plan_backup_restoration`'s `backup_subfolder=BackupSubfolder.DELETED_FILES` and `is_first_time=True`, ensuring any pre-existing host files or directories colliding with restored files or ancestors are backed up to `deleted_files/` rather than corrupting the active `overwritten/` backup store or unbacked in-place overwrites.
     *   **Discrete Action Decomposition (`plan_package_uninstall`)**:
-        *   *Standard Uninstall*: Compiles `plan_file_removals` (`DELETE_FILE`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`).
-        *   *Detach Mode*: Compiles `plan_symlink_conversions` (`DELETE_FILE` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
+        *   *Standard Uninstall*: Compiles `plan_file_removals` (`DELETE_ITEM`) followed by `plan_backup_restoration` (emitting an `INFO_MESSAGE` header, ensuring ancestor directory creation with `ENSURE_DIR`, and restoring original files via `CREATE_COPY`). Deployed empty directories are pruned using [`remove_file_or_empty_dir`](../src/drift/utils/file_ops.py), which safely removes empty folders via `rmdir` while skipping populated directories with a warning. Shared empty directories are protected via reference counting and only removed when their reference count reaches 0.
+        *   *Detach Mode*: Compiles `plan_symlink_conversions` (`DELETE_ITEM` symlinks and `CREATE_COPY` physical files from `install/<pkg>/`), leaving `overwritten/` backups intact.
     *   **Unified Action Execution (`execute_package_uninstall`)**: Applies planned operations sequentially via `execute_delivery_actions`.
     *   **Zero-Mutation Dry-Run**: Under `--dry-run`, Drift simulates uninstallation without touching host files, state registry, or executing lifecycle hooks, rendering an inspectable structured summary via `UninstallResult.format_text(dry_run=True)`.
 2.  **Dependency Safeguards & Reverse Topological Order**:
@@ -982,7 +989,7 @@ Inter-package dependencies are orchestrated across every stage of the Drift life
     *   Operates using `UninstallConfig(force, dry_run, detach, no_deps, flags)`.
     *   Pre-flight check evaluates `assert_no_broken_dependencies_on_uninstall` (bypassed if `force` or `no_deps`).
     *   Multi-package uninstallation executes in reverse topological order via `resolve_package_uninstall_order`, ensuring dependent packages run their `pre_uninstall` / `post_uninstall` hooks and release files while their prerequisites remain fully operational on the host.
-    *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`DELETE_FILE`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
+    *   Compiles a declarative `UninstallPlan` (`PackageUninstallPlan`) decomposing operations into fundamental file actions (`DELETE_ITEM`, `CREATE_COPY`, `ENSURE_DIR`, `INFO_MESSAGE`), executing safely with ancestor collision protection.
     *   If a package directory is missing in `install/`, Drift logs a warning and cleans the record from `StateRegistry` without crashing.
 *   **Primitive 8: Rollback Recovery**:
     *   Executes a single unified reverse topological sort (`resolve_package_uninstall_order`) across all candidate packages requiring recovery.
@@ -1208,11 +1215,18 @@ If a configuration file, folder, or symlink is manually deleted, modified, or ad
         *   Because the template file still exists in `src/`, running `drift deploy` (Stage 2) compiles the template into `render/`, sees that the compiled file is missing in the newly clean `install/` base (since we committed its deletion!), treats it as a brand-new **file addition**, stages it to `install/`, and deploys it back onto the system, perfectly restoring the missing resource!
 
 3.  **Adopting Host-Side Modifications, Renames & New Additions (`drift adopt`)**:
-    When manual modifications, file renames, or new file additions (within Fully-Controlled Directories) are reverse-synced back into `install/`:
+    When manual modifications, file renames, directory additions, or deletions (within Fully-Controlled Directories) are reverse-synced back into `install/`:
     *   **Unified Patch Application & Suffix Resolution**:
         `drift adopt` matches live files in `install/` to their source template counterparts in `src/` by querying active `RenderEngineRegistry` suffixes (e.g. `.envst`, `.mustache`, custom engines). Unified diffs are extracted via `git diff HEAD`, header paths are adjusted, and patches are applied directly to templates.
     *   **Permission & Mode Synchronization**:
         File mode bits (e.g. `chmod 0755` executable permissions) are automatically synchronized from `install/` onto the corresponding source file in `src/` during adoption.
+    *   **Empty Folder & Sentinel Stub (`.drift_keep`) Translation**:
+        - **Renames**: Any rename involving `.drift_keep` (e.g. `dir_a/.drift_keep` $\rightarrow$ `dir_b/.drift_keep`) is split into a deletion of `dir_a` and an addition of `dir_b`.
+        - **Path Translation**: Additions and deletions of `<path>/.drift_keep` are translated directly to `<path>`.
+        - **Corruption Guards**: Any modified or non-empty `.drift_keep` file triggers a loud `⚠️ [CORRUPT]` warning and is stripped from adopt planning (`.drift_keep` must always be a 0-byte stub).
+        - **Directory Additions**: Clean directory additions call [`ensure_dir`](../src/drift/utils/file_ops.py) to create the folder inside `src/<package>/` (the `.drift_keep` stub is **never** copied into `src/`). Pre-existing directories in source are skipped cleanly; collisions with regular files or templates raise conflicts.
+        - **Directory Deletions**: If the source directory is empty, [`adopt_deletion`](../src/drift/primitives/adopt_repo.py) removes it via [`remove_tree`](../src/drift/utils/file_ops.py). If the source directory is non-empty, non-interactive adoption discards the deletion with a warning log to preserve user files (restoring the folder on the next deploy); interactive mode displays an itemized list of existing source files, a prominent danger warning, and requires explicit confirmation (`[y/N]`) before executing `remove_tree`.
+        - *(See [`docs/empty_folder_dataflow.md`](empty_folder_dataflow.md) for full architectural dataflow and edge cases.)*
     *   **Interactive Guided Reconciliation (`drift adopt -i`)**:
         - **Diff Inspection**: Shows clean unified diffs before presenting resolution options.
         - **Clean Patches**: Supports direct adoption, immediate post-merge editing in `$EDITOR` (`Adopt and Edit in Editor`), or opening template and live files in side-by-side split view (`Open Side-by-Side Reference` supporting `nvim`, `vim`, `code`, and `emacs`).
@@ -1226,26 +1240,47 @@ If a configuration file, folder, or symlink is manually deleted, modified, or ad
         - Passing `--accept-conflicts` permits automated application of conflicting patches with merge conflict markers.
 
 ### H. State Registry Database (`install/state.toml`)
-To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, the system maintains a persistent, local-only state registry file at `install/state.toml`.
+To safely determine whether a package should execute its `pre/post_install` or `pre/post_update` lifecycle hook, track deployed artifacts, verify execution privileges, and detect destination migrations, the system maintains a persistent, local-only state registry file at `install/state.toml`.
 *   This registry tracks package lifecycle states:
     ```toml
     # install/state.toml
     [packages.nvim]
     state = "installed"
+    target_directory = "~/.config/nvim"
     last_deployed = "2026-08-16T21:10:50.123456"
     install_method = "symlink"
-    deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json"]
+    deployed_files = ["dot-config/nvim/init.lua", "dot-config/nvim/coc-settings.json", "dot-config/nvim/autoload"]
+    sudo = false
+
+    [packages.sysctl_config]
+    state = "installed"
+    target_directory = "/etc"
+    last_deployed = "2026-08-16T21:12:00.000000"
+    install_method = "copy"
+    deployed_files = ["sysctl.d/99-custom.conf"]
+    sudo = true
 
     [packages.qbittorrent]
     state = "staged"
+    target_directory = "~/.config/qBittorrent"
     install_method = "copy"
     deployed_files = ["config.ini"]
+    sudo = false
 
     [packages.wezterm]
     state = "installing"
+    target_directory = "~/.config/wezterm"
     install_method = "symlink"
     deployed_files = []
+    sudo = false
     ```
+*   **Tracked Manifest Fields**:
+    - **`state`**: Lifecycle state string (`"installed"`, `"staged"`, `"staging"`, `"installing"`).
+    - **`target_directory`**: Recorded host target path where package files were deployed. Used to detect destination migrations (`get_target_migrated_from`), build cross-package destination ownership mappings (`build_destination_ownership_map`), and resolve target directories during uninstallation without requiring source package configurations.
+    - **`last_deployed`**: ISO-8601 timestamp string of the last successful deployment. Used for hook classification (differentiating first-time installs from updates).
+    - **`install_method`**: Method used during physical deployment (`"symlink"` or `"copy"`).
+    - **`deployed_files`**: Sorted list of relative paths successfully deployed onto the host, including empty directories as leaf nodes. Historical orphan reconciliation compares desired state in `install/` against this manifest.
+    - **`sudo`**: Boolean recording whether the package was installed with root privilege escalation (`sudo = true`). Persisted directly into `PackageUninstallContext` to ensure uninstallation and backup restoration retain identical root privileges even if package configurations in `install/` are missing or modified.
 *   **Lifecycle States**:
     - **`"installed"`**: (Stable) The package is fully applied to the host system.
     - **`"staged"`**: (Stable) The package has been successfully staged from `render/` to `install/`, but not yet applied to the system.
@@ -1273,6 +1308,8 @@ A package can declare a list of subdirectories under `target_directory` as **Ful
 #### 1. FCD Reverse-Sync Sweep
 During **Primitive 1: Reverse Sync** (Stage 1 deployment check), the engine recursively traverses the host's FCD subdirectories on disk.
 *   Any wild, untracked, or newly created file found inside these directories on the host is automatically reverse-synchronized and copied back into the `install/` state database folder.
+*   **Empty Directory Capture**: Scans FCDs with `DirMode.ONLY_EMPTY_DIR` to capture wild empty folders, generating `CREATE_KEEP_FILE` actions that write `.drift_keep` stub files into `install/<package>/`.
+*   **Sentinel Stub Pruning**: When a previously empty folder is populated with child files on the host, ancestor directory inspection prunes the obsolete `.drift_keep` stub file (`DELETE_ITEM`).
 *   This places the workspace in an uncommitted state, signaling an active host configuration drift that must be reconciled.
 
 #### 2. Bidirectional Reconciliation Flow (`drift adopt`)
@@ -1280,16 +1317,16 @@ Developers reconcile discovered untracked FCD additions using `drift adopt`, whi
 *   **Scoped Git Cleanliness Safeguard Check**: Prior to modifying any file inside `src/`, `drift adopt` verifies that the specific target package's source directory (`src/<package>/`) is completely Git clean. This ensures uncommitted draft changes in other active packages do not block the adoption workflow.
 
 *   **Adopt (Keep in Repository)**:
-    1.  *Source Copy*: The file is copied from `install/<package>/` to `src/<package>/` (reverting prefix translations like `.` back to `dot-` and preparing template configurations if desired).
-    2.  *Commit*: The change is committed, merging the new file permanently into the declarative source repository.
+    1.  *Source Copy*: For regular files, the file is copied from `install/<package>/` to `src/<package>/` (reverting prefix translations like `.` back to `dot-` and preparing template configurations if desired). For empty directories, [`ensure_dir`](../src/drift/utils/file_ops.py) creates the pure folder in `src/<package>/` without copying the `.drift_keep` sentinel.
+    2.  *Commit / Staging*: Staging `install/` via `git -C install add -- <pkg>/<rel_path>` acknowledges the change, permanently aligning state.
 *   **Ignore (Keep on System, Stop Tracking)**:
-    1.  *State Unlink*: The untracked file is deleted from the `install/<package>/` state database, restoring state cleanliness.
-    2.  *Ignore Registration*: The file's relative path pattern is appended to the package's `.drift_ignore` PCRE ignore configuration.
-    3.  *The Result*: During all future `reverse-sync` sweeps, the ignore engine sees that the physical host file matches `.drift_ignore` and skips syncing it, allowing the untracked file to reside on the active host system without registering as database drift.
+    1.  *State Unlink*: The untracked file or directory is deleted from the `install/<package>/` state database (`git rm --cached` and physical removal), restoring state cleanliness.
+    2.  *Ignore Registration*: The relative path pattern (with a trailing `/` for directories) is appended to the package's `.drift_ignore` PCRE ignore configuration.
+    3.  *The Result*: During all future `reverse-sync` sweeps, the ignore engine sees that the physical host path matches `.drift_ignore` and skips syncing it, allowing the untracked path to reside on the active host system without registering as database drift.
 *   **Discard/Delete (Remove from System)**:
-    1.  *State Indexing (`git add`)*: Instead of immediately unlinking, Drift stages and tracks the untracked file inside the local `install/` Git repository by executing `git -C install add <file_path>`.
-    2.  *Staging Delta Promotion*: On the subsequent `drift deploy` (Stage 2) run, because the file is tracked in `install/` but is completely absent from the newly compiled `render/` sandbox output, the staging promotion compiler (`drift stage` / Primitive 4) automatically flags it as an **orphaned deletion** (tracked in state, but missing from compiled declarations).
-    3.  *The Result*: A delete instruction is generated for this file, and during the physical deployment phase (`drift apply` / Primitive 5), it is symmetrically and cleanly deleted from the active host system, restoring pristine configuration baseline alignment!
+    1.  *State Indexing (`git add`)*: Instead of immediately unlinking, Drift stages and tracks the untracked file or directory inside the local `install/` Git repository by executing `git -C install add <file_path>`.
+    2.  *Staging Delta Promotion*: On the subsequent `drift deploy` (Stage 2) run, because the file/directory is tracked in `install/` but is completely absent from the newly compiled `render/` sandbox output, the staging promotion compiler (`drift stage` / Primitive 4) automatically flags it as an **orphaned deletion** (tracked in state, but missing from compiled declarations).
+    3.  *The Result*: A delete instruction is generated for this file/directory, and during the physical deployment phase (`drift apply` / Primitive 5), it is symmetrically and cleanly deleted from the active host system, restoring pristine configuration baseline alignment!
 
 ### J. CLI Privilege Safeguards & Sudo Workspace Protection
 To prevent target directory mismatches and permission corruption across internal sub-repositories and state databases, Drift enforces strict privilege boundaries when executing workspace actions:
@@ -1330,7 +1367,7 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Targeted Tracked Comparison**: Probes only package files in `install/<package>` on host (`src_only=True, translate_mode="forward"`), avoiding full `$HOME` directory traversals.
     - **System Deletions**: Tracked files manually deleted on the system are symmetrically removed from the `install/` state database folder.
     - **System Modifications & Type Changes**: Files edited on the system (or transformed into directories) are reverse-copied back to `install/` with dot-prefix translation (`.bashrc` $\rightarrow$ `dot-bashrc`).
-    - **Scoped FCD Sync**: Any wild/untracked files inside configured **Fully-Controlled Directories (FCD)** are discovered and synced back via scoped subtree comparisons.
+    - **Scoped FCD Sync & Empty Folders**: Any wild/untracked files inside configured **Fully-Controlled Directories (FCD)** are discovered and synced back via scoped subtree comparisons. Newly created wild empty directories on the host generate `CREATE_KEEP_FILE` actions to establish `.drift_keep` in `install/<package>/`, while populated directories prune obsolete sentinel stubs.
 *   **Uncommitted State Check**: After performing reverse-sync on all active packages, the deployer checks if `git -C install status` is dirty. If uncommitted changes are detected (representing active host drift, i.e., Diff B), the deployer **halts immediately**. This acts as a security sentinel, forcing the developer to explicitly review the drift (via `drift diff --system`) and either **Adopt** (via `drift adopt`) or **Dismiss** (by deploying with `--force`) the system changes before template rendering can continue.
 
 #### 3. Stage 2: Sandboxing & Reconciliation (Render -> Stage)
@@ -1341,17 +1378,17 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
         2. *Metadata Compiling*: Loads and compiles package config from the source folder (supporting on-the-fly parsing of `package.envst.toml` templates). If `enable_render` is false, rendering is skipped.
         3. *Pre-Source Lifecycle Hook*: Triggers the `pre_source` hook script (if defined) running with working directory set to the script's parent directory (`cwd = hook_path.parent`) to dynamically generate/update source templates or dynamic system files prior to compilation.
         4. *Misspelled Ignore Warning*: Checks for a misspelled `.driftignore` and if found (without `.drift_ignore`), logs a warning and automatically copies it under correct name `.drift_ignore`.
-        5. *Surgical File Walk & Hook Sandbox Compilation*: Traverses the source package directory. Dedicated lifecycle hook scripts in `src/<package>/drift_hooks/` are compiled into `render/<package>/.drift/hooks/` (with template expansion), isolating scripts from deployable dotfiles. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name).
+        5. *Surgical File Walk & Hook Sandbox Compilation*: Traverses the source package directory. Dedicated lifecycle hook scripts in `src/<package>/drift_hooks/` are compiled into `render/<package>/.drift/hooks/` (with template expansion), isolating scripts from deployable dotfiles. Subdirectory ignore files (`.drift_ignore` or `.driftignore`) are blocked with errors. Static files are physically copied. Template files matching any active engine configuration suffix are surgically compiled (engine suffix is stripped from the rendered file name). Empty directories are populated with 0-byte `.drift_keep` sentinel files so Git tracks the directory structure.
         6. *Post-Render Lifecycle Hook*: Triggers the `post_render` hook script (if defined) running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
-    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 100% 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`). No synthetic files or ignore artifacts are generated in `install/`.
+    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 100% 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`), including `.drift_keep` sentinel files. No synthetic files or ignore artifacts are generated in `install/`.
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
-        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `FileAction`s (`DELETE_FILE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`).
+        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `FileAction`s (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`).
         2. *Unified Delivery Execution (`execute_package_stage`)*: Dispatches actions to `execute_delivery_actions`, performing physical file deletion, directory creation, file copying, and fast permission synchronization.
         3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
     - **Staged Transaction Complete (or Dry-Run Simulation)**: In live execution, updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s. In dry-run mode (`dry_run=True`), compiles and returns the full `StageResult` with zero mutations to `install/` or `state.toml`.
@@ -1359,20 +1396,20 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
 #### 4. Stage 2: Physical Deployment Sequence (Primitive 5)
 For each redeployable package:
 *   **Target Directory Check**: The engine verifies that the package's target directory is absolute and is not nested inside or equal to the workspace root (`target_dir.resolve()` relative to `drift_root.resolve()`).
-*   **Cross-Package Conflict Guard**: Verifies no two deployable packages target identical host file paths (`assert_no_cross_package_conflicts`).
+*   **Cross-Package Conflict Guard**: Verifies no two deployable packages target identical host file paths (`assert_no_cross_package_conflicts`). Empty directories are excluded from conflict assertions (`include_empty_dirs=False`), allowing shared directory trees across packages.
 *   **Target Migration Check**: If the target directory changed from previous deployments (`target_migrated_from`), Drift undeploys files from the former host location and forces a full redeployment.
 *   **State Transition to `"installing"`**: The state registry database `state.toml` is written to mark the package's state as `"installing"`.
 *   **Declarative Plan Compilation (`plan_package_install`)**:
     - *Intermediate Directory Inspection*: Evaluates all intermediate directory levels between `target_dir` and the destination file, planning `BACKUP_OVERWRITE` and `ENSURE_DIR` if blocked by files or internal symlinks.
-    - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`.
+    - *Leaf Inspection*: Evaluates leaf destinations according to `install_method` (`symlink` or `copy`), planning `CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, or `BACKUP_OVERWRITE`. Empty directories are planned as `CREATE_DIR` (`mkdir -p`) and never symlinked.
     - *Orphan Reconciliation*: Compares deployable files against historical `deployed_files`, planning `BACKUP_PRUNE` to `backup/<pkg>/deleted_files/` and physical removal.
     - *Dry-Run Preview*: If `--dry-run` is active, displays the plan summary and exits without modifying the host filesystem or executing lifecycle hooks.
 *   **Lifecycle Pre-Hook**: The package's `pre_install` (first-time install) or `pre_update` (subsequent update) executable script is triggered, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`).
 *   **Target Manifest Synchronization**: Synchronizes deployable targets to `state.toml` before physical delivery so crashes have an authoritative list for recovery.
 *   **Plan Execution Phase (`execute_package_actions`)**:
-    - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/`, atomic file copying or relative symlink creation, and orphan pruning.
+    - Applies planned operations in topological dependency order: intermediate directory creation, backups to `backup/<pkg>/overwritten/`, atomic file copying or relative symlink creation, and orphan pruning. Elevated permissions are used if `sudo = true` is configured.
 *   **Lifecycle Post-Hook**: Triggers `post_install` or `post_update` executable scripts, running with its working directory set to the script's parent directory (`cwd = hook_path.parent`). The host target directory is accessible via `$drift_package_target_dir`.
-*   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, and the list of successfully deployed paths is saved to the `deployed_files` manifest inside `state.toml`.
+*   **State Registry Lock**: The state database is updated: the package's state is set to `"installed"`, a deployment timestamp is written, `target_directory`, `install_method`, and `sudo` flag are saved, and the list of successfully deployed paths (including empty directories) is recorded in the `deployed_files` manifest inside `state.toml`.
 
 #### 5. Stage 2: Final State Commit (Primitive 6)
 *   The updated configurations and `state.toml` file are staged and committed into the local-only `install/` Git repository, locking the environment into a clean, reproducible state.
