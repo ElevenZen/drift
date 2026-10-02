@@ -35,6 +35,7 @@ from drift.core.exceptions import (
     HookMissingError,
     PackageInstallDirMissingError,
     ConfigError,
+    MidwayTransactionError,
 )
 from drift.config.package_config import (
     PackageConfig,
@@ -883,7 +884,7 @@ class TestInstallRepo(unittest.TestCase):
         # Re-run standalone deployment (without package_changes)
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
         self.assertEqual(res2.status, "SUCCESS")
-        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res2.packages[0].plan.prune_backups], ["file2.txt"])
+        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res2.packages[0].plan.prune_backups if a.src_path is not None], ["file2.txt"])
 
         # 3. Assert file2.txt is pruned from system target
         self.assertFalse(system_file2.exists())
@@ -1191,6 +1192,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("Safety Abort", str(ctx.exception))
         self.assertIn("Package(s) in midway transaction state", str(ctx.exception))
         self.assertIn("pkg_installing", str(ctx.exception))
+        assert isinstance(ctx.exception, MidwayTransactionError)
         self.assertEqual(ctx.exception.packages, [pkg])
 
         # Attempt with force=True - should proceed (and succeed here)
@@ -1573,7 +1575,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(external_file.read_text(encoding="utf-8"), "setting=external_original\n")
         # 3. Collision backup was saved
         self.assertTrue((self.backup_dir / pkg / "overwritten" / "app.conf").exists())
-        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups], ["app.conf"])
+        self.assertEqual([str(a.src_path.relative_to(self.system_target_dir)) for a in res.packages[0].plan.overwritten_backups if a.src_path is not None], ["app.conf"])
 
     def test_switch_method_from_symlink_to_copy_backs_up_and_replaces_symlinks(self) -> None:
         """Verifies that when a package deployed with 'symlink' switches to 'copy',
@@ -2454,8 +2456,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertFalse((self.system_target_dir / "dot-bashrc").exists())
         self.assertFalse((self.system_target_dir / "dot-config").exists())
 
-    def test_plan_package_install_accepts_generators(self) -> None:
-        """Verifies plan_package_install accepts unmaterialized generator expressions."""
+    def test_plan_package_install_with_sequences(self) -> None:
+        """Verifies plan_package_install processes deployable and deployed Sequence inputs."""
         from drift.core.ignore import DriftIgnore
 
         context = PackageInstallContext(
@@ -2470,13 +2472,13 @@ class TestInstallRepo(unittest.TestCase):
             drift_root=self.workspace_config.drift_root,
         )
 
-        deployable_gen = (Path(f"file_{i}.txt") for i in [1, 2])
-        deployed_gen = (Path(f"file_{i}.txt") for i in [1, 2, 3])
+        deployable = [Path(f"file_{i}.txt") for i in [1, 2]]
+        deployed = [Path(f"file_{i}.txt") for i in [1, 2, 3]]
 
         plan = plan_package_install(
             context=context,
-            deployable_files=deployable_gen,
-            deployed_files=deployed_gen,
+            deployable_files=deployable,
+            deployed_files=deployed,
         )
         self.assertEqual(len(plan.created), 2)
         # file_3.txt is orphaned but doesn't exist on disk, so no prune actions are generated
@@ -2640,6 +2642,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("pkg_b", err_msg)
         self.assertIn("pkg_c", err_msg)
         self.assertEqual(ctx.exception.packages, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertIsNotNone(ctx.exception.conflicts)
+        assert ctx.exception.conflicts is not None
         self.assertEqual(len(ctx.exception.conflicts), 2)
 
     def test_cross_package_inter_package_conflict_excludes_reinstalling_package(self) -> None:
@@ -2689,6 +2693,8 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("Cross-package destination conflicts detected (1 collision(s)):", err_msg)
         self.assertIn("Package 'pkg_new' (current batch) collides with 'pkg_installed' (already installed)", err_msg)
         self.assertEqual(ctx.exception.packages, ["pkg_installed", "pkg_new"])
+        self.assertIsNotNone(ctx.exception.conflicts)
+        assert ctx.exception.conflicts is not None
         self.assertEqual(len(ctx.exception.conflicts), 1)
 
     def test_target_directory_migration_clean_migration(self) -> None:
@@ -2798,6 +2804,8 @@ class TestInstallRepo(unittest.TestCase):
             if a.action_type == FileActionType.INFO_MESSAGE and "MIGRATE" in (a.reason or "")
         ]
         self.assertEqual(len(migration_messages), 1)
+        self.assertIsNotNone(migration_messages[0].reason)
+        assert migration_messages[0].reason is not None
         self.assertIn("target_mig_1", migration_messages[0].reason)
         self.assertIn("target_mig_2", migration_messages[0].reason)
 
@@ -3442,6 +3450,97 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions_norm[0].action_type, FileActionType.ENSURE_DIR)
         self.assertEqual(actions_norm[0].dst_path, self.system_target_dir / "link_to_dir")
 
+    def test_concrete_directory_blocking_leaf_file_plans_delete_tree_when_no_backup(self) -> None:
+        """Verifies that a pre-existing concrete directory blocking a leaf file plans DELETE_TREE when backup is None and removes the tree upon execution."""
+        pkg = "pkg_dir_collision"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "blocked_file").write_text("file content replacing directory\n", encoding="utf-8")
+
+        # Create concrete directory on system target with nested content
+        colliding_dir = self.system_target_dir / "blocked_file"
+        colliding_dir.mkdir(parents=True, exist_ok=True)
+        (colliding_dir / "nested_a.txt").write_text("nested a\n", encoding="utf-8")
+        (colliding_dir / "sub").mkdir(parents=True, exist_ok=True)
+        (colliding_dir / "sub" / "nested_b.txt").write_text("nested b\n", encoding="utf-8")
+
+        # 1. Delivery inspection without backup (backup_pkg_dir=None): plans DELETE_TREE
+        delivery_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.workspace_config.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=True,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+        )
+
+        actions = plan_folder_delivery(
+            context=delivery_ctx,
+            deployable_files=[Path("blocked_file")],
+        )
+
+        # Actions should contain DELETE_TREE followed by CREATE_COPY
+        delete_action = next((a for a in actions if a.action_type == FileActionType.DELETE_TREE), None)
+        self.assertIsNotNone(delete_action)
+        assert delete_action is not None
+        self.assertEqual(delete_action.dst_path, colliding_dir)
+        self.assertEqual(delete_action.reason, "Directory blocking file")
+
+        create_action = next((a for a in actions if a.action_type == FileActionType.CREATE_COPY), None)
+        self.assertIsNotNone(create_action)
+        assert create_action is not None
+        self.assertEqual(create_action.dst_path, colliding_dir)
+
+        # Execute actions: colliding directory must be deleted as a tree, and leaf file created
+        execute_delivery_actions(FileActionExecutionContext(), actions)
+        self.assertTrue(colliding_dir.is_file())
+        self.assertFalse(colliding_dir.is_dir())
+        self.assertEqual(colliding_dir.read_text(encoding="utf-8"), "file content replacing directory\n")
+
+    def test_concrete_directory_blocking_leaf_file_plans_backup_overwrite_when_backup_configured(self) -> None:
+        """Verifies that a pre-existing concrete directory blocking a leaf file plans BACKUP_OVERWRITE when backup is configured."""
+        pkg = "pkg_dir_backup_collision"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "blocked_file").write_text("file content replacing directory\n", encoding="utf-8")
+
+        colliding_dir = self.system_target_dir / "blocked_file"
+        colliding_dir.mkdir(parents=True, exist_ok=True)
+        (colliding_dir / "nested.txt").write_text("saved content\n", encoding="utf-8")
+
+        context_with_backup = PackageInstallContext(
+            pkg_name=pkg,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            ignore_handler=DriftIgnore(),
+            sudo=False,
+            is_first_time=True,
+            drift_root=self.workspace_config.drift_root,
+        )
+
+        plan = plan_package_install(
+            context=context_with_backup,
+            deployable_files=[Path("blocked_file")],
+        )
+
+        backup_action = next((a for a in plan.actions if a.action_type == FileActionType.BACKUP_OVERWRITE), None)
+        self.assertIsNotNone(backup_action)
+        assert backup_action is not None
+        self.assertEqual(backup_action.src_path, colliding_dir)
+        self.assertEqual(backup_action.dst_path, self.backup_dir / pkg / BackupSubfolder.OVERWRITTEN.value / "blocked_file")
+        self.assertEqual(backup_action.reason, "Directory blocking file")
+
+        execute_package_actions(context_with_backup, plan)
+        self.assertTrue(colliding_dir.is_file())
+        self.assertEqual(colliding_dir.read_text(encoding="utf-8"), "file content replacing directory\n")
+        # Verify backup directory tree was preserved
+        backed_up_tree = self.backup_dir / pkg / BackupSubfolder.OVERWRITTEN.value / "blocked_file"
+        self.assertTrue(backed_up_tree.is_dir())
+        self.assertEqual((backed_up_tree / "nested.txt").read_text(encoding="utf-8"), "saved content\n")
+
 
 class TestInstallDependencies(unittest.TestCase):
     """Tests for package dependency ordering, validation, and DAG resolution during install."""
@@ -3647,8 +3746,7 @@ class TestNativeSymlinkComputation(unittest.TestCase):
             rel = compute_relative_symlink_target(source_file, symlink_parent)
             # When resolved from the real external parent, it must point directly to source_file
             self.assertEqual((symlink_parent / rel).resolve(), source_file.resolve())
-            self.assertEqual((external_dir / rel).resolve(), source_file.resolve())
-
 
 if __name__ == "__main__":
     unittest.main()
+

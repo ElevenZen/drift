@@ -31,7 +31,7 @@ from .render_core import render_template_to_file, RenderError
 from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged, is_drift_error
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.result_models import PackageRenderResult, RenderResult
-from ..utils.file_ops import remove, copy_file
+from ..utils.file_ops import remove_tree, copy_file
 from ..utils.path_utils import encode_dot_prefix, is_relative_to
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: st
     """Clears the sandbox package directory inside the render folder to preserve the render/.git repository."""
     render_pkg_dir = workspace_config.render_path / package_name
     if render_pkg_dir.exists() or render_pkg_dir.is_symlink():
-        remove(render_pkg_dir)
+        remove_tree(render_pkg_dir)
 
 
 def _validate_not_driftignore_target(

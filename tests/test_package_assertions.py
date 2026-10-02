@@ -249,6 +249,7 @@ class TestPackageAssertions(unittest.TestCase):
         with self.assertRaises(FileNotFoundError) as ctx_fnf:
             assert_packages_install_dirs_exist(self.install_dir, ["pkg_exists", "pkg_missing1", "pkg_missing2"])
         self.assertIsInstance(ctx_fnf.exception, PackageInstallDirMissingError)
+        assert isinstance(ctx_fnf.exception, PackageInstallDirMissingError)
         self.assertIsInstance(ctx_fnf.exception, DriftError)
         self.assertEqual(sorted(ctx_fnf.exception.packages), ["pkg_missing1", "pkg_missing2"])
         self.assertIn("pkg_missing1", str(ctx_fnf.exception))
@@ -275,6 +276,7 @@ class TestPackageAssertions(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx_val:
             assert_packages_target_dirs_valid({"pkg_rel": meta_relative}, self.workspace_config)
         self.assertIsInstance(ctx_val.exception, ConfigError)
+        assert isinstance(ctx_val.exception, ConfigError)
         self.assertIsInstance(ctx_val.exception, DriftError)
         self.assertEqual(ctx_val.exception.packages, ["pkg_rel"])
         self.assertIn("must be absolute", str(ctx_val.exception))
@@ -363,6 +365,7 @@ class TestPackageAssertions(unittest.TestCase):
                     self.workspace_config,
                 )
             self.assertIsInstance(ctx.exception, TargetPermissionError)
+            assert isinstance(ctx.exception, TargetPermissionError)
             self.assertIsInstance(ctx.exception, DriftError)
             self.assertEqual(sorted(ctx.exception.packages), ["pkg_bad1", "pkg_bad2"])
             self.assertIn("pkg_bad1", str(ctx.exception))

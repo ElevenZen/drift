@@ -49,6 +49,7 @@ from ..core.folder_delivery import (
     FileAction,
     FileActionExecutionContext,
     FileActionType,
+    DELETE_ACTION_TYPES,
     InstallMethod,
     BackupSubfolder,
     plan_folder_delivery,
@@ -114,21 +115,21 @@ def _record_actions_in_results(
 ) -> None:
     """Derives and records drifted and synced file paths from planned execution actions."""
     for action in actions:
-        if action.action_type in (
-            FileActionType.CREATE_COPY,
-            FileActionType.UPDATE_COPY,
-            FileActionType.UPDATE_PERMISSION,
-            FileActionType.DELETE_FILE,
-            FileActionType.BACKUP_PRUNE,
-        ):
-            if action.dst_path:
-                try:
-                    repo_rel = action.dst_path.relative_to(install_pkg_dir)
-                except ValueError:
-                    continue
-                synced_str = str(repo_rel)
-                drifted_str = str(encode_dot_prefix(repo_rel))
-                record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
+        if (
+            action.action_type in (
+                FileActionType.CREATE_COPY,
+                FileActionType.UPDATE_COPY,
+                FileActionType.UPDATE_PERMISSION,
+            )
+            or action.action_type in DELETE_ACTION_TYPES
+        ) and action.dst_path is not None:
+            try:
+                repo_rel = action.dst_path.relative_to(install_pkg_dir)
+            except ValueError:
+                continue
+            synced_str = str(repo_rel)
+            drifted_str = str(encode_dot_prefix(repo_rel))
+            record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
 
 
 def _gather_single_tracked_candidate(
@@ -394,7 +395,7 @@ def execute_package_reverse_sync(
     execute_delivery_actions(exec_ctx, plan.actions)
 
     for action in plan.actions:
-        if action.action_type in (FileActionType.DELETE_FILE, FileActionType.BACKUP_PRUNE):
+        if action.action_type in DELETE_ACTION_TYPES:
             if action.dst_path and action.dst_path.parent != install_pkg_dir:
                 prune_empty_parents(action.dst_path.parent, limit_dir=install_pkg_dir)
 

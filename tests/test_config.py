@@ -312,20 +312,20 @@ class TestConfigClasses(unittest.TestCase):
             self.assertEqual(match, RenderSourceMatch(path=p_static, engine=None, target_name="config.toml"))
 
     def test_find_source_file_for_targets_with_directories(self) -> None:
-        """Verifies find_source_file_for_rendered_names correctly identifies directories."""
+        """Verifies find_source_file_for_rendered_names ignores directories and matches only files."""
         with tempfile.TemporaryDirectory() as temp_dir:
             directory = Path(temp_dir).resolve()
             config = WorkspaceConfig(drift_root=directory, render_engine_configs=RenderEngineRegistry())
             
             targets = ["my_folder", "other_folder"]
             
-            # 1. Directory exists
+            # 1. Directory exists: must return None (directories never match rendered targets)
             d1 = directory / "my_folder"
             d1.mkdir()
             match = config.render_engine_configs.find_source_file_for_rendered_names(directory, targets)
-            self.assertEqual(match, RenderSourceMatch(path=d1, engine=None, target_name="my_folder"))
+            self.assertIsNone(match)
             
-            # 2. File with same name takes precedence
+            # 2. File with same name matches
             shutil.rmtree(d1)
             f1 = directory / "my_folder"
             f1.touch()

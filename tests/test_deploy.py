@@ -596,6 +596,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
@@ -644,6 +645,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
@@ -684,6 +686,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
@@ -715,6 +718,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")
@@ -768,6 +772,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         # Recommended command must target ALL staged packages whose install state was modified!
@@ -816,6 +821,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a pkg_b")
@@ -845,6 +851,7 @@ target_directory = "{self.system_target_dir}"
 
         self.assertEqual(res.status, "FAILED")
         self.assertIsNotNone(res.failure)
+        assert res.failure is not None
         self.assertTrue(res.failure.requires_rollback)
         self.assertEqual(res.failure.next_action_type, NextActionType.ROLLBACK)
         self.assertEqual(res.failure.recommended_command, "drift rollback pkg_a")

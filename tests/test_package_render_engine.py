@@ -518,6 +518,97 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         expected_input_file = (self.src_dir / pkg_name / "inputs/data.json").resolve()
         self.assertEqual(custom_engine.input_file, expected_input_file)
 
+    def test_find_source_file_ignores_directories(self) -> None:
+        """Verifies find_source_file_for_rendered_names ignores directories and matches only files/templates."""
+        pkg_dir = self.src_dir / "pkg_dir_test"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a directory named 'folder_entry'
+        folder = pkg_dir / "folder_entry"
+        folder.mkdir()
+
+        # Create a regular file named 'file_entry.txt'
+        file_entry = pkg_dir / "file_entry.txt"
+        file_entry.write_text("content", encoding="utf-8")
+
+        registry = RenderEngineRegistry()
+        
+        # Searching for 'folder_entry' must return None (directories must be ignored)
+        match_dir = registry.find_source_file_for_rendered_names(pkg_dir, ["folder_entry"])
+        self.assertIsNone(match_dir)
+
+        # Searching for 'file_entry.txt' matches
+        match_file = registry.find_source_file_for_rendered_names(pkg_dir, ["file_entry.txt"])
+        self.assertIsNotNone(match_file)
+        assert match_file is not None
+        self.assertEqual(match_file.path, file_entry)
+        self.assertEqual(match_file.status, "match")
+
+    def test_find_conflict_in_source_dir_intermediate_and_leaf(self) -> None:
+        """Verifies find_conflict_in_source_dir properly handles intermediate descent, file blocking dir, and leaf folder blocking."""
+        pkg_dir = self.src_dir / "pkg_conflict_test"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        # 1. Setup nested directories and leaf file
+        (pkg_dir / "a" / "b").mkdir(parents=True, exist_ok=True)
+        leaf_file = pkg_dir / "a" / "b" / "target.txt"
+        leaf_file.write_text("target", encoding="utf-8")
+
+        # 2. Setup a file blocking a directory
+        block_file = pkg_dir / "a" / "blocked_dir"
+        block_file.write_text("I am a file, not a dir", encoding="utf-8")
+
+        # 3. Setup a leaf folder with a name that would conflict with a target file
+        leaf_folder = pkg_dir / "a" / "b" / "folder_as_file"
+        leaf_folder.mkdir()
+
+        registry = RenderEngineRegistry()
+
+        # Case A: Exact match in nested directory
+        match_exact = registry.find_conflict_in_source_dir(pkg_dir, Path("a/b/target.txt"))
+        self.assertIsNotNone(match_exact)
+        assert match_exact is not None
+        self.assertEqual(match_exact.status, "match")
+        self.assertEqual(match_exact.path, leaf_file)
+
+        # Case B: Intermediate segment blocked by file
+        match_blocked_dir = registry.find_conflict_in_source_dir(pkg_dir, Path("a/blocked_dir/subfile.txt"))
+        self.assertIsNotNone(match_blocked_dir)
+        assert match_blocked_dir is not None
+        self.assertEqual(match_blocked_dir.status, "block")
+        self.assertEqual(match_blocked_dir.path, block_file)
+
+        # Case C: Intermediate path doesn't exist -> returns None
+        match_missing = registry.find_conflict_in_source_dir(pkg_dir, Path("a/missing_dir/subfile.txt"))
+        self.assertIsNone(match_missing)
+
+        # Case D: Leaf target is blocked by an existing directory
+        match_leaf_folder = registry.find_conflict_in_source_dir(pkg_dir, Path("a/b/folder_as_file"))
+        self.assertIsNotNone(match_leaf_folder)
+        assert match_leaf_folder is not None
+        self.assertEqual(match_leaf_folder.status, "block")
+        self.assertEqual(match_leaf_folder.path, leaf_folder)
+
+        # Case E: Leaf folder blocks target file even if a template file also exists
+        (pkg_dir / "a" / "b" / "folder_as_file.envst").write_text("template", encoding="utf-8")
+        registry_with_engine = RenderEngineRegistry({
+            "envst": RenderEngineConfig(name="envst", input_file=Path(""), suffix="envst", render_command="cat %i")
+        })
+        match_leaf_folder_priority = registry_with_engine.find_conflict_in_source_dir(pkg_dir, Path("a/b/folder_as_file"))
+        self.assertIsNotNone(match_leaf_folder_priority)
+        assert match_leaf_folder_priority is not None
+        self.assertEqual(match_leaf_folder_priority.status, "block")
+        self.assertEqual(match_leaf_folder_priority.path, leaf_folder)
+
+        # Case F: Broken symlink in intermediate path blocks descent
+        broken_symlink = pkg_dir / "a" / "broken_link"
+        broken_symlink.symlink_to(pkg_dir / "nonexistent")
+        match_broken = registry.find_conflict_in_source_dir(pkg_dir, Path("a/broken_link/sub.txt"))
+        self.assertIsNotNone(match_broken)
+        assert match_broken is not None
+        self.assertEqual(match_broken.status, "block")
+        self.assertEqual(match_broken.path, broken_symlink)
+
 
 if __name__ == "__main__":
     unittest.main()

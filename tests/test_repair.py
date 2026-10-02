@@ -837,9 +837,11 @@ class TestWorkspaceGitUserRepair(unittest.TestCase):
             self.assertTrue(any("No packages are enabled" in msg for msg in cm.output))
 
             # 2. quiet=True suppresses warning
+            res_quiet = None
             with self.assertRaises(AssertionError):
                 with self.assertLogs("drift.config.workspace_config", level="WARNING"):
                     res_quiet = check_workspace_config(self.drift_root, quiet=True)
+            assert res_quiet is not None
             self.assertEqual(res_quiet.status, ComponentStatus.GOOD)
         finally:
             set_test_mode(True, enable_logging=False)

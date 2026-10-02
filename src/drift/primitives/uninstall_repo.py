@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -89,8 +90,8 @@ from ..core.folder_delivery import (
 from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, RestoredBackup, UninstallResult
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
 from ..hooks.lifecycle_hooks import HookExecFlags
-from ..utils.file_ops import prune_empty_parents, remove
-from ..utils.path_utils import decode_dot_prefix, is_relative_to
+from ..utils.file_ops import prune_empty_parents, remove_tree
+from ..utils.path_utils import decode_dot_prefix, encode_dot_prefix, is_relative_to
 from ..utils.process_utils import assert_can_escalate
 from .package_assertions import (
     assert_no_broken_dependencies_on_uninstall,
@@ -253,7 +254,7 @@ def clean_up_package_directories(context: PackageUninstallContext) -> None:
     """Cleans up the package directory under install_path and empty package directory under backup_path."""
     if context.install_pkg_dir.exists():
         try:
-            shutil.rmtree(context.install_pkg_dir)
+            remove_tree(context.install_pkg_dir)
         except Exception as e:
             logger.warning(f"   Failed to clean up install directory {context.install_pkg_dir}: {e}")
 
@@ -266,6 +267,7 @@ def clean_up_package_directories(context: PackageUninstallContext) -> None:
 
 def plan_package_uninstall(
     context: PackageUninstallContext,
+    host_ref_counts: Optional[Dict[Path, int]] = None,
 ) -> PackageUninstallPlan:
     """Compiles a deterministic PackageUninstallPlan without modifying host files or registry."""
     actions: List[FileAction] = []
@@ -281,14 +283,28 @@ def plan_package_uninstall(
             hooks_to_trigger=[],
         )
 
+    def _claim_file_removal(rel_file: Path) -> bool:
+        if host_ref_counts is None:
+            return True
+        host_target = context.target_dir / encode_dot_prefix(rel_file)
+        host_ref_counts[host_target] -= 1
+        return host_ref_counts[host_target] <= 0
+
+    effective_deployed_files = [
+        rel_file for rel_file in context.deployed_files
+        if _claim_file_removal(rel_file)
+    ]
+
     if context.detach:
-        actions.extend(
-            plan_symlink_conversions(
-                deployed_files=context.deployed_files,
-                target_dir=context.target_dir,
-                install_pkg_dir=context.install_pkg_dir,
+        if context.install_method == InstallMethod.SYMLINK:
+            actions.extend(
+                plan_symlink_conversions(
+                    deployed_files=effective_deployed_files,
+                    target_dir=context.target_dir,
+                    install_pkg_dir=context.install_pkg_dir,
+                )
             )
-        )
+        # If COPY, no filesystem mutations needed
     else:
         # Standard uninstall: hooks + file removals + backup restoration
         if context.hooks and (context.hooks.pre_uninstall or context.hooks.post_uninstall):
@@ -299,7 +315,7 @@ def plan_package_uninstall(
 
         actions.extend(
             plan_file_removals(
-                deployed_files=context.deployed_files,
+                deployed_files=effective_deployed_files,
                 target_dir=context.target_dir,
             )
         )
@@ -404,7 +420,7 @@ def uninstall_one_package(
             if backup_overwritten.is_dir():
                 for a in plan.restored:
                     if a.src_path and a.src_path.exists():
-                        remove(a.src_path, context.sudo)
+                        remove_tree(a.src_path, context.sudo)
                 prune_empty_parents(backup_overwritten, context.backup_pkg_dir)
 
             # 4. Post-uninstall hook
@@ -562,8 +578,24 @@ def prepare_uninstall_packages(
         for pkg in ordered_packages
     }
 
+    def _resolve_pkg_target_dir(pkg_name: str, pkg_state: PackageState) -> Path:
+        if pkg_state.target_directory is not None:
+            return pkg_state.target_directory
+        # if the installed target_directory is not recorded in StateRegistry
+        # then we have to read it from package config.
+        if pkg_name in contexts:
+            return contexts[pkg_name].target_dir
+        pkg_cfg = load_package_config_for_uninstall(workspace_config, pkg_name)
+        return pkg_cfg.get_target_directory(workspace_config)
+
+    host_ref_counts: Counter[Path] = Counter(
+        _resolve_pkg_target_dir(pkg_name, pkg_state) / encode_dot_prefix(rel_file)
+        for pkg_name, pkg_state in state_registry.packages.items()
+        for rel_file in pkg_state.deployed_files
+    )
+
     package_plans = {
-        pkg: plan_package_uninstall(contexts[pkg])
+        pkg: plan_package_uninstall(contexts[pkg], host_ref_counts=host_ref_counts)
         for pkg in ordered_packages
     }
 

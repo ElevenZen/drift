@@ -10,7 +10,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
 from .exceptions import InstallCollisionError
@@ -22,7 +22,8 @@ from ..utils.file_ops import (
     copy_permissions,
     create_symlink,
     ensure_dir,
-    remove,
+    remove_tree,
+    remove_file_or_empty_dir,
 )
 from .sync_ops import backup_file_or_dir_external
 from ..utils.path_utils import (
@@ -55,9 +56,30 @@ class FileActionType(str, Enum):
     BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
     BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
     DELETE_FILE = "DELETE_FILE"            # Direct file/symlink deletion without backup
+    DELETE_TREE = "DELETE_TREE"            # Direct directory tree deletion without backup
 
     # Workflow Notifications
     INFO_MESSAGE = "INFO_MESSAGE"          # Informational message logged during execution
+
+
+BACKUP_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
+    FileActionType.BACKUP_OVERWRITE,
+    FileActionType.BACKUP_PRUNE,
+})
+
+DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
+    FileActionType.DELETE_FILE,
+    FileActionType.DELETE_TREE,
+})
+
+BACKUP_OR_DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset(
+    BACKUP_ACTION_TYPES | DELETE_ACTION_TYPES
+)
+
+CREATE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
+    FileActionType.CREATE_SYMLINK,
+    FileActionType.CREATE_COPY,
+})
 
 
 @dataclass
@@ -155,8 +177,8 @@ def format_action_line(action: FileAction) -> str:
     elif action.action_type == FileActionType.BACKUP_PRUNE:
         target = action.src_path or action.dst_path
         return f"    📦 [BACKUP_PRUNE]    {target}{reason_str}"
-    elif action.action_type == FileActionType.DELETE_FILE:
-        return f"    🗑️ [DELETE_FILE]    {action.dst_path}{reason_str}"
+    elif action.action_type in DELETE_ACTION_TYPES:
+        return f"    🗑️ [{action.action_type}]    {action.dst_path}{reason_str}"
     elif action.action_type == FileActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
     return f"    [{action.action_type}] {action.src_path} -> {action.dst_path}{reason_str}"
@@ -165,7 +187,7 @@ def format_action_line(action: FileAction) -> str:
 def format_action_summary(actions: Sequence[FileAction]) -> str:
     """Formats a concise summary string of action counts."""
     counts = []
-    created = [a for a in actions if a.action_type in (FileActionType.CREATE_SYMLINK, FileActionType.CREATE_COPY)]
+    created = [a for a in actions if a.action_type in CREATE_ACTION_TYPES]
     if created:
         counts.append(f"{len(created)} to create")
     updated = [a for a in actions if a.action_type == FileActionType.UPDATE_COPY]
@@ -177,10 +199,10 @@ def format_action_summary(actions: Sequence[FileAction]) -> str:
     skipped = [a for a in actions if a.action_type == FileActionType.SKIP_IDENTICAL]
     if skipped:
         counts.append(f"{len(skipped)} up-to-date")
-    removed = [a for a in actions if a.action_type == FileActionType.DELETE_FILE]
+    removed = [a for a in actions if a.action_type in DELETE_ACTION_TYPES]
     if removed:
         counts.append(f"{len(removed)} to remove")
-    backups = [a for a in actions if a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.BACKUP_PRUNE)]
+    backups = [a for a in actions if a.action_type in BACKUP_ACTION_TYPES]
     if backups:
         counts.append(f"{len(backups)} to backup")
     ensured = [a for a in actions if a.action_type == FileActionType.ENSURE_DIR]
@@ -219,8 +241,9 @@ def _plan_backup_or_delete(
     rel_path: Path,
     reason: Optional[str] = None,
     is_orphan: bool = False,
+    is_tree: bool = False,
 ) -> FileAction:
-    """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_FILE when absent."""
+    """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_FILE/DELETE_TREE when absent."""
     subfolder = BackupSubfolder.DELETED_FILES if is_orphan else None
     backup_dst = context.resolve_backup_path(rel_path, subfolder=subfolder)
     if backup_dst:
@@ -231,8 +254,10 @@ def _plan_backup_or_delete(
             dst_path=backup_dst,
             reason=reason,
         )
+
+    action_type = FileActionType.DELETE_TREE if is_tree else FileActionType.DELETE_FILE
     return FileAction(
-        action_type=FileActionType.DELETE_FILE,
+        action_type=action_type,
         dst_path=target,
         reason=reason,
     )
@@ -302,7 +327,7 @@ def _check_has_backed_up_ancestor(target: Path, backed_up_targets: Set[Path]) ->
 
 def inspect_ancestor_directories(
     context: DeliveryInspectionContext,
-    deployable_files: Iterable[Path],
+    deployable_files: Sequence[Path],
     handled_targets: Set[Path],
     actions: List[FileAction],
 ) -> Set[Path]:
@@ -325,7 +350,7 @@ def inspect_ancestor_directories(
             rel_path=rel_path,
             has_backed_up_ancestor=has_backed_up,
         )
-        if any(a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.DELETE_FILE) for a in res):
+        if any(a.action_type in BACKUP_OR_DELETE_ACTION_TYPES for a in res):
             backed_up_ancestor_targets.add(ancestor_target)
         actions.extend(res)
 
@@ -508,6 +533,7 @@ def _inspect_resolved_leaf_file(
             system_target,
             rel_file,
             reason="Directory blocking file",
+            is_tree=True,
         ))
         actions.append(_plan_file_creation(context, source_file, system_target))
         return
@@ -587,7 +613,7 @@ def _inspect_leaf(
             rel_path=rel_file,
             has_backed_up_ancestor=has_backed_up_parent,
         )
-        if any(a.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.DELETE_FILE) for a in dir_actions):
+        if any(a.action_type in BACKUP_OR_DELETE_ACTION_TYPES for a in dir_actions):
             backed_up_ancestor_targets.add(system_target)
         actions.extend(dir_actions)
         return
@@ -642,8 +668,8 @@ def _plan_orphan_prune(
 
 def _inspect_orphans(
     context: DeliveryInspectionContext,
-    deployable_files: Iterable[Path],
-    deployed_files: Iterable[Path],
+    deployable_files: Sequence[Path],
+    deployed_files: Sequence[Path],
 ) -> List[FileAction]:
     """Plans BACKUP_PRUNE or DELETE_FILE actions for historical deployed files missing in candidate package."""
     if context.reverse_mode:
@@ -675,8 +701,8 @@ def _inspect_orphans(
 
 def plan_folder_delivery(
     context: DeliveryInspectionContext,
-    deployable_files: Iterable[Path],
-    deployed_files: Iterable[Path] = (),
+    deployable_files: Sequence[Path],
+    deployed_files: Sequence[Path] = (),
 ) -> List[FileAction]:
     """Plans declarative filesystem operations for delivering source_dir to target_dir."""
     if not context.reverse_mode:
@@ -684,18 +710,16 @@ def plan_folder_delivery(
     actions: List[FileAction] = []
     handled_targets: Set[Path] = set()
 
-    deployable_file_list = list(deployable_files)
-
     # 1. Intermediate Ancestor Directories Inspection
     backed_up_ancestor_targets = inspect_ancestor_directories(
         context=context,
-        deployable_files=deployable_file_list,
+        deployable_files=deployable_files,
         handled_targets=handled_targets,
         actions=actions,
     )
 
     # 2. Leaf Files Inspection
-    for rel_file in deployable_file_list:
+    for rel_file in deployable_files:
         _inspect_leaf(
             context=context,
             rel_file=rel_file,
@@ -705,7 +729,7 @@ def plan_folder_delivery(
         )
 
     # 3. Orphan Files Reconciliation (additions before deletions)
-    actions.extend(_inspect_orphans(context, deployable_file_list, deployed_files))
+    actions.extend(_inspect_orphans(context, deployable_files, deployed_files))
 
     return actions
 
@@ -762,7 +786,8 @@ def plan_symlink_conversions(
     symlinks_to_convert = [
         rel_file
         for rel_file in deployed_files
-        if (target_dir / encode_dot_prefix(rel_file)).is_symlink()
+        if not (install_pkg_dir / rel_file).is_dir()
+        and (target_dir / encode_dot_prefix(rel_file)).is_symlink()
     ]
     if not symlinks_to_convert:
         return []
@@ -894,7 +919,7 @@ def execute_single_action(
     action: FileAction,
 ) -> None:
     """Executes a single planned file/directory delivery action on the host system."""
-    if action.action_type in (FileActionType.BACKUP_OVERWRITE, FileActionType.BACKUP_PRUNE):
+    if action.action_type in BACKUP_ACTION_TYPES:
         if action.src_path and action.dst_path:
             if action.reason:
                 logger.warning(f"🛡️  [BACKUP] {action.reason} at '{action.src_path}'")
@@ -906,7 +931,10 @@ def execute_single_action(
                 resolve_symlinks=context.resolve_symlinks,
             )
         if action.src_path:
-            remove(action.src_path, context.sudo)
+            if action.action_type == FileActionType.BACKUP_PRUNE:
+                remove_file_or_empty_dir(action.src_path, context.sudo)
+            else:
+                remove_tree(action.src_path, context.sudo)
 
     elif action.action_type == FileActionType.ENSURE_DIR:
         if action.dst_path:
@@ -929,9 +957,13 @@ def execute_single_action(
         if action.src_path and action.dst_path:
             copy_permissions(action.src_path, action.dst_path, sudo=context.sudo)
 
+    elif action.action_type == FileActionType.DELETE_TREE:
+        if action.dst_path:
+            remove_tree(action.dst_path, context.sudo)
+
     elif action.action_type == FileActionType.DELETE_FILE:
         if action.dst_path:
-            remove(action.dst_path, context.sudo)
+            remove_file_or_empty_dir(action.dst_path, context.sudo)
 
     elif action.action_type == FileActionType.SKIP_IDENTICAL:
         logger.debug(f"   Skipping '{action.dst_path}': already up-to-date")

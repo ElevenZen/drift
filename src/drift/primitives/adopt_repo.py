@@ -120,7 +120,7 @@ from ..utils.git_utils import (
     get_drift_root,
     commit_staged_repo_changes,
 )
-from ..utils.file_ops import remove, copy_file
+from ..utils.file_ops import remove_file_or_empty_dir, copy_file
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 from ..utils.editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
@@ -414,7 +414,7 @@ def ignore_addition(pkg_dir: Path, install_pkg_dir: Path, rel_path: Path) -> Non
     """Unlinks the file from install base and registers the relative path pattern in .drift_ignore."""
     install_file = install_pkg_dir / rel_path
     if install_file.exists() or install_file.is_symlink():
-        remove(install_file)
+        remove_file_or_empty_dir(install_file)
             
     install_base = install_pkg_dir.parent
     rel_install_base = Path(install_pkg_dir.name) / rel_path
@@ -439,7 +439,7 @@ def adopt_deletion(render_engines: RenderEngineRegistry, src_dir_to_render: Path
     """Symmetrically deletes the corresponding file from declarative source folder."""
     src_file = resolve_source_file_path(render_engines, src_dir_to_render, rel_path)
     if src_file and (src_file.exists() or src_file.is_symlink()):
-        remove(src_file)
+        remove_file_or_empty_dir(src_file)
 
 
 def patch_and_edit(

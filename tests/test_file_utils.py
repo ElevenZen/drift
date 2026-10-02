@@ -29,7 +29,8 @@ from drift.utils.file_ops import (
     move_tree,
     assert_writable,
     ensure_dir,
-    remove,
+    remove_tree,
+    remove_file_or_empty_dir,
     create_symlink,
     copy_file,
     copy_symlink,
@@ -311,10 +312,10 @@ class TestFileUtils(unittest.TestCase):
         mock_run.assert_called_once_with(["sudo", "mkdir", "-p", str(path)], check=True, capture_output=True)
 
     @patch("subprocess.run")
-    def test_remove_file_or_dir_with_sudo(self, mock_run) -> None:
+    def test_remove_tree_file_or_dir_with_sudo(self, mock_run) -> None:
         path = self.root / "file_to_remove"
         path.touch()
-        remove(path, sudo=True)
+        remove_tree(path, sudo=True)
         mock_run.assert_called_once_with(["sudo", "rm", "-f", str(path)], check=True, capture_output=True)
 
     @patch("subprocess.run")
@@ -392,7 +393,7 @@ class TestFileUtils(unittest.TestCase):
             mock_run.assert_not_called()
 
             # 4. remove
-            remove(dst_copy, sudo=True)
+            remove_tree(dst_copy, sudo=True)
             self.assertFalse(dst_copy.exists())
             mock_run.assert_not_called()
 
@@ -583,7 +584,7 @@ class TestFileUtils(unittest.TestCase):
         self.assertTrue(contents_differ(f1, f2, convert_line_endings=False))
 
     def test_unlock_file_or_dir_if_windows(self) -> None:
-        from drift.utils.file_ops import clear_readonly, remove
+        from drift.utils.file_ops import clear_readonly, remove_tree
 
         # 1. On non-windows: does nothing without errors
         target_file = self.root / "locked_file.txt"
@@ -610,8 +611,8 @@ class TestFileUtils(unittest.TestCase):
             self.assertTrue(bool(child_file.stat().st_mode & 0o200))
 
         # Clean removal
-        remove(target_file)
-        remove(target_dir)
+        remove_tree(target_file)
+        remove_tree(target_dir)
         self.assertFalse(target_file.exists())
         self.assertFalse(target_dir.exists())
 
@@ -767,6 +768,76 @@ class TestFileUtils(unittest.TestCase):
             write_file(dst_dir, "new content")
         self.assertTrue(dst_dir.is_dir())
         self.assertTrue(canary.is_file())
+
+    def test_remove_file_or_empty_dir_behavior(self) -> None:
+        # Non-existent path returns False
+        non_existent = self.root / "does_not_exist.txt"
+        self.assertFalse(remove_file_or_empty_dir(non_existent))
+
+        # Regular file removal returns True
+        f = self.root / "regular.txt"
+        f.write_text("hello", encoding="utf-8")
+        self.assertTrue(remove_file_or_empty_dir(f))
+        self.assertFalse(f.exists())
+
+        # Empty directory removal returns True
+        empty_d = self.root / "empty_dir"
+        empty_d.mkdir()
+        self.assertTrue(remove_file_or_empty_dir(empty_d))
+        self.assertFalse(empty_d.exists())
+
+        # Non-empty directory is preserved and returns False
+        non_empty_d = self.root / "non_empty_dir"
+        non_empty_d.mkdir()
+        child = non_empty_d / "child.txt"
+        child.write_text("protected", encoding="utf-8")
+        self.assertFalse(remove_file_or_empty_dir(non_empty_d))
+        self.assertTrue(non_empty_d.is_dir())
+        self.assertTrue(child.is_file())
+
+        # Symlink to file: unlinks symlink, target intact, returns True
+        sym_file = self.root / "sym_to_child"
+        sym_file.symlink_to(child)
+        self.assertTrue(remove_file_or_empty_dir(sym_file))
+        self.assertFalse(sym_file.is_symlink())
+        self.assertTrue(child.is_file())
+
+        # Symlink to directory: unlinks symlink, directory intact, returns True
+        sym_dir = self.root / "sym_to_dir"
+        sym_dir.symlink_to(non_empty_d)
+        self.assertTrue(remove_file_or_empty_dir(sym_dir))
+        self.assertFalse(sym_dir.is_symlink())
+        self.assertTrue(non_empty_d.is_dir())
+
+        # Broken symlink returns True
+        broken_sym = self.root / "broken_link"
+        broken_sym.symlink_to(self.root / "missing_target")
+        self.assertTrue(remove_file_or_empty_dir(broken_sym))
+        self.assertFalse(broken_sym.is_symlink())
+
+    @patch("subprocess.run")
+    def test_remove_file_or_empty_dir_with_sudo(self, mock_run) -> None:
+        # File under sudo -> sudo rm -f
+        f = self.root / "sudo_file.txt"
+        f.touch()
+        self.assertTrue(remove_file_or_empty_dir(f, sudo=True))
+        mock_run.assert_called_with(["sudo", "rm", "-f", str(f)], check=True, capture_output=True)
+
+        mock_run.reset_mock()
+        # Empty dir under sudo -> sudo rmdir
+        d = self.root / "sudo_empty_dir"
+        d.mkdir()
+        self.assertTrue(remove_file_or_empty_dir(d, sudo=True))
+        mock_run.assert_called_with(["sudo", "rmdir", str(d)], check=True, capture_output=True)
+
+    def test_remove_tree_recursive(self) -> None:
+        # remove_tree recursively removes directory with children
+        tree_dir = self.root / "tree_dir"
+        sub_dir = tree_dir / "sub"
+        sub_dir.mkdir(parents=True)
+        (sub_dir / "nested.txt").write_text("data", encoding="utf-8")
+        remove_tree(tree_dir)
+        self.assertFalse(tree_dir.exists())
 
 
 if __name__ == "__main__":

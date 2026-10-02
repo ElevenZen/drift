@@ -269,6 +269,7 @@ class TestStatus(unittest.TestCase):
         status, diff = calculate_pending_delta(render_pkg, install_pkg)
         self.assertEqual(status, "STAGED")
         self.assertIsNotNone(diff)
+        assert diff is not None
         # Exactly 1 added file, directory entries 'nested' and 'nested/sub' are excluded
         self.assertEqual(diff.added, [Path("nested/sub/file.txt")])
         self.assertEqual(diff.modified, [])

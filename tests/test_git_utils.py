@@ -97,6 +97,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
 
                 err = check_repo_can_commit(self.repo_dir)
                 self.assertIsNotNone(err)
+                assert err is not None
                 self.assertIn("user.name", err)
                 self.assertIn("git_user_name", err)
 
@@ -119,6 +120,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
             with patch("drift.utils.git_utils.run_command", side_effect=fake_run):
                 err = check_repo_can_commit(self.repo_dir)
                 self.assertIsNotNone(err)
+                assert err is not None
                 self.assertIn("user.email", err)
                 self.assertIn("git_user_email", err)
 
@@ -131,6 +133,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         nonexistent = self.repo_dir / "does_not_exist"
         err = check_repo_can_commit(nonexistent)
         self.assertIsNotNone(err)
+        assert err is not None
         self.assertIn("does not exist", err)
 
         with self.assertRaises(RuntimeError):
@@ -146,6 +149,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         configure_repo_git_user(self.repo_dir, user_name="Old Name", user_email="same@example.com")
         err = check_repo_git_user_synced(self.repo_dir, expected_name="New Name", expected_email="same@example.com")
         self.assertIsNotNone(err)
+        assert err is not None
         self.assertIn("user.name", err)
 
     def test_check_repo_git_user_synced_mismatch_email(self) -> None:
@@ -153,6 +157,7 @@ class TestGitUtilsUserConfig(unittest.TestCase):
         configure_repo_git_user(self.repo_dir, user_name="Same Name", user_email="old@example.com")
         err = check_repo_git_user_synced(self.repo_dir, expected_name="Same Name", expected_email="new@example.com")
         self.assertIsNotNone(err)
+        assert err is not None
         self.assertIn("user.email", err)
 
     def test_check_repo_git_user_synced_none_expected(self) -> None:

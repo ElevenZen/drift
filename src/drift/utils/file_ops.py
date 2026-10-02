@@ -19,7 +19,8 @@ Atomic Operations (temp-file + rename, never leaves partial state):
 Direct Operations:
     copy_symlink(src, dst, sudo) — Recreate symlink pointing to src's target.
     copy_permissions(src, dst, sudo) — chmod permissions sync.
-    remove(path, sudo) — Remove file/symlink/dir tree.
+    remove_tree(path, sudo) — Remove file/symlink/dir tree.
+    remove_file_or_empty_dir(path, sudo) — Safely remove file, symlink, or empty dir.
     remove_with_parents(file_path, limit_dir) — Remove + prune empty ancestors.
     create_symlink(src, dst, sudo) — Create symlink with cleanup.
     ensure_dir(path, sudo) — mkdir -p with optional elevation.
@@ -172,7 +173,7 @@ def copy_permissions(src: Path, dst: Path, sudo: bool = False) -> None:
 # Remove operations
 # ---------------------------------------------------------------------------
 
-def remove(path: Path, sudo: bool = False) -> None:
+def remove_tree(path: Path, sudo: bool = False) -> None:
     """Safely removes a file, symlink, or directory tree.
 
     Uses sudo on POSIX if requested, or Python builtins on Windows / non-sudo.
@@ -190,13 +191,44 @@ def remove(path: Path, sudo: bool = False) -> None:
             path.unlink()
 
 
+def remove_file_or_empty_dir(path: Path, sudo: bool = False) -> bool:
+    """Safely removes a file, symlink, or strictly empty directory.
+
+    If path is a non-empty directory, it is left untouched and False is returned.
+    Uses sudo on POSIX if requested.
+    """
+    clear_readonly(path)
+    if not (path.exists() or path.is_symlink()):
+        return False
+    if is_concrete_dir(path):
+        try:
+            if any(path.iterdir()):
+                logger.warning(f"Skipping removal of non-empty directory: {path}")
+                return False
+        except OSError as e:
+            logger.warning(f"Could not inspect directory entries for '{path}': {e}")
+            return False
+
+        if sudo and sys.platform != "win32":
+            run_command(["rmdir", str(path)], sudo=True)
+        else:
+            path.rmdir()
+        return True
+    else:
+        if sudo and sys.platform != "win32":
+            run_command(["rm", "-f", str(path)], sudo=True)
+        else:
+            path.unlink()
+        return True
+
+
 def remove_with_parents(file_path: Path, limit_dir: Optional[Path] = None) -> None:
     """Removes a file or symlink and cleans up empty parent directories up to limit_dir."""
     if not file_path.exists() and not file_path.is_symlink():
         return
 
     clear_readonly(file_path)
-    remove(file_path)
+    remove_file_or_empty_dir(file_path)
     if limit_dir:
         prune_empty_parents(file_path.parent, limit_dir)
 
@@ -211,7 +243,7 @@ def copy_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
         raise IsADirectoryError(f"Cannot copy symlink to '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
-    remove(dst, sudo=sudo)
+    remove_file_or_empty_dir(dst, sudo=sudo)
 
     link_target = os.readlink(src)
     if sys.platform == "win32" or not sudo:
@@ -227,7 +259,7 @@ def create_symlink(src: Path, dst: Path, sudo: bool = False) -> None:
         raise IsADirectoryError(f"Cannot create symlink at '{dst}': destination exists and is a directory.")
     ensure_dir(dst.parent, sudo=sudo)
     clear_readonly(dst)
-    remove(dst, sudo=sudo)
+    remove_file_or_empty_dir(dst, sudo=sudo)
 
     if sys.platform == "win32" or not sudo:
         dst.symlink_to(src, target_is_directory=src.is_dir())
@@ -410,7 +442,7 @@ def _tree_op_windows(src: Path, dst: Path, move: bool, resolve_symlinks: bool) -
     """Windows tree copy/move using Python standard library."""
     if move:
         if dst.exists() or dst.is_symlink():
-            remove(dst)
+            remove_tree(dst)
         shutil.move(str(src), str(dst))
     else:
         if is_concrete_dir(src):

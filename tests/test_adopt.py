@@ -1563,12 +1563,14 @@ render_command = "bash -c 'cat %i %s'"
 
         plan1 = plan.get_package_plan(pkg1)
         self.assertIsNotNone(plan1)
+        assert plan1 is not None
         self.assertEqual(plan1.modifications, [Path("config.txt")])
         self.assertIn("config.txt", plan1.patches)
         self.assertIn("v2_modified", plan1.patches["config.txt"])
 
         plan2 = plan.get_package_plan(pkg2)
         self.assertIsNotNone(plan2)
+        assert plan2 is not None
         self.assertEqual(plan2.additions, [Path("new_tool.sh")])
 
         # Verify staging index in install/ was completely restored during planning

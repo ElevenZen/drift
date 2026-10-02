@@ -798,10 +798,12 @@ fi
         # Verify plan: BACKUP_OVERWRITE of colliding file into deleted_files, then CREATE_COPY of restored file
         backup_action = next((a for a in plan.actions if a.action_type == FileActionType.BACKUP_OVERWRITE and a.src_path == colliding_file), None)
         self.assertIsNotNone(backup_action)
+        assert backup_action is not None
         self.assertEqual(backup_action.dst_path, expected_backup_dst)
 
         restore_action = next((a for a in plan.actions if a.action_type == FileActionType.CREATE_COPY and a.dst_path == colliding_file), None)
         self.assertIsNotNone(restore_action)
+        assert restore_action is not None
         self.assertEqual(restore_action.src_path, backup_pkg_overwritten / "settings.json")
 
         # Execute uninstallation
@@ -893,6 +895,139 @@ fi
         )
         self.assertTrue(context.sudo)
         self.assertTrue(context.file_action_context.sudo)
+
+    def test_uninstall_detach_copy_package_produces_zero_host_actions(self):
+        """Verifies that detaching a COPY package produces zero host mutations and unregisters cleanly."""
+        pkg = "pkg_detach_copy"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "copied_file.txt").write_text("content", encoding="utf-8")
+        (self.system_target_dir / "copied_file.txt").write_text("content", encoding="utf-8")
+
+        state = PackageState(
+            state="installed",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[Path("copied_file.txt")],
+            sudo=False,
+        )
+
+        state_registry = load_state_registry(self.install_dir / "state.toml")
+        state_registry.packages[pkg] = state
+        save_state_registry(state_registry)
+
+        # 1. Plan inspection: must have actions == []
+        context = PackageUninstallContext(
+            pkg_name=pkg,
+            target_dir=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[Path("copied_file.txt")],
+            sudo=False,
+            install_pkg_dir=pkg_install_dir,
+            backup_pkg_dir=self.backup_dir / pkg,
+            drift_root=self.drift_root,
+            detach=True,
+        )
+        plan = plan_package_uninstall(context)
+        self.assertEqual(plan.actions, [])
+
+        # 2. Execution via Primitive 7: host file intact, package removed from state.toml
+        self.workspace_config.packages_enable[pkg] = False
+        res = run_primitive_7_uninstall_packages(
+            self.workspace_config,
+            package_names=[pkg],
+            config=UninstallConfig(detach=True, force=True),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertTrue((self.system_target_dir / "copied_file.txt").is_file())
+        self.assertEqual((self.system_target_dir / "copied_file.txt").read_text(encoding="utf-8"), "content")
+
+        reloaded_registry = load_state_registry(self.install_dir / "state.toml")
+        self.assertNotIn(pkg, reloaded_registry.packages)
+
+    def test_uninstall_shared_host_path_reference_counting(self):
+        """Verifies that shared host paths are only removed when reference count reaches zero."""
+        pkg_a = "pkg_share_a"
+        pkg_b = "pkg_share_b"
+
+        pkg_a_install = self.install_dir / pkg_a
+        pkg_b_install = self.install_dir / pkg_b
+        pkg_a_install.mkdir(parents=True, exist_ok=True)
+        pkg_b_install.mkdir(parents=True, exist_ok=True)
+
+        shared_file = Path("shared_dir/shared_item.txt")
+        (self.system_target_dir / "shared_dir").mkdir(parents=True, exist_ok=True)
+        (self.system_target_dir / shared_file).write_text("shared", encoding="utf-8")
+
+        state_registry = load_state_registry(self.install_dir / "state.toml")
+        state_registry.packages[pkg_a] = PackageState(
+            state="installed",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[shared_file, Path("a_only.txt")],
+            sudo=False,
+        )
+        state_registry.packages[pkg_b] = PackageState(
+            state="installed",
+            target_directory=self.system_target_dir,
+            install_method=InstallMethod.COPY,
+            deployed_files=[shared_file, Path("b_only.txt")],
+            sudo=False,
+        )
+        save_state_registry(state_registry)
+
+        (self.system_target_dir / "a_only.txt").write_text("a", encoding="utf-8")
+        (self.system_target_dir / "b_only.txt").write_text("b", encoding="utf-8")
+
+        # Prepare uninstall for both packages
+        self.workspace_config.packages_enable[pkg_a] = False
+        self.workspace_config.packages_enable[pkg_b] = False
+
+        prep_plan = prepare_uninstall_packages(
+            self.workspace_config,
+            package_names=[pkg_a, pkg_b],
+            config=UninstallConfig(force=True),
+        )
+
+        plan_first = prep_plan.package_plans[prep_plan.ordered_packages[0]]
+        plan_second = prep_plan.package_plans[prep_plan.ordered_packages[1]]
+
+        # The first package uninstalled decrements ref-count 2 -> 1, so shared_file is NOT in plan_first.actions
+        first_removals = [a.dst_path for a in plan_first.removed]
+        self.assertNotIn(self.system_target_dir / shared_file, first_removals)
+
+        # The second package uninstalled decrements ref-count 1 -> 0, so shared_file IS in plan_second.actions
+        second_removals = [a.dst_path for a in plan_second.removed]
+        self.assertIn(self.system_target_dir / shared_file, second_removals)
+
+    def test_plan_symlink_conversions_skips_directory_items(self):
+        """Verifies plan_symlink_conversions ignores directories and only converts symlinked files."""
+        from drift.core.folder_delivery import plan_symlink_conversions
+
+        pkg = "pkg_dir_symlink"
+        install_pkg_dir = self.install_dir / pkg
+        install_pkg_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create a directory in install_pkg_dir
+        (install_pkg_dir / "my_dir").mkdir()
+        # Create a regular file in install_pkg_dir
+        (install_pkg_dir / "my_file.txt").write_text("content", encoding="utf-8")
+
+        # In target_dir, create symlink for file and symlink/directory for my_dir
+        target_file = self.system_target_dir / "my_file.txt"
+        target_file.symlink_to(install_pkg_dir / "my_file.txt")
+        target_dir = self.system_target_dir / "my_dir"
+        target_dir.symlink_to(install_pkg_dir / "my_dir")
+
+        actions = plan_symlink_conversions(
+            deployed_files=[Path("my_dir"), Path("my_file.txt")],
+            target_dir=self.system_target_dir,
+            install_pkg_dir=install_pkg_dir,
+        )
+
+        # my_dir must be skipped, only my_file.txt should be converted
+        converted_targets = [a.dst_path for a in actions if a.action_type == FileActionType.CREATE_COPY]
+        self.assertEqual(converted_targets, [target_file])
 
 
 if __name__ == "__main__":

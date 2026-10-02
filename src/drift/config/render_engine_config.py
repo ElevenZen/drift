@@ -307,16 +307,16 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         target_names: Sequence[str]
     ) -> Optional[RenderSourceMatch]:
         """
-        Locates a file or directory in the given directory that will render to one of the rendered names.
-        Checks for static files/dirs first, then for templates using defined render engines.
+        Locates a source file in the given directory that will render to one of the rendered names.
+        Checks for static files first, then for templates using defined render engines.
         Returns a RenderSourceMatch or None if no match is found.
 
         The callers include package_config_render, drift_new, reverse_sync.
         """
-        # 1. Static check
+        # 1. Static check (files only, never directories)
         for name in target_names:
             p = directory / name
-            if p.exists():
+            if p.is_file():
                 return RenderSourceMatch(path=p, engine=None, target_name=name, status="match")
 
         # 2. Template check (using defined engines)
@@ -350,33 +350,45 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         """
         Finds a source file that renders to rel_target_path or a blocking path.
         Returns RenderSourceMatch with status="match" if it's an exact rendering match,
-        or status="block" if an intermediate path segment is blocked by a file.
+        or status="block" if an intermediate path segment is blocked by a file or if
+        the leaf target file is blocked by an existing directory.
         """
         from ..utils.path_utils import decode_dot_prefix
-        
+
         translated_path = decode_dot_prefix(rel_target_path)
         parts = translated_path.parts
-        
+
         current_dir = src_pkg_dir
         for i, part in enumerate(parts):
-            match = self.find_source_file_for_rendered_names(current_dir, [part])
-            
-            if match:
-                if i == len(parts) - 1:
-                    # Last segment reached: exact conflict (match).
-                    match.status = "match"
-                    return match
-                else:
-                    # Not last segment: if it's a file, it's a conflict (file blocking directory).
-                    if match.path.is_file():
-                        match.status = "block"
-                        return match
-                    # Directory found, descend for next segment.
-                    current_dir = match.path
+            if i < len(parts) - 1:
+                # Intermediate segment: check if blocked by template/file
+                render_match = self.find_source_file_for_rendered_names(current_dir, [part])
+                if render_match and render_match.path.is_file():
+                    render_match.status = "block"
+                    return render_match
+
+                # Descend concrete directory
+                next_dir = current_dir / part
+                if not next_dir.exists() and not next_dir.is_symlink():
+                    return None
+                if not next_dir.is_dir():
+                    return RenderSourceMatch(path=next_dir, engine=None, target_name=part, status="block")
+                current_dir = next_dir
             else:
-                # No match for this segment, no conflict possible for this path.
-                return None
-                
-            if not current_dir.exists() or not current_dir.is_dir():
+                leaf_path = current_dir / part
+                # Check if leaf target file is blocked by an existing folder in source
+                if leaf_path.is_dir():
+                    return RenderSourceMatch(path=leaf_path, engine=None, target_name=part, status="block")
+
+                # Leaf segment: exact match check for file/template
+                render_match = self.find_source_file_for_rendered_names(current_dir, [part])
+                if render_match:
+                    render_match.status = "match"
+                    return render_match
+
+                # Broken symlink blocking check
+                if leaf_path.is_symlink() and not leaf_path.exists():
+                    return RenderSourceMatch(path=leaf_path, engine=None, target_name=part, status="block")
+
                 return None
         return None

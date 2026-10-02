@@ -3,6 +3,7 @@ import tempfile
 import unittest
 import logging
 from pathlib import Path
+from typing import Optional, List, Any, Sequence
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -136,7 +137,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
-        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created if a.dst_path is not None}
         self.assertIn(Path("file1.txt"), created_paths)
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / PACKAGE_CONFIG_FILE_NAME, created_paths)
         self.assertEqual(changes["pkg_a"].updated, [])
@@ -167,7 +168,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
         self.assertEqual(changes["pkg_a"].created, [])
-        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated], [Path("file1.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated if a.dst_path is not None], [Path("file1.txt")])
         self.assertEqual(changes["pkg_a"].deleted, [])
 
         # Check modified file in install/
@@ -201,7 +202,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
         self.assertEqual(changes["pkg_a"].created, [])
         self.assertEqual(changes["pkg_a"].updated, [])
-        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].deleted], [Path("file2.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].deleted if a.dst_path is not None], [Path("file2.txt")])
 
         # Verify file2 is removed from install/
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file2.txt")))
@@ -253,7 +254,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_ignored"].package, "pkg_ignored")
-        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_ignored") for a in changes["pkg_ignored"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_ignored") for a in changes["pkg_ignored"].created if a.dst_path is not None}
         self.assertIn(Path("valid.txt"), created_paths)
         self.assertIn(Path("ignored_file.txt"), created_paths)
         self.assertIn(Path("error.log"), created_paths)
@@ -324,7 +325,7 @@ class TestStageRepo(unittest.TestCase):
 
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_misspelled"].package, "pkg_misspelled")
-        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_misspelled") for a in changes["pkg_misspelled"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_misspelled") for a in changes["pkg_misspelled"].created if a.dst_path is not None}
         self.assertIn(Path("valid.txt"), created_paths)
         self.assertIn(Path("misspelled_ignored.txt"), created_paths)
 
@@ -440,7 +441,7 @@ class TestStageRepo(unittest.TestCase):
         # Staging should reflect .drift_ignore creation
         self.assertEqual(len(changes), 1)
         self.assertTrue(changes["pkg_a"].has_changes)
-        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].created if a.dst_path is not None}
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_IGNORE_FILE_NAME, created_paths)
         # file1.txt still exists physically in install/ (so ignored files like hooks remain available)
         self.assertTrue(os.path.exists(os.path.join(self.install_dir, "pkg_a", "file1.txt")))
@@ -503,7 +504,7 @@ class TestStageRepo(unittest.TestCase):
 
         # Stage plan contains all files staged to install/
         self.assertEqual(len(changes), 1)
-        created_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes[pkg].created}
+        created_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes[pkg].created if a.dst_path is not None}
         self.assertIn(Path("app.json"), created_paths)
         self.assertIn(Path(f"{DRIFT_INTERNAL_DIR_NAME}/{DRIFT_INTERNAL_HOOKS_DIR_NAME}/pre_install.sh"), created_paths)
         self.assertTrue(changes[pkg].has_changes)
@@ -577,7 +578,7 @@ class TestStageRepo(unittest.TestCase):
         changes = run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_a", force=True)
         self.assertEqual(len(changes), 1)
         self.assertEqual(changes["pkg_a"].package, "pkg_a")
-        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated], [Path("file1.txt")])
+        self.assertEqual([a.dst_path.relative_to(self.install_dir / "pkg_a") for a in changes["pkg_a"].updated if a.dst_path is not None], [Path("file1.txt")])
 
     def test_stage_aborts_if_already_staging(self) -> None:
         """Verifies that staging aborts if any package is already in 'staging' state."""
@@ -869,7 +870,7 @@ class TestStageRepo(unittest.TestCase):
         )
 
         self.assertEqual(plan.package, "pkg_a")
-        self.assertIn(Path("new_diff_file.txt"), [a.dst_path.relative_to(self.install_dir / "pkg_a") for a in plan.created])
+        self.assertIn(Path("new_diff_file.txt"), [a.dst_path.relative_to(self.install_dir / "pkg_a") for a in plan.created if a.dst_path is not None])
         # Verify file was NOT copied to install/ yet
         self.assertFalse((self.install_dir / "pkg_a" / "new_diff_file.txt").exists())
 
@@ -965,7 +966,7 @@ class TestStageRepo(unittest.TestCase):
         )
 
         actions = plan_actions_from_folder_diff(diff, src_dir, dst_dir)
-        action_map = {a.dst_path.name: a for a in actions}
+        action_map = {a.dst_path.name: a for a in actions if a.dst_path is not None}
 
         # 1. Deletions come first
         self.assertEqual(actions[0].action_type, FileActionType.DELETE_FILE)
@@ -1036,7 +1037,7 @@ class TestStageRepo(unittest.TestCase):
         changes3 = run_primitive_4_stage_render_to_install(self.workspace_config, pkg)
         self.assertIn(pkg, changes3)
         self.assertTrue(changes3[pkg].has_changes)
-        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes3[pkg].updated}
+        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in changes3[pkg].updated if a.dst_path is not None}
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post_install.sh", updated_paths)
 
         # Verify post_install.sh was copied into install/
@@ -1076,7 +1077,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn(pkg, changes2)
         stage_pkg = changes2[pkg]
         self.assertTrue(stage_pkg.has_changes)
-        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in stage_pkg.updated}
+        updated_paths = {a.dst_path.relative_to(self.install_dir / pkg) for a in stage_pkg.updated if a.dst_path is not None}
         self.assertIn(Path("config.json"), updated_paths)
         self.assertIn(Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME / "post.sh", updated_paths)
 
@@ -1369,7 +1370,7 @@ class TestStageDependencies(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def _create_render_package(self, pkg_name: str, dependencies: list = None) -> None:
+    def _create_render_package(self, pkg_name: str, dependencies: Optional[Sequence[Any]] = None) -> None:
         pkg_dir = self.render_dir / pkg_name
         dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
         dot_drift.mkdir(parents=True, exist_ok=True)

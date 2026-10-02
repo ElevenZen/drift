@@ -43,6 +43,7 @@ from .folder_delivery import (
     FileAction,
     format_action_line,
     format_action_summary,
+    DELETE_ACTION_TYPES,
 )
 
 
@@ -73,7 +74,7 @@ class PackageReverseSyncPlan(SerializableModel):
 
     @property
     def deleted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type in (FileActionType.DELETE_FILE, FileActionType.BACKUP_PRUNE)]
+        return [a for a in self.actions if a.action_type in DELETE_ACTION_TYPES]
 
     @property
     def skipped(self) -> List[FileAction]:
@@ -169,7 +170,7 @@ class PackageStagePlan(SerializableModel):
 
     @property
     def deleted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == FileActionType.DELETE_FILE]
+        return [a for a in self.actions if a.action_type in DELETE_ACTION_TYPES]
 
     @property
     def ensured_dirs(self) -> List[FileAction]:
@@ -347,7 +348,7 @@ class PackageUninstallPlan(SerializableModel):
 
     @property
     def deleted(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == FileActionType.DELETE_FILE]
+        return [a for a in self.actions if a.action_type in DELETE_ACTION_TYPES]
 
     @property
     def removed(self) -> List[FileAction]:

@@ -2,7 +2,8 @@ from pathlib import Path
 
 from .folder_diff import compare_folders
 from ..utils.file_ops import (
-    remove,
+    remove_tree,
+    remove_file_or_empty_dir,
     move_tree,
 )
 from ..utils.file_inspect import is_concrete_dir
@@ -17,7 +18,7 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
         return
 
     # Safely remove backup_dest if it already exists, to avoid conflicts.
-    remove(backup_dest, sudo)
+    remove_tree(backup_dest, sudo)
 
     if not resolve_symlinks:
         move_tree(src, backup_dest, sudo, resolve_symlinks=False)
@@ -57,4 +58,4 @@ def backup_file_or_dir_external(src: Path, backup_dest: Path, sudo: bool, resolv
 
     # After moving all children, if src was a directory, we need to remove the empty directory shell
     if is_concrete_dir(src):
-        remove(src, sudo)
+        remove_file_or_empty_dir(src, sudo)

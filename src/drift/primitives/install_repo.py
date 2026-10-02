@@ -289,7 +289,7 @@ def plan_package_install(
                 target_dir=target_migrated_from,
             )
             actions.extend(migration_removals)
-        active_deployed_files: Iterable[Path] = ()
+        active_deployed_files: Sequence[Path] = ()
     else:
         active_deployed_files = deployed_files
 

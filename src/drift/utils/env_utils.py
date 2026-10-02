@@ -587,23 +587,25 @@ def topological_sort(
     # 4. Topological sort using Kahn's algorithm with min-heap for deterministic tie-breaking
     import heapq
 
+    queue: List[T] = []
+    heap: List[Any] = []
     try:
-        heap: List[T] = [k for k, deg in in_degree.items() if deg == 0]
+        heap = [k for k, deg in in_degree.items() if deg == 0]
         heapq.heapify(heap)
         use_heap = True
     except TypeError:
         # Fallback for unorderable node types
-        queue: List[T] = [k for k, deg in in_degree.items() if deg == 0]
+        queue = [k for k, deg in in_degree.items() if deg == 0]
         use_heap = False
 
     eval_order: List[T] = []
 
     if use_heap:
         while heap:
-            curr = heapq.heappop(heap)
+            curr: T = heapq.heappop(heap)
             eval_order.append(curr)
             try:
-                deps_iter = sorted(dependents[curr])
+                deps_iter = sorted(dependents[curr])  # type: ignore[type-var]
             except TypeError:
                 deps_iter = list(dependents[curr])
             for dep in deps_iter:
