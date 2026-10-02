@@ -154,6 +154,7 @@ class LineEnding(str, Enum):
 
 class InstallMethod(str, Enum):
     """Supported package installation methods for deploying configuration files."""
+    DEFAULT = "symlink"
     SYMLINK = "symlink"
     COPY = "copy"
 
@@ -192,8 +193,7 @@ class InstallMethod(str, Enum):
 
 
 # Global default package installation method (SYMLINK)
-DEFAULT_INSTALL_METHOD: InstallMethod = InstallMethod.SYMLINK
-InstallMethod.DEFAULT = DEFAULT_INSTALL_METHOD
+DEFAULT_INSTALL_METHOD: InstallMethod = InstallMethod.DEFAULT
 
 
 class BackupSubfolder(str, Enum):

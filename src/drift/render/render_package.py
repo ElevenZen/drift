@@ -114,7 +114,7 @@ def render_or_copy_file(
     """
     file_path = src_dir / rel_path
 
-    # If the item is a directory (e.g. empty directory or symlink to directory in source), create it in dest_dir without copying or rendering
+    # If the item is a directory (only empty directory), create it in dest_dir without copying or rendering
     if file_path.is_dir():
         dest_path = dest_dir / rel_path
         logger.info(f"📁 Directory: {rel_path}")
