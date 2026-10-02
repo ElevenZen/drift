@@ -159,7 +159,7 @@ def plan_package_stage(
     """Computes physical file diff between render/ and install/ and compiles a PackageStagePlan.
 
     Evaluates 1:1 structural fidelity differences without ignore filtering, compiling
-    discrete CREATE_COPY, UPDATE_COPY, UPDATE_PERMISSION, ENSURE_DIR, and DELETE_FILE actions.
+    discrete CREATE_COPY, UPDATE_COPY, UPDATE_PERMISSION, ENSURE_DIR, and DELETE_ITEM actions.
     """
     install_pkg_dir = install_base / pkg
     render_pkg_dir = render_base / pkg

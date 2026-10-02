@@ -10,6 +10,7 @@ from .constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_KEEP_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_IGNORE_PATTERNS,
 )
@@ -139,28 +140,56 @@ class DriftIgnore(IgnoreHandler):
             ]
         return cls(patterns)
 
-    def filter_deployable_files(self, install_pkg_dir: Path) -> List[Path]:
-        """
-        Returns a list of relative Path objects for all deployable files in a package.
-        The install_pkg_dir is the path to the package in the install directory.
-        The input should not contain any symlink to other directories.
-        The returned list excludes files that match the ignore patterns.
+    def filter_deployable_files(
+        self,
+        install_pkg_dir: Path,
+        include_empty_dirs: bool = True,
+    ) -> List[Path]:
+        """Returns relative paths for all deployable items in a package.
+
+        When include_empty_dirs is True, empty folders tracked via .drift_keep
+        are transformed into their parent directory relative paths as leaf nodes.
+        When include_empty_dirs is False, empty directories and .drift_keep stubs
+        are excluded (used for cross-package collision checks).
         """
         from ..utils.file_inspect import tree_files
-        return [
+
+        raw_files = tree_files(install_pkg_dir)
+        regular_files = [
             rel_file
-            for rel_file in tree_files(install_pkg_dir)
-            if not self.match_path(rel_file, is_dir=False)
+            for rel_file in raw_files
+            if rel_file.name != DRIFT_KEEP_FILE_NAME
+            and not self.match_path(rel_file, is_dir=False)
         ]
+
+        if not include_empty_dirs:
+            return sorted(regular_files)
+
+        regular_ancestors = {
+            parent
+            for file_path in regular_files
+            for parent in file_path.parents
+        }
+
+        empty_dirs = [
+            rel_file.parent
+            for rel_file in raw_files
+            if rel_file.name == DRIFT_KEEP_FILE_NAME
+            and rel_file.parent != Path(".")
+            and rel_file.parent not in regular_ancestors
+            and not self.match_path(rel_file.parent, is_dir=True)
+        ]
+
+        return sorted(regular_files + empty_dirs)
 
     def match_path(self, rel_path: Path, is_dir: bool = False) -> bool:
         """Implements regex ignore matching algorithm on a relative path."""
-        # Special exception: always ignore internal drift directories, ignore-related files, and config files
+        # Special exception: always ignore internal drift directories, ignore-related files, config files, and keep file stubs
         if rel_path.parts and rel_path.parts[0] == DRIFT_INTERNAL_DIR_NAME:
             return True
 
         filename = rel_path.name
-        if filename in MANAGED_CONFIG_FILES:
+        if filename in MANAGED_CONFIG_FILES or filename == DRIFT_KEEP_FILE_NAME:
             return True
 
         normalized_rel_path = rel_path.as_posix()

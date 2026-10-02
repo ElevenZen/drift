@@ -425,6 +425,46 @@ class TestPackageAssertions(unittest.TestCase):
         self.assertIn("pkg_a", str(ctx.exception))
         self.assertIn("pkg_b", str(ctx.exception))
 
+    def test_assert_no_cross_package_conflicts_allows_shared_empty_directories(self) -> None:
+        """Verifies that multiple packages can share the same empty directory without cross-package collision."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
+
+        system_target = Path(self.temp_dir.name).parent / "system_home_shared"
+        system_target.mkdir(parents=True, exist_ok=True)
+
+        meta_a = PackageConfig.from_dict(
+            {"package": {"name": "pkg_a", "target_directory": str(system_target)}},
+            "pkg_a",
+            self.source_dir / "pkg_a",
+            workspace_config=self.workspace_config,
+        )
+        meta_b = PackageConfig.from_dict(
+            {"package": {"name": "pkg_b", "target_directory": str(system_target)}},
+            "pkg_b",
+            self.source_dir / "pkg_b",
+            workspace_config=self.workspace_config,
+        )
+
+        pkg_a_install = self.install_dir / "pkg_a"
+        pkg_b_install = self.install_dir / "pkg_b"
+        (pkg_a_install / "shared_empty").mkdir(parents=True, exist_ok=True)
+        (pkg_a_install / "shared_empty" / DRIFT_KEEP_FILE_NAME).touch()
+        (pkg_a_install / "file_a.txt").write_text("a", encoding="utf-8")
+
+        (pkg_b_install / "shared_empty").mkdir(parents=True, exist_ok=True)
+        (pkg_b_install / "shared_empty" / DRIFT_KEEP_FILE_NAME).touch()
+        (pkg_b_install / "file_b.txt").write_text("b", encoding="utf-8")
+
+        registry = StateRegistry()
+
+        # Both packages declare the identical empty folder 'shared_empty'; this must NOT raise CrossPackageCollisionError
+        assert_no_cross_package_conflicts(
+            self.workspace_config,
+            ["pkg_a", "pkg_b"],
+            {"pkg_a": meta_a, "pkg_b": meta_b},
+            registry,
+        )
+
     def test_resolve_package_install_order_dag(self) -> None:
         deps_map = {
             "pkg_c": PackageDependencies(items=[PackageDependency(name="pkg_b")]),

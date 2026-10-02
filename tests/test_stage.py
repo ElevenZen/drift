@@ -913,7 +913,7 @@ class TestStageRepo(unittest.TestCase):
             FileAction(action_type=FileActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
             FileAction(action_type=FileActionType.UPDATE_COPY, src_path=Path("/tmp/render/m.txt"), dst_path=Path("/tmp/m.txt")),
             FileAction(action_type=FileActionType.UPDATE_PERMISSION, src_path=Path("/tmp/render/p.txt"), dst_path=Path("/tmp/p.txt")),
-            FileAction(action_type=FileActionType.DELETE_FILE, dst_path=Path("/tmp/d.txt")),
+            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=Path("/tmp/d.txt")),
             FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=Path("/tmp/sub")),
         ]
         plan = PackageStagePlan(package="test_pkg", actions=actions)
@@ -932,7 +932,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertIn("CREATE_COPY", formatted)
         self.assertIn("UPDATE_COPY", formatted)
         self.assertIn("UPDATE_PERMISSION", formatted)
-        self.assertIn("DELETE_FILE", formatted)
+        self.assertIn("DELETE_ITEM", formatted)
 
         # Empty plan
         empty_plan = PackageStagePlan("empty_pkg")
@@ -969,7 +969,7 @@ class TestStageRepo(unittest.TestCase):
         action_map = {a.dst_path.name: a for a in actions if a.dst_path is not None}
 
         # 1. Deletions come first
-        self.assertEqual(actions[0].action_type, FileActionType.DELETE_FILE)
+        self.assertEqual(actions[0].action_type, FileActionType.DELETE_ITEM)
         self.assertEqual(actions[0].dst_path, dst_dir / "deleted.txt")
 
         # 2. Additions: file -> CREATE_COPY, dir -> ENSURE_DIR

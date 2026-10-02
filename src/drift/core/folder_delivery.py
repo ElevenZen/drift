@@ -12,7 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
-from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod
+from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod, DRIFT_KEEP_FILE_NAME
 from .exceptions import InstallCollisionError
 from .folder_diff import FolderDiff
 from .serialization import SerializableModel
@@ -24,6 +24,7 @@ from ..utils.file_ops import (
     ensure_dir,
     remove_tree,
     remove_file_or_empty_dir,
+    write_file,
 )
 from .sync_ops import backup_file_or_dir_external
 from ..utils.path_utils import (
@@ -45,6 +46,7 @@ class FileActionType(str, Enum):
     # Creations & Updates
     CREATE_SYMLINK = "CREATE_SYMLINK"
     CREATE_COPY = "CREATE_COPY"
+    CREATE_KEEP_FILE = "CREATE_KEEP_FILE"
     UPDATE_COPY = "UPDATE_COPY"
     UPDATE_PERMISSION = "UPDATE_PERMISSION"
     ENSURE_DIR = "ENSURE_DIR"
@@ -55,7 +57,7 @@ class FileActionType(str, Enum):
     # Collisions & Cleanups
     BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
     BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
-    DELETE_FILE = "DELETE_FILE"            # Direct file/symlink deletion without backup
+    DELETE_ITEM = "DELETE_ITEM"            # Direct file/symlink/empty dir deletion without backup
     DELETE_TREE = "DELETE_TREE"            # Direct directory tree deletion without backup
 
     # Workflow Notifications
@@ -68,7 +70,7 @@ BACKUP_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
 })
 
 DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
-    FileActionType.DELETE_FILE,
+    FileActionType.DELETE_ITEM,
     FileActionType.DELETE_TREE,
 })
 
@@ -79,6 +81,7 @@ BACKUP_OR_DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset(
 CREATE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
     FileActionType.CREATE_SYMLINK,
     FileActionType.CREATE_COPY,
+    FileActionType.CREATE_KEEP_FILE,
 })
 
 
@@ -165,6 +168,8 @@ def format_action_line(action: FileAction) -> str:
         return f"    🔗 [CREATE_SYMLINK]  {action.src_path} -> {action.dst_path}"
     elif action.action_type == FileActionType.CREATE_COPY:
         return f"    📄 [CREATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
+    elif action.action_type == FileActionType.CREATE_KEEP_FILE:
+        return f"    📌 [CREATE_KEEP_FILE] {action.dst_path}{reason_str}"
     elif action.action_type == FileActionType.UPDATE_COPY:
         return f"    📝 [UPDATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
     elif action.action_type == FileActionType.UPDATE_PERMISSION:
@@ -243,7 +248,7 @@ def _plan_backup_or_delete(
     is_orphan: bool = False,
     is_tree: bool = False,
 ) -> FileAction:
-    """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_FILE/DELETE_TREE when absent."""
+    """Plans BACKUP_OVERWRITE (or BACKUP_PRUNE if is_orphan) when backup is configured, or DELETE_ITEM/DELETE_TREE when absent."""
     subfolder = BackupSubfolder.DELETED_FILES if is_orphan else None
     backup_dst = context.resolve_backup_path(rel_path, subfolder=subfolder)
     if backup_dst:
@@ -255,7 +260,7 @@ def _plan_backup_or_delete(
             reason=reason,
         )
 
-    action_type = FileActionType.DELETE_TREE if is_tree else FileActionType.DELETE_FILE
+    action_type = FileActionType.DELETE_TREE if is_tree else FileActionType.DELETE_ITEM
     return FileAction(
         action_type=action_type,
         dst_path=target,
@@ -269,22 +274,32 @@ def _inspect_directory_node(
     source_dir: Optional[Path],
     rel_path: Path,
     has_backed_up_ancestor: bool = False,
+    prune_keep_file: bool = False,
 ) -> List[FileAction]:
     """Inspects a directory destination against source directory, planning creation, permissions sync, or collision resolution."""
     if has_backed_up_ancestor or not (target_dir.exists() or target_dir.is_symlink()):
         return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir)]
 
     if is_concrete_dir(target_dir):
+        node_actions: List[FileAction] = []
+        if context.reverse_mode and prune_keep_file:
+            keep_file = target_dir / DRIFT_KEEP_FILE_NAME
+            if keep_file.is_file():
+                node_actions.append(FileAction(
+                    action_type=FileActionType.DELETE_ITEM,
+                    dst_path=keep_file,
+                    reason="Prune .drift_keep from populated directory",
+                ))
         if source_dir is not None and source_dir.is_dir() and permissions_differ(source_dir, target_dir):
             src_mode = oct(source_dir.stat().st_mode & 0o777)
             dst_mode = oct(target_dir.stat().st_mode & 0o777)
-            return [FileAction(
+            node_actions.append(FileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=source_dir,
                 dst_path=target_dir,
                 reason=f"Permissions differ ({dst_mode} -> {src_mode})",
-            )]
-        return []
+            ))
+        return node_actions
 
     # Blocked by an internal symlink, foreign symlink, or physical file
     if target_dir.is_symlink():
@@ -317,6 +332,7 @@ def _inspect_single_ancestor(
         source_dir=source_dir_path if source_dir_path.is_dir() else None,
         rel_path=rel_path,
         has_backed_up_ancestor=has_backed_up_ancestor,
+        prune_keep_file=True,
     )
 
 
@@ -350,7 +366,11 @@ def inspect_ancestor_directories(
             rel_path=rel_path,
             has_backed_up_ancestor=has_backed_up,
         )
-        if any(a.action_type in BACKUP_OR_DELETE_ACTION_TYPES for a in res):
+        if any(
+            a.action_type in BACKUP_OR_DELETE_ACTION_TYPES
+            and (a.src_path == ancestor_target or a.dst_path == ancestor_target)
+            for a in res
+        ):
             backed_up_ancestor_targets.add(ancestor_target)
         actions.extend(res)
 
@@ -612,10 +632,31 @@ def _inspect_leaf(
             source_dir=source_file,
             rel_path=rel_file,
             has_backed_up_ancestor=has_backed_up_parent,
+            prune_keep_file=False,
         )
-        if any(a.action_type in BACKUP_OR_DELETE_ACTION_TYPES for a in dir_actions):
+        if any(
+            a.action_type in BACKUP_OR_DELETE_ACTION_TYPES
+            and (a.src_path == system_target or a.dst_path == system_target)
+            for a in dir_actions
+        ):
             backed_up_ancestor_targets.add(system_target)
         actions.extend(dir_actions)
+
+        # In reverse_mode, if host folder is a concrete empty directory, track it with .drift_keep in install/
+        if context.reverse_mode and not source_file.is_symlink() and not any(source_file.iterdir()):
+            keep_file = system_target / DRIFT_KEEP_FILE_NAME
+            if not keep_file.exists():
+                actions.append(FileAction(
+                    action_type=FileActionType.CREATE_KEEP_FILE,
+                    dst_path=keep_file,
+                    reason="Track empty folder with .drift_keep",
+                ))
+            else:
+                actions.append(FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    dst_path=keep_file,
+                    reason="Keep file already exists",
+                ))
         return
 
     # 2. Leaf file symlink resolution
@@ -659,7 +700,7 @@ def _plan_orphan_prune(
     orphan_rel: Path,
     reason: str,
 ) -> List[FileAction]:
-    """Inspects an orphaned path on target and plans BACKUP_PRUNE or DELETE_FILE if present."""
+    """Inspects an orphaned path on target and plans BACKUP_PRUNE or DELETE_ITEM if present."""
     system_target = context.translate_target_path(orphan_rel)
     if not (system_target.exists() or system_target.is_symlink()):
         return []
@@ -671,7 +712,7 @@ def _inspect_orphans(
     deployable_files: Sequence[Path],
     deployed_files: Sequence[Path],
 ) -> List[FileAction]:
-    """Plans BACKUP_PRUNE or DELETE_FILE actions for historical deployed files missing in candidate package."""
+    """Plans BACKUP_PRUNE or DELETE_ITEM actions for historical deployed files missing in candidate package."""
     if context.reverse_mode:
         deployable_norm = {decode_dot_prefix(p) for p in deployable_files}
         deployed_norm = {decode_dot_prefix(p) for p in deployed_files}
@@ -802,7 +843,7 @@ def plan_symlink_conversions(
 
         actions.append(
             FileAction(
-                action_type=FileActionType.DELETE_FILE,
+                action_type=FileActionType.DELETE_ITEM,
                 dst_path=system_target,
                 reason="Remove symlink for detach",
             )
@@ -830,7 +871,7 @@ def plan_file_removals(
     ]
     return [
         FileAction(
-            action_type=FileActionType.DELETE_FILE,
+            action_type=FileActionType.DELETE_ITEM,
             dst_path=target,
             reason="Remove deployed file from host",
         )
@@ -850,7 +891,7 @@ def plan_actions_from_folder_diff(
     # 1. Deletions first: cleanly clear obsolete paths to avoid directory/file type collisions
     for rel in sorted(diff.deleted, reverse=True):
         actions.append(FileAction(
-            action_type=FileActionType.DELETE_FILE,
+            action_type=FileActionType.DELETE_ITEM,
             dst_path=target_dir / rel,
             reason="Deleted in source",
         ))
@@ -961,9 +1002,14 @@ def execute_single_action(
         if action.dst_path:
             remove_tree(action.dst_path, context.sudo)
 
-    elif action.action_type == FileActionType.DELETE_FILE:
+    elif action.action_type == FileActionType.DELETE_ITEM:
         if action.dst_path:
             remove_file_or_empty_dir(action.dst_path, context.sudo)
+
+    elif action.action_type == FileActionType.CREATE_KEEP_FILE:
+        if action.dst_path:
+            ensure_dir(action.dst_path.parent, context.sudo)
+            write_file(action.dst_path, b"", sudo=context.sudo)
 
     elif action.action_type == FileActionType.SKIP_IDENTICAL:
         logger.debug(f"   Skipping '{action.dst_path}': already up-to-date")

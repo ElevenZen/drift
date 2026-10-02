@@ -370,7 +370,7 @@ def _gather_package_destination_targets(
         return []
     install_pkg_dir = workspace_config.install_path / pkg
     ignore_handler = DriftIgnore.load_from_dir(install_pkg_dir, is_source=False)
-    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir)
+    deployable_files = ignore_handler.filter_deployable_files(install_pkg_dir, include_empty_dirs=False)
     target_dir = metadata.get_target_directory(workspace_config)
 
     return [

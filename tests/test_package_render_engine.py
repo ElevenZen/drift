@@ -609,6 +609,44 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         self.assertEqual(match_broken.status, "block")
         self.assertEqual(match_broken.path, broken_symlink)
 
+    def test_render_empty_directory_creates_drift_keep(self) -> None:
+        """Verifies that rendering empty directories generates .drift_keep stubs in render/."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
+
+        pkg_src = self.src_dir / "pkg_empty"
+        (pkg_src / "empty_folder").mkdir(parents=True, exist_ok=True)
+        (pkg_src / "nested" / "empty_sub").mkdir(parents=True, exist_ok=True)
+        (pkg_src / "regular.txt").write_text("hello", encoding="utf-8")
+        (pkg_src / "drift_package.toml").write_text("[package]\nenable_install = true\n", encoding="utf-8")
+
+        workspace_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
+        workspace_toml.write_text("""
+            [workspace]
+            render_directory = "render"
+
+            [packages.enable]
+            pkg_empty = true
+        """, encoding="utf-8")
+
+        ws_config = WorkspaceConfig.from_workspace_dir(self.drift_root)
+        res = render_package(ws_config, pkg_src)
+
+        render_pkg = ws_config.render_path / "pkg_empty"
+        keep_1 = render_pkg / "empty_folder" / DRIFT_KEEP_FILE_NAME
+        keep_2 = render_pkg / "nested" / "empty_sub" / DRIFT_KEEP_FILE_NAME
+
+        self.assertTrue(keep_1.is_file(), f"Expected {keep_1} to exist")
+        self.assertEqual(keep_1.stat().st_size, 0)
+        self.assertTrue(keep_2.is_file(), f"Expected {keep_2} to exist")
+        self.assertEqual(keep_2.stat().st_size, 0)
+
+        # Parent directory 'nested' should NOT have .drift_keep because it contains empty_sub
+        self.assertFalse((render_pkg / "nested" / DRIFT_KEEP_FILE_NAME).exists())
+        # Root directory should NOT have .drift_keep
+        self.assertFalse((render_pkg / DRIFT_KEEP_FILE_NAME).exists())
+        # Regular file rendered/copied cleanly
+        self.assertTrue((render_pkg / "regular.txt").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

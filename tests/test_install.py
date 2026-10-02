@@ -64,6 +64,7 @@ from drift.core.folder_delivery import (
         format_action_line,
         format_action_summary,
         plan_folder_delivery,
+        DELETE_ACTION_TYPES,
 )
 from drift.core.result_models import (
         FileActionType,
@@ -2809,7 +2810,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn("target_mig_1", migration_messages[0].reason)
         self.assertIn("target_mig_2", migration_messages[0].reason)
 
-        removals = [a for a in plan.actions if a.action_type == FileActionType.DELETE_FILE]
+        removals = [a for a in plan.actions if a.action_type == FileActionType.DELETE_ITEM]
         self.assertEqual(len(removals), 1)
         self.assertEqual(removals[0].dst_path, target_1 / "config.conf")
 
@@ -3383,7 +3384,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(actions[0].reason, "Source and target are identical")
         host_link.unlink()
 
-        # 2. Host broken symlink -> DELETE_FILE in repo
+        # 2. Host broken symlink -> DELETE_ITEM in repo
         host_link.symlink_to(self.system_target_dir / "nonexistent_target")
         actions_broken = plan_folder_delivery(
             context=rev_ctx,
@@ -3391,7 +3392,7 @@ class TestInstallRepo(unittest.TestCase):
             deployed_files=[Path(".bashrc")],
         )
         self.assertEqual(len(actions_broken), 1)
-        self.assertEqual(actions_broken[0].action_type, FileActionType.DELETE_FILE)
+        self.assertEqual(actions_broken[0].action_type, FileActionType.DELETE_ITEM)
         self.assertEqual(actions_broken[0].dst_path, repo_file)
         self.assertEqual(actions_broken[0].reason, "Broken symlink on host")
         host_link.unlink()
@@ -3406,7 +3407,7 @@ class TestInstallRepo(unittest.TestCase):
             deployed_files=[Path(".bashrc")],
         )
         self.assertEqual(len(actions_dir_link), 2)
-        self.assertEqual(actions_dir_link[0].action_type, FileActionType.DELETE_FILE)
+        self.assertEqual(actions_dir_link[0].action_type, FileActionType.DELETE_ITEM)
         self.assertEqual(actions_dir_link[0].dst_path, repo_file)
         self.assertEqual(actions_dir_link[0].reason, "File blocking directory")
         self.assertEqual(actions_dir_link[1].action_type, FileActionType.ENSURE_DIR)
@@ -3710,6 +3711,200 @@ class TestInstallDependencies(unittest.TestCase):
         self._create_install_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
         plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
         self.assertEqual(plan.packages_to_install, ["pkg_b"])
+
+    def test_empty_folder_lifecycle_install_mode(self) -> None:
+        """Verifies empty folder delivery in normal install mode: ENSURE_DIR on host, .drift_keep never copied."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
+        pkg = "pkg_empty_install"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / "empty_dir").mkdir(parents=True, exist_ok=True)
+        (pkg_install_dir / "empty_dir" / DRIFT_KEEP_FILE_NAME).touch()
+
+        # 1. filter_deployable_files(include_empty_dirs=True) transforms stub into parent dir
+        ignore = DriftIgnore()
+        deployable = ignore.filter_deployable_files(pkg_install_dir, include_empty_dirs=True)
+        self.assertEqual(deployable, [Path("empty_dir")])
+
+        # 2. Planning with InstallMethod.COPY: plans ENSURE_DIR
+        copy_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=True,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=False,
+        )
+        actions_copy = plan_folder_delivery(copy_ctx, deployable_files=deployable)
+        self.assertEqual(len(actions_copy), 1)
+        self.assertEqual(actions_copy[0].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(actions_copy[0].dst_path, self.system_target_dir / "empty_dir")
+
+        # 3. Planning with InstallMethod.SYMLINK: STILL plans ENSURE_DIR (never symlinks empty directory)
+        symlink_ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.SYMLINK,
+            is_first_time=True,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reverse_mode=False,
+        )
+        actions_symlink = plan_folder_delivery(symlink_ctx, deployable_files=deployable)
+        self.assertEqual(len(actions_symlink), 1)
+        self.assertEqual(actions_symlink[0].action_type, FileActionType.ENSURE_DIR)
+        self.assertEqual(actions_symlink[0].dst_path, self.system_target_dir / "empty_dir")
+
+        # 4. Execute and verify host state: directory exists, .drift_keep NOT present
+        exec_ctx = FileActionExecutionContext()
+        execute_delivery_actions(exec_ctx, actions_copy)
+        self.assertTrue((self.system_target_dir / "empty_dir").is_dir())
+        self.assertFalse((self.system_target_dir / "empty_dir" / DRIFT_KEEP_FILE_NAME).exists())
+
+        # 5. Subsequent install populating the directory suppresses orphan pruning
+        actions_subsequent = plan_folder_delivery(
+            copy_ctx,
+            deployable_files=[Path("empty_dir/child.txt")],
+            deployed_files=[Path("empty_dir")],
+        )
+        # Should NOT plan orphan prune for empty_dir because it is an ancestor of empty_dir/child.txt
+        prune_actions = [a for a in actions_subsequent if a.action_type in DELETE_ACTION_TYPES]
+        self.assertEqual(len(prune_actions), 0)
+
+    def test_empty_folder_lifecycle_reverse_mode(self) -> None:
+        """Verifies empty folder handling in reverse mode: detects empty host folder and creates .drift_keep."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
+        pkg = "pkg_empty_rev"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        host_empty = self.system_target_dir / "host_empty_dir"
+        host_empty.mkdir(parents=True, exist_ok=True)
+
+        rev_ctx = DeliveryInspectionContext(
+            target_dir=pkg_install_dir,
+            source_dir=self.system_target_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=True,
+        )
+
+        actions = plan_folder_delivery(
+            rev_ctx,
+            deployable_files=[Path("host_empty_dir")],
+            deployed_files=(),
+        )
+
+        action_types = [a.action_type for a in actions]
+        self.assertIn(FileActionType.ENSURE_DIR, action_types)
+        self.assertIn(FileActionType.CREATE_KEEP_FILE, action_types)
+
+        keep_action = next(a for a in actions if a.action_type == FileActionType.CREATE_KEEP_FILE)
+        self.assertEqual(keep_action.dst_path, pkg_install_dir / "host_empty_dir" / DRIFT_KEEP_FILE_NAME)
+
+        # Execute actions: verify .drift_keep created in install/
+        exec_ctx = FileActionExecutionContext()
+        execute_delivery_actions(exec_ctx, actions)
+        keep_path = pkg_install_dir / "host_empty_dir" / DRIFT_KEEP_FILE_NAME
+        self.assertTrue(keep_path.is_file())
+        self.assertEqual(keep_path.stat().st_size, 0)
+
+        # Plan again: should SKIP_IDENTICAL for .drift_keep
+        actions_repeat = plan_folder_delivery(
+            rev_ctx,
+            deployable_files=[Path("host_empty_dir")],
+            deployed_files=(),
+        )
+        self.assertTrue(any(a.action_type == FileActionType.SKIP_IDENTICAL and a.dst_path == keep_path for a in actions_repeat))
+
+    def test_empty_folder_ancestor_prune_in_reverse_mode(self) -> None:
+        """Verifies ancestor inspection prunes .drift_keep when an empty folder becomes populated in reverse mode."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
+        pkg = "pkg_ancestor_prune"
+        pkg_install_dir = self.install_dir / pkg
+        repo_sub = pkg_install_dir / "tracked_dir"
+        repo_sub.mkdir(parents=True, exist_ok=True)
+        keep_file = repo_sub / DRIFT_KEEP_FILE_NAME
+        keep_file.touch()
+
+        # Host has a new file in tracked_dir
+        host_sub = self.system_target_dir / "tracked_dir"
+        host_sub.mkdir(parents=True, exist_ok=True)
+        (host_sub / "new_file.txt").write_text("content", encoding="utf-8")
+
+        rev_ctx = DeliveryInspectionContext(
+            target_dir=pkg_install_dir,
+            source_dir=self.system_target_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=True,
+        )
+
+        actions = plan_folder_delivery(
+            rev_ctx,
+            deployable_files=[Path("tracked_dir/new_file.txt")],
+            deployed_files=(),
+        )
+
+        # Ancestor tracked_dir must have DELETE_ITEM planned for .drift_keep
+        prune_keep = next((a for a in actions if a.action_type == FileActionType.DELETE_ITEM and a.dst_path == keep_file), None)
+        self.assertIsNotNone(prune_keep)
+        assert prune_keep is not None
+        self.assertIn("Prune .drift_keep", str(prune_keep.reason))
+
+        # Leaf new_file.txt must have CREATE_COPY planned
+        create_file = next((a for a in actions if a.action_type == FileActionType.CREATE_COPY and a.dst_path == pkg_install_dir / "tracked_dir/new_file.txt"), None)
+        self.assertIsNotNone(create_file)
+
+        # Execute actions: .drift_keep deleted, new_file.txt created
+        exec_ctx = FileActionExecutionContext()
+        execute_delivery_actions(exec_ctx, actions)
+        self.assertFalse(keep_file.exists())
+        self.assertTrue((pkg_install_dir / "tracked_dir/new_file.txt").is_file())
+
+    def test_orphan_prune_always_uses_delete_item(self) -> None:
+        """Verifies orphan pruning always plans DELETE_ITEM, never DELETE_TREE."""
+        pkg = "pkg_orphan_item"
+        pkg_install_dir = self.install_dir / pkg
+        pkg_install_dir.mkdir(parents=True, exist_ok=True)
+
+        # Host has an orphan empty directory
+        host_orphan_dir = self.system_target_dir / "orphan_empty_dir"
+        host_orphan_dir.mkdir(parents=True, exist_ok=True)
+
+        ctx = DeliveryInspectionContext(
+            target_dir=self.system_target_dir,
+            source_dir=pkg_install_dir,
+            drift_root=self.drift_root,
+            install_method=InstallMethod.COPY,
+            is_first_time=False,
+            backup_pkg_dir=None,
+            backup_subfolder=BackupSubfolder.DELETED_FILES,
+            reverse_mode=False,
+        )
+
+        actions = plan_folder_delivery(
+            ctx,
+            deployable_files=(),
+            deployed_files=[Path("orphan_empty_dir")],
+        )
+
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action_type, FileActionType.DELETE_ITEM)
+        self.assertEqual(actions[0].dst_path, host_orphan_dir)
+
+        # Execute: empty dir removed safely via remove_file_or_empty_dir
+        exec_ctx = FileActionExecutionContext()
+        execute_delivery_actions(exec_ctx, actions)
+        self.assertFalse(host_orphan_dir.exists())
 
 
 class TestNativeSymlinkComputation(unittest.TestCase):

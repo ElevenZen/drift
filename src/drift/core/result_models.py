@@ -62,7 +62,10 @@ class PackageReverseSyncPlan(SerializableModel):
 
     @property
     def created(self) -> List[FileAction]:
-        return [a for a in self.actions if a.action_type == FileActionType.CREATE_COPY]
+        return [
+            a for a in self.actions
+            if a.action_type in (FileActionType.CREATE_COPY, FileActionType.CREATE_KEEP_FILE)
+        ]
 
     @property
     def updated(self) -> List[FileAction]:

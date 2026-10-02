@@ -265,6 +265,49 @@ class TestDriftIgnore(unittest.TestCase):
         finally:
             set_test_mode(True, enable_logging=False)
 
+    def test_drift_keep_matching_and_deployable_filtering(self) -> None:
+        """Verifies that .drift_keep is matched by match_path and handled by filter_deployable_files."""
+        from drift.core.constants import DRIFT_KEEP_FILE_NAME
 
+        ignore = DriftIgnore([])
 
+        # 1. match_path should always return True for .drift_keep
+        self.assertTrue(ignore.match_path(Path(DRIFT_KEEP_FILE_NAME)))
+        self.assertTrue(ignore.match_path(Path("nested") / DRIFT_KEEP_FILE_NAME))
+        self.assertTrue(ignore.match_path(Path("a/b/c") / DRIFT_KEEP_FILE_NAME))
 
+        # Setup directory structure:
+        # - empty_dir/.drift_keep
+        # - populated_dir/.drift_keep + populated_dir/file.txt
+        # - nested/empty_sub/.drift_keep
+        # - normal.txt
+        (self.pkg_dir / "empty_dir").mkdir(parents=True, exist_ok=True)
+        (self.pkg_dir / "empty_dir" / DRIFT_KEEP_FILE_NAME).touch()
+
+        (self.pkg_dir / "populated_dir").mkdir(parents=True, exist_ok=True)
+        (self.pkg_dir / "populated_dir" / DRIFT_KEEP_FILE_NAME).touch()
+        (self.pkg_dir / "populated_dir" / "file.txt").touch()
+
+        (self.pkg_dir / "nested" / "empty_sub").mkdir(parents=True, exist_ok=True)
+        (self.pkg_dir / "nested" / "empty_sub" / DRIFT_KEEP_FILE_NAME).touch()
+
+        (self.pkg_dir / "normal.txt").touch()
+
+        # 2. filter_deployable_files with include_empty_dirs=True (default)
+        deployable_all = ignore.filter_deployable_files(self.pkg_dir, include_empty_dirs=True)
+        self.assertIn(Path("empty_dir"), deployable_all)
+        self.assertIn(Path("nested/empty_sub"), deployable_all)
+        self.assertIn(Path("populated_dir/file.txt"), deployable_all)
+        self.assertIn(Path("normal.txt"), deployable_all)
+        # populated_dir has children, so populated_dir itself is not emitted as a leaf
+        self.assertNotIn(Path("populated_dir"), deployable_all)
+        # .drift_keep stubs are never in deployable_files
+        self.assertFalse(any(p.name == DRIFT_KEEP_FILE_NAME for p in deployable_all))
+
+        # 3. filter_deployable_files with include_empty_dirs=False
+        deployable_no_empty = ignore.filter_deployable_files(self.pkg_dir, include_empty_dirs=False)
+        self.assertNotIn(Path("empty_dir"), deployable_no_empty)
+        self.assertNotIn(Path("nested/empty_sub"), deployable_no_empty)
+        self.assertIn(Path("populated_dir/file.txt"), deployable_no_empty)
+        self.assertIn(Path("normal.txt"), deployable_no_empty)
+        self.assertFalse(any(p.name == DRIFT_KEEP_FILE_NAME for p in deployable_no_empty))

@@ -18,6 +18,7 @@ from ..core.constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_KEEP_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
@@ -114,12 +115,14 @@ def render_or_copy_file(
     """
     file_path = src_dir / rel_path
 
-    # If the item is a directory (only empty directory), create it in dest_dir without copying or rendering
+    # If the item is a directory (only empty directory), create it in dest_dir with .drift_keep stub
     if file_path.is_dir():
+        assert not any(file_path.iterdir()), f"Expected empty directory in ONLY_EMPTY_DIR mode, got: {file_path}"
         dest_path = dest_dir / rel_path
         logger.info(f"📁 Directory: {rel_path}")
         logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
         dest_path.mkdir(parents=True, exist_ok=True)
+        (dest_path / DRIFT_KEEP_FILE_NAME).touch()
         return (rel_path.as_posix(), False)
 
     engine: Optional[RenderEngineConfig] = None
