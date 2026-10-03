@@ -71,6 +71,7 @@ DRIFT_INTERNAL_DIR_NAME = ".drift"
 DRIFT_HOOKS_DIR_NAME = "drift_hooks"
 DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
 DRIFT_INTERNAL_RENDER_DIR_NAME = "render"
+RENDER_LOCK_FILE_NAME = "render_lock.json"
 FORBIDDEN_RENDER_ENGINE_SUFFIXES: frozenset = frozenset({
     "drift_package",
     "drift_hook",
@@ -440,7 +441,9 @@ TEMPORARY_FILE_PATTERNS = (
     "*Thumbs.db*",
 )
 
-DEFAULT_DIFF_EXCLUDE_PATTERNS = tuple(f":(exclude){p}" for p in TEMPORARY_FILE_PATTERNS)
+DEFAULT_DIFF_EXCLUDE_PATTERNS = tuple(f":(exclude){p}" for p in TEMPORARY_FILE_PATTERNS) + (
+    f":(exclude)*{RENDER_LOCK_FILE_NAME}*",
+)
 
 DEFAULT_INTERNAL_GITIGNORE_CONTENT = (
     "# =====================================================================\n"
