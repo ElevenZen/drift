@@ -32,6 +32,7 @@ from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
 from ..utils.config_utils import validate_known_keys
+from ..utils.path_utils import is_relative_to
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +43,15 @@ class RenderEngineConfig:
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = ("input_file", "suffix", "render_command")
 
     name: str
-    input_file: Path = Path("")
+    input_file: Optional[Path] = None
     suffix: str = ""
     render_command: str = ""
 
     def __post_init__(self) -> None:
-        """Coerces any string path fields to pathlib.Path objects for absolute safety."""
-        self.input_file = Path(self.input_file) if self.input_file is not None else Path("")
+        """Coerces any non-empty input_file string to pathlib.Path object, or None if empty."""
+        if self.input_file is not None:
+            raw_str = str(self.input_file).strip()
+            self.input_file = Path(raw_str) if raw_str not in ("", ".") else None
 
     @property
     def is_internal(self) -> bool:
@@ -68,15 +71,15 @@ class RenderEngineConfig:
         if not self.render_command or not isinstance(self.render_command, str):
             raise ConfigError("render_command must be a non-empty string.")
         if not self.is_internal:
-            if not isinstance(self.input_file, Path) or str(self.input_file) in ("", "."):
-                raise ConfigError("input_file must be a non-empty Path.")
+            if self.input_file is None:
+                raise ConfigError("input_file must be specified for non-internal render engine.")
 
     @property
     def is_disabled(self) -> bool:
         """Returns True if the render engine is disabled due to missing or empty input file."""
         if self.is_internal:
             return False
-        return not self.input_file or str(self.input_file) in ("", ".")
+        return self.input_file is None
 
     def copy(self) -> "RenderEngineConfig":
         """Returns a copy of the RenderEngineConfig."""
@@ -85,9 +88,15 @@ class RenderEngineConfig:
     def patch(self, override: Union["RenderEngineConfig", Mapping[str, Any]]) -> "RenderEngineConfig":
         """Creates a new RenderEngineConfig by applying non-empty override fields onto this config."""
         if isinstance(override, Mapping):
+            raw_in = override.get("input_file")
+            override_input = (
+                Path(str(raw_in).strip())
+                if raw_in is not None and str(raw_in).strip() not in ("", ".")
+                else None
+            )
             override = RenderEngineConfig(
                 name=self.name,
-                input_file=Path(override.get("input_file", "")),
+                input_file=override_input,
                 suffix=str(override.get("suffix", "")),
                 render_command=str(override.get("render_command", "")),
             )
@@ -96,7 +105,7 @@ class RenderEngineConfig:
 
         return replace(
             self,
-            input_file=override.input_file if str(override.input_file) not in ("", ".") else self.input_file,
+            input_file=override.input_file if override.input_file is not None else self.input_file,
             suffix=override.suffix if override.suffix else self.suffix,
             render_command=override.render_command if override.render_command else self.render_command,
         )
@@ -212,7 +221,11 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
                 if isinstance(override, RenderEngineConfig)
                 else RenderEngineConfig(
                     name=name,
-                    input_file=Path(override.get("input_file", "")),
+                    input_file=(
+                        Path(str(override["input_file"]).strip())
+                        if override.get("input_file") is not None and str(override["input_file"]).strip() not in ("", ".")
+                        else None
+                    ),
                     suffix=str(override.get("suffix", "")),
                     render_command=str(override.get("render_command", "")),
                 )
@@ -248,14 +261,32 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         def build_engine(name: str, config_dict: Any) -> RenderEngineConfig:
             if not isinstance(config_dict, dict):
                 raise ConfigError(f"Render engine '{name}' configuration must be a dictionary.")
-            validate_known_keys(config_dict, RenderEngineConfig.KNOWN_KEYS, context=f"render.{name}")
-            raw_input = Path(config_dict.get("input_file", ""))
-            input_path = (base_dir / raw_input) if (str(raw_input) not in ("", ".") and not raw_input.is_absolute()) else raw_input
+            validate_known_keys(
+                config_dict, RenderEngineConfig.KNOWN_KEYS, context=f"render.{name}"
+            )
+            raw_input = config_dict.get("input_file", None)
+            input_path: Optional[Path] = None
+            if raw_input is not None:
+                raw_input_str = str(raw_input).strip()
+                input_path = base_dir / Path(raw_input_str)
+                resolved_base = base_dir.resolve()
+                resolved_input = input_path.resolve()
+
+                if not is_relative_to(resolved_input, resolved_base):
+                    raise ConfigError(
+                        f"Render engine '{name}' input_file '{raw_input_str}' cannot resolve outside base directory '{base_dir}'."
+                    )
+                if resolved_input == resolved_base:
+                    raise ConfigError(
+                        f"Render engine '{name}' input_file '{raw_input_str}' cannot be the base directory itself."
+                    )
+
+            # validation is done in RenderEngineConfig.validate() after construction
             return RenderEngineConfig(
                 name=name,
                 input_file=input_path,
                 suffix=str(config_dict.get("suffix", "")),
-                render_command=str(config_dict.get("render_command", ""))
+                render_command=str(config_dict.get("render_command", "")),
             )
 
         configs = {

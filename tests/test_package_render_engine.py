@@ -592,7 +592,7 @@ grep "HOOK_CHAINED_SUCCESS" "$0" >> "$DRIFT_HOOK_OUT"
         # Case E: Leaf folder blocks target file even if a template file also exists
         (pkg_dir / "a" / "b" / "folder_as_file.envst").write_text("template", encoding="utf-8")
         registry_with_engine = RenderEngineRegistry({
-            "envst": RenderEngineConfig(name="envst", input_file=Path(""), suffix="envst", render_command="cat %i")
+            "envst": RenderEngineConfig(name="envst", input_file=None, suffix="envst", render_command="cat %i")
         })
         match_leaf_folder_priority = registry_with_engine.find_conflict_in_source_dir(pkg_dir, Path("a/b/folder_as_file"))
         self.assertIsNotNone(match_leaf_folder_priority)

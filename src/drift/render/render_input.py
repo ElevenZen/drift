@@ -49,7 +49,7 @@ def get_engine_dependency(
     engines: RenderEngineRegistry
 ) -> Optional[str]:
     """Determines if an engine's input file is a template requiring a dependency engine."""
-    if engine.is_internal or not engine.input_file or str(engine.input_file) in ("", "."):
+    if engine.is_internal or engine.input_file is None:
         return None
     dep_engine = engines.find_engine_for_file(str(engine.input_file))
     return dep_engine.name if (dep_engine and dep_engine.name != engine.name) else None
@@ -82,21 +82,21 @@ def assert_no_cyclic_dependencies(dependency_map: Mapping[str, Optional[str]]) -
 
 
 def resolve_static_input_file(
-    input_file: Path,
+    input_file: Optional[Path],
     engine_name: str
-) -> Path:
+) -> Optional[Path]:
     """Validates an absolute static input file path."""
-    if not input_file or str(input_file) in ("", "."):
+    if input_file is None:
         logger.warning(
             f"Input file for render engine '{engine_name}' is not specified or empty. Engine '{engine_name}' is disabled."
         )
-        return Path("")
+        return None
 
     if not input_file.exists():
         logger.warning(
             f"Input file for render engine '{engine_name}' not found: {input_file}. Engine '{engine_name}' is disabled."
         )
-        return Path("")
+        return None
     return input_file
 
 
@@ -142,34 +142,38 @@ def render_input_templates(
     assert_no_cyclic_dependencies(dependency_map)
 
     target_output_dir = Path(output_dir)
-    memo: Dict[str, Path] = {}
+    memo: Dict[str, Optional[Path]] = {}
 
-    def get_or_render_input_file(engine: RenderEngineConfig) -> Path:
+    def get_or_render_input_file(engine: RenderEngineConfig) -> Optional[Path]:
         if engine.name in memo:
             return memo[engine.name]
 
         if engine.is_internal:
-            memo[engine.name] = Path("")
-            return Path("")
+            memo[engine.name] = None
+            return None
 
         dep_name = dependency_map[engine.name]
         if dep_name:
             dep_engine = engines[dep_name]
             dep_input_file = get_or_render_input_file(dep_engine)
-            if dep_input_file == Path("") and not dep_engine.is_internal:
+            if dep_input_file is None and not dep_engine.is_internal:
                 logger.warning(
                     f"Render engine '{engine.name}' is disabled because dependent engine '{dep_name}' is disabled."
                 )
-                memo[engine.name] = Path("")
-                return Path("")
+                memo[engine.name] = None
+                return None
+
+            if engine.input_file is None:
+                memo[engine.name] = None
+                return None
 
             template_file_path = engine.input_file
             if not template_file_path.exists():
                 logger.warning(
                     f"Input template file for render engine '{engine.name}' not found: {template_file_path}. Engine '{engine.name}' is disabled."
                 )
-                memo[engine.name] = Path("")
-                return Path("")
+                memo[engine.name] = None
+                return None
 
             output_filename = dep_engine.strip_suffix(template_file_path.name)
             output_file_path = target_output_dir / output_filename
@@ -183,14 +187,14 @@ def render_input_templates(
                     drift_root=drift_root,
                     template_file_path=template_file_path,
                     output_file_path=output_file_path,
-                    input_file_path=dep_input_file if dep_input_file != Path("") else None,
+                    input_file_path=dep_input_file,
                 )
             except Exception as e:
                 logger.warning(
                     f"Failed to render input template for engine '{engine.name}': {e}. Engine '{engine.name}' is disabled."
                 )
-                memo[engine.name] = Path("")
-                return Path("")
+                memo[engine.name] = None
+                return None
 
             memo[engine.name] = output_file_path
             return output_file_path

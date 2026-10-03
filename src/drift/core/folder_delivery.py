@@ -734,7 +734,7 @@ def _inspect_orphans(
         parent
         for dep in deployable_norm
         for parent in dep.parents
-        if parent != Path("") and parent != Path(".")
+        if parent != Path("")
     }
 
     actions: List[FileAction] = []

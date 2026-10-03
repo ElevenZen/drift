@@ -168,7 +168,7 @@ class TestRenderEngine(unittest.TestCase):
 
         engine_config = RenderEngineConfig(
             name="env_engine",
-            input_file=Path(""), # Empty input file
+            input_file=None, # Empty input file
             suffix="sh",
             render_command="bash -c 'source %i && cat %s'"
         )
@@ -342,8 +342,8 @@ class TestDependencyResolver(unittest.TestCase):
         self.assertIsNone(registry.find_engine_for_file("static.json"))
 
     def test_strip_engine_suffix(self) -> None:
-        envst_engine = RenderEngineConfig(name="envsubst", input_file=Path(""), suffix="envst", render_command="")
-        mustache_engine = RenderEngineConfig(name="mustache", input_file=Path(""), suffix="mustache", render_command="")
+        envst_engine = RenderEngineConfig(name="envsubst", input_file=None, suffix="envst", render_command="")
+        mustache_engine = RenderEngineConfig(name="mustache", input_file=None, suffix="mustache", render_command="")
         
         self.assertEqual(envst_engine.strip_suffix("mustache.envst.json"), "mustache.json")
         self.assertEqual(mustache_engine.strip_suffix("settings.mustache.json"), "settings.json")
@@ -443,7 +443,7 @@ class TestDependencyResolver(unittest.TestCase):
             self.drift_root,
             self.drift_root / "render" / ".drift"
         )
-        self.assertEqual(envsubst_engine.input_file, Path(""))
+        self.assertIsNone(envsubst_engine.input_file)
 
     def test_multi_level_dependency_tree(self) -> None:
         # Create config directory
@@ -1098,7 +1098,7 @@ class TestRenderPackage(unittest.TestCase):
             self.drift_root,
             self.drift_root / "render" / ".drift"
         )
-        self.assertEqual(engine_config.input_file, Path(""))
+        self.assertIsNone(engine_config.input_file)
 
         # Create a mock template
         template_path = self.drift_root / "template.sh"
@@ -1141,7 +1141,7 @@ class TestRenderPackage(unittest.TestCase):
             self.drift_root,
             self.drift_root / "render" / ".drift"
         )
-        self.assertEqual(mustache_engine.input_file, Path(""))
+        self.assertIsNone(mustache_engine.input_file)
 
     def test_render_package_name_starts_with_dot_dash(self) -> None:
         """Verifies that rendering a package whose name starts with 'dot-' preserves the name exactly."""
@@ -1504,7 +1504,7 @@ class TestRenderPackage(unittest.TestCase):
             self.drift_root,
             self.drift_root / "render" / ".drift"
         )
-        self.assertEqual(jinja2_engine.input_file, Path(""))
+        self.assertIsNone(jinja2_engine.input_file)
         self.assertTrue(jinja2_engine.is_disabled)
 
     def test_primitive_2_partial_failure_proceeds_with_other_packages(self) -> None:
@@ -1519,7 +1519,7 @@ class TestRenderPackage(unittest.TestCase):
         )
         disabled_engine = RenderEngineConfig(
             name="jinja2",
-            input_file=Path(""), # disabled!
+            input_file=None, # disabled!
             suffix="jinja2",
             render_command="jinja2 %i %s"
         )

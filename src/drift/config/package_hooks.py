@@ -315,6 +315,7 @@ class PackageHooks:
                 else:
                     return p_res, None
             else:
+                # If the normalized value is relative, we need a base directory to resolve it against
                 if not hook_base_map:
                     name_str = f" for package '{package_name}'" if package_name else ""
                     raise ConfigError(

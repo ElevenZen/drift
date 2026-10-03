@@ -204,7 +204,7 @@ health = "drift_hooks/health_check.ps1"
 # Packages can define custom render engines or override workspace engines.
 # When overriding an existing engine from drift_workspace.toml, unspecified fields (suffix, render_command)
 # are inherited from workspace configuration, while input_file is overridden.
-# Relative input_file paths are resolved relative to this package's directory (src/<pkg>/).
+# Relative input_file paths are resolved relative to this package's directory (src/<pkg>/). Paths outside the package directory are forbidden.
 # Intermediate input file template outputs are rendered into render/<pkg>/.drift/render/ sandbox.
 #
 # Note: 'input_file' fields in render engines are specified as names BEFORE rendering
@@ -368,7 +368,7 @@ Packages can define custom render engines or override global workspace render en
 
 ### 1. Field-Level Inheritance
 When a package defines a `[render.<name>]` table for an engine already defined in `drift_workspace.toml`, Drift applies **field-level inheritance**:
-* **`input_file`**: Overridden by the package's local input file (relative to `src/<pkg>/`).
+* **`input_file`**: Overridden by the package's local input file (must reside within `src/<pkg>/`; paths outside are forbidden).
 * **`suffix`**: Inherited from the workspace engine if omitted in the package config.
 * **`render_command`**: Inherited from the workspace engine if omitted in the package config.
 

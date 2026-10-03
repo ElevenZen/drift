@@ -534,7 +534,7 @@ Rather than utilizing closed/hardcoded compilation scripts, the drift workspace 
 
 #### 1. Custom Render Engine Schema
 Under the `[render.<engine_name>]` tables in `drift_workspace.toml`, developers can define arbitrary engines. Each engine declaration supports three main properties:
-1.  **`input_file`**: The file path providing active variables or values to the engine (e.g. a shell environment script or JSON dataset). If relative, the path is always resolved against the `config/` base folder.
+1.  **`input_file`**: The file path providing active variables or values to the engine (e.g. a shell environment script or JSON dataset). The path must reside within the `config/` base folder (or `src/<pkg>/` for package-level engines); paths resolving outside `base_dir` are strictly forbidden.
 2.  **`suffix`**: The file extension pattern matched by the engine (e.g., matching `.envst` or `.mustache`).
 3.  **`render_command`**: The exact shell execution pattern used to compile files. It supports two special interpolation placeholders:
     *   `%i`: Substituted with the resolved, absolute path of the engine's `input_file` (or its rendered counterpart).
@@ -576,7 +576,7 @@ The primary motivation of **Package-Level Render Engine Configuration** (`[rende
    - `RenderEngineRegistry.from_dict(render_data, base_dir: Path)` normalizes all relative `input_file` paths immediately upon ingestion:
      - Workspace configuration: `base_dir = drift_root / "config"`
      - Package configuration: `base_dir = src/<package_name>/`
-   - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing.
+   - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing. Resolving paths outside `base_dir` or using `base_dir` itself as `input_file` is strictly prohibited and guarded at ingestion.
 
 3. **Multi-Phase Compilation & Intermediate Sandboxing (`.drift/`)**:
    - **Phase 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).

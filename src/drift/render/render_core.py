@@ -81,13 +81,11 @@ def resolve_render_input_file(
 ) -> Path:
     """Resolves and validates the input file path for an external render engine."""
     if input_file_path_override:
-        if str(input_file_path_override) == "":
-            raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
         if not input_file_path_override.exists():
             raise FileNotFoundError(f"Input file does not exist: {input_file_path_override}")
         return input_file_path_override
 
-    if engine_config.is_disabled:
+    if engine_config.is_disabled or engine_config.input_file is None:
         raise RenderError(f"Render engine '{engine_config.name}' is disabled or has an invalid/empty input file.")
 
     config_path = engine_config_input_relative_to / engine_config.input_file

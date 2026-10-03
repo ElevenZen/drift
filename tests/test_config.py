@@ -1569,7 +1569,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         self.assertIn("var", config.render_engine_configs)
         self.assertTrue(config.render_engine_configs["var"].is_internal)
         self.assertFalse(config.render_engine_configs["var"].is_disabled)
-        self.assertEqual(config.render_engine_configs["var"].input_file, Path(""))
+        self.assertIsNone(config.render_engine_configs["var"].input_file)
 
     def test_render_engine_registry_class(self) -> None:
         from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry, RenderSourceMatch
@@ -1582,6 +1582,36 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             RenderEngineRegistry.from_dict("invalid", base_dir=dummy_base)
         with self.assertRaises(ConfigError):
             RenderEngineRegistry.from_dict({"test": {"invalid_key": 123}}, base_dir=dummy_base)
+
+        # Boundary checks on input_file
+        with self.assertRaises(ConfigError) as ctx:
+            RenderEngineRegistry.from_dict(
+                {"test": {"suffix": "t", "render_command": "cmd", "input_file": "../outside.txt"}},
+                base_dir=dummy_base,
+            )
+        self.assertIn("cannot resolve outside base directory", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            RenderEngineRegistry.from_dict(
+                {"test": {"suffix": "t", "render_command": "cmd", "input_file": "/etc/passwd"}},
+                base_dir=dummy_base,
+            )
+        self.assertIn("cannot resolve outside base directory", str(ctx.exception))
+
+        with self.assertRaises(ConfigError) as ctx:
+            RenderEngineRegistry.from_dict(
+                {"test": {"suffix": "t", "render_command": "cmd", "input_file": "."}},
+                base_dir=dummy_base,
+            )
+        self.assertIn("cannot be the base directory itself", str(ctx.exception))
+
+        # Valid relative input_file inside base_dir
+        valid_reg = RenderEngineRegistry.from_dict(
+            {"test": {"suffix": "t", "render_command": "cmd", "input_file": "sub/input.json"}},
+            base_dir=dummy_base,
+        )
+        self.assertEqual(valid_reg["test"].input_file, (dummy_base / "sub/input.json").resolve())
+
 
         # Test valid instantiation and mapping operations
         engine = RenderEngineConfig(

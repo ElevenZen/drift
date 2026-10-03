@@ -58,8 +58,8 @@ DEFAULT = false
 # enables Drift to unambiguously detect dependencies (DAG) and compile them in topological order.
 [render.envsubst]
 # Shell script providing env variables for envsubst
-# If it's a relative path, it's always relative to the 'config' folder under drift root directory.
-# The file is located at "config/envsubst.bash" .
+# input_file must reside within the 'config' directory under drift root (e.g. 'envsubst.bash' resolves to 'config/envsubst.bash').
+# Paths outside 'config' are forbidden.
 input_file = "envsubst.bash"
 
 # Files with name "file.envst.suffix" or "file.envst" will be rendered using envsubst.

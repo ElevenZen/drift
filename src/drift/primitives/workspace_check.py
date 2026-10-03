@@ -593,7 +593,7 @@ def check_engine_inputs(
     missing = []
     total = 0
     for engine in workspace_config.render_engine_configs.values():
-        if not engine.is_disabled:
+        if not engine.is_disabled and engine.input_file is not None:
             total += 1
             input_path = engine.input_file
             if not input_path.is_absolute():

@@ -420,7 +420,7 @@ def repair_engine_inputs(
 
     configured_engines = list(workspace_config.render_engine_configs.values())
     for engine in configured_engines:
-        if engine.is_disabled:
+        if engine.is_disabled or engine.input_file is None:
             actions.append(f"⚠️ Warning: Render engine '{engine.name}' has no input file configured. Manual creation required.")
             continue
         input_path = config_dir / engine.input_file

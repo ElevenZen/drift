@@ -92,6 +92,7 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # Note: Unlike hook fields (which are names AFTER rendering), 'input_file' fields
 # in render engines are specified as names BEFORE rendering (e.g. "custom_data.envst.json").
 # This allows Drift to detect engine suffixes and compile input dependencies in topological order.
+# All input_file paths must reside within this package directory (src/<pkg>/); paths outside are forbidden.
 # [render.custom]
 # input_file     = "data.json"
 # suffix         = "custom"

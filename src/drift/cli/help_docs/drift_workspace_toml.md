@@ -102,7 +102,7 @@ render_command = "internal"
 
 
 [render.envsubst]
-# Input environment file relative to workspace 'config' folder
+# Input environment file relative to workspace 'config' folder (must reside within 'config')
 input_file = "envsubst.bash"
 
 # File suffix to trigger envsubst template compilation
@@ -308,7 +308,7 @@ The `[render.<name>]` section defines how templates in `src/` are compiled into 
 
 ### 1. Engine Configuration Parameters
 * **`suffix`**: The template file suffix that triggers this engine (e.g. `suffix = "envst"` matches `*.envst` files).
-* **`input_file`**: An optional data or environment file (relative to `config/`) passed into the compiler.
+* **`input_file`**: An optional data or environment file passed into the compiler. Must reside within the `config/` directory under drift root (paths outside `config/` are forbidden).
 * **`render_command`**: The shell command to execute, where `%i` is replaced by the resolved input file path and `%s` is replaced by the source template path. Use `"internal"` for built-in engines like `[render.var]`.
 
 ### 2. Multi-Engine DAG Dependency Chaining
