@@ -14,7 +14,7 @@ from drift.core.constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     RENDER_LOCK_FILE_NAME,
 )
-from drift.render.render_cache import NodeHashes, StaticRenderCache, static_render_cache
+from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_lock import RenderLockfile, RenderBucket
 from drift.render.render_dag import (
     FileNode,
@@ -174,10 +174,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
     """Unit tests for DigestionResult, DigestionContext, and check_and_apply_cache."""
 
     def setUp(self) -> None:
-        static_render_cache.clear()
-
-    def tearDown(self) -> None:
-        static_render_cache.clear()
+        self.render_cache = RenderCache()
 
     def test_digestion_result_properties(self) -> None:
         res = DigestionResult(
@@ -201,7 +198,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
             src_file.parent.mkdir(parents=True)
             src_file.write_text("source content")
 
-            node = StaticFileNode(output_path=p, src_path=src_file)
+            node = StaticFileNode(dst_path=p, src_path=src_file)
             indep = node.depends_on[0]
             self.assertIsInstance(indep, FileNode)
             assert isinstance(indep, FileNode)
@@ -215,7 +212,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
                 package_render_dir=drift_root / "render/pkg",
                 lockfile=lock,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
 
             # 1. Miss when not in lockfile
@@ -236,7 +233,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
             self.assertEqual(ctx.result.skipped_paths, [p])
             self.assertIn(expected_m, ctx.active_hashes)
             self.assertEqual(node.merkle_hash, expected_m)
-            self.assertTrue(static_render_cache.contains(p))
+            self.assertTrue(self.render_cache.contains(p))
 
             # 3. Force flag bypasses cache
             ctx_force = DigestionContext(
@@ -246,7 +243,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
                 lockfile=lock,
                 bucket=RenderBucket.PAYLOAD,
                 force=True,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             self.assertFalse(check_and_apply_cache(node, p, ctx_force))
 
@@ -255,10 +252,7 @@ class TestDigestRenderDAG(unittest.TestCase):
     """End-to-end integration unit tests for digest_render_dag."""
 
     def setUp(self) -> None:
-        static_render_cache.clear()
-
-    def tearDown(self) -> None:
-        static_render_cache.clear()
+        self.render_cache = RenderCache()
 
     def _setup_workspace(self, root: Path, pkg_name: str = "demo_pkg") -> Dict[str, Path]:
         src_dir = root / "src" / pkg_name
@@ -297,7 +291,7 @@ class TestDigestRenderDAG(unittest.TestCase):
 
             # Construct DAG
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
 
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
@@ -306,7 +300,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             )
             tmpl_out = pkg_render_dir / "app.conf"
             tmpl_node = EngineOutputFileNode(
-                output_path=tmpl_out,
+                dst_path=tmpl_out,
                 input_node=None,
                 template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
@@ -315,7 +309,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             )
 
             dir_out = pkg_render_dir / "empty_dir"
-            dir_node = DirectoryNode(dir_path=dir_out)
+            dir_node = DirectoryNode(dst_path=dir_out)
 
             payload_root = PackagePayloadNode(pkg_name, [static_node, tmpl_node, dir_node])
 
@@ -326,7 +320,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=lockfile,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
 
             # Execute digestion
@@ -361,7 +355,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             # 1. First run
@@ -372,14 +366,14 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=lock1,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             digest_render_dag(payload_root, ctx1)
             mtime_initial = static_out.stat().st_mtime_ns
 
             # 2. Second run with unchanged files
             loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node2 = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             payload_root2 = PackagePayloadNode(pkg_name, [static_node2])
 
             ctx2 = DigestionContext(
@@ -388,7 +382,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
@@ -408,7 +402,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
 
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
@@ -417,7 +411,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             )
             tmpl_out = pkg_render_dir / "app.conf"
             tmpl_node = EngineOutputFileNode(
-                output_path=tmpl_out,
+                dst_path=tmpl_out,
                 input_node=None,
                 template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
@@ -433,7 +427,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             digest_render_dag(payload_root, ctx1)
 
@@ -442,9 +436,9 @@ class TestDigestRenderDAG(unittest.TestCase):
 
             # Run 2
             loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node2 = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             tmpl_node2 = EngineOutputFileNode(
-                output_path=tmpl_out,
+                dst_path=tmpl_out,
                 input_node=None,
                 template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
@@ -459,7 +453,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
@@ -477,7 +471,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             # Run 1
@@ -487,7 +481,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             digest_render_dag(payload_root, ctx1)
             self.assertTrue(static_out.is_file())
@@ -498,7 +492,7 @@ class TestDigestRenderDAG(unittest.TestCase):
 
             # Run 2: Lockfile still contains hash, but disk file is missing
             loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node2 = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             payload_root2 = PackagePayloadNode(pkg_name, [static_node2])
 
             ctx2 = DigestionContext(
@@ -507,7 +501,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
@@ -524,7 +518,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
+            static_node = StaticFileNode(dst_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             ctx = DigestionContext(
@@ -533,7 +527,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
-                cache=static_render_cache,
+                cache=self.render_cache,
                 dry_run=True,
             )
             result = digest_render_dag(payload_root, ctx)
@@ -565,7 +559,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             src_cfg.write_text("[package]\nname = 'demo_pkg'\n")
 
             cfg_node = PackageConfigNode(
-                output_path=cfg_out,
+                dst_path=cfg_out,
                 sources=[IndependentFileNode(src_cfg)],
                 env_node=JsonNode({"USER": "tester"}),
                 package_dir=drift_root / "src" / pkg_name,
@@ -578,7 +572,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.CONFIG,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
 
             digest_render_dag(cfg_node, ctx)
@@ -608,7 +602,7 @@ class TestDigestRenderDAG(unittest.TestCase):
 
             # Destination hook
             hook_out = hooks_dir / "pre_sync.sh"
-            hook_node = StaticFileNode(output_path=hook_out, src_path=src_hook)
+            hook_node = StaticFileNode(dst_path=hook_out, src_path=src_hook)
 
             # Create an obsolete hook on disk that should be pruned
             disk_hooks = hooks_dir
@@ -624,7 +618,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.HOOKS,
-                cache=static_render_cache,
+                cache=self.render_cache,
             )
 
             digest_render_dag(hooks_root, ctx)

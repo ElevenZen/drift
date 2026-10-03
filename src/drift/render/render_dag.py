@@ -6,13 +6,14 @@ Architecture & Call Chain Overview
 
 Layer 1: Node Definitions & Polymorphic Digestion
     - Node base class (value, depends_on, hashes, own_hash, merkle_hash, digest)
+    - PathNode: Base class for filesystem path nodes (dst_path, src_path)
     - Node specializations:
         - TextNode / JsonNode: Raw content & deterministic JSON text
-        - FileNode: Base class for filesystem path nodes
+        - FileNode: Base class for file path nodes
+        - DirectoryNode: Directory synchronization target (.digest ensures dir)
         - UnknownPathNode: Placeholder node resolved during expansion
         - IndependentFileNode: Unmanaged leaf dependency asset
         - StaticFileNode: 1:1 copied static file (.digest copies file)
-        - DirectoryNode: Directory synchronization target (.digest ensures dir)
         - CachedNode: Reused output from previous phase / run
         - EngineOutputFileNode: Template compiled by render engine (.digest renders)
         - PackageConfigNode: Rendered package configuration container
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from ..config.package_config import PackageConfig
     from .render_digester import DigestionContext
 
+from ..core.constants import PACKAGE_CONFIG_FILE_NAME
 from .render_cache import NodeHashes
 
 
@@ -88,99 +90,116 @@ class JsonNode(TextNode):
 
 
 @dataclass(init=False)
-class FileNode(Node):
-    """Base class for any node representing a filesystem path."""
+class PathNode(Node):
+    """Base class for any node representing a filesystem path (file or directory)."""
 
-    file_path: Path
+    dst_path: Optional[Path] = None
+    src_path: Optional[Path] = None
 
-    def __init__(self, file_path: Path, depends_on: Optional[List[Node]] = None):
-        super().__init__(value=file_path.as_posix(), depends_on=depends_on or [])
-        self.file_path = file_path
+    def __init__(
+        self,
+        dst_path: Optional[Path] = None,
+        src_path: Optional[Path] = None,
+        depends_on: Optional[List[Node]] = None,
+        hashes: Optional[NodeHashes] = None,
+    ):
+        primary_path = dst_path if dst_path is not None else src_path
+        super().__init__(
+            value=primary_path.as_posix() if primary_path is not None else "",
+            depends_on=depends_on or [],
+            hashes=hashes,
+        )
+        self.dst_path = dst_path
+        self.src_path = src_path
 
 
 @dataclass(init=False)
-class UnknownPathNode(Node):
+class FileNode(PathNode):
+    """Base class for any node representing a file path."""
+
+    def __init__(
+        self,
+        dst_path: Path,
+        src_path: Optional[Path] = None,
+        depends_on: Optional[List[Node]] = None,
+        hashes: Optional[NodeHashes] = None,
+    ):
+        super().__init__(dst_path=dst_path, src_path=src_path, depends_on=depends_on, hashes=hashes)
+
+
+@dataclass(init=False)
+class UnknownPathNode(PathNode):
     """Placeholder AST node whose concrete type is resolved during expansion."""
 
-    path: Path
+    src_path: Path
 
-    def __init__(self, path: Path):
-        super().__init__(value=path.as_posix(), depends_on=[])
-        self.path = path
+    def __init__(self, src_path: Path):
+        super().__init__(src_path=src_path)
 
 
 @dataclass(init=False)
 class IndependentFileNode(FileNode):
     """Unmanaged source asset or template (leaf file node)."""
 
-    pass
+    def __init__(self, src_path: Path):
+        super().__init__(dst_path=src_path, src_path=src_path)
 
 
 @dataclass(init=False)
 class StaticFileNode(FileNode):
     """1:1 copied static file."""
 
-    src_path: Path
-
-    def __init__(self, output_path: Path, src_path: Path):
-        super().__init__(output_path, depends_on=[IndependentFileNode(src_path)])
-        self.src_path = src_path
-
-    @property
-    def output_path(self) -> Path:
-        return self.file_path
+    def __init__(self, dst_path: Path, src_path: Path):
+        super().__init__(dst_path=dst_path, src_path=src_path, depends_on=[IndependentFileNode(src_path)])
 
     def digest(self, context: "DigestionContext") -> None:
         from .render_digester import check_and_apply_cache
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
 
-        if check_and_apply_cache(self, self.output_path, context):
+        if check_and_apply_cache(self, self.dst_path, context):
             return
 
-        if not self.src_path.is_file():
+        if not self.src_path or not self.src_path.is_file():
             raise FileNotFoundError(f"Static source file not found: {self.src_path}")
 
         if not context.dry_run:
-            self.output_path.parent.mkdir(parents=True, exist_ok=True)
-            if self.src_path.resolve() != self.output_path.resolve():
-                shutil.copy2(self.src_path, self.output_path)
+            self.dst_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.src_path.resolve() != self.dst_path.resolve():
+                shutil.copy2(self.src_path, self.dst_path)
 
-        own_h = hash_file_disk(self.output_path) or ""
+        own_h = hash_file_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
-        context.result.rendered_paths.append(self.output_path)
+        context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
         if context.cache is not None:
-            context.cache.set(self.output_path, self.hashes)
+            context.cache.set(self.dst_path, self.hashes, src_path=self.src_path)
 
 
 @dataclass(init=False)
-class DirectoryNode(Node):
+class DirectoryNode(PathNode):
     """Empty directory synchronization target (.drift_keep)."""
 
-    dir_path: Path
-
-    def __init__(self, dir_path: Path):
-        super().__init__(value=dir_path.as_posix(), depends_on=[])
-        self.dir_path = dir_path
+    def __init__(self, dst_path: Path, src_path: Optional[Path] = None):
+        super().__init__(dst_path=dst_path, src_path=src_path)
 
     def digest(self, context: "DigestionContext") -> None:
         from .render_digester import check_and_apply_cache
         from .render_hasher import hash_directory_disk, compute_merkle_node_hash
 
-        if check_and_apply_cache(self, self.dir_path, context):
+        if check_and_apply_cache(self, self.dst_path, context):
             return
 
         if not context.dry_run:
-            self.dir_path.mkdir(parents=True, exist_ok=True)
+            self.dst_path.mkdir(parents=True, exist_ok=True)
 
-        own_h = hash_directory_disk(self.dir_path) or ""
+        own_h = hash_directory_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
-        context.result.rendered_paths.append(self.dir_path)
+        context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
         if context.cache is not None:
-            context.cache.set(self.dir_path, self.hashes)
+            context.cache.set(self.dst_path, self.hashes, src_path=self.src_path or self.dst_path)
 
 
 @dataclass(init=False)
@@ -189,20 +208,14 @@ class CachedNode(FileNode):
 
     def __init__(
         self,
-        output_path: Path,
-        input_path: Path,
+        dst_path: Path,
+        src_path: Path,
         hashes: Optional[NodeHashes] = None,
     ):
-        super().__init__(output_path, depends_on=[])
-        self.input_path = input_path
-        self.hashes = hashes
-
-    @property
-    def output_path(self) -> Path:
-        return self.file_path
+        super().__init__(dst_path=dst_path, src_path=src_path, hashes=hashes)
 
     def digest(self, context: "DigestionContext") -> None:
-        context.result.skipped_paths.append(self.output_path)
+        context.result.skipped_paths.append(self.dst_path)
         if self.hashes and self.hashes.merkle_hash:
             context.active_hashes.add(self.hashes.merkle_hash)
 
@@ -219,7 +232,7 @@ class EngineOutputFileNode(FileNode):
 
     def __init__(
         self,
-        output_path: Path,
+        dst_path: Path,
         input_node: Optional[Node],
         template_node: Node,
         env_node: JsonNode,
@@ -227,34 +240,30 @@ class EngineOutputFileNode(FileNode):
         engine_config: Optional["RenderEngineConfig"] = None,
     ):
         deps = [input_node, template_node, env_node, engine_node] if input_node else [template_node, env_node, engine_node]
-        super().__init__(output_path, depends_on=deps)
+        super().__init__(dst_path=dst_path, src_path=template_node.src_path, depends_on=deps)
         self.input_node = input_node
         self.template_node = template_node
         self.env_node = env_node
         self.engine_node = engine_node
         self.engine_config = engine_config
 
-    @property
-    def output_path(self) -> Path:
-        return self.file_path
-
     def digest(self, context: "DigestionContext") -> None:
         from .render_digester import check_and_apply_cache
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_core import render_template_to_file
 
-        if check_and_apply_cache(self, self.output_path, context):
+        if check_and_apply_cache(self, self.dst_path, context):
             return
 
-        if not isinstance(self.template_node, FileNode):
-            raise TypeError(f"Template node must be a FileNode, got {type(self.template_node)}")
+        tmpl = self.src_path
+        if tmpl is None or not tmpl.is_file():
+            raise FileNotFoundError(f"Template source file not found: {tmpl}")
 
-        tmpl = self.template_node.file_path
-        dst = self.output_path
-        in_file = (self.input_node.file_path) if isinstance(self.input_node, FileNode) else None
+        dst = self.dst_path
+        in_file = self.input_node.dst_path if isinstance(self.input_node, PathNode) else None
 
         if self.engine_config is None:
-            raise ValueError(f"EngineOutputFileNode for '{self.output_path}' lacks engine_config")
+            raise ValueError(f"EngineOutputFileNode for '{self.dst_path}' lacks engine_config")
 
         if not context.dry_run:
             render_template_to_file(
@@ -265,13 +274,13 @@ class EngineOutputFileNode(FileNode):
                 input_file_path=in_file,
             )
 
-        own_h = hash_file_disk(self.output_path) or ""
+        own_h = hash_file_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
-        context.result.rendered_paths.append(self.output_path)
+        context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
         if context.cache is not None:
-            context.cache.set(self.output_path, self.hashes)
+            context.cache.set(self.dst_path, self.hashes, src_path=tmpl)
 
 
 @dataclass(init=False)
@@ -285,21 +294,19 @@ class PackageConfigNode(FileNode):
 
     def __init__(
         self,
-        output_path: Path,
+        dst_path: Path,
         sources: List[Node],
         env_node: JsonNode,
         package_dir: Path,
         workspace_config: Optional["WorkspaceConfig"] = None,
     ):
-        super().__init__(output_path, depends_on=[*sources, env_node])
+        source_file = package_dir / PACKAGE_CONFIG_FILE_NAME
+        src_path = source_file if source_file.exists() else None
+        super().__init__(dst_path=dst_path, src_path=src_path, depends_on=[*sources, env_node])
         self.package_dir = package_dir
         self.workspace_config = workspace_config
         self.package_config = None
         self.source_files = []
-
-    @property
-    def output_path(self) -> Path:
-        return self.file_path
 
     def digest(self, context: "DigestionContext") -> None:
         from ..config.package_config import PackageConfig
@@ -317,27 +324,13 @@ class PackageConfigNode(FileNode):
         source_files: list[Path] = []
 
         for dep in self.depends_on:
-            if isinstance(dep, (EngineOutputFileNode, StaticFileNode)):
-                if isinstance(dep, EngineOutputFileNode) and isinstance(dep.template_node, FileNode):
-                    source_files.append(dep.template_node.file_path)
-                elif isinstance(dep, StaticFileNode):
+            if isinstance(dep, PathNode):
+                if dep.src_path is not None:
                     source_files.append(dep.src_path)
-                if dep.output_path.is_file():
-                    combined_dict = merge_toml(combined_dict, parse_toml(dep.output_path.read_text(encoding="utf-8")))
+                if dep.dst_path.is_file():
+                    combined_dict = merge_toml(combined_dict, parse_toml(dep.dst_path.read_text(encoding="utf-8")))
                 else:
-                    raise FileNotFoundError(f"Dependency output file not found: {dep.output_path}")
-            elif isinstance(dep, CachedNode):
-                source_files.append(dep.input_path)
-                if dep.output_path.is_file():
-                    combined_dict = merge_toml(combined_dict, parse_toml(dep.output_path.read_text(encoding="utf-8")))
-                else:
-                    raise FileNotFoundError(f"Cached dependency output file not found: {dep.output_path}")
-            elif isinstance(dep, IndependentFileNode):
-                source_files.append(dep.file_path)
-                if dep.file_path.is_file():
-                    combined_dict = merge_toml(combined_dict, parse_toml(dep.file_path.read_text(encoding="utf-8")))
-                else:
-                    raise FileNotFoundError(f"Independent source file not found: {dep.file_path}")
+                    raise FileNotFoundError(f"Dependency output file not found: {dep.dst_path}")
 
         # 2. Dynamic Python package hook
         combined_dict, hook_path = apply_package_hook(
@@ -356,19 +349,19 @@ class PackageConfigNode(FileNode):
         )
 
         # 4. Write final stitched TOML to render/<pkg>/.drift/drift_package.toml
-        target_path = self.output_path
+        target_path = self.dst_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
         if not context.dry_run:
             target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
 
         # 5. Merkle hash calculation
-        own_h = hash_file_disk(self.output_path) or ""
+        own_h = hash_file_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
-        context.result.rendered_paths.append(self.output_path)
+        context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
         if context.cache is not None:
-            context.cache.set(self.output_path, self.hashes)
+            context.cache.set(self.dst_path, self.hashes, src_path=self.src_path)
 
         # 6. Prune obsolete configs
         pruned = prune_obsolete_config_files(

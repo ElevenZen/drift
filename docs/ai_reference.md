@@ -114,6 +114,17 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`load_package_config_for_install(package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads package configuration strictly from `install/<pkg>/` state database.
 *   [`load_package_config_rendered(package_toml_path, package_name, package_dir, workspace_config=None) -> PackageConfig`](../src/drift/config/package_config.py): Loads and parses package configuration with explicit `package_dir` and optional `workspace_config`.
 *   [`config.is_package_enabled(pkg) -> bool`](../src/drift/config/workspace_config.py): Checks if package is active in workspace.
+*   [`WorkspaceConfig.render_cache: RenderCache`](../src/drift/config/workspace_config.py): Per-workspace cache instance injected into expansion and digestion contexts.
+
+### [`render/`](../src/drift/render/) (Incremental Render DAG, Cache, & Lockfile)
+*   [`RenderCache`](../src/drift/render/render_cache.py): In-memory cache mapping destination paths (`dst_path`) to `CachedFileEntry(hashes, source_mtime_ns, source_size)`. Injected via `WorkspaceConfig.render_cache`. Features sub-microsecond nanosecond stat fingerprinting (`st_mtime_ns` and `st_size`) to automatically invalidate entries when source files are touched on disk.
+*   [`NodeHashes(own_hash, merkle_hash)`](../src/drift/render/render_cache.py): Immutable container storing own hash and topological Merkle tree hash.
+*   [`PathNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py): Common AST base class for filesystem path nodes (`FileNode`, `DirectoryNode`, `UnknownPathNode`), encapsulating `dst_path` and `src_path` fields and eliminating duplicated path state across derived node types.
+*   [`FileNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py) & [`DirectoryNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py): Sibling subclasses of `PathNode` representing file assets and directory synchronization targets respectively.
+*   [`ExpansionContext(drift_root, package_name, enable_render, env_node, render_engines, cache, ...)`](../src/drift/render/render_expansion.py): Context holding required `cache: RenderCache` and path translation tables to expand files and directories into Merkle tree nodes.
+*   [`DigestionContext(drift_root, package_name, package_render_dir, lockfile, bucket, cache, ...)`](../src/drift/render/render_digester.py): Context carrying required `cache: RenderCache` and `RenderLockfile` into recursive DAG digestion.
+*   [`digest_render_dag(root_node, context) -> DigestionResult`](../src/drift/render/render_digester.py): Digestion engine performing zero-diff file skipping against lockfiles, incremental node caching, and scoped pruning of obsolete `.drift/` internal artifacts and payload files.
+*   [`RenderLockfile`](../src/drift/render/render_lock.py): Per-package manifest (`.drift/render.lock`) persisting active Merkle hashes across `config`, `hooks`, and `payload` buckets.
 
 ### [`utils/git_utils.py`](../src/drift/utils/git_utils.py) (Sub-Repository Git Management)
 *   [`commit_repo_changes(repo_path, message, target_pkgs=(), repo_name="repo")`](../src/drift/utils/git_utils.py): Scoped `git add` and `git commit`.

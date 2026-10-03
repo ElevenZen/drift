@@ -25,7 +25,6 @@ from ..core.constants import (
     DRIFT_INTERNAL_RENDER_DIR_NAME,
     DirMode,
 )
-from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from .render_input import render_input_templates
 from .render_core import render_template_to_file, RenderError
@@ -41,8 +40,6 @@ logger = logging.getLogger(__name__)
 def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
     """Clears the sandbox package directory inside the render folder while preserving .drift/ internal metadata."""
     render_pkg_dir = workspace_config.render_path / package_name
-    from .render_cache import static_render_cache
-    static_render_cache.invalidate_prefix(render_pkg_dir)
     if not render_pkg_dir.exists():
         return
     if render_pkg_dir.is_symlink():
@@ -412,9 +409,6 @@ def run_primitive_2_render_packages(
     flags: Optional[HookExecFlags] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    from .render_cache import static_render_cache
-    static_render_cache.clear()
-
     hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []

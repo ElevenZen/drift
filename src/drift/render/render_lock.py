@@ -166,10 +166,10 @@ class RenderLockfile:
         from .render_dag import FileNode, DirectoryNode
 
         if isinstance(node, FileNode):
-            disk_path = drift_root / node.file_path
+            disk_path = drift_root / node.dst_path
             if not disk_path.is_file():
                 return None
-            own_h = hash_file_disk(node.file_path)
+            own_h = hash_file_disk(node.dst_path)
             if own_h is None:
                 return None
             if any(d.merkle_hash is None for d in node.depends_on):
@@ -186,10 +186,10 @@ class RenderLockfile:
             return None
 
         elif isinstance(node, DirectoryNode):
-            disk_path = drift_root / node.dir_path
+            disk_path = drift_root / node.dst_path
             if not disk_path.is_dir():
                 return None
-            own_h = hash_directory_disk(node.dir_path)
+            own_h = hash_directory_disk(node.dst_path)
             if own_h is None:
                 return None
             candidate_m = hash_text(f"DirectoryNode:{own_h}")

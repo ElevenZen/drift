@@ -33,7 +33,6 @@ from ..core.constants import (
 )
 from ..core.folder_diff import list_folder_paths
 from ..utils.path_utils import is_relative_to
-from .render_cache import static_render_cache
 from .render_dag import (
     Node,
     JsonNode,
@@ -96,6 +95,7 @@ def build_phase2_hooks_dag(
         enable_render=True,
         env_node=env_node,
         render_engines=effective_engines,
+        cache=workspace_config.render_cache,
         path_translation=translation_map,
         drift_root=workspace_config.drift_root,
     )
@@ -185,7 +185,7 @@ def render_hooks(
         package_render_dir=pkg_render_dir,
         lockfile=lockfile,
         bucket=RenderBucket.HOOKS,
-        cache=static_render_cache,
+        cache=workspace_config.render_cache,
         dry_run=dry_run,
     )
 

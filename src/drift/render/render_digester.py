@@ -42,7 +42,7 @@ from ..core.constants import (
 )
 from ..core.folder_diff import list_folder_paths
 from ..utils.file_ops import prune_empty_parents
-from .render_cache import NodeHashes, StaticRenderCache
+from .render_cache import NodeHashes, RenderCache
 from .render_lock import RenderLockfile, RenderBucket
 from .render_dag import Node
 
@@ -100,7 +100,7 @@ class DigestionContext:
     package_render_dir: Path  # Path("render") / package_name (relative to drift_root)
     lockfile: RenderLockfile
     bucket: RenderBucket
-    cache: StaticRenderCache
+    cache: RenderCache
     force: bool = False
     dry_run: bool = False
 
@@ -133,7 +133,7 @@ def check_and_apply_cache(
         if cached.merkle_hash:
             context.active_hashes.add(cached.merkle_hash)
         if context.cache is not None:
-            context.cache.set(target_path, cached)
+            context.cache.set(target_path, cached, src_path=node.src_path)
         return True
     return False
 

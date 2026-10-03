@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 from drift.cli import main
 from tests.test_utils import TestCaseUtilityMixin
-from drift.render.render_cache import NodeHashes, StaticRenderCache, static_render_cache
 
 
 class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
@@ -60,11 +59,9 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         from drift.primitives.workspace_repair import repair_drift_workspace
         from pathlib import Path
         repair_drift_workspace(Path(self.drift_root))
-        # static_render_cache.clear()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
-        # static_render_cache.clear()
 
     def test_cli_help(self) -> None:
         """Verifies that the CLI help option displays correctly."""

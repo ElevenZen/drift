@@ -11,7 +11,7 @@ Layer 2: AST Expansion & Collision Detection
         Recursively resolves UnknownPathNode into concrete Node hierarchy.
     - create_node_for_file(file_path, ctx) -> Node
         Constructs concrete Node based on cache, engine matching, and path translation.
-    - assert_no_render_collisions(output_path, input_path, collision_map, pkg_name)
+    - assert_no_render_collisions(dst_path, src_path, collision_map, pkg_name)
         Validates collision-free 1:1 or N:1 mappings to destination paths.
 
 Layer 1: Path Translation & Root Discovery
@@ -19,7 +19,7 @@ Layer 1: Path Translation & Root Discovery
         Converts canonical absolute input_file into a relative path from drift_root.
     - translate_path(path, translation_map) -> Path
         Prefix-based translation of source paths to render destination paths.
-    - make_root_dependency_node(file_path, pkg_source_dir, drift_root) -> Node
+    - make_root_dependency_node(src_path, pkg_source_dir, drift_root) -> Node
         Wraps candidate file into UnknownPathNode (managed) or IndependentFileNode (external).
     - to_node_key(path) -> str
         Canonical string key representation for node deduplication.
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 from ..core.constants import CONFIG_DIR_NAME
 from ..core.exceptions import RenderCollisionError
 from ..utils.path_utils import is_relative_to
-from .render_cache import static_render_cache
+from .render_cache import RenderCache
 from .render_dag import (
     Node,
     JsonNode,
@@ -66,6 +66,7 @@ class ExpansionContext:
     enable_render: bool
     env_node: JsonNode
     render_engines: "RenderEngineRegistry"
+    cache: RenderCache
     path_translation: Dict[Path, Path] = field(default_factory=dict)
     node_refs: Dict[str, Node] = field(default_factory=dict)
     collision_map: Dict[Path, Path] = field(default_factory=dict)
@@ -118,6 +119,7 @@ class ExpansionContext:
             enable_render=self.enable_render,
             env_node=self.env_node,
             render_engines=self.render_engines,
+            cache=self.cache,
             path_translation=self.get_engine_input_translation_rules(),
             node_refs=self.node_refs,
             collision_map=self.collision_map,
@@ -150,7 +152,7 @@ def translate_path(path: Path, translation_map: Dict[Path, Path]) -> Path:
 
 
 def make_root_dependency_node(
-    file_path: Path,
+    src_path: Path,
     pkg_source_dir: Path,
     drift_root: Path,
 ) -> Node:
@@ -160,7 +162,7 @@ def make_root_dependency_node(
     Files located outside pkg_source_dir are wrapped in IndependentFileNode with absolute paths,
     ensuring unmanaged external files take part only as leaf dependencies and are not rendered.
     """
-    abs_file = (drift_root / file_path).resolve()
+    abs_file = (drift_root / src_path).resolve()
     abs_pkg_source = pkg_source_dir.resolve()
     if is_relative_to(abs_file, abs_pkg_source):
         return UnknownPathNode(abs_file)
@@ -168,21 +170,21 @@ def make_root_dependency_node(
 
 
 def assert_no_render_collisions(
-    output_path: Path,
-    input_path: Path,
+    dst_path: Path,
+    src_path: Path,
     collision_map: Dict[Path, Path],
     package_name: str,
 ) -> None:
     """Validates that two different source files do not compile to the same output destination.
 
     Raises:
-        RenderCollisionError: If output_path is already mapped to a different input file.
+        RenderCollisionError: If dst_path is already mapped to a different input file.
     """
-    if output_path in collision_map and collision_map[output_path] != input_path:
-        prev_file = collision_map[output_path]
+    if dst_path in collision_map and collision_map[dst_path] != src_path:
+        prev_file = collision_map[dst_path]
         raise RenderCollisionError(
-            f"Multiple source files in package '{package_name}' render to the same destination path '{output_path.as_posix()}': "
-            f"'{prev_file}' and '{input_path}'."
+            f"Multiple source files in package '{package_name}' render to the same destination path '{dst_path.as_posix()}': "
+            f"'{prev_file}' and '{src_path}'."
         )
 
 
@@ -195,21 +197,21 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
     stripped_path = Path(engine.strip_suffix(file_path.as_posix())) if engine else file_path
 
     # 2. Translate stripped path to target destination path via path_translation
-    output_path = translate_path(stripped_path, ctx.path_translation)
+    dst_path = translate_path(stripped_path, ctx.path_translation)
 
-    # 3. Check static process-level running cache for the translated output_path
-    cached_hashes = static_render_cache.get(output_path)
+    # 3. Check process-level running cache for the translated dst_path
+    cached_hashes = ctx.cache.get(dst_path, src_path=file_path)
     if cached_hashes is not None:
-        return CachedNode(output_path, input_path=file_path, hashes=cached_hashes)
+        return CachedNode(dst_path, src_path=file_path, hashes=cached_hashes)
 
     # 4. If the file is not handled by an engine and is not translated into a new output path,
     # it represents an untranslated external or leaf file dependency.
-    if engine is None and output_path == file_path:
+    if engine is None and dst_path == file_path:
         return IndependentFileNode(file_path)
 
-    # 5. Early collision check on output_path
-    assert_no_render_collisions(output_path, file_path, ctx.collision_map, ctx.package_name)
-    ctx.collision_map[output_path] = file_path
+    # 5. Early collision check on dst_path
+    assert_no_render_collisions(dst_path, file_path, ctx.collision_map, ctx.package_name)
+    ctx.collision_map[dst_path] = file_path
 
     if engine:
         # Recursively expand input template if engine declares an input_file
@@ -221,7 +223,7 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
         engine_node = ctx.get_engine_node(engine)
 
         return EngineOutputFileNode(
-            output_path=output_path,
+            dst_path=dst_path,
             input_node=input_node,
             template_node=template_node,
             env_node=ctx.env_node,
@@ -229,15 +231,15 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
             engine_config=engine,
         )
     else:
-        return StaticFileNode(output_path=output_path, src_path=file_path)
+        return StaticFileNode(dst_path=dst_path, src_path=file_path)
 
 
 def create_node_for_dir(dir_path: Path, ctx: ExpansionContext) -> Node:
-    output_path = translate_path(dir_path, ctx.path_translation)
-    cached_hashes = static_render_cache.get(output_path)
+    dst_path = translate_path(dir_path, ctx.path_translation)
+    cached_hashes = ctx.cache.get(dst_path, src_path=dir_path)
     if cached_hashes is not None:
-        return CachedNode(output_path, input_path=dir_path, hashes=cached_hashes)
-    return DirectoryNode(dir_path)
+        return CachedNode(dst_path, src_path=dir_path, hashes=cached_hashes)
+    return DirectoryNode(dst_path=dst_path, src_path=dir_path)
 
 
 def expand_unknown_path(path: Path, ctx: ExpansionContext) -> Node:
@@ -255,7 +257,7 @@ def expand_node_dependencies(root: Node, ctx: ExpansionContext) -> None:
     expanded: list[Node] = []
     for dep in root.depends_on:
         if isinstance(dep, UnknownPathNode):
-            expanded.append(expand_unknown_path(dep.path, ctx))
+            expanded.append(expand_unknown_path(dep.src_path, ctx))
         else:
             expanded.append(dep)
     root.depends_on = expanded

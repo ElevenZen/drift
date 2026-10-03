@@ -1,10 +1,14 @@
 """Package lifecycle hook direct trigger engine."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional, Union, TYPE_CHECKING
 
-from ..config.workspace_config import WorkspaceConfig
+if TYPE_CHECKING:
+    from ..config.workspace_config import WorkspaceConfig
+
 from ..config.package_config import PackageConfig
 from .lifecycle_hooks import (
     HookExecFlags,

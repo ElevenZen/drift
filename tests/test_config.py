@@ -230,6 +230,23 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.workspace.backup_directory, Path("backup"))
         self.assertEqual(config.workspace.default_target_directory, Path("~").expanduser())
         self.assertEqual(config.packages_enable, {})
+        from drift.render.render_cache import RenderCache
+        self.assertIsInstance(config.render_cache, RenderCache)
+
+    def test_workspace_config_render_cache(self) -> None:
+        from drift.render.render_cache import RenderCache
+        cfg1 = WorkspaceConfig(drift_root=self.drift_root)
+        cfg2 = WorkspaceConfig(drift_root=self.drift_root)
+        self.assertIsInstance(cfg1.render_cache, RenderCache)
+        self.assertIsInstance(cfg2.render_cache, RenderCache)
+        self.assertIsNot(cfg1.render_cache, cfg2.render_cache)
+
+        custom_cache = RenderCache()
+        cfg_custom = WorkspaceConfig(drift_root=self.drift_root, render_cache=custom_cache)
+        self.assertIs(cfg_custom.render_cache, custom_cache)
+
+        with self.assertRaises(ConfigError):
+            WorkspaceConfig(drift_root=self.drift_root, render_cache="invalid_type")
 
     def test_workspace_config_from_dict(self) -> None:
         data = {

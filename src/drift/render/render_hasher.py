@@ -97,10 +97,10 @@ def compute_node_own_hash(node: Node) -> Optional[str]:
     if node.own_hash is not None:
         return node.own_hash
 
-    if isinstance(node, (IndependentFileNode, FileNode)):
-        return hash_file_disk(node.file_path)
-    elif isinstance(node, DirectoryNode):
-        return hash_directory_disk(node.dir_path)
+    if isinstance(node, DirectoryNode):
+        return hash_directory_disk(node.dst_path)
+    elif isinstance(node, FileNode):
+        return hash_file_disk(node.dst_path)
     elif isinstance(node, (PackageHooksNode, PackagePayloadNode)):
         return hash_text(f"{node.__class__.__name__}:{node.value}")
     else:

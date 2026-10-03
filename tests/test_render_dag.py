@@ -6,9 +6,10 @@ from typing import Any, List, Optional
 from unittest.mock import MagicMock
 
 from drift.core.exceptions import RenderCollisionError
-from drift.render.render_cache import NodeHashes, StaticRenderCache, static_render_cache
+from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_dag import (
     Node,
+    PathNode,
     TextNode,
     JsonNode,
     FileNode,
@@ -34,10 +35,10 @@ from drift.render.render_digester import topological_sort_nodes
 
 class TestRenderDAG(unittest.TestCase):
     def setUp(self) -> None:
-        static_render_cache.clear()
+        self.render_cache = RenderCache()
 
     def tearDown(self) -> None:
-        static_render_cache.clear()
+        pass
 
     def test_node_attributes_and_defaults(self) -> None:
         """Validates that base Node and FileNode properly store values and default to None for hashes."""
@@ -49,9 +50,65 @@ class TestRenderDAG(unittest.TestCase):
 
         file_node = FileNode(Path("foo/bar.txt"))
         self.assertEqual(file_node.value, "foo/bar.txt")
-        self.assertEqual(file_node.file_path, Path("foo/bar.txt"))
+        self.assertEqual(file_node.dst_path, Path("foo/bar.txt"))
+        self.assertIsNone(file_node.src_path)
         self.assertIsNone(file_node.own_hash)
         self.assertIsNone(file_node.merkle_hash)
+        self.assertIsInstance(file_node, PathNode)
+
+        path_node = PathNode(dst_path=Path("out/bar.txt"), src_path=Path("src/bar.txt"))
+        self.assertEqual(path_node.value, "out/bar.txt")
+        self.assertEqual(path_node.dst_path, Path("out/bar.txt"))
+        self.assertEqual(path_node.src_path, Path("src/bar.txt"))
+        self.assertIsInstance(path_node, Node)
+
+    def test_unified_path_accessors(self) -> None:
+        """Validates that compatible node types provide unified src_path and dst_path properties."""
+        # 1. Base Node
+        base = Node(value="base")
+        self.assertFalse(hasattr(base, "src_path"))
+        self.assertFalse(hasattr(base, "dst_path"))
+
+        # 2. IndependentFileNode
+        indep = IndependentFileNode(Path("src/pkg/leaf.txt"))
+        self.assertEqual(indep.src_path, Path("src/pkg/leaf.txt"))
+        self.assertEqual(indep.dst_path, Path("src/pkg/leaf.txt"))
+        self.assertIsInstance(indep, PathNode)
+        self.assertIsInstance(indep, FileNode)
+
+        # 3. StaticFileNode
+        static = StaticFileNode(dst_path=Path("render/pkg/file.txt"), src_path=Path("src/pkg/file.txt"))
+        self.assertEqual(static.src_path, Path("src/pkg/file.txt"))
+        self.assertEqual(static.dst_path, Path("render/pkg/file.txt"))
+        self.assertIsInstance(static, PathNode)
+        self.assertIsInstance(static, FileNode)
+
+        # 4. DirectoryNode
+        dir_node = DirectoryNode(dst_path=Path("render/pkg/empty"), src_path=Path("src/pkg/empty"))
+        self.assertEqual(dir_node.dst_path, Path("render/pkg/empty"))
+        self.assertEqual(dir_node.src_path, Path("src/pkg/empty"))
+        self.assertIsInstance(dir_node, PathNode)
+        self.assertNotIsInstance(dir_node, FileNode)
+
+        # 5. CachedNode
+        cached = CachedNode(dst_path=Path("render/pkg/out.txt"), src_path=Path("src/pkg/in.txt"))
+        self.assertEqual(cached.src_path, Path("src/pkg/in.txt"))
+        self.assertEqual(cached.dst_path, Path("render/pkg/out.txt"))
+        self.assertIsInstance(cached, PathNode)
+        self.assertIsInstance(cached, FileNode)
+
+        # 6. EngineOutputFileNode
+        engine_node = EngineOutputFileNode(
+            dst_path=Path("render/pkg/out.json"),
+            input_node=None,
+            template_node=indep,
+            env_node=JsonNode({}),
+            engine_node=JsonNode({}),
+        )
+        self.assertEqual(engine_node.src_path, Path("src/pkg/leaf.txt"))
+        self.assertEqual(engine_node.dst_path, Path("render/pkg/out.json"))
+        self.assertIsInstance(engine_node, PathNode)
+        self.assertIsInstance(engine_node, FileNode)
 
     def test_package_payload_node(self) -> None:
         """Validates PackagePayloadNode container properties."""
@@ -76,9 +133,9 @@ class TestRenderDAG(unittest.TestCase):
         self.assertEqual(j1.data, data1)
         self.assertEqual(j2.data, data2)
 
-    def test_static_render_cache(self) -> None:
-        """Validates StaticRenderCache set, get, contains, and clear."""
-        cache = StaticRenderCache()
+    def test_render_cache(self) -> None:
+        """Validates RenderCache set, get, contains, and clear."""
+        cache = RenderCache()
         p = Path("render/pkg/.zshrc")
         self.assertFalse(cache.contains(p))
         self.assertIsNone(cache.get(p))
@@ -93,13 +150,54 @@ class TestRenderDAG(unittest.TestCase):
         self.assertEqual(len(cache), 0)
         self.assertFalse(cache.contains(p))
 
+    def test_render_cache_stat_fingerprinting(self) -> None:
+        """Validates that RenderCache invalidates when output disappears or source file mtime/size changes."""
+        import tempfile
+        import time
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            source_file = tmp_root / "source.txt"
+            source_file.write_text("initial source")
+            output_file = tmp_root / "output.txt"
+            output_file.write_text("initial output")
+
+            cache = RenderCache()
+            hashes = NodeHashes(own_hash="own1", merkle_hash="merkle1")
+
+            # 1. Register with src_path
+            cache.set(output_file, hashes, src_path=source_file)
+            self.assertTrue(cache.contains(output_file, src_path=source_file))
+            self.assertEqual(cache.get(output_file, src_path=source_file), hashes)
+
+            # 2. Cache hit is stable when files unchanged
+            self.assertEqual(cache.get(output_file, src_path=source_file), hashes)
+
+            # 3. Output file deletion triggers cache eviction
+            output_file.unlink()
+            self.assertFalse(cache.contains(output_file, src_path=source_file))
+            self.assertIsNone(cache.get(output_file, src_path=source_file))
+            self.assertEqual(len(cache), 0)
+
+            # Re-create output file and re-cache
+            output_file.write_text("re-created output")
+            cache.set(output_file, hashes, src_path=source_file)
+            self.assertTrue(cache.contains(output_file, src_path=source_file))
+
+            # 4. Source file modification (mtime / size change) triggers cache eviction
+            time.sleep(0.01)  # Ensure nanosecond timestamp advance
+            source_file.write_text("modified source content with different size")
+            self.assertFalse(cache.contains(output_file, src_path=source_file))
+            self.assertIsNone(cache.get(output_file, src_path=source_file))
+            self.assertEqual(len(cache), 0)
+
     def test_cached_node_restoration(self) -> None:
         """Validates CachedNode restores both own_hash and merkle_hash."""
-        c = CachedNode(Path("app.conf"),
-                       input_path=Path("app.envst.conf"),
+        c = CachedNode(dst_path=Path("app.conf"),
+                       src_path=Path("app.envst.conf"),
                        hashes=NodeHashes(own_hash="h_own", merkle_hash="h_merkle"))
-        self.assertEqual(c.file_path, Path("app.conf"))
-        self.assertEqual(c.input_path, Path("app.envst.conf"))
+        self.assertEqual(c.dst_path, Path("app.conf"))
+        self.assertEqual(c.src_path, Path("app.envst.conf"))
         self.assertEqual(c.own_hash, "h_own")
         self.assertEqual(c.merkle_hash, "h_merkle")
         self.assertEqual(c.depends_on, [])
@@ -148,14 +246,16 @@ class TestRenderDAG(unittest.TestCase):
         inside_node = make_root_dependency_node(inside_file, pkg_source_dir, drift_root)
         self.assertIsInstance(inside_node, UnknownPathNode)
         assert isinstance(inside_node, UnknownPathNode)
-        self.assertEqual(inside_node.path, Path("/workspace/src/test_pkg/scripts/deploy.sh"))
+        self.assertEqual(inside_node.src_path, Path("/workspace/src/test_pkg/scripts/deploy.sh"))
+        self.assertIsNone(inside_node.dst_path)
 
         # File outside package source directory (e.g. global config or external asset)
         outside_file = Path("/workspace/config/shared.json")
         outside_node = make_root_dependency_node(outside_file, pkg_source_dir, drift_root)
         self.assertIsInstance(outside_node, IndependentFileNode)
         assert isinstance(outside_node, IndependentFileNode)
-        self.assertEqual(outside_node.file_path, outside_file.resolve())
+        self.assertEqual(outside_node.dst_path, outside_file.resolve())
+        self.assertEqual(outside_node.src_path, outside_file.resolve())
 
     def test_expand_unknown_file_static(self) -> None:
         """Validates expansion of a file without an engine into a StaticFileNode with path translation."""
@@ -168,18 +268,45 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({"FOO": "bar"}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
         node = expand_unknown_path(Path("/workspace/src/test_pkg/scripts/run.sh"), ctx)
         self.assertIsInstance(node, StaticFileNode)
         assert isinstance(node, StaticFileNode)
-        self.assertEqual(node.file_path, Path("/workspace/render/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.dst_path, Path("/workspace/render/test_pkg/scripts/run.sh"))
         self.assertEqual(node.src_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
         self.assertEqual(len(node.depends_on), 1)
         self.assertIsInstance(node.depends_on[0], IndependentFileNode)
         assert isinstance(node.depends_on[0], IndependentFileNode)
-        self.assertEqual(node.depends_on[0].file_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.depends_on[0].dst_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.depends_on[0].src_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
+
+    def test_expand_unknown_dir(self) -> None:
+        """Validates expansion of a directory into DirectoryNode with translated dst_path and original src_path."""
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_root = Path(tmp_dir)
+            src_dir = tmp_root / "src/test_pkg/my_dir"
+            src_dir.mkdir(parents=True)
+            render_dir = tmp_root / "render/test_pkg/my_dir"
+
+            ctx = ExpansionContext(
+                drift_root=tmp_root,
+                package_name="test_pkg",
+                enable_render=True,
+                env_node=JsonNode({}),
+                render_engines=MagicMock(),
+                cache=self.render_cache,
+                path_translation={tmp_root / "src/test_pkg": tmp_root / "render/test_pkg"},
+            )
+
+            node = expand_unknown_path(src_dir, ctx)
+            self.assertIsInstance(node, DirectoryNode)
+            assert isinstance(node, DirectoryNode)
+            self.assertEqual(node.dst_path, render_dir)
+            self.assertEqual(node.src_path, src_dir)
 
     def test_expand_unknown_file_template(self) -> None:
         """Validates expansion of an engine template into EngineOutputFileNode with path translation."""
@@ -200,16 +327,19 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({"PORT": "8080"}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
         node = expand_unknown_path(Path("/workspace/src/test_pkg/config.toml.envst"), ctx)
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
-        self.assertEqual(node.file_path, Path("/workspace/render/test_pkg/config.toml"))
+        self.assertEqual(node.dst_path, Path("/workspace/render/test_pkg/config.toml"))
+        self.assertEqual(node.src_path, Path("/workspace/src/test_pkg/config.toml.envst"))
         self.assertIsNone(node.input_node)
         assert isinstance(node.template_node, FileNode)
-        self.assertEqual(node.template_node.file_path, Path("/workspace/src/test_pkg/config.toml.envst"))
+        self.assertEqual(node.template_node.dst_path, Path("/workspace/src/test_pkg/config.toml.envst"))
+        self.assertEqual(node.template_node.src_path, Path("/workspace/src/test_pkg/config.toml.envst"))
         self.assertEqual(node.env_node, ctx.env_node)
         self.assertEqual(node.engine_node.data["name"], "envsubst")
         self.assertEqual(node.engine_config, mock_engine)
@@ -252,6 +382,7 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
@@ -259,13 +390,13 @@ class TestRenderDAG(unittest.TestCase):
         self.assertIsInstance(root, EngineOutputFileNode)
         assert isinstance(root, EngineOutputFileNode)
         # Main payload output path
-        self.assertEqual(root.file_path, Path("/workspace/render/test_pkg/rendered.html"))
+        self.assertEqual(root.dst_path, Path("/workspace/render/test_pkg/rendered.html"))
 
         # Input node should be recursively expanded and translated to .drift/render/
         self.assertIsNotNone(root.input_node)
         self.assertIsInstance(root.input_node, EngineOutputFileNode)
         assert isinstance(root.input_node, EngineOutputFileNode)
-        self.assertEqual(root.input_node.file_path, Path("/workspace/render/test_pkg/.drift/render/data.json"))
+        self.assertEqual(root.input_node.dst_path, Path("/workspace/render/test_pkg/.drift/render/data.json"))
 
     def test_workspace_engine_input_translation(self) -> None:
         """Validates that workspace engine inputs under config/ are translated to render/.drift/render/."""
@@ -286,19 +417,20 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
+            cache=self.render_cache,
         )
         input_ctx = ctx.derive_engine_input_context()
 
         node = expand_unknown_path(Path("/workspace/config/mustache.envst.json"), input_ctx)
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
-        self.assertEqual(node.file_path, Path("/workspace/render/.drift/render/mustache.json"))
+        self.assertEqual(node.dst_path, Path("/workspace/render/.drift/render/mustache.json"))
 
-    def test_static_cache_produces_cached_node(self) -> None:
-        """Validates that a path pre-populated in static_render_cache emits a CachedNode."""
+    def test_render_cache_produces_cached_node(self) -> None:
+        """Validates that a path pre-populated in RenderCache emits a CachedNode."""
         target_output = Path("/workspace/render/test_pkg/bin/tool")
-        static_render_cache.set_existence_check_enabled(False)
-        static_render_cache.register(target_output, own_hash="own123", merkle_hash="merkle456")
+        self.render_cache.set_existence_check_enabled(False)
+        self.render_cache.register(target_output, own_hash="own123", merkle_hash="merkle456")
 
         mock_registry = MagicMock()
         mock_registry.find_engine_for_file.return_value = None
@@ -309,13 +441,14 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
         node = expand_unknown_path(Path("/workspace/src/test_pkg/bin/tool"), ctx)
         self.assertIsInstance(node, CachedNode)
         assert isinstance(node, CachedNode)
-        self.assertEqual(node.file_path, target_output)
+        self.assertEqual(node.dst_path, target_output)
         self.assertEqual(node.own_hash, "own123")
         self.assertEqual(node.merkle_hash, "merkle456")
         mock_registry.find_engine_for_file.assert_called_once_with("/workspace/src/test_pkg/bin/tool")
@@ -339,6 +472,7 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({"KEY": "val"}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
@@ -372,6 +506,7 @@ class TestRenderDAG(unittest.TestCase):
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
+            cache=self.render_cache,
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 

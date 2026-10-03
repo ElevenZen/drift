@@ -27,7 +27,6 @@ from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
 from drift.config.package_loader import load_package_config_from_source_dir
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
-from drift.render.render_cache import static_render_cache
 from drift.render.render_hooks import render_hooks, ensure_configured_hook_permissions
 from drift.render.render_lock import RenderLockfile, RenderBucket
 from drift.hooks.lifecycle_hooks import resolve_hook_exec_path
@@ -35,7 +34,6 @@ from drift.hooks.lifecycle_hooks import resolve_hook_exec_path
 
 class TestRenderPhase1AndPhase2(unittest.TestCase):
     def setUp(self) -> None:
-        static_render_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
 
@@ -62,7 +60,6 @@ class TestRenderPhase1AndPhase2(unittest.TestCase):
         })
 
     def tearDown(self) -> None:
-        static_render_cache.clear()
         self.temp_dir.cleanup()
 
     # =========================================================================

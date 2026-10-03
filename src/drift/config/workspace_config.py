@@ -22,6 +22,8 @@ Layer 1: Workspace Specifications & Settings Models
 ===============================================================================
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -35,6 +37,7 @@ from typing import (
     Sequence,
     Tuple,
     Union,
+    TYPE_CHECKING,
 )
 
 from ..core.constants import (
@@ -65,6 +68,7 @@ from .render_engine_config import (
     RenderEngineRegistry,
     RenderSourceMatch,
 )
+from ..render.render_cache import RenderCache
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +257,7 @@ class WorkspaceConfig:
     render_engine_configs: RenderEngineRegistry = field(default_factory=RenderEngineRegistry)
     env_resolve: EnvResolve = field(default_factory=EnvResolve)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
+    render_cache: RenderCache = field(default_factory=RenderCache)
 
     def __init__(
         self,
@@ -263,6 +268,7 @@ class WorkspaceConfig:
         render_engine_configs: Optional[RenderEngineRegistry] = None,
         env_resolve: Optional[EnvResolve] = None,
         settings: Optional[SettingsConfig] = None,
+        render_cache: Optional[RenderCache] = None,
     ) -> None:
         if not isinstance(drift_root, (str, Path)):
             raise ConfigError(f"drift_root must be a Path or str, got {type(drift_root).__name__}")
@@ -276,6 +282,8 @@ class WorkspaceConfig:
             raise ConfigError("packages_enable must be a dictionary.")
         if env_resolve is not None and not isinstance(env_resolve, EnvResolve):
             raise ConfigError(f"env_resolve must be an EnvResolve instance, got {type(env_resolve).__name__}")
+        if render_cache is not None and not isinstance(render_cache, RenderCache):
+            raise ConfigError(f"render_cache must be a RenderCache instance, got {type(render_cache).__name__}")
 
         self.drift_root = Path(drift_root)
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
@@ -284,6 +292,7 @@ class WorkspaceConfig:
         self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
         self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
         self.settings = settings if settings is not None else SettingsConfig()
+        self.render_cache = render_cache if render_cache is not None else RenderCache()
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -304,6 +313,8 @@ class WorkspaceConfig:
         if not isinstance(self.settings, SettingsConfig):
             raise ConfigError("settings must be a SettingsConfig instance.")
         self.settings.validate()
+        if not isinstance(self.render_cache, RenderCache):
+            raise ConfigError("render_cache must be a RenderCache instance.")
 
     @property
     def source_path(self) -> Path:

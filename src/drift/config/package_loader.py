@@ -292,12 +292,8 @@ def _load_package_config_with_workspace(
     from ..render.render_dag import PackageConfigNode, UnknownPathNode, JsonNode, Node
     from ..render.render_expansion import ExpansionContext, expand_node_dependencies
     from ..render.render_digester import DigestionContext, digest_render_dag
-    from ..render.render_cache import static_render_cache
     from ..render.render_lock import RenderLockfile, RenderBucket
     from ..utils.env_utils import env_resolve_scope
-
-    # protect against stale cache entries if the package config is being reloaded
-    static_render_cache.invalidate_prefix(workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME)
 
     src_prefix = workspace_config.source_path / pkg_name
     dst_prefix = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
@@ -318,6 +314,7 @@ def _load_package_config_with_workspace(
         enable_render=True,
         env_node=env_node,
         render_engines=workspace_config.render_engine_configs,
+        cache=workspace_config.render_cache,
         path_translation=translation_map,
         drift_root=workspace_config.drift_root,
     )
@@ -326,9 +323,9 @@ def _load_package_config_with_workspace(
     for cand in candidate_source_files:
         cand_nodes.append(UnknownPathNode(cand))
 
-    output_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+    dst_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     cfg_node = PackageConfigNode(
-        output_path=output_path,
+        dst_path=dst_path,
         sources=cand_nodes,
         env_node=env_node,
         package_dir=package_dir,
@@ -345,7 +342,7 @@ def _load_package_config_with_workspace(
         package_render_dir=pkg_render_dir,
         lockfile=lockfile,
         bucket=RenderBucket.CONFIG,
-        cache=static_render_cache,
+        cache=workspace_config.render_cache,
     )
 
     with env_resolve_scope(env_res):

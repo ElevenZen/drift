@@ -26,6 +26,8 @@ Layer 1: Package Metadata & Section Specifications
 ===============================================================================
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sys
@@ -67,10 +69,10 @@ from ..utils.config_utils import (
 from .package_hooks import PackageHooks
 from .package_requirements import PackageRequirements
 from .render_engine_config import RenderEngineRegistry
-from .workspace_config import WorkspaceConfig
 
 if TYPE_CHECKING:
     from ..hooks.lifecycle_hooks import HookExecFlags
+    from .workspace_config import WorkspaceConfig
 
 logger = logging.getLogger(__name__)
 
