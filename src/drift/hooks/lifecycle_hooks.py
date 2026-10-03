@@ -436,29 +436,23 @@ def resolve_hook_source_path(
         raise HookMissingError(err_msg, packages=[package_name], hook_name=hook_name)
 
     rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
-    src_pkg_dir = workspace_config.source_path / package_name
-
     if rel_hook_path is None:
         # If hook is an external absolute path outside package hierarchy, execute it directly
         hook_source_path = Path(hook_file_val)
     else:
         # If hook is inside the package directory hierarchy, check if it exists in the source directory first
         # If not, check if it can be rendered from the source directory using the package's render engines
-        hook_parent_in_src = src_pkg_dir / rel_hook_path.parent
-        static_candidate = hook_parent_in_src / rel_hook_path.name
-        if static_candidate.exists():
-            hook_source_path = static_candidate
-        else:
-            hook_engines = (
-                engines_override
-                if engines_override is not None
-                else pkg_config.package_render_engines(workspace_config)
-            )
-            match_info = hook_engines.find_source_file_for_rendered_names(
-                hook_parent_in_src,
-                [rel_hook_path.name],
-            )
-            hook_source_path = match_info.path if match_info else None
+        hook_engines = (
+            engines_override
+            if engines_override is not None
+            else pkg_config.package_render_engines(workspace_config)
+        )
+        src_pkg_dir = workspace_config.source_path / package_name
+        match_info = hook_engines.find_source_file_for_rendered_names(
+            src_pkg_dir / rel_hook_path.parent,
+            [rel_hook_path.name],
+        )
+        hook_source_path = match_info.path if match_info else None
 
     return assert_valid_hook_file(
         hook_path=hook_source_path,

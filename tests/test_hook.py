@@ -1386,7 +1386,7 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
                 pkg_config=pkg_dir_config,
                 hook_name="pre_source",
             )
-        self.assertIn("not a regular file", str(ctx.exception))
+        self.assertIn("not found", str(ctx.exception))
         self.assertEqual(ctx.exception.packages, ["pkg_hook"])
         self.assertEqual(ctx.exception.hook_name, "pre_source")
 
