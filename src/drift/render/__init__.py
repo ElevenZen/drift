@@ -16,7 +16,6 @@ from .render_input import (
 )
 from .render_package import (
     clear_render_package_dir,
-    ensure_rendered_file_hook_permissions,
     render_or_copy_file,
     render_package_file_entry,
     render_subfolder_entries,
@@ -26,6 +25,11 @@ from .render_package import (
     render_package,
     run_primitive_2_render_packages,
     run_primitive_3_commit_render_repo,
+)
+from .render_hooks import (
+    build_phase2_hooks_dag,
+    ensure_configured_hook_permissions,
+    render_hooks,
 )
 
 __all__ = [
@@ -40,7 +44,6 @@ __all__ = [
     "resolve_dependencies",
     "render_input_templates",
     "clear_render_package_dir",
-    "ensure_rendered_file_hook_permissions",
     "render_or_copy_file",
     "render_package_file_entry",
     "render_subfolder_entries",
@@ -50,4 +53,7 @@ __all__ = [
     "render_package",
     "run_primitive_2_render_packages",
     "run_primitive_3_commit_render_repo",
+    "build_phase2_hooks_dag",
+    "ensure_configured_hook_permissions",
+    "render_hooks",
 ]

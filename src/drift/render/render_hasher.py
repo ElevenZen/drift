@@ -46,25 +46,17 @@ def hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def hash_file_disk(file_path: Path, base_dir: Path) -> Optional[str]:
+def hash_file_disk(file_path: Path) -> Optional[str]:
     """Computes SHA-256 hash of a file on disk combining relative path, mode, and content.
 
     Returns None if the file does not exist or is not a regular file.
     """
-    abs_path = (base_dir / file_path) if not file_path.is_absolute() else file_path
-    if not abs_path.is_file():
+    if not file_path.is_file():
         return None
-
-    try:
-        rel_path = abs_path.relative_to(base_dir).as_posix()
-    except ValueError:
-        rel_path = abs_path.as_posix()
-
-    mode_oct = oct(abs_path.stat().st_mode & 0o777)
-    content = abs_path.read_bytes()
-
+    mode_oct = oct(file_path.stat().st_mode & 0o777)
+    content = file_path.read_bytes()
     hasher = hashlib.sha256()
-    hasher.update(rel_path.encode("utf-8"))
+    hasher.update(file_path.as_posix().encode("utf-8"))
     hasher.update(b"\0")
     hasher.update(mode_oct.encode("utf-8"))
     hasher.update(b"\0")
@@ -72,25 +64,17 @@ def hash_file_disk(file_path: Path, base_dir: Path) -> Optional[str]:
     return hasher.hexdigest()
 
 
-def hash_directory_disk(dir_path: Path, base_dir: Path) -> Optional[str]:
+def hash_directory_disk(dir_path: Path) -> Optional[str]:
     """Computes SHA-256 hash of a directory on disk combining relative path and mode.
 
     Returns None if the path does not exist or is not a directory.
     """
-    abs_path = (base_dir / dir_path) if not dir_path.is_absolute() else dir_path
-    if not abs_path.is_dir():
+    if not dir_path.is_dir():
         return None
-
-    try:
-        rel_path = abs_path.relative_to(base_dir).as_posix()
-    except ValueError:
-        rel_path = abs_path.as_posix()
-
-    mode_oct = oct(abs_path.stat().st_mode & 0o777)
-
+    mode_oct = oct(dir_path.stat().st_mode & 0o777)
     hasher = hashlib.sha256()
     hasher.update(b"DIR\0")
-    hasher.update(rel_path.encode("utf-8"))
+    hasher.update(dir_path.as_posix().encode("utf-8"))
     hasher.update(b"\0")
     hasher.update(mode_oct.encode("utf-8"))
     return hasher.hexdigest()
@@ -100,7 +84,7 @@ def hash_directory_disk(dir_path: Path, base_dir: Path) -> Optional[str]:
 # Layer 2: Node Hashing & Merkle Invariants
 # =====================================================================
 
-def compute_node_own_hash(node: Node, base_dir: Path) -> Optional[str]:
+def compute_node_own_hash(node: Node) -> Optional[str]:
     """Computes the own_hash for a given Node from disk or raw content.
 
     - TextNode / JsonNode / CachedNode: returns existing own_hash.
@@ -114,16 +98,16 @@ def compute_node_own_hash(node: Node, base_dir: Path) -> Optional[str]:
         return node.own_hash
 
     if isinstance(node, (IndependentFileNode, FileNode)):
-        return hash_file_disk(node.file_path, base_dir)
+        return hash_file_disk(node.file_path)
     elif isinstance(node, DirectoryNode):
-        return hash_directory_disk(node.dir_path, base_dir)
+        return hash_directory_disk(node.dir_path)
     elif isinstance(node, (PackageHooksNode, PackagePayloadNode)):
         return hash_text(f"{node.__class__.__name__}:{node.value}")
     else:
         return hash_text(node.value)
 
 
-def compute_merkle_node_hash(node: Node, base_dir: Path) -> Optional[str]:
+def compute_merkle_node_hash(node: Node) -> Optional[str]:
     """Computes and populates NodeHashes for a given Node using its dependencies.
 
     Returns None if the node's own_hash cannot be resolved (e.g. unrendered on disk)
@@ -132,7 +116,7 @@ def compute_merkle_node_hash(node: Node, base_dir: Path) -> Optional[str]:
     if node.merkle_hash is not None:
         return node.merkle_hash
 
-    own_h = node.own_hash if node.own_hash is not None else compute_node_own_hash(node, base_dir)
+    own_h = node.own_hash if node.own_hash is not None else compute_node_own_hash(node)
     if own_h is None:
         return None
 

@@ -36,10 +36,14 @@ class StaticRenderCache:
 
     def __init__(self) -> None:
         self._cache: Dict[Path, NodeHashes] = {}
+        self.existence_check_enabled: bool = True  # Optional runtime toggle for testing or performance
+
+    def set_existence_check_enabled(self, enabled: bool) -> None:
+        self.existence_check_enabled = enabled
 
     def get(self, output_path: Path) -> Optional[NodeHashes]:
         """Retrieves NodeHashes for a given output path if cached."""
-        return self._cache.get(output_path)
+        return self._cache.get(output_path) if self.contains(output_path) else None
 
     def set(self, output_path: Path, hashes: NodeHashes) -> None:
         """Stores NodeHashes for a given output path."""
@@ -51,11 +55,18 @@ class StaticRenderCache:
 
     def contains(self, output_path: Path) -> bool:
         """Checks if an output path has already been cached in this run."""
-        return output_path in self._cache
+        return output_path in self._cache and (not self.existence_check_enabled or output_path.exists())
 
     def clear(self) -> None:
         """Clears all cached entries. Used in tests or fresh runs."""
         self._cache.clear()
+
+    def invalidate_prefix(self, prefix: Path) -> None:
+        """Removes all cached entries whose paths start with or match prefix."""
+        from ..utils.path_utils import is_relative_to
+        to_del = [p for p in self._cache if is_relative_to(p, prefix)]
+        for p in to_del:
+            self._cache.pop(p, None)
 
     def items(self) -> ItemsView[Path, NodeHashes]:
         """Returns view of all cached (path, hashes) pairs."""

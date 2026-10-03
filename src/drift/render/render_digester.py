@@ -35,6 +35,7 @@ from typing import List, Optional, Set, Sequence, Dict
 
 from ..core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DirMode,
@@ -99,10 +100,9 @@ class DigestionContext:
     package_render_dir: Path  # Path("render") / package_name (relative to drift_root)
     lockfile: RenderLockfile
     bucket: RenderBucket
+    cache: StaticRenderCache
     force: bool = False
     dry_run: bool = False
-    # cache=None should only be used in test mode.
-    cache: Optional[StaticRenderCache] = None
 
     # Result container mutated during traversal (all paths relative to drift_root)
     result: DigestionResult = field(default_factory=DigestionResult)
@@ -116,7 +116,7 @@ class DigestionContext:
 
 def check_and_apply_cache(
     node: Node,
-    target_rel_path: Path,
+    target_path: Path,
     context: DigestionContext,
 ) -> bool:
     """Checks if the node is already cached in lockfile; if so, populates hashes and records as skipped.
@@ -129,11 +129,11 @@ def check_and_apply_cache(
     cached = context.lockfile.check_lockfile_matches(context.bucket, node, context.drift_root)
     if cached is not None:
         node.hashes = cached
-        context.result.skipped_paths.append(target_rel_path)
+        context.result.skipped_paths.append(target_path)
         if cached.merkle_hash:
             context.active_hashes.add(cached.merkle_hash)
         if context.cache is not None:
-            context.cache.set(target_rel_path, cached)
+            context.cache.set(target_path, cached)
         return True
     return False
 
@@ -148,19 +148,20 @@ def prune_obsolete_config_files(
     active_paths: Sequence[Path],
     dry_run: bool = False,
 ) -> List[Path]:
-    """Prunes unrendered config files (drift_package.toml, drift_package.local.toml) from .drift/."""
+    """Prunes unrendered config files (drift_package.toml, drift_package.local.toml) from .drift/ and .drift/render/."""
     candidates = [
-        package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
-        package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
+        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
+        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
     ]
     active_set = set(active_paths)
     pruned: List[Path] = []
 
     for cand in candidates:
-        disk_cand = drift_root / cand
-        if disk_cand.is_file() and cand not in active_set:
+        if cand.is_file() and cand not in active_set:
             if not dry_run:
-                disk_cand.unlink()
+                cand.unlink()
             pruned.append(cand)
 
     return sorted(pruned)
@@ -178,7 +179,7 @@ def prune_obsolete_hooks(
         return []
 
     active_set = set(active_paths)
-    candidates = list_folder_paths(disk_hooks, base_rel=hooks_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
+    candidates = list_folder_paths(disk_hooks, base_rel=drift_root / hooks_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
     for cand in reversed(candidates):
@@ -211,12 +212,12 @@ def prune_obsolete_payload_files(
         return []
 
     active_set = set(active_paths)
-    candidates = list_folder_paths(disk_pkg, base_rel=package_render_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
+    candidates = list_folder_paths(disk_pkg, base_rel=drift_root / package_render_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
     payload_candidates = [
         cand for cand in candidates
-        if not is_drift_internal_path(cand, package_render_dir)
+        if not is_drift_internal_path(cand, drift_root / package_render_dir)
     ]
 
     for cand in reversed(payload_candidates):

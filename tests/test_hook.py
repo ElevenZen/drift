@@ -19,6 +19,8 @@ from drift.cli import main, run_argparse_cli
 
 class TestPackageHook(unittest.TestCase):
     def setUp(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = (Path(self.temp_dir.name) / "drift_workspace").resolve()
         self.drift_root.mkdir(parents=True, exist_ok=True)
@@ -74,6 +76,8 @@ class TestPackageHook(unittest.TestCase):
             s.chmod(0o755)
 
     def tearDown(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         self.temp_dir.cleanup()
 
     def test_invalid_hook_name_raises_config_error(self) -> None:
@@ -915,6 +919,8 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             '[package]\nname = "pkg_hook"\n[hooks]\nprobe = "drift_hooks/fail.sh"\n',
             encoding="utf-8"
         )
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         probe_res = trigger_probe_hook(
             workspace_config=self.workspace_config,
             package_name="pkg_hook",

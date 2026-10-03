@@ -477,31 +477,17 @@ def resolve_hook_exec_path(
     if rel_hook_path is None:
         return hook_source_path
 
-    from ..render.render_package import render_subfolder_entries, prepare_package_render_engines
+    from ..render.render_hooks import render_hooks
 
     package_name = pkg_config.name
     target_render_dir = workspace_config.render_path / package_name
     hook_dest_dir = target_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-    effective_engines = (
-        engines_override
-        if engines_override is not None
-        else prepare_package_render_engines(
-            workspace_config=workspace_config,
-            pkg_config=pkg_config,
-            render_pkg_dir=target_render_dir,
-        )
+
+    render_hooks(
+        workspace_config=workspace_config,
+        pkg_config=pkg_config,
+        engines_override=engines_override,
     )
-    src_pkg_dir = workspace_config.source_path / package_name
-    hooks_src_dir = src_pkg_dir / DRIFT_HOOKS_DIR_NAME
-    if hooks_src_dir.is_dir():
-        render_subfolder_entries(
-            src_dir=hooks_src_dir,
-            dest_dir=hook_dest_dir,
-            drift_root=workspace_config.drift_root,
-            pkg_config=pkg_config,
-            render_engines=effective_engines,
-            skip_drift_hooks=False,
-        )
     sub_rel = (
         rel_hook_path.relative_to(Path(DRIFT_HOOKS_DIR_NAME))
         if is_relative_to(rel_hook_path, Path(DRIFT_HOOKS_DIR_NAME))

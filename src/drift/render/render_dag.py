@@ -9,7 +9,7 @@ Layer 1: Node Definitions & Polymorphic Digestion
     - Node specializations:
         - TextNode / JsonNode: Raw content & deterministic JSON text
         - FileNode: Base class for filesystem path nodes
-        - UnknownFileNode: Placeholder node resolved during expansion
+        - UnknownPathNode: Placeholder node resolved during expansion
         - IndependentFileNode: Unmanaged leaf dependency asset
         - StaticFileNode: 1:1 copied static file (.digest copies file)
         - DirectoryNode: Directory synchronization target (.digest ensures dir)
@@ -32,6 +32,8 @@ from typing import List, Optional, Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineConfig
+    from ..config.workspace_config import WorkspaceConfig
+    from ..config.package_config import PackageConfig
     from .render_digester import DigestionContext
 
 from .render_cache import NodeHashes
@@ -61,7 +63,7 @@ class Node:
         """Default digestion for leaf/dependency nodes."""
         from .render_hasher import compute_merkle_node_hash
 
-        compute_merkle_node_hash(self, context.drift_root)
+        compute_merkle_node_hash(self)
 
 
 @dataclass(init=False)
@@ -97,10 +99,14 @@ class FileNode(Node):
 
 
 @dataclass(init=False)
-class UnknownFileNode(FileNode):
+class UnknownPathNode(Node):
     """Placeholder AST node whose concrete type is resolved during expansion."""
 
-    pass
+    path: Path
+
+    def __init__(self, path: Path):
+        super().__init__(value=path.as_posix(), depends_on=[])
+        self.path = path
 
 
 @dataclass(init=False)
@@ -131,17 +137,16 @@ class StaticFileNode(FileNode):
         if check_and_apply_cache(self, self.output_path, context):
             return
 
-        src = context.drift_root / self.src_path
-        dst = context.drift_root / self.output_path
-        if not src.is_file():
+        if not self.src_path.is_file():
             raise FileNotFoundError(f"Static source file not found: {self.src_path}")
 
         if not context.dry_run:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            self.output_path.parent.mkdir(parents=True, exist_ok=True)
+            if self.src_path.resolve() != self.output_path.resolve():
+                shutil.copy2(self.src_path, self.output_path)
 
-        own_h = hash_file_disk(self.output_path, context.drift_root) or ""
-        m_h = compute_merkle_node_hash(self, context.drift_root) or ""
+        own_h = hash_file_disk(self.output_path) or ""
+        m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.output_path)
         context.active_hashes.add(m_h)
@@ -167,10 +172,10 @@ class DirectoryNode(Node):
             return
 
         if not context.dry_run:
-            (context.drift_root / self.dir_path).mkdir(parents=True, exist_ok=True)
+            self.dir_path.mkdir(parents=True, exist_ok=True)
 
-        own_h = hash_directory_disk(self.dir_path, context.drift_root) or ""
-        m_h = compute_merkle_node_hash(self, context.drift_root) or ""
+        own_h = hash_directory_disk(self.dir_path) or ""
+        m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dir_path)
         context.active_hashes.add(m_h)
@@ -185,14 +190,21 @@ class CachedNode(FileNode):
     def __init__(
         self,
         output_path: Path,
+        input_path: Path,
         hashes: Optional[NodeHashes] = None,
     ):
         super().__init__(output_path, depends_on=[])
+        self.input_path = input_path
         self.hashes = hashes
 
     @property
     def output_path(self) -> Path:
         return self.file_path
+
+    def digest(self, context: "DigestionContext") -> None:
+        context.result.skipped_paths.append(self.output_path)
+        if self.hashes and self.hashes.merkle_hash:
+            context.active_hashes.add(self.hashes.merkle_hash)
 
 
 @dataclass(init=False)
@@ -237,9 +249,9 @@ class EngineOutputFileNode(FileNode):
         if not isinstance(self.template_node, FileNode):
             raise TypeError(f"Template node must be a FileNode, got {type(self.template_node)}")
 
-        tmpl = context.drift_root / self.template_node.file_path
-        dst = context.drift_root / self.output_path
-        in_file = (context.drift_root / self.input_node.file_path) if isinstance(self.input_node, FileNode) else None
+        tmpl = self.template_node.file_path
+        dst = self.output_path
+        in_file = (self.input_node.file_path) if isinstance(self.input_node, FileNode) else None
 
         if self.engine_config is None:
             raise ValueError(f"EngineOutputFileNode for '{self.output_path}' lacks engine_config")
@@ -253,8 +265,8 @@ class EngineOutputFileNode(FileNode):
                 input_file_path=in_file,
             )
 
-        own_h = hash_file_disk(self.output_path, context.drift_root) or ""
-        m_h = compute_merkle_node_hash(self, context.drift_root) or ""
+        own_h = hash_file_disk(self.output_path) or ""
+        m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.output_path)
         context.active_hashes.add(m_h)
@@ -264,23 +276,101 @@ class EngineOutputFileNode(FileNode):
 
 @dataclass(init=False)
 class PackageConfigNode(FileNode):
-    """Rendered package configuration (drift_package.toml)."""
+    """Root container for Phase 1: Package configuration compilation and variable stitching."""
 
-    def __init__(self, output_path: Path, sources: List[Node], env_node: JsonNode):
+    package_dir: Path
+    workspace_config: Optional["WorkspaceConfig"]
+    package_config: Optional["PackageConfig"]
+    source_files: List[Path]
+
+    def __init__(
+        self,
+        output_path: Path,
+        sources: List[Node],
+        env_node: JsonNode,
+        package_dir: Path,
+        workspace_config: Optional["WorkspaceConfig"] = None,
+    ):
         super().__init__(output_path, depends_on=[*sources, env_node])
+        self.package_dir = package_dir
+        self.workspace_config = workspace_config
+        self.package_config = None
+        self.source_files = []
 
     @property
     def output_path(self) -> Path:
         return self.file_path
 
     def digest(self, context: "DigestionContext") -> None:
+        from ..config.package_config import PackageConfig
+        from ..config.package_loader import resolve_and_interpolate_package_config
+        from ..hooks.package_hook import apply_package_hook
+        from ..utils.path_utils import is_relative_to
+        from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
+        from .render_cache import NodeHashes
         from .render_digester import prune_obsolete_config_files
+        from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_lock import RenderBucket
+        
+        # 1. Parse and merge TOMLs from resolved dependencies
+        combined_dict: dict = {}
+        source_files: list[Path] = []
 
-        super().digest(context)
-        if self.merkle_hash:
-            context.active_hashes.add(self.merkle_hash)
+        for dep in self.depends_on:
+            if isinstance(dep, (EngineOutputFileNode, StaticFileNode)):
+                if isinstance(dep, EngineOutputFileNode) and isinstance(dep.template_node, FileNode):
+                    source_files.append(dep.template_node.file_path)
+                elif isinstance(dep, StaticFileNode):
+                    source_files.append(dep.src_path)
+                if dep.output_path.is_file():
+                    combined_dict = merge_toml(combined_dict, parse_toml(dep.output_path.read_text(encoding="utf-8")))
+                else:
+                    raise FileNotFoundError(f"Dependency output file not found: {dep.output_path}")
+            elif isinstance(dep, CachedNode):
+                source_files.append(dep.input_path)
+                if dep.output_path.is_file():
+                    combined_dict = merge_toml(combined_dict, parse_toml(dep.output_path.read_text(encoding="utf-8")))
+                else:
+                    raise FileNotFoundError(f"Cached dependency output file not found: {dep.output_path}")
+            elif isinstance(dep, IndependentFileNode):
+                source_files.append(dep.file_path)
+                if dep.file_path.is_file():
+                    combined_dict = merge_toml(combined_dict, parse_toml(dep.file_path.read_text(encoding="utf-8")))
+                else:
+                    raise FileNotFoundError(f"Independent source file not found: {dep.file_path}")
 
+        # 2. Dynamic Python package hook
+        combined_dict, hook_path = apply_package_hook(
+            self.package_dir,
+            combined_dict,
+            self.workspace_config,
+        )
+        if hook_path:
+            source_files.append(hook_path)
+
+        # 3. Variable stitching & interpolation
+        stitched_dict, env_res = resolve_and_interpolate_package_config(
+            combined_dict,
+            package_name=context.package_name,
+            workspace_config=self.workspace_config,
+        )
+
+        # 4. Write final stitched TOML to render/<pkg>/.drift/drift_package.toml
+        target_path = self.output_path
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if not context.dry_run:
+            target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
+
+        # 5. Merkle hash calculation
+        own_h = hash_file_disk(self.output_path) or ""
+        m_h = compute_merkle_node_hash(self) or ""
+        self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
+        context.result.rendered_paths.append(self.output_path)
+        context.active_hashes.add(m_h)
+        if context.cache is not None:
+            context.cache.set(self.output_path, self.hashes)
+
+        # 6. Prune obsolete configs
         pruned = prune_obsolete_config_files(
             drift_root=context.drift_root,
             package_render_dir=context.package_render_dir,
@@ -288,9 +378,21 @@ class PackageConfigNode(FileNode):
             dry_run=context.dry_run,
         )
         context.result.pruned_paths.extend(pruned)
+
+        # 7. Update lockfile bucket
         context.lockfile.update_bucket_hashes(RenderBucket.CONFIG, context.active_hashes)
         if not context.dry_run:
             context.lockfile.save_to_dir(context.drift_root / context.package_render_dir)
+
+        # 8. Model construction
+        self.source_files = source_files
+        self.package_config = PackageConfig.from_dict(
+            stitched_dict,
+            package_name=context.package_name,
+            source_files=source_files,
+            base_dir=self.package_dir,
+            workspace_config=self.workspace_config,
+        )
 
 
 @dataclass(init=False)

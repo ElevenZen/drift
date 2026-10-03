@@ -44,12 +44,12 @@ class TestRenderHasher(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
             missing = tmp_path / "does_not_exist.txt"
-            self.assertIsNone(hash_file_disk(missing, tmp_path))
+            self.assertIsNone(hash_file_disk(missing))
 
             # Directory passed to hash_file_disk should return None
             sub_dir = tmp_path / "subdir"
             sub_dir.mkdir()
-            self.assertIsNone(hash_file_disk(sub_dir, tmp_path))
+            self.assertIsNone(hash_file_disk(sub_dir))
 
     def test_hash_file_disk_existing_and_permissions(self) -> None:
         """Validates that file content, path relativity, and POSIX permissions affect file hash."""
@@ -59,24 +59,24 @@ class TestRenderHasher(unittest.TestCase):
             file_path.write_bytes(b"sample content")
 
             # Basic hash
-            h1 = hash_file_disk(file_path, base_dir=tmp_path)
+            h1 = hash_file_disk(file_path)
             self.assertIsNotNone(h1)
             assert h1 is not None
 
             # Same file and mode gives identical hash
-            h2 = hash_file_disk(file_path, base_dir=tmp_path)
+            h2 = hash_file_disk(file_path)
             self.assertEqual(h1, h2)
 
             # Changing content changes hash
             file_path.write_bytes(b"modified content")
-            h3 = hash_file_disk(file_path, base_dir=tmp_path)
+            h3 = hash_file_disk(file_path)
             self.assertNotEqual(h1, h3)
 
             # Changing permissions (e.g. chmod 755 vs 644) changes hash
             file_path.chmod(0o644)
-            h_644 = hash_file_disk(file_path, base_dir=tmp_path)
+            h_644 = hash_file_disk(file_path)
             file_path.chmod(0o755)
-            h_755 = hash_file_disk(file_path, base_dir=tmp_path)
+            h_755 = hash_file_disk(file_path)
             self.assertNotEqual(h_644, h_755)
 
     def test_hash_directory_disk(self) -> None:
@@ -86,17 +86,17 @@ class TestRenderHasher(unittest.TestCase):
             dir_path = tmp_path / "test_dir"
 
             # Missing directory returns None
-            self.assertIsNone(hash_directory_disk(dir_path, tmp_path))
+            self.assertIsNone(hash_directory_disk(dir_path))
 
             # Existing directory returns hash
             dir_path.mkdir()
-            h_dir = hash_directory_disk(dir_path, base_dir=tmp_path)
+            h_dir = hash_directory_disk(dir_path)
             self.assertIsNotNone(h_dir)
 
             # File passed to directory hasher returns None
             f_path = tmp_path / "file.txt"
             f_path.write_text("not a dir")
-            self.assertIsNone(hash_directory_disk(f_path, tmp_path))
+            self.assertIsNone(hash_directory_disk(f_path))
 
     def test_compute_node_own_hash(self) -> None:
         """Validates own_hash computation across different node specializations."""
@@ -105,52 +105,52 @@ class TestRenderHasher(unittest.TestCase):
 
             # 1. TextNode and JsonNode already have own_hash populated
             t_node = TextNode("custom text")
-            self.assertEqual(compute_node_own_hash(t_node, tmp_path), t_node.own_hash)
+            self.assertEqual(compute_node_own_hash(t_node), t_node.own_hash)
 
             j_node = JsonNode({"port": 8080})
-            self.assertEqual(compute_node_own_hash(j_node, tmp_path), j_node.own_hash)
+            self.assertEqual(compute_node_own_hash(j_node), j_node.own_hash)
 
             # 2. IndependentFileNode hashes source file on disk
             src_file = tmp_path / "source.txt"
             indep = IndependentFileNode(src_file)
             # Before creation -> None
-            self.assertIsNone(compute_node_own_hash(indep, tmp_path))
+            self.assertIsNone(compute_node_own_hash(indep))
             self.assertIsNone(indep.own_hash)
 
             # After creation -> valid hash
             src_file.write_text("source data")
-            h_src = compute_node_own_hash(indep, tmp_path)
+            h_src = compute_node_own_hash(indep)
             self.assertIsNotNone(h_src)
-            self.assertEqual(h_src, hash_file_disk(src_file, tmp_path))
+            self.assertEqual(h_src, hash_file_disk(src_file))
 
             # 3. StaticFileNode (FileNode output target)
             dest_file = tmp_path / "rendered.txt"
             static_node = StaticFileNode(dest_file, src_file)
             # Rendered target does not exist yet -> None
-            self.assertIsNone(compute_node_own_hash(static_node, tmp_path))
+            self.assertIsNone(compute_node_own_hash(static_node))
 
             # Once rendered target exists -> computed
             dest_file.write_text("rendered data")
-            h_dest = compute_node_own_hash(static_node, tmp_path)
+            h_dest = compute_node_own_hash(static_node)
             self.assertIsNotNone(h_dest)
-            self.assertEqual(h_dest, hash_file_disk(dest_file, tmp_path))
+            self.assertEqual(h_dest, hash_file_disk(dest_file))
 
             # 4. DirectoryNode
             empty_dir = tmp_path / "empty_dir"
             dir_node = DirectoryNode(empty_dir)
-            self.assertIsNone(compute_node_own_hash(dir_node, tmp_path))
+            self.assertIsNone(compute_node_own_hash(dir_node))
             empty_dir.mkdir()
-            h_dir = compute_node_own_hash(dir_node, tmp_path)
+            h_dir = compute_node_own_hash(dir_node)
             self.assertIsNotNone(h_dir)
-            self.assertEqual(h_dir, hash_directory_disk(empty_dir, tmp_path))
+            self.assertEqual(h_dir, hash_directory_disk(empty_dir))
 
             # 5. PackagePayloadNode and PackageHooksNode
             pkg_node = PackagePayloadNode("pkg_foo", [])
-            h_pkg = compute_node_own_hash(pkg_node, tmp_path)
+            h_pkg = compute_node_own_hash(pkg_node)
             self.assertEqual(h_pkg, hash_text("PackagePayloadNode:pkg_foo"))
 
             hooks_node = PackageHooksNode("pkg_foo", [])
-            h_hooks = compute_node_own_hash(hooks_node, tmp_path)
+            h_hooks = compute_node_own_hash(hooks_node)
             self.assertEqual(h_hooks, hash_text("PackageHooksNode:pkg_foo"))
 
     def test_compute_merkle_node_hash_leaf_and_composite(self) -> None:
@@ -168,15 +168,15 @@ class TestRenderHasher(unittest.TestCase):
             static_node.depends_on = [indep_node]
 
             # If dependency's merkle_hash is not yet computed -> returns None
-            self.assertIsNone(compute_merkle_node_hash(static_node, tmp_path))
+            self.assertIsNone(compute_merkle_node_hash(static_node))
 
             # Compute dependency's merkle hash first (topological post-order)
-            m_indep = compute_merkle_node_hash(indep_node, tmp_path)
+            m_indep = compute_merkle_node_hash(indep_node)
             self.assertIsNotNone(m_indep)
             self.assertEqual(indep_node.merkle_hash, m_indep)
 
             # Now static_node can compute its merkle hash
-            m_static = compute_merkle_node_hash(static_node, tmp_path)
+            m_static = compute_merkle_node_hash(static_node)
             self.assertIsNotNone(m_static)
             self.assertEqual(static_node.merkle_hash, m_static)
 
@@ -192,14 +192,14 @@ class TestRenderHasher(unittest.TestCase):
             f_path.write_text("v1")
 
             indep = IndependentFileNode(f_path)
-            m1 = compute_merkle_node_hash(indep, tmp_path)
+            m1 = compute_merkle_node_hash(indep)
             self.assertIsNotNone(m1)
 
             # Modify file on disk and reset node hashes
             f_path.write_text("v2")
             indep.hashes = None
 
-            m2 = compute_merkle_node_hash(indep, tmp_path)
+            m2 = compute_merkle_node_hash(indep)
             self.assertIsNotNone(m2)
             self.assertNotEqual(m1, m2)
 

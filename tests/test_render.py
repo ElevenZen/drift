@@ -37,10 +37,14 @@ from drift.utils.host_facts import get_system_facts, inject_system_facts
 
 class TestRenderEngine(unittest.TestCase):
     def setUp(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
 
     def tearDown(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         self.temp_dir.cleanup()
 
     def test_env_settings_passed_to_envsubst_render_engine(self) -> None:
@@ -586,6 +590,8 @@ class TestDependencyResolver(unittest.TestCase):
 
 class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         set_test_mode(True)
         self.original_environ = dict(os.environ)
         self.original_initial_env = set(INITIAL_ENV)
@@ -594,6 +600,8 @@ class TestRenderPackage(unittest.TestCase):
         inject_system_facts()
 
     def tearDown(self) -> None:
+        from drift.render.render_cache import static_render_cache
+        static_render_cache.clear()
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
@@ -816,7 +824,7 @@ class TestRenderPackage(unittest.TestCase):
         )
         envsubst_engine = RenderEngineConfig(
             name="envsubst",
-            input_file=Path("env.sh"),
+            input_file=config_dir / Path("env.sh"),
             suffix="envst",
             render_command="bash -c 'source %i && envsubst < %s'"
         )

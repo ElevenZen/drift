@@ -38,8 +38,10 @@ from ..core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
 )
 from ..core.exceptions import ConfigError, mark_logged
+from ..utils.path_utils import is_relative_to
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
@@ -260,84 +262,132 @@ def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional["WorkspaceConfig"] = None,
 ) -> PackageConfig:
-    """Loads, transforms, and validates the package configuration from its source directory.
+    """Loads, transforms, and validates the package configuration from its source directory."""
+    if workspace_config is not None:
+        return _load_package_config_with_workspace(package_dir, workspace_config)
+    return _load_package_config_static_fallback(package_dir)
 
-    Configuration Pipeline Execution Order:
-    1. Multi-File Discovery & Merging: Discovers candidate files (drift_package.toml,
-       drift_package.local.toml, and templates) and deep-merges them via render_load_package_config_dict.
-    2. Dynamic Python Package Hook: Executes configure_package(context) from src/<pkg>/drift_package.py
-       (or custom hook_file). The hook operates as a preprocessor on the raw dictionary with access to
-       resolved context facts and environment.
-    3. Variable Stitching & Topological Sort: Resolves [env.override], [env.secrets], [env.default],
-       and [env.fallback] tables using Kahn's topological sort and Drift's 6-tier precedence model.
-    4. Cross-Section Interpolation: Interpolates ${VAR} across all non-env sections.
-    5. Render Staging: Writes stitched configuration to render/<pkg>/drift_package.toml.
-    6. Schema Validation & Model Construction: Instantiates strongly-typed PackageConfig.
 
-    Args:
-        package_dir: Directory path of the package (e.g. src/<pkg>/).
-        workspace_config: Optional active WorkspaceConfig instance.
-
-    Returns:
-        Fully resolved and validated PackageConfig instance.
-
-    Raises:
-        FileNotFoundError: If the package has no configuration file or template.
-        ConfigError: If configuration syntax or schema is invalid.
-    """
+def _load_package_config_with_workspace(
+    package_dir: Path,
+    workspace_config: "WorkspaceConfig",
+) -> PackageConfig:
+    """Full Phase 1 Merkle DAG compilation pipeline for package configuration."""
     pkg_name = package_dir.name
-    from ..hooks.package_hook import apply_package_hook
+    candidate_rendered_names = [PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_LOCAL_FILE_NAME]
+    candidate_source_files: List[Path] = []
 
-    combined_dict, source_files = render_load_package_config_dict(
-        pkg_name, [
-            package_dir / PACKAGE_CONFIG_FILE_NAME,
-            package_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME,
-        ], workspace_config)
+    engines = workspace_config.render_engine_configs
+    for cand_name in candidate_rendered_names:
+        file_match = engines.find_source_file_for_rendered_names(package_dir, [cand_name])
+        if file_match:
+            candidate_source_files.append(file_match.path)
 
-    # Apply dynamic Python package hook (src/<pkg>/drift_package.py or custom hook_file)
-    combined_dict, hook_path = apply_package_hook(
-        package_dir,
-        combined_dict,
-        workspace_config
+    if not candidate_source_files:
+        raise FileNotFoundError(
+            f"Package configuration file not found in [{', '.join(candidate_rendered_names)}] "
+            "or their templates."
+        )
+
+    from ..render.render_dag import PackageConfigNode, UnknownPathNode, JsonNode, Node
+    from ..render.render_expansion import ExpansionContext, expand_node_dependencies
+    from ..render.render_digester import DigestionContext, digest_render_dag
+    from ..render.render_cache import static_render_cache
+    from ..render.render_lock import RenderLockfile, RenderBucket
+    from ..utils.env_utils import env_resolve_scope
+
+    # protect against stale cache entries if the package config is being reloaded
+    static_render_cache.invalidate_prefix(workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME)
+
+    src_prefix = workspace_config.source_path / pkg_name
+    dst_prefix = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
+    translation_map = {
+        src_prefix / PACKAGE_CONFIG_FILE_NAME: dst_prefix / PACKAGE_CONFIG_FILE_NAME,
+        src_prefix / PACKAGE_CONFIG_LOCAL_FILE_NAME: dst_prefix / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    }
+
+    pkg_facts = workspace_config.get_drift_package_facts(pkg_name)
+    env_res = resolve_env_configs(
+        workspace_config.env_resolve.effective,
+        None,
+        extra_facts=pkg_facts,
+    )
+    env_node = JsonNode(env_res.effective_dict)
+    exp_ctx = ExpansionContext(
+        package_name=pkg_name,
+        enable_render=True,
+        env_node=env_node,
+        render_engines=workspace_config.render_engine_configs,
+        path_translation=translation_map,
+        drift_root=workspace_config.drift_root,
     )
 
-    # Register dynamic hook file in source_files so is_package_config_file ignores it during copy/render
-    if hook_path:
-        source_files.append(hook_path)
+    cand_nodes: List[Node] = []
+    for cand in candidate_source_files:
+        cand_nodes.append(UnknownPathNode(cand))
 
-    # 1. Resolve environment variables and stitch configuration sections
-    stitched_dict, env_res = resolve_and_interpolate_package_config(
-        combined_dict,
-        package_name=pkg_name,
+    output_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+    cfg_node = PackageConfigNode(
+        output_path=output_path,
+        sources=cand_nodes,
+        env_node=env_node,
+        package_dir=package_dir,
         workspace_config=workspace_config,
     )
 
-    # 2. Determine output path: render/<package_name>/.drift/drift_package.toml
-    # Writes the fully resolved, stitched configuration to the git-ignored render sandbox
-    if workspace_config is not None:
-        output_file_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
-        output_file_path.parent.mkdir(parents=True, exist_ok=True)
-        toml_str = dump_toml(stitched_dict)
-        output_file_path.write_text(toml_str, encoding="utf-8")
+    expand_node_dependencies(cfg_node, exp_ctx)
 
-    # 3. Load PackageConfig from the stitched dictionary
-    try:
-        config = PackageConfig.from_dict(
-            stitched_dict,
-            package_name=pkg_name,
-            source_files=source_files,
-            base_dir=package_dir,
-            workspace_config=workspace_config,
+    pkg_render_dir = workspace_config.render_path / pkg_name
+    lockfile = RenderLockfile.load_from_dir(pkg_render_dir)
+    ctx = DigestionContext(
+        drift_root=workspace_config.drift_root,
+        package_name=pkg_name,
+        package_render_dir=pkg_render_dir,
+        lockfile=lockfile,
+        bucket=RenderBucket.CONFIG,
+        cache=static_render_cache,
+    )
+
+    with env_resolve_scope(env_res):
+        digest_render_dag(cfg_node, ctx)
+
+    assert cfg_node.package_config is not None, "PackageConfigNode failed to instantiate PackageConfig"
+    return cfg_node.package_config
+
+
+def _load_package_config_static_fallback(package_dir: Path) -> PackageConfig:
+    """Static file parsing fallback without workspace context (used in isolated unit tests)."""
+    pkg_name = package_dir.name
+    from ..hooks.package_hook import apply_package_hook
+
+    candidate_rendered_names = [PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_LOCAL_FILE_NAME]
+    candidate_source_files: List[Path] = [
+        package_dir / cand_name for cand_name in candidate_rendered_names if (package_dir / cand_name).is_file()
+    ]
+
+    if not candidate_source_files:
+        raise FileNotFoundError(
+            f"Package configuration file not found in [{', '.join(candidate_rendered_names)}] "
+            "or their templates."
         )
-    except ConfigError:
-        raise
-    except (TypeError, ValueError) as e:
-        package_dir_log = package_dir.relative_to(workspace_config.drift_root) if workspace_config else package_dir
-        err_msg = (f"Invalid configuration for package '{pkg_name}' in '{package_dir_log}' "
-                   f"from {[str(x.relative_to(package_dir)) for x in source_files]}: {e}")
-        logger.error(f"❌ {err_msg}")
-        raise mark_logged(ConfigError(err_msg)) from e
-    return config
+
+    combined_dict: Dict[str, Any] = {}
+    source_files = list(candidate_source_files)
+    for cand in candidate_source_files:
+        combined_dict = merge_toml(combined_dict, parse_toml(cand.read_text(encoding="utf-8")))
+
+    combined_dict, hook_path = apply_package_hook(package_dir, combined_dict, None)
+    if hook_path:
+        source_files.append(hook_path)
+
+    stitched_dict, _ = resolve_and_interpolate_package_config(combined_dict, package_name=pkg_name, workspace_config=None)
+    return PackageConfig.from_dict(
+        stitched_dict,
+        package_name=pkg_name,
+        source_files=source_files,
+        base_dir=package_dir,
+        workspace_config=None,
+    )
 
 
 def load_package_config_from_render_dir(

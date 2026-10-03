@@ -5,18 +5,22 @@ Architecture & Call Chain Overview
 ===============================================================================
 
 Layer 2: AST Expansion & Collision Detection
+    - expand_node_dependencies(root, ctx) -> None
+        Expands all UnknownPathNode dependencies of a root node into concrete AST nodes.
     - expand_unknown_file(file_path, ctx) -> Node
-        Recursively resolves UnknownFileNode into concrete Node hierarchy.
+        Recursively resolves UnknownPathNode into concrete Node hierarchy.
     - create_node_for_file(file_path, ctx) -> Node
         Constructs concrete Node based on cache, engine matching, and path translation.
     - assert_no_render_collisions(output_path, input_path, collision_map, pkg_name)
         Validates collision-free 1:1 or N:1 mappings to destination paths.
 
 Layer 1: Path Translation & Root Discovery
+    - resolve_engine_input_path(input_file, drift_root) -> Path
+        Converts canonical absolute input_file into a relative path from drift_root.
     - translate_path(path, translation_map) -> Path
         Prefix-based translation of source paths to render destination paths.
     - make_root_dependency_node(file_path, pkg_source_dir, drift_root) -> Node
-        Wraps candidate file into UnknownFileNode (managed) or IndependentFileNode (external).
+        Wraps candidate file into UnknownPathNode (managed) or IndependentFileNode (external).
     - to_node_key(path) -> str
         Canonical string key representation for node deduplication.
     - ExpansionContext: State container holding engine registry, translation rules, and node cache.
@@ -32,14 +36,17 @@ from typing import Dict, Optional, Callable, cast, TYPE_CHECKING
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry, RenderEngineConfig
 
+from ..core.constants import CONFIG_DIR_NAME
 from ..core.exceptions import RenderCollisionError
+from ..utils.path_utils import is_relative_to
 from .render_cache import static_render_cache
 from .render_dag import (
     Node,
     JsonNode,
-    UnknownFileNode,
+    UnknownPathNode,
     IndependentFileNode,
     StaticFileNode,
+    DirectoryNode,
     CachedNode,
     EngineOutputFileNode,
 )
@@ -54,6 +61,7 @@ def to_node_key(path: Path) -> str:
 class ExpansionContext:
     """State container for AST expansion, node deduplication, and collision detection."""
 
+    drift_root: Path
     package_name: str
     enable_render: bool
     env_node: JsonNode
@@ -97,8 +105,8 @@ class ExpansionContext:
             src/<package_name>/<rel_path> -> render/<package_name>/.drift/render/<rel_path>
         """
         return {
-            Path("config"): Path("render/.drift/render"),
-            Path(f"src/{self.package_name}"): Path(f"render/{self.package_name}/.drift/render"),
+            self.drift_root / Path("config"): self.drift_root / Path("render/.drift/render"),
+            self.drift_root / Path(f"src/{self.package_name}"): self.drift_root / Path(f"render/{self.package_name}/.drift/render"),
         }
 
     def derive_engine_input_context(self) -> "ExpansionContext":
@@ -113,6 +121,7 @@ class ExpansionContext:
             path_translation=self.get_engine_input_translation_rules(),
             node_refs=self.node_refs,
             collision_map=self.collision_map,
+            drift_root=self.drift_root,
         )
 
 
@@ -147,19 +156,15 @@ def make_root_dependency_node(
 ) -> Node:
     """Wraps a candidate file into an initial AST dependency for root nodes.
 
-    Files located inside pkg_source_dir become UnknownFileNode with paths relative to drift_root.
+    Files located inside pkg_source_dir become UnknownPathNode with paths relative to drift_root.
     Files located outside pkg_source_dir are wrapped in IndependentFileNode with absolute paths,
     ensuring unmanaged external files take part only as leaf dependencies and are not rendered.
     """
-    abs_file = file_path if file_path.is_absolute() else (drift_root / file_path).resolve()
+    abs_file = (drift_root / file_path).resolve()
     abs_pkg_source = pkg_source_dir.resolve()
-
-    try:
-        abs_file.relative_to(abs_pkg_source)
-        rel_to_drift = abs_file.relative_to(drift_root.resolve())
-        return UnknownFileNode(rel_to_drift)
-    except ValueError:
-        return IndependentFileNode(abs_file)
+    if is_relative_to(abs_file, abs_pkg_source):
+        return UnknownPathNode(abs_file)
+    return IndependentFileNode(abs_file)
 
 
 def assert_no_render_collisions(
@@ -195,9 +200,14 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
     # 3. Check static process-level running cache for the translated output_path
     cached_hashes = static_render_cache.get(output_path)
     if cached_hashes is not None:
-        return CachedNode(output_path, hashes=cached_hashes)
+        return CachedNode(output_path, input_path=file_path, hashes=cached_hashes)
 
-    # 4. Early collision check on output_path
+    # 4. If the file is not handled by an engine and is not translated into a new output path,
+    # it represents an untranslated external or leaf file dependency.
+    if engine is None and output_path == file_path:
+        return IndependentFileNode(file_path)
+
+    # 5. Early collision check on output_path
     assert_no_render_collisions(output_path, file_path, ctx.collision_map, ctx.package_name)
     ctx.collision_map[output_path] = file_path
 
@@ -206,7 +216,7 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
         input_node: Optional[Node] = None
         if engine.input_file is not None:
             input_ctx = ctx.derive_engine_input_context()
-            input_node = expand_unknown_file(engine.input_file, input_ctx)
+            input_node = expand_unknown_path(engine.input_file, input_ctx)
         template_node = IndependentFileNode(file_path)
         engine_node = ctx.get_engine_node(engine)
 
@@ -222,11 +232,31 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
         return StaticFileNode(output_path=output_path, src_path=file_path)
 
 
-def expand_unknown_file(file_path: Path, ctx: ExpansionContext) -> Node:
-    """Expands an UnknownFileNode into its concrete cached, template, or static node,
+def create_node_for_dir(dir_path: Path, ctx: ExpansionContext) -> Node:
+    output_path = translate_path(dir_path, ctx.path_translation)
+    cached_hashes = static_render_cache.get(output_path)
+    if cached_hashes is not None:
+        return CachedNode(output_path, input_path=dir_path, hashes=cached_hashes)
+    return DirectoryNode(dir_path)
+
+
+def expand_unknown_path(path: Path, ctx: ExpansionContext) -> Node:
+    """Expands an UnknownPathNode into its concrete cached, template, or static node,
     reusing existing references from node_refs via get_or_register_path_node.
     """
     return ctx.get_or_register_path_node(
-        file_path,
-        lambda: create_node_for_file(file_path, ctx),
+        path,
+        lambda: create_node_for_dir(path, ctx) if path.is_dir() else create_node_for_file(path, ctx),
     )
+
+
+def expand_node_dependencies(root: Node, ctx: ExpansionContext) -> None:
+    """Expands all UnknownPathNode dependencies of a root node into concrete AST nodes."""
+    expanded: list[Node] = []
+    for dep in root.depends_on:
+        if isinstance(dep, UnknownPathNode):
+            expanded.append(expand_unknown_path(dep.path, ctx))
+        else:
+            expanded.append(dep)
+    root.depends_on = expanded
+

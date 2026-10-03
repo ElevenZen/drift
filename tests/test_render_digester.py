@@ -66,15 +66,15 @@ class TestScopedPruning(unittest.TestCase):
     def test_prune_obsolete_config_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
-            pkg_render = Path("render/pkg_a")
-            internal_dir = drift_root / pkg_render / DRIFT_INTERNAL_DIR_NAME
+            pkg_render = drift_root / "render" / "pkg_a"
+            internal_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME
             internal_dir.mkdir(parents=True)
 
             main_cfg = pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
             local_cfg = pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
 
-            (drift_root / main_cfg).write_text("name = 'pkg_a'")
-            (drift_root / local_cfg).write_text("enabled = true")
+            main_cfg.write_text("name = 'pkg_a'")
+            local_cfg.write_text("enabled = true")
 
             # Active set only includes main_cfg; local_cfg is obsolete
             active_paths = [main_cfg]
@@ -82,20 +82,20 @@ class TestScopedPruning(unittest.TestCase):
             # 1. Dry run
             dry_pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=True)
             self.assertEqual(dry_pruned, [local_cfg])
-            self.assertTrue((drift_root / local_cfg).is_file())
+            self.assertTrue(local_cfg.is_file())
 
             # 2. Live execution
             pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=False)
             self.assertEqual(pruned, [local_cfg])
-            self.assertFalse((drift_root / local_cfg).exists())
-            self.assertTrue((drift_root / main_cfg).is_file())
+            self.assertFalse(local_cfg.exists())
+            self.assertTrue(main_cfg.is_file())
 
     def test_prune_obsolete_hooks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
-            pkg_render = Path("render/pkg_b")
+            pkg_render = drift_root / "render" / "pkg_b"
             hooks_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-            disk_hooks = drift_root / hooks_dir
+            disk_hooks = hooks_dir
 
             active_hook = hooks_dir / "pre_sync.sh"
             obsolete_hook = hooks_dir / "sub" / "old_hook.sh"
@@ -103,8 +103,8 @@ class TestScopedPruning(unittest.TestCase):
 
             (disk_hooks / "sub").mkdir(parents=True)
             (disk_hooks / "empty_dir").mkdir(parents=True)
-            (drift_root / active_hook).write_text("#!/bin/sh\necho active")
-            (drift_root / obsolete_hook).write_text("#!/bin/sh\necho old")
+            active_hook.write_text("#!/bin/sh\necho active")
+            obsolete_hook.write_text("#!/bin/sh\necho old")
 
             # Active paths only contain active_hook
             active_paths = [active_hook]
@@ -112,22 +112,22 @@ class TestScopedPruning(unittest.TestCase):
             # Dry run: files intact
             dry_pruned = prune_obsolete_hooks(drift_root, hooks_dir, active_paths, dry_run=True)
             self.assertIn(obsolete_hook, dry_pruned)
-            self.assertTrue((drift_root / obsolete_hook).is_file())
+            self.assertTrue(obsolete_hook.is_file())
 
             # Live run: obsolete hook and empty directories pruned
             pruned = prune_obsolete_hooks(drift_root, hooks_dir, active_paths, dry_run=False)
             self.assertIn(obsolete_hook, pruned)
             self.assertIn(empty_folder, pruned)
-            self.assertFalse((drift_root / obsolete_hook).exists())
+            self.assertFalse(obsolete_hook.exists())
             self.assertFalse((disk_hooks / "sub").exists())
             self.assertFalse((disk_hooks / "empty_dir").exists())
-            self.assertTrue((drift_root / active_hook).is_file())
+            self.assertTrue(active_hook.is_file())
 
     def test_prune_obsolete_payload_files_and_drift_shielding(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
-            pkg_render = Path("render/pkg_c")
-            disk_pkg = drift_root / pkg_render
+            pkg_render = drift_root / "render" / "pkg_c"
+            disk_pkg = pkg_render
 
             # Create internal .drift/ files that must NEVER be pruned
             internal_dir = disk_pkg / DRIFT_INTERNAL_DIR_NAME
@@ -144,11 +144,10 @@ class TestScopedPruning(unittest.TestCase):
 
             (disk_pkg / "bin").mkdir(parents=True)
             (disk_pkg / "nested").mkdir(parents=True)
-            empty_payload_dir_disk = drift_root / empty_payload_dir
-            empty_payload_dir_disk.mkdir(parents=True)
+            empty_payload_dir.mkdir(parents=True)
 
-            (drift_root / active_file).write_text("active")
-            (drift_root / obsolete_file).write_text("obsolete")
+            active_file.write_text("active")
+            obsolete_file.write_text("obsolete")
 
             active_paths = [active_file]
 
@@ -158,12 +157,12 @@ class TestScopedPruning(unittest.TestCase):
             self.assertIn(empty_payload_dir, pruned)
 
             # Obsolete file and its empty parent dir deleted
-            self.assertFalse((drift_root / obsolete_file).exists())
+            self.assertFalse(obsolete_file.exists())
             self.assertFalse((disk_pkg / "nested").exists())
-            self.assertFalse(empty_payload_dir_disk.exists())
+            self.assertFalse(empty_payload_dir.exists())
 
             # Active file preserved
-            self.assertTrue((drift_root / active_file).is_file())
+            self.assertTrue(active_file.is_file())
 
             # .drift/ hierarchy strictly shielded!
             self.assertTrue(lock_path.is_file())
@@ -194,25 +193,26 @@ class TestDigestionModelsAndCache(unittest.TestCase):
     def test_check_and_apply_cache_hit_and_miss(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
-            p = Path("render/pkg/foo.txt")
-            (drift_root / p).parent.mkdir(parents=True)
-            (drift_root / p).write_text("content")
+            p = drift_root / "render/pkg/foo.txt"
+            p.parent.mkdir(parents=True)
+            p.write_text("content")
 
-            node = StaticFileNode(output_path=p, src_path=Path("src/pkg/foo.txt"))
+            src_file = drift_root / "src/pkg/foo.txt"
+            src_file.parent.mkdir(parents=True)
+            src_file.write_text("source content")
+
+            node = StaticFileNode(output_path=p, src_path=src_file)
             indep = node.depends_on[0]
             self.assertIsInstance(indep, FileNode)
             assert isinstance(indep, FileNode)
-            indep_path = drift_root / indep.file_path
-            indep_path.parent.mkdir(parents=True, exist_ok=True)
-            indep_path.write_text("source content")
             from drift.render.render_hasher import compute_merkle_node_hash
-            compute_merkle_node_hash(indep, drift_root)
+            compute_merkle_node_hash(indep)
 
             lock = RenderLockfile()
             ctx = DigestionContext(
                 drift_root=drift_root,
                 package_name="pkg",
-                package_render_dir=Path("render/pkg"),
+                package_render_dir=drift_root / "render/pkg",
                 lockfile=lock,
                 bucket=RenderBucket.PAYLOAD,
                 cache=static_render_cache,
@@ -224,7 +224,7 @@ class TestDigestionModelsAndCache(unittest.TestCase):
 
             # Compute actual hash and populate lockfile
             from drift.render.render_hasher import hash_file_disk, hash_text
-            own_h = hash_file_disk(p, drift_root)
+            own_h = hash_file_disk(p)
             self.assertIsNotNone(own_h)
             expected_m = hash_text(f"StaticFileNode:{own_h}:{indep.merkle_hash}")
             lock.update_payload_hashes([expected_m])
@@ -242,10 +242,11 @@ class TestDigestionModelsAndCache(unittest.TestCase):
             ctx_force = DigestionContext(
                 drift_root=drift_root,
                 package_name="pkg",
-                package_render_dir=Path("render/pkg"),
+                package_render_dir=drift_root / "render/pkg",
                 lockfile=lock,
                 bucket=RenderBucket.PAYLOAD,
                 force=True,
+                cache=static_render_cache,
             )
             self.assertFalse(check_and_apply_cache(node, p, ctx_force))
 
@@ -292,11 +293,11 @@ class TestDigestRenderDAG(unittest.TestCase):
             ws = self._setup_workspace(drift_root)
 
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             # Construct DAG
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
 
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
@@ -307,7 +308,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             tmpl_node = EngineOutputFileNode(
                 output_path=tmpl_out,
                 input_node=None,
-                template_node=IndependentFileNode(Path("src") / pkg_name / "app.conf.tmpl"),
+                template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
                 engine_node=JsonNode({"name": "test_engine"}),
                 engine_config=engine_cfg,
@@ -337,19 +338,19 @@ class TestDigestRenderDAG(unittest.TestCase):
             self.assertEqual(result.pruned_count, 0)
 
             # Files created on disk
-            self.assertTrue((drift_root / static_out).is_file())
-            self.assertEqual((drift_root / static_out).read_text(), "static-content-v1")
+            self.assertTrue(static_out.is_file())
+            self.assertEqual(static_out.read_text(), "static-content-v1")
 
-            self.assertTrue((drift_root / tmpl_out).is_file())
-            self.assertEqual((drift_root / tmpl_out).read_text(), "KEY=VALUE")
+            self.assertTrue(tmpl_out.is_file())
+            self.assertEqual(tmpl_out.read_text(), "KEY=VALUE")
 
-            self.assertTrue((drift_root / dir_out).is_dir())
+            self.assertTrue(dir_out.is_dir())
 
             # Lockfile created on disk
-            lock_disk = drift_root / pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME
+            lock_disk = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME
             self.assertTrue(lock_disk.is_file())
 
-            reloaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
+            reloaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
             self.assertEqual(len(reloaded_lock.payload_hashes), 4)  # 3 children + 1 payload root container
 
     def test_incremental_zero_diff_skip(self) -> None:
@@ -357,10 +358,10 @@ class TestDigestRenderDAG(unittest.TestCase):
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             # 1. First run
@@ -371,13 +372,14 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=lock1,
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             digest_render_dag(payload_root, ctx1)
-            mtime_initial = (drift_root / static_out).stat().st_mtime_ns
+            mtime_initial = static_out.stat().st_mtime_ns
 
             # 2. Second run with unchanged files
-            loaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
+            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             payload_root2 = PackagePayloadNode(pkg_name, [static_node2])
 
             ctx2 = DigestionContext(
@@ -386,6 +388,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
@@ -394,7 +397,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             self.assertEqual(result2.skipped_paths, [static_out])
 
             # Verify file was NOT touched on disk
-            mtime_after = (drift_root / static_out).stat().st_mtime_ns
+            mtime_after = static_out.stat().st_mtime_ns
             self.assertEqual(mtime_initial, mtime_after)
 
     def test_partial_invalidation(self) -> None:
@@ -402,10 +405,10 @@ class TestDigestRenderDAG(unittest.TestCase):
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
 
             engine_cfg = RenderEngineConfig(
                 name="test_engine",
@@ -416,7 +419,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             tmpl_node = EngineOutputFileNode(
                 output_path=tmpl_out,
                 input_node=None,
-                template_node=IndependentFileNode(Path("src") / pkg_name / "app.conf.tmpl"),
+                template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
                 engine_node=JsonNode({"name": "test_engine"}),
                 engine_config=engine_cfg,
@@ -430,6 +433,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             digest_render_dag(payload_root, ctx1)
 
@@ -437,12 +441,12 @@ class TestDigestRenderDAG(unittest.TestCase):
             ws["tmpl_src"].write_text("KEY=MODIFIED_VALUE")
 
             # Run 2
-            loaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
+            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             tmpl_node2 = EngineOutputFileNode(
                 output_path=tmpl_out,
                 input_node=None,
-                template_node=IndependentFileNode(Path("src") / pkg_name / "app.conf.tmpl"),
+                template_node=IndependentFileNode(ws["tmpl_src"]),
                 env_node=JsonNode({}),
                 engine_node=JsonNode({"name": "test_engine"}),
                 engine_config=engine_cfg,
@@ -455,6 +459,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
@@ -462,17 +467,17 @@ class TestDigestRenderDAG(unittest.TestCase):
             self.assertEqual(result2.skipped_count, 1)
             self.assertEqual(result2.rendered_paths, [tmpl_out])
             self.assertEqual(result2.skipped_paths, [static_out])
-            self.assertEqual((drift_root / tmpl_out).read_text(), "KEY=MODIFIED_VALUE")
+            self.assertEqual(tmpl_out.read_text(), "KEY=MODIFIED_VALUE")
 
     def test_missing_file_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             # Run 1
@@ -482,17 +487,18 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             digest_render_dag(payload_root, ctx1)
-            self.assertTrue((drift_root / static_out).is_file())
+            self.assertTrue(static_out.is_file())
 
             # Delete file on disk (corrupted or deleted externally)
-            (drift_root / static_out).unlink()
-            self.assertFalse((drift_root / static_out).exists())
+            static_out.unlink()
+            self.assertFalse(static_out.exists())
 
             # Run 2: Lockfile still contains hash, but disk file is missing
-            loaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
-            static_node2 = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            loaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
+            static_node2 = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             payload_root2 = PackagePayloadNode(pkg_name, [static_node2])
 
             ctx2 = DigestionContext(
@@ -501,23 +507,24 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=loaded_lock,
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
             )
             result2 = digest_render_dag(payload_root2, ctx2)
 
             # Recovered by re-rendering
             self.assertEqual(result2.rendered_count, 1)
             self.assertEqual(result2.skipped_count, 0)
-            self.assertTrue((drift_root / static_out).is_file())
+            self.assertTrue(static_out.is_file())
 
     def test_dry_run_leaves_disk_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             static_out = pkg_render_dir / "static.txt"
-            static_node = StaticFileNode(output_path=static_out, src_path=Path("src") / pkg_name / "static.txt")
+            static_node = StaticFileNode(output_path=static_out, src_path=ws["static_src"])
             payload_root = PackagePayloadNode(pkg_name, [static_node])
 
             ctx = DigestionContext(
@@ -526,6 +533,7 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.PAYLOAD,
+                cache=static_render_cache,
                 dry_run=True,
             )
             result = digest_render_dag(payload_root, ctx)
@@ -533,52 +541,54 @@ class TestDigestRenderDAG(unittest.TestCase):
             # Recorded in result as rendered
             self.assertEqual(result.rendered_count, 1)
             # But file and lockfile NOT created on disk
-            self.assertFalse((drift_root / static_out).exists())
+            self.assertFalse(static_out.exists())
+
     def test_package_config_node_digestion(self) -> None:
         """Validates PackageConfigNode digestion, pruning of obsolete config, and lockfile bucket update."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
 
             # Pre-create rendered drift_package.toml and obsolete drift_package.local.toml
-            internal_dir = drift_root / pkg_render_dir / DRIFT_INTERNAL_DIR_NAME
+            internal_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME
             internal_dir.mkdir(parents=True)
-            cfg_out = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
-            (drift_root / cfg_out).write_text("name = 'demo_pkg'")
-            obsolete_local = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
-            (drift_root / obsolete_local).write_text("debug = true")
+            cfg_out = internal_dir / PACKAGE_CONFIG_FILE_NAME
+            cfg_out.write_text("[package]\nname = 'demo_pkg'\n")
+            obsolete_local = internal_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
+            obsolete_local.write_text("[package]\ndebug = true\n")
 
             # Source file
-            src_cfg = Path("src") / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
-            (drift_root / src_cfg).parent.mkdir(parents=True)
-            (drift_root / src_cfg).write_text("name = 'demo_pkg'")
+            src_cfg = drift_root / "src" / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+            src_cfg.parent.mkdir(parents=True)
+            src_cfg.write_text("[package]\nname = 'demo_pkg'\n")
 
             cfg_node = PackageConfigNode(
                 output_path=cfg_out,
                 sources=[IndependentFileNode(src_cfg)],
                 env_node=JsonNode({"USER": "tester"}),
+                package_dir=drift_root / "src" / pkg_name,
+                workspace_config=None,
             )
 
-            # Record cfg_out in rendered_paths so it is treated as active
             ctx = DigestionContext(
                 drift_root=drift_root,
                 package_name=pkg_name,
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.CONFIG,
+                cache=static_render_cache,
             )
-            ctx.result.rendered_paths.append(cfg_out)
 
             digest_render_dag(cfg_node, ctx)
 
             # Obsolete local config was pruned
-            self.assertFalse((drift_root / obsolete_local).exists())
+            self.assertFalse(obsolete_local.exists())
             self.assertIn(obsolete_local, ctx.result.pruned_paths)
 
             # Lockfile saved with config_hashes
-            reloaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
+            reloaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
             self.assertEqual(len(reloaded_lock.config_hashes), 1)
             self.assertIn(cfg_node.merkle_hash, reloaded_lock.config_hashes)
 
@@ -588,23 +598,23 @@ class TestDigestRenderDAG(unittest.TestCase):
             drift_root = Path(tmp_dir)
             ws = self._setup_workspace(drift_root)
             pkg_name = "demo_pkg"
-            pkg_render_dir = Path("render") / pkg_name
+            pkg_render_dir = ws["render_pkg_dir"]
             hooks_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
 
             # Source hook
-            src_hook = Path("src") / pkg_name / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_sync.sh"
-            (drift_root / src_hook).parent.mkdir(parents=True)
-            (drift_root / src_hook).write_text("#!/bin/sh\necho sync")
+            src_hook = drift_root / "src" / pkg_name / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "pre_sync.sh"
+            src_hook.parent.mkdir(parents=True)
+            src_hook.write_text("#!/bin/sh\necho sync")
 
             # Destination hook
             hook_out = hooks_dir / "pre_sync.sh"
             hook_node = StaticFileNode(output_path=hook_out, src_path=src_hook)
 
             # Create an obsolete hook on disk that should be pruned
-            disk_hooks = drift_root / hooks_dir
+            disk_hooks = hooks_dir
             disk_hooks.mkdir(parents=True)
             obsolete_hook = hooks_dir / "old_hook.sh"
-            (drift_root / obsolete_hook).write_text("#!/bin/sh\necho old")
+            obsolete_hook.write_text("#!/bin/sh\necho old")
 
             hooks_root = PackageHooksNode(pkg_name, [hook_node])
 
@@ -614,17 +624,18 @@ class TestDigestRenderDAG(unittest.TestCase):
                 package_render_dir=pkg_render_dir,
                 lockfile=RenderLockfile(),
                 bucket=RenderBucket.HOOKS,
+                cache=static_render_cache,
             )
 
             digest_render_dag(hooks_root, ctx)
 
             # Active hook generated, obsolete hook pruned
-            self.assertTrue((drift_root / hook_out).is_file())
-            self.assertFalse((drift_root / obsolete_hook).exists())
+            self.assertTrue(hook_out.is_file())
+            self.assertFalse(obsolete_hook.exists())
             self.assertIn(obsolete_hook, ctx.result.pruned_paths)
 
             # Lockfile saved with hook_hashes
-            reloaded_lock = RenderLockfile.load_from_dir(drift_root / pkg_render_dir)
+            reloaded_lock = RenderLockfile.load_from_dir(pkg_render_dir)
             self.assertIn(hook_node.merkle_hash, reloaded_lock.hook_hashes)
             self.assertIn(hooks_root.merkle_hash, reloaded_lock.hook_hashes)
 

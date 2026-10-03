@@ -39,10 +39,22 @@ logger = logging.getLogger(__name__)
 
 
 def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
-    """Clears the sandbox package directory inside the render folder to preserve the render/.git repository."""
+    """Clears the sandbox package directory inside the render folder while preserving .drift/ internal metadata."""
     render_pkg_dir = workspace_config.render_path / package_name
-    if render_pkg_dir.exists() or render_pkg_dir.is_symlink():
-        remove_tree(render_pkg_dir)
+    from .render_cache import static_render_cache
+    static_render_cache.invalidate_prefix(render_pkg_dir)
+    if not render_pkg_dir.exists():
+        return
+    if render_pkg_dir.is_symlink():
+        render_pkg_dir.unlink()
+        return
+    for child in render_pkg_dir.iterdir():
+        if child.name == DRIFT_INTERNAL_DIR_NAME:
+            continue
+        if child.is_dir() and not child.is_symlink():
+            remove_tree(child)
+        else:
+            child.unlink()
 
 
 def _validate_not_driftignore_target(
@@ -66,38 +78,6 @@ def _validate_not_driftignore_target(
                 f"Package '{package_name}' cannot use '{file_path.name}' to represent '{DRIFT_IGNORE_FILE_NAME}'. "
                 f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
             )
-
-
-def ensure_rendered_file_hook_permissions(
-    src_path: Path,
-    dest_path: Path,
-    rel_path: Path,
-    pkg_config: PackageConfig,
-) -> None:
-    """Ensures rendered or copied lifecycle hook files have executable permissions (0o755) on POSIX.
-
-    Since template rendering and atomic copying already preserve source file mode,
-    we only need to check if the file matches a configured lifecycle hook.
-    """
-    if sys.platform == "win32":
-        return
-
-    rel_posix = rel_path.as_posix()
-    hook_rel_posix = (Path(DRIFT_HOOKS_DIR_NAME) / rel_path).as_posix()
-    if rel_posix not in pkg_config.hooks.configured_relative_paths and hook_rel_posix not in pkg_config.hooks.configured_relative_paths:
-        return
-
-    try:
-        if dest_path.exists() and dest_path.is_file():
-            dest_mode = dest_path.stat().st_mode
-            if not (dest_mode & 0o111):
-                dest_path.chmod(dest_mode | 0o755)
-        if src_path.exists() and src_path.is_file():
-            src_mode = src_path.stat().st_mode
-            if not (src_mode & 0o111):
-                src_path.chmod(src_mode | 0o755)
-    except Exception as e:
-        logger.debug(f"Could not ensure executable permission for hook file '{dest_path}': {e}")
 
 
 def render_or_copy_file(
@@ -207,14 +187,6 @@ def render_package_file_entry(
         target_rel_path=dest_rel_str,
         package_name=pkg_config.name,
         is_template=was_rendered,
-    )
-
-    # Ensure hook permissions on POSIX for declared lifecycle hooks
-    ensure_rendered_file_hook_permissions(
-        src_path=file_path,
-        dest_path=dest_dir / dest_rel_str,
-        rel_path=Path(dest_rel_str),
-        pkg_config=pkg_config,
     )
 
     return Path(dest_rel_str), was_rendered
@@ -343,24 +315,6 @@ def render_package_files(
         skip_drift_hooks=True,
     )
 
-    # Pass 2: Render control plane lifecycle hooks from package_dir/drift_hooks into render_pkg_dir/.drift/hooks
-    hooks_src_dir = package_dir / DRIFT_HOOKS_DIR_NAME
-    if hooks_src_dir.is_dir():
-        hook_dest_dir = render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-        hook_dest_prefix = Path(DRIFT_INTERNAL_DIR_NAME) / DRIFT_INTERNAL_HOOKS_DIR_NAME
-        render_subfolder_entries(
-            src_dir=hooks_src_dir,
-            dest_dir=hook_dest_dir,
-            drift_root=workspace_config.drift_root,
-            pkg_config=pkg_config,
-            render_engines=render_engines,
-            written_destinations=written_destinations,
-            rendered_files=rendered_files,
-            copied_files=copied_files,
-            dest_prefix=hook_dest_prefix,
-            skip_drift_hooks=False,
-        )
-
     # Trigger post_render hook
     pkg_config.hooks.trigger_post_render(
         flags=hook_flags,
@@ -415,6 +369,21 @@ def render_package(
     scoped_flags = replace(hook_flags, load_envs=False)
 
     with pkg_config.package_envs():
+        # Stage 2 & 2.5: Merge package render engines and render intermediate input templates
+        effective_engines = prepare_package_render_engines(
+            workspace_config=workspace_config,
+            pkg_config=pkg_config,
+            render_pkg_dir=render_pkg_dir,
+        )
+
+        # Phase 2: Render lifecycle hooks into render/<pkg>/.drift/hooks/
+        from .render_hooks import render_hooks
+        render_hooks(
+            workspace_config=workspace_config,
+            pkg_config=pkg_config,
+            engines_override=effective_engines,
+        )
+
         # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
         is_satisfied, failure_reason = pkg_config.evaluate_requirements(
             workspace_config, flags=scoped_flags
@@ -426,14 +395,7 @@ def render_package(
                 status="SKIPPED",
                 skip_reason=failure_reason
             )
-
-        # Stage 2 & 2.5: Merge package render engines and render intermediate input templates
-        effective_engines = prepare_package_render_engines(
-            workspace_config=workspace_config,
-            pkg_config=pkg_config,
-            render_pkg_dir=render_pkg_dir,
-        )
-
+            
         return render_package_files(
             workspace_config=workspace_config,
             pkg_config=pkg_config,
@@ -450,6 +412,9 @@ def run_primitive_2_render_packages(
     flags: Optional[HookExecFlags] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
+    from .render_cache import static_render_cache
+    static_render_cache.clear()
+
     hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []

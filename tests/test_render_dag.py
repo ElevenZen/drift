@@ -12,7 +12,7 @@ from drift.render.render_dag import (
     TextNode,
     JsonNode,
     FileNode,
-    UnknownFileNode,
+    UnknownPathNode,
     IndependentFileNode,
     StaticFileNode,
     DirectoryNode,
@@ -25,8 +25,7 @@ from drift.render.render_dag import (
 from drift.render.render_expansion import (
     ExpansionContext,
     to_node_key,
-    expand_unknown_file,
-    create_node_for_file,
+    expand_unknown_path,
     translate_path,
     make_root_dependency_node,
 )
@@ -84,6 +83,7 @@ class TestRenderDAG(unittest.TestCase):
         self.assertFalse(cache.contains(p))
         self.assertIsNone(cache.get(p))
 
+        cache.set_existence_check_enabled(False)  # Disable existence check for testing
         cache.register(p, own_hash="hash1", merkle_hash="hash2")
         self.assertTrue(cache.contains(p))
         self.assertEqual(cache.get(p), NodeHashes(own_hash="hash1", merkle_hash="hash2"))
@@ -95,8 +95,11 @@ class TestRenderDAG(unittest.TestCase):
 
     def test_cached_node_restoration(self) -> None:
         """Validates CachedNode restores both own_hash and merkle_hash."""
-        c = CachedNode(Path("app.conf"), hashes=NodeHashes(own_hash="h_own", merkle_hash="h_merkle"))
+        c = CachedNode(Path("app.conf"),
+                       input_path=Path("app.envst.conf"),
+                       hashes=NodeHashes(own_hash="h_own", merkle_hash="h_merkle"))
         self.assertEqual(c.file_path, Path("app.conf"))
+        self.assertEqual(c.input_path, Path("app.envst.conf"))
         self.assertEqual(c.own_hash, "h_own")
         self.assertEqual(c.merkle_hash, "h_merkle")
         self.assertEqual(c.depends_on, [])
@@ -134,7 +137,7 @@ class TestRenderDAG(unittest.TestCase):
         )
 
     def test_make_root_dependency_node(self) -> None:
-        """Validates that candidate files inside pkg_source_dir become UnknownFileNode
+        """Validates that candidate files inside pkg_source_dir become UnknownPathNode
         and files outside become IndependentFileNode with absolute paths.
         """
         drift_root = Path("/workspace")
@@ -143,9 +146,9 @@ class TestRenderDAG(unittest.TestCase):
         # File inside package source directory
         inside_file = Path("/workspace/src/test_pkg/scripts/deploy.sh")
         inside_node = make_root_dependency_node(inside_file, pkg_source_dir, drift_root)
-        self.assertIsInstance(inside_node, UnknownFileNode)
-        assert isinstance(inside_node, UnknownFileNode)
-        self.assertEqual(inside_node.file_path, Path("src/test_pkg/scripts/deploy.sh"))
+        self.assertIsInstance(inside_node, UnknownPathNode)
+        assert isinstance(inside_node, UnknownPathNode)
+        self.assertEqual(inside_node.path, Path("/workspace/src/test_pkg/scripts/deploy.sh"))
 
         # File outside package source directory (e.g. global config or external asset)
         outside_file = Path("/workspace/config/shared.json")
@@ -160,22 +163,23 @@ class TestRenderDAG(unittest.TestCase):
         mock_registry.find_engine_for_file.return_value = None
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({"FOO": "bar"}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        node = expand_unknown_file(Path("src/test_pkg/scripts/run.sh"), ctx)
+        node = expand_unknown_path(Path("/workspace/src/test_pkg/scripts/run.sh"), ctx)
         self.assertIsInstance(node, StaticFileNode)
         assert isinstance(node, StaticFileNode)
-        self.assertEqual(node.file_path, Path("render/test_pkg/scripts/run.sh"))
-        self.assertEqual(node.src_path, Path("src/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.file_path, Path("/workspace/render/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.src_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
         self.assertEqual(len(node.depends_on), 1)
         self.assertIsInstance(node.depends_on[0], IndependentFileNode)
         assert isinstance(node.depends_on[0], IndependentFileNode)
-        self.assertEqual(node.depends_on[0].file_path, Path("src/test_pkg/scripts/run.sh"))
+        self.assertEqual(node.depends_on[0].file_path, Path("/workspace/src/test_pkg/scripts/run.sh"))
 
     def test_expand_unknown_file_template(self) -> None:
         """Validates expansion of an engine template into EngineOutputFileNode with path translation."""
@@ -185,26 +189,27 @@ class TestRenderDAG(unittest.TestCase):
         mock_engine.render_command = "envsubst < %s"
         mock_engine.is_internal = False
         mock_engine.input_file = None
-        mock_engine.strip_suffix.return_value = "src/test_pkg/config.toml"
+        mock_engine.strip_suffix.return_value = "/workspace/src/test_pkg/config.toml"
 
         mock_registry = MagicMock()
         mock_registry.find_engine_for_file.return_value = mock_engine
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({"PORT": "8080"}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        node = expand_unknown_file(Path("src/test_pkg/config.toml.envst"), ctx)
+        node = expand_unknown_path(Path("/workspace/src/test_pkg/config.toml.envst"), ctx)
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
-        self.assertEqual(node.file_path, Path("render/test_pkg/config.toml"))
+        self.assertEqual(node.file_path, Path("/workspace/render/test_pkg/config.toml"))
         self.assertIsNone(node.input_node)
         assert isinstance(node.template_node, FileNode)
-        self.assertEqual(node.template_node.file_path, Path("src/test_pkg/config.toml.envst"))
+        self.assertEqual(node.template_node.file_path, Path("/workspace/src/test_pkg/config.toml.envst"))
         self.assertEqual(node.env_node, ctx.env_node)
         self.assertEqual(node.engine_node.data["name"], "envsubst")
         self.assertEqual(node.engine_config, mock_engine)
@@ -219,8 +224,8 @@ class TestRenderDAG(unittest.TestCase):
         mustache_engine.suffix = "mustache"
         mustache_engine.render_command = "mustache %i %s"
         mustache_engine.is_internal = False
-        mustache_engine.input_file = Path("src/test_pkg/data.json.envst")
-        mustache_engine.strip_suffix.return_value = "src/test_pkg/rendered.html"
+        mustache_engine.input_file = Path("/workspace/src/test_pkg/data.json.envst")
+        mustache_engine.strip_suffix.return_value = "/workspace/src/test_pkg/rendered.html"
 
         # Engine 2: envsubst compiles data.json.envst -> data.json
         envsubst_engine = MagicMock()
@@ -229,7 +234,7 @@ class TestRenderDAG(unittest.TestCase):
         envsubst_engine.render_command = "envsubst < %s"
         envsubst_engine.is_internal = False
         envsubst_engine.input_file = None
-        envsubst_engine.strip_suffix.return_value = "src/test_pkg/data.json"
+        envsubst_engine.strip_suffix.return_value = "/workspace/src/test_pkg/data.json"
 
         def find_engine(f_str: str) -> Any:
             if f_str.endswith(".mustache"):
@@ -242,24 +247,25 @@ class TestRenderDAG(unittest.TestCase):
         mock_registry.find_engine_for_file.side_effect = find_engine
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        root = expand_unknown_file(Path("src/test_pkg/template.html.mustache"), ctx)
+        root = expand_unknown_path(Path("/workspace/src/test_pkg/template.html.mustache"), ctx)
         self.assertIsInstance(root, EngineOutputFileNode)
         assert isinstance(root, EngineOutputFileNode)
         # Main payload output path
-        self.assertEqual(root.file_path, Path("render/test_pkg/rendered.html"))
+        self.assertEqual(root.file_path, Path("/workspace/render/test_pkg/rendered.html"))
 
         # Input node should be recursively expanded and translated to .drift/render/
         self.assertIsNotNone(root.input_node)
         self.assertIsInstance(root.input_node, EngineOutputFileNode)
         assert isinstance(root.input_node, EngineOutputFileNode)
-        self.assertEqual(root.input_node.file_path, Path("render/test_pkg/.drift/render/data.json"))
+        self.assertEqual(root.input_node.file_path, Path("/workspace/render/test_pkg/.drift/render/data.json"))
 
     def test_workspace_engine_input_translation(self) -> None:
         """Validates that workspace engine inputs under config/ are translated to render/.drift/render/."""
@@ -269,12 +275,13 @@ class TestRenderDAG(unittest.TestCase):
         envsubst_engine.render_command = "envsubst < %s"
         envsubst_engine.is_internal = False
         envsubst_engine.input_file = None
-        envsubst_engine.strip_suffix.return_value = "config/mustache.json"
+        envsubst_engine.strip_suffix.return_value = "/workspace/config/mustache.json"
 
         mock_registry = MagicMock()
         mock_registry.find_engine_for_file.return_value = envsubst_engine
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({}),
@@ -282,34 +289,36 @@ class TestRenderDAG(unittest.TestCase):
         )
         input_ctx = ctx.derive_engine_input_context()
 
-        node = expand_unknown_file(Path("config/mustache.envst.json"), input_ctx)
+        node = expand_unknown_path(Path("/workspace/config/mustache.envst.json"), input_ctx)
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
-        self.assertEqual(node.file_path, Path("render/.drift/render/mustache.json"))
+        self.assertEqual(node.file_path, Path("/workspace/render/.drift/render/mustache.json"))
 
     def test_static_cache_produces_cached_node(self) -> None:
         """Validates that a path pre-populated in static_render_cache emits a CachedNode."""
-        target_output = Path("render/test_pkg/bin/tool")
+        target_output = Path("/workspace/render/test_pkg/bin/tool")
+        static_render_cache.set_existence_check_enabled(False)
         static_render_cache.register(target_output, own_hash="own123", merkle_hash="merkle456")
 
         mock_registry = MagicMock()
         mock_registry.find_engine_for_file.return_value = None
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        node = expand_unknown_file(Path("src/test_pkg/bin/tool"), ctx)
+        node = expand_unknown_path(Path("/workspace/src/test_pkg/bin/tool"), ctx)
         self.assertIsInstance(node, CachedNode)
         assert isinstance(node, CachedNode)
         self.assertEqual(node.file_path, target_output)
         self.assertEqual(node.own_hash, "own123")
         self.assertEqual(node.merkle_hash, "merkle456")
-        mock_registry.find_engine_for_file.assert_called_once_with("src/test_pkg/bin/tool")
+        mock_registry.find_engine_for_file.assert_called_once_with("/workspace/src/test_pkg/bin/tool")
 
     def test_node_refs_shares_instances(self) -> None:
         """Validates that multiple files sharing the same engine reuse the exact same JsonNode."""
@@ -325,15 +334,16 @@ class TestRenderDAG(unittest.TestCase):
         mock_registry.find_engine_for_file.return_value = mock_engine
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({"KEY": "val"}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        n1 = expand_unknown_file(Path("src/test_pkg/file1.envst"), ctx)
-        n2 = expand_unknown_file(Path("src/test_pkg/file2.envst"), ctx)
+        n1 = expand_unknown_path(Path("/workspace/src/test_pkg/file1.envst"), ctx)
+        n2 = expand_unknown_path(Path("/workspace/src/test_pkg/file2.envst"), ctx)
 
         self.assertIsInstance(n1, EngineOutputFileNode)
         self.assertIsInstance(n2, EngineOutputFileNode)
@@ -351,22 +361,23 @@ class TestRenderDAG(unittest.TestCase):
         mock_engine.render_command = "envsubst < %s"
         mock_engine.is_internal = False
         mock_engine.input_file = None
-        mock_engine.strip_suffix.return_value = "src/test_pkg/config.toml"
+        mock_engine.strip_suffix.return_value = "/workspace/src/test_pkg/config.toml"
 
         mock_registry = MagicMock()
         mock_registry.find_engine_for_file.return_value = mock_engine
 
         ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
             package_name="test_pkg",
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
-            path_translation={Path("src/test_pkg"): Path("render/test_pkg")},
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        expand_unknown_file(Path("src/test_pkg/config.toml.envst"), ctx)
+        expand_unknown_path(Path("/workspace/src/test_pkg/config.toml.envst"), ctx)
         with self.assertRaises(RenderCollisionError) as cm:
-            expand_unknown_file(Path("src/test_pkg/config.toml.custom.envst"), ctx)
+            expand_unknown_path(Path("/workspace/src/test_pkg/config.toml.custom.envst"), ctx)
         self.assertIn("Multiple source files in package 'test_pkg'", str(cm.exception))
 
     def test_topological_sort_order(self) -> None:
