@@ -30,7 +30,10 @@ import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Any, TYPE_CHECKING
+from typing import List, Optional, Any, Generic, TypeVar, TYPE_CHECKING
+
+_DstT = TypeVar("_DstT", bound=Optional[Path])
+_SrcT = TypeVar("_SrcT", bound=Optional[Path])
 
 logger = logging.getLogger(__name__)
 
@@ -93,16 +96,16 @@ class JsonNode(TextNode):
 
 
 @dataclass(init=False)
-class PathNode(Node):
+class PathNode(Node, Generic[_DstT, _SrcT]):
     """Base class for any node representing a filesystem path (file or directory)."""
 
-    dst_path: Optional[Path] = None
-    src_path: Optional[Path] = None
+    dst_path: _DstT
+    src_path: _SrcT
 
     def __init__(
         self,
-        dst_path: Optional[Path] = None,
-        src_path: Optional[Path] = None,
+        dst_path: _DstT = None,  # type: ignore[assignment]
+        src_path: _SrcT = None,  # type: ignore[assignment]
         depends_on: Optional[List[Node]] = None,
         hashes: Optional[NodeHashes] = None,
     ):
@@ -117,13 +120,13 @@ class PathNode(Node):
 
 
 @dataclass(init=False)
-class FileNode(PathNode):
+class FileNode(PathNode[Path, _SrcT], Generic[_SrcT]):
     """Base class for any node representing a file path."""
 
     def __init__(
         self,
         dst_path: Path,
-        src_path: Optional[Path] = None,
+        src_path: _SrcT = None,  # type: ignore[assignment]
         depends_on: Optional[List[Node]] = None,
         hashes: Optional[NodeHashes] = None,
     ):
@@ -131,17 +134,15 @@ class FileNode(PathNode):
 
 
 @dataclass(init=False)
-class UnknownPathNode(PathNode):
+class UnknownPathNode(PathNode[Optional[Path], Path]):
     """Placeholder AST node whose concrete type is resolved during expansion."""
 
-    src_path: Path
-
     def __init__(self, src_path: Path):
-        super().__init__(src_path=src_path)
+        super().__init__(dst_path=None, src_path=src_path)
 
 
 @dataclass(init=False)
-class IndependentFileNode(FileNode):
+class IndependentFileNode(FileNode[Path]):
     """Unmanaged source asset or template (leaf file node)."""
 
     def __init__(self, src_path: Path):
@@ -149,7 +150,7 @@ class IndependentFileNode(FileNode):
 
 
 @dataclass(init=False)
-class StaticFileNode(FileNode):
+class StaticFileNode(FileNode[Path]):
     """1:1 copied static file."""
 
     def __init__(self, dst_path: Path, src_path: Path):
@@ -162,7 +163,7 @@ class StaticFileNode(FileNode):
         if check_and_apply_cache(self, self.dst_path, context):
             return
 
-        if not self.src_path or not self.src_path.is_file():
+        if not self.src_path.is_file():
             raise FileNotFoundError(f"Static source file not found: {self.src_path}")
 
         logger.info(
@@ -189,7 +190,7 @@ class StaticFileNode(FileNode):
 
 
 @dataclass(init=False)
-class DirectoryNode(PathNode):
+class DirectoryNode(PathNode[Path, Optional[Path]]):
     """Empty directory synchronization target (.drift_keep)."""
 
     def __init__(self, dst_path: Path, src_path: Optional[Path] = None):
@@ -232,7 +233,7 @@ class DirectoryNode(PathNode):
 
 
 @dataclass(init=False)
-class CachedNode(FileNode):
+class CachedNode(FileNode[Path]):
     """Node representing an output already digested in the current run."""
 
     def __init__(
@@ -264,11 +265,11 @@ class CachedNode(FileNode):
 
 
 @dataclass(init=False)
-class EngineOutputFileNode(FileNode):
+class EngineOutputFileNode(FileNode[Path]):
     """Template compiled by a render engine."""
 
     input_node: Optional[Node]
-    template_node: Node
+    template_node: PathNode[Any, Path]
     env_node: JsonNode
     engine_node: JsonNode
     engine_config: Optional["RenderEngineConfig"]
@@ -277,7 +278,7 @@ class EngineOutputFileNode(FileNode):
         self,
         dst_path: Path,
         input_node: Optional[Node],
-        template_node: Node,
+        template_node: PathNode[Any, Path],
         env_node: JsonNode,
         engine_node: JsonNode,
         engine_config: Optional["RenderEngineConfig"] = None,
@@ -299,11 +300,11 @@ class EngineOutputFileNode(FileNode):
             return
 
         tmpl = self.src_path
-        if tmpl is None or not tmpl.is_file():
+        if not tmpl.is_file():
             raise FileNotFoundError(f"Template source file not found: {tmpl}")
 
         dst = self.dst_path
-        in_file = self.input_node.dst_path if isinstance(self.input_node, PathNode) else None
+        in_file = self.input_node.dst_path if isinstance(self.input_node, PathNode) and self.input_node.dst_path is not None else None
 
         if self.engine_config is None:
             raise ValueError(f"EngineOutputFileNode for '{self.dst_path}' lacks engine_config")
@@ -337,7 +338,7 @@ class EngineOutputFileNode(FileNode):
 
 
 @dataclass(init=False)
-class PackageConfigNode(FileNode):
+class PackageConfigNode(FileNode[Optional[Path]]):
     """Root container for Phase 1: Package configuration compilation and variable stitching."""
 
     package_dir: Path
@@ -379,7 +380,7 @@ class PackageConfigNode(FileNode):
             if isinstance(dep, PathNode):
                 if dep.src_path is not None:
                     source_files.append(dep.src_path)
-                if dep.dst_path.is_file():
+                if dep.dst_path is not None and dep.dst_path.is_file():
                     combined_dict = merge_toml(combined_dict, parse_toml(dep.dst_path.read_text(encoding="utf-8")))
                 else:
                     raise FileNotFoundError(f"Dependency output file not found: {dep.dst_path}")

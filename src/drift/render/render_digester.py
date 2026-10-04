@@ -184,15 +184,16 @@ def check_and_apply_cache(
         context.result.skipped_paths.append(target_path)
         if cached.merkle_hash:
             context.active_hashes.add(cached.merkle_hash)
+        src_path = getattr(node, "src_path", None)
         if context.cache is not None:
-            context.cache.set(target_path, cached, src_path=node.src_path)
+            context.cache.set(target_path, cached, src_path=src_path)
 
         engine_name = getattr(getattr(node, "engine_config", None), "name", None)
         logger.debug(
             format_render_action_line(
                 "SKIP_IDENTICAL",
                 target_path,
-                src_path=node.src_path,
+                src_path=src_path,
                 reason=engine_name,
                 drift_root=context.drift_root,
             )
