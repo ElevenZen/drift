@@ -25,11 +25,14 @@ Layer 1: Node Definitions & Polymorphic Digestion
 from __future__ import annotations
 
 import json
+import logging
 import hashlib
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Any, TYPE_CHECKING
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineConfig
@@ -153,7 +156,7 @@ class StaticFileNode(FileNode):
         super().__init__(dst_path=dst_path, src_path=src_path, depends_on=[IndependentFileNode(src_path)])
 
     def digest(self, context: "DigestionContext") -> None:
-        from .render_digester import check_and_apply_cache
+        from .render_digester import check_and_apply_cache, format_render_action_line
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
 
         if check_and_apply_cache(self, self.dst_path, context):
@@ -161,6 +164,15 @@ class StaticFileNode(FileNode):
 
         if not self.src_path or not self.src_path.is_file():
             raise FileNotFoundError(f"Static source file not found: {self.src_path}")
+
+        logger.info(
+            format_render_action_line(
+                "COPY",
+                self.dst_path,
+                src_path=self.src_path,
+                drift_root=context.drift_root,
+            )
+        )
 
         if not context.dry_run:
             self.dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -185,7 +197,7 @@ class DirectoryNode(PathNode):
 
     def digest(self, context: "DigestionContext") -> None:
         from ..core.constants import DRIFT_KEEP_FILE_NAME
-        from .render_digester import check_and_apply_cache
+        from .render_digester import check_and_apply_cache, format_render_action_line
         from .render_hasher import hash_directory_disk, compute_merkle_node_hash
 
         keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
@@ -193,9 +205,21 @@ class DirectoryNode(PathNode):
             context.result.skipped_paths.append(keep_file)
             return
 
+        dir_existed = self.dst_path.is_dir()
         if not context.dry_run:
             self.dst_path.mkdir(parents=True, exist_ok=True)
             keep_file.touch()
+
+        action_line = format_render_action_line(
+                "ENSURE_DIR",
+                self.dst_path,
+                drift_root=context.drift_root,
+            )
+
+        if dir_existed:
+            logger.debug(action_line)
+        else:
+            logger.info(action_line)
 
         own_h = hash_directory_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
@@ -221,6 +245,7 @@ class CachedNode(FileNode):
 
     def digest(self, context: "DigestionContext") -> None:
         from ..core.constants import DRIFT_KEEP_FILE_NAME
+        from .render_digester import format_render_action_line
 
         context.result.skipped_paths.append(self.dst_path)
         keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
@@ -228,6 +253,14 @@ class CachedNode(FileNode):
             context.result.skipped_paths.append(keep_file)
         if self.hashes and self.hashes.merkle_hash:
             context.active_hashes.add(self.hashes.merkle_hash)
+        logger.debug(
+            format_render_action_line(
+                "SKIP_IDENTICAL",
+                self.dst_path,
+                src_path=self.src_path,
+                drift_root=context.drift_root,
+            )
+        )
 
 
 @dataclass(init=False)
@@ -258,7 +291,7 @@ class EngineOutputFileNode(FileNode):
         self.engine_config = engine_config
 
     def digest(self, context: "DigestionContext") -> None:
-        from .render_digester import check_and_apply_cache
+        from .render_digester import check_and_apply_cache, format_render_action_line
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_core import render_template_to_file
 
@@ -274,6 +307,16 @@ class EngineOutputFileNode(FileNode):
 
         if self.engine_config is None:
             raise ValueError(f"EngineOutputFileNode for '{self.dst_path}' lacks engine_config")
+
+        logger.info(
+            format_render_action_line(
+                "RENDER",
+                dst,
+                src_path=tmpl,
+                reason=self.engine_config.name,
+                drift_root=context.drift_root,
+            )
+        )
 
         if not context.dry_run:
             render_template_to_file(
@@ -324,7 +367,7 @@ class PackageConfigNode(FileNode):
         from ..hooks.package_hook import apply_package_hook
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
-        from .render_digester import prune_obsolete_config_files
+        from .render_digester import prune_obsolete_config_files, format_render_action_line
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_lock import RenderBucket
         
@@ -360,6 +403,13 @@ class PackageConfigNode(FileNode):
         # 4. Write final stitched TOML to render/<pkg>/.drift/drift_package.toml
         target_path = self.dst_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            format_render_action_line(
+                "CONFIG",
+                target_path,
+                drift_root=context.drift_root,
+            )
+        )
         if not context.dry_run:
             target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
 

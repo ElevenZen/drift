@@ -3,6 +3,7 @@
 import subprocess
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -24,6 +25,8 @@ from drift.primitives.stage_repo import StagePlan, StageResult
 class TestErrorStacking(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True, enable_logging=True)
+        self.stdout_patch = patch("sys.stdout", StringIO())
+        self.stdout_patch.start()
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
         
@@ -43,6 +46,7 @@ class TestErrorStacking(unittest.TestCase):
         self.workspace_config = WorkspaceConfig(drift_root=self.drift_root)
 
     def tearDown(self) -> None:
+        self.stdout_patch.stop()
         set_test_mode(True, enable_logging=False)
         self.temp_dir.cleanup()
 

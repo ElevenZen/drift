@@ -16,6 +16,7 @@ from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     InstallMethod,
     BackupSubfolder,
+    set_test_mode,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.package_config import PackageConfig, PackageSectionConfig
@@ -3941,6 +3942,88 @@ class TestNativeSymlinkComputation(unittest.TestCase):
             rel = compute_relative_symlink_target(source_file, symlink_parent)
             # When resolved from the real external parent, it must point directly to source_file
             self.assertEqual((symlink_parent / rel).resolve(), source_file.resolve())
+
+
+class TestFolderDeliveryActionLogging(unittest.TestCase):
+    """Unit tests for folder delivery file action execution and logging."""
+
+    def test_skip_identical_requires_src_path(self) -> None:
+        """Verifies FileActionType.SKIP_IDENTICAL enforces src_path presence via __post_init__."""
+        with self.assertRaises(ValueError) as ctx:
+            FileAction(
+                action_type=FileActionType.SKIP_IDENTICAL,
+                dst_path=Path("/tmp/target.txt"),
+            )
+        self.assertIn("FileActionType.SKIP_IDENTICAL must have src_path set", str(ctx.exception))
+
+        # Successfully instantiates when src_path is provided
+        action = FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=Path("/tmp/source.txt"),
+            dst_path=Path("/tmp/target.txt"),
+        )
+        self.assertEqual(action.src_path, Path("/tmp/source.txt"))
+        self.assertIn("/tmp/source.txt -> /tmp/target.txt", format_action_line(action))
+
+    def test_delivery_action_logging_info_and_debug(self) -> None:
+        set_test_mode(True, enable_logging=True)
+        try:
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                tmp_root = Path(tmp_dir)
+                src_file = tmp_root / "src.txt"
+                src_file.write_text("hello", encoding="utf-8")
+                dst_file = tmp_root / "dst.txt"
+
+                exec_ctx = FileActionExecutionContext()
+
+                # 1. CREATE_COPY logs at INFO
+                copy_action = FileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=src_file,
+                    dst_path=dst_file,
+                )
+                with self.assertLogs("drift.core.folder_delivery", level="INFO") as cm:
+                    execute_single_action(exec_ctx, copy_action)
+                self.assertTrue(any("📄 [CREATE_COPY]" in msg for msg in cm.output))
+                self.assertTrue(dst_file.is_file())
+
+                # 2. SKIP_IDENTICAL logs at DEBUG (and NOT at INFO)
+                skip_action = FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=src_file,
+                    dst_path=dst_file,
+                )
+                with self.assertLogs("drift.core.folder_delivery", level="DEBUG") as cm_debug:
+                    execute_single_action(exec_ctx, skip_action)
+                self.assertTrue(any("⏭️ [SKIP_IDENTICAL]" in msg for msg in cm_debug.output))
+
+                with self.assertRaises(AssertionError):
+                    with self.assertLogs("drift.core.folder_delivery", level="INFO"):
+                        execute_single_action(exec_ctx, skip_action)
+
+                # 3. ENSURE_DIR conditional logging:
+                new_dir = tmp_root / "new_folder"
+                dir_action = FileAction(
+                    action_type=FileActionType.ENSURE_DIR,
+                    dst_path=new_dir,
+                )
+                # First execution: dir does not exist -> created -> logs at INFO
+                with self.assertLogs("drift.core.folder_delivery", level="INFO") as cm_dir:
+                    execute_single_action(exec_ctx, dir_action)
+                self.assertTrue(any("📁 [ENSURE_DIR]" in msg for msg in cm_dir.output))
+                self.assertTrue(new_dir.is_dir())
+
+                # Second execution: dir already exists -> logs at DEBUG (not INFO)
+                with self.assertLogs("drift.core.folder_delivery", level="DEBUG") as cm_dir_debug:
+                    execute_single_action(exec_ctx, dir_action)
+                self.assertTrue(any("📁 [ENSURE_DIR]" in msg for msg in cm_dir_debug.output))
+
+                with self.assertRaises(AssertionError):
+                    with self.assertLogs("drift.core.folder_delivery", level="INFO"):
+                        execute_single_action(exec_ctx, dir_action)
+        finally:
+            set_test_mode(True, enable_logging=False)
+
 
 if __name__ == "__main__":
     unittest.main()

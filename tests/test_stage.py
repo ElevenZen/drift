@@ -2,8 +2,10 @@ import os
 import tempfile
 import unittest
 import logging
+from io import StringIO
 from pathlib import Path
 from typing import Optional, List, Any, Sequence
+from unittest.mock import patch
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -296,11 +298,12 @@ class TestStageRepo(unittest.TestCase):
         from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.render.render_package", level="WARNING") as cm:
-                # Render pkg_misspelled
-                render_package(self.workspace_config, self.pkg_misspelled_src)
-                warning_found = any(".driftignore" in msg and "misspelled" in msg for msg in cm.output)
-                self.assertTrue(warning_found)
+            with patch("sys.stdout", StringIO()):
+                with self.assertLogs("drift.render.render_package", level="WARNING") as cm:
+                    # Render pkg_misspelled
+                    render_package(self.workspace_config, self.pkg_misspelled_src)
+                    warning_found = any(".driftignore" in msg and "misspelled" in msg for msg in cm.output)
+                    self.assertTrue(warning_found)
         finally:
             set_test_mode(True, enable_logging=False)
 

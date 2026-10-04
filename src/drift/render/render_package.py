@@ -148,8 +148,8 @@ def build_phase3_payload_dag(
         # 2. Skip any '.*' files (except .drift_ignore) in rendering process and print info
         if rel.name.startswith(".") and rel.name not in DRIFT_IGNORE_FILE_NAME_LIST:
             logger.info(
-                f"ℹ️  [SKIP] Skipping hidden file '{rel}' in package rendering. "
-                "All hidden files must use the 'dot-' prefix in source templates."
+                f"ℹ️  [SKIP] Skipping hidden file '{rel}' in rendering. "
+                "All hidden files to be deployed must use the 'dot-' prefix in source templates."
             )
             continue
 

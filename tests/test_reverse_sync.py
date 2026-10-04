@@ -4,7 +4,9 @@ import os
 import shutil
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -868,10 +870,11 @@ class TestReverseSync(unittest.TestCase):
 
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.core.folder_diff", level="WARNING") as cm:
-                res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
-            self.assertEqual(res.status, "SUCCESS")
-            self.assertTrue(any("Circular self-referential directory symlink detected" in log for log in cm.output))
+            with patch("sys.stdout", StringIO()):
+                with self.assertLogs("drift.core.folder_diff", level="WARNING") as cm:
+                    res = run_primitive_1_reverse_sync(self.workspace_config, [pkg])
+                self.assertEqual(res.status, "SUCCESS")
+                self.assertTrue(any("Circular self-referential directory symlink detected" in log for log in cm.output))
         finally:
             set_test_mode(True, enable_logging=False)
 

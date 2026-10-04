@@ -35,3 +35,25 @@
 * **Whole Suite Execution Rules**:
   * Run the full test suite (`python3 -m unittest discover -s tests`) only after completing cross-cutting changes or finalizing a multi-file feature.
   * If other test files have previously passed and only test files were modified without altering source code, running the targeted test file is sufficient to assure overall suite correctness.
+* **CLI & Integration Test Patterns (Reference: [`tests/test_cli.py`](tests/test_cli.py))**:
+  * **Isolated Workspace & Git Topology Scaffolding**:
+    * Create a temporary directory via `tempfile.TemporaryDirectory()` in `setUp()` and clean it up in `tearDown()`.
+    * Build canonical workspace directory layouts (`src/`, `config/drift_workspace.toml`, `render/`, `install/`, target directories).
+    * Initialize necessary Git repositories in temporary folders with `subprocess.run(["git", "init"], cwd=..., check=True, capture_output=True)` and set dummy git credentials (`user.name`, `user.email`). Use `repair_drift_workspace(Path(self.drift_root))` or `main(["init", "--force"])` to establish initial repo invariants.
+  * **Stdout & Stderr Stream Patching**:
+    * **Zero Terminal Leakage**: Test runner output (`python3 -m unittest discover -s tests`) must remain completely silent and pristine (dots only). Never let commands or logging leak raw strings into stdout/stderr.
+    * **Setup / Intermediate Command Suppression**: When running prerequisite CLI commands during setup (e.g. `init`, `render`, `stage`), silence them using `with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):`.
+    * **Output Capture & Verification**: Intercept streams using `with patch("sys.stdout", StringIO()) as mock_out:` (or explicit `try...finally` redirection with `sys.stdout = stdout`) to assert on command outputs without printing to the console.
+  * **ANSI Escape & Whitespace Normalization (`TestCaseUtilityMixin`)**:
+    * For tests verifying styled terminal output (Rich colors, emojis, tables, word-wrapping), inherit `TestCaseUtilityMixin` from [`tests/test_utils.py`](tests/test_utils.py).
+    * Use `self.assertIn_stripped(expected, actual)` to perform resilient substring matching that strips ANSI escape codes and normalizes variable whitespace.
+  * **Dual CLI Backend Testing**:
+    * Drift supports both Typer and Argparse backends. When adding or testing CLI commands and flags, test both backends: `main(...)` (Typer entry point) and `run_argparse_cli(...)` (Argparse entry point).
+    * For handler routing tests, use `unittest.mock.patch` on `drift.cli.cli_handlers.<handler>` to verify that flags (e.g. `dry_run`, `no_hooks`, `no_deps`, `reinstall`, `no_cache`) propagate correctly via `mock_action.call_args`.
+  * **Exit Code Assertions**:
+    * Test expected failures or help flags with `with self.assertRaises(SystemExit) as cm:` and assert explicit status codes: `cm.exception.code == 0` for help/success, `cm.exception.code == 1` for execution failures/domain errors, `cm.exception.code == 2` for syntax/argument errors.
+  * **Scoped Test Mode & Logging Hygiene**:
+    * By default, Drift tests run in test mode with logging disabled (`set_test_mode(True, enable_logging=False)`).
+    * If a test verifies log emission via `self.assertLogs(...)`, enable logging strictly within the test scope using `set_test_mode(True, enable_logging=True)` and always restore `set_test_mode(True, enable_logging=False)` in a `finally` block or `tearDown()`.
+    * Because enabling logging activates handlers on the root logger, always wrap logging tests or the asserted execution in `with patch("sys.stdout", StringIO()):` (or patch `sys.stderr`) to prevent non-asserted logger records from leaking to the terminal.
+

@@ -5,6 +5,7 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from io import StringIO
 from unittest.mock import patch, MagicMock
 from pathlib import Path
 from typing import cast, Any, List, Tuple, Union
@@ -971,8 +972,9 @@ class TestRenderPackage(unittest.TestCase):
         from drift.core.constants import set_test_mode
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.render.render_package", level="INFO") as log_capture:
-                render_package(workspace_config, pkg_dir)
+            with patch("sys.stdout", StringIO()):
+                with self.assertLogs("drift.render.render_package", level="INFO") as log_capture:
+                    render_package(workspace_config, pkg_dir)
         finally:
             set_test_mode(True, enable_logging=False)
 

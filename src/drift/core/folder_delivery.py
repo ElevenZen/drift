@@ -93,6 +93,10 @@ class FileAction(SerializableModel):
     dst_path: Optional[Path] = None
     reason: Optional[str] = None
 
+    def __post_init__(self) -> None:
+        if self.action_type == FileActionType.SKIP_IDENTICAL and self.src_path is None:
+            raise ValueError(f"FileActionType.SKIP_IDENTICAL must have src_path set, got dst_path='{self.dst_path}'")
+
 
 @dataclass(frozen=True)
 class FileActionExecutionContext:
@@ -654,6 +658,7 @@ def _inspect_leaf(
             else:
                 actions.append(FileAction(
                     action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=source_file,
                     dst_path=keep_file,
                     reason="Keep file already exists",
                 ))
@@ -969,10 +974,20 @@ def execute_single_action(
     action: FileAction,
 ) -> None:
     """Executes a single planned file/directory delivery action on the host system."""
+    if action.action_type == FileActionType.SKIP_IDENTICAL:
+        logger.debug(format_action_line(action))
+        return
+
+    if action.action_type == FileActionType.INFO_MESSAGE:
+        if action.reason:
+            logger.info(action.reason)
+        return
+
+    if action.action_type != FileActionType.ENSURE_DIR:
+        logger.info(format_action_line(action))
+
     if action.action_type in BACKUP_ACTION_TYPES:
         if action.src_path and action.dst_path:
-            if action.reason:
-                logger.warning(f"🛡️  [BACKUP] {action.reason} at '{action.src_path}'")
             logger.debug(f"   Backing up to: {action.dst_path}")
             backup_file_or_dir_external(
                 action.src_path,
@@ -992,7 +1007,12 @@ def execute_single_action(
                 raise NotADirectoryError(
                     f"Cannot ensure directory '{action.dst_path}': path exists and is not a directory."
                 )
+            dir_existed = action.dst_path.is_dir()
             ensure_dir(action.dst_path, context.sudo)
+            if dir_existed:
+                logger.debug(format_action_line(action))
+            else:
+                logger.info(format_action_line(action))
 
     elif action.action_type == FileActionType.CREATE_SYMLINK:
         if action.src_path and action.dst_path:
@@ -1019,13 +1039,6 @@ def execute_single_action(
         if action.dst_path:
             ensure_dir(action.dst_path.parent, context.sudo)
             write_file(action.dst_path, b"", sudo=context.sudo)
-
-    elif action.action_type == FileActionType.SKIP_IDENTICAL:
-        logger.debug(f"   Skipping '{action.dst_path}': already up-to-date")
-
-    elif action.action_type == FileActionType.INFO_MESSAGE:
-        if action.reason:
-            logger.info(action.reason)
 
 
 def execute_delivery_actions(

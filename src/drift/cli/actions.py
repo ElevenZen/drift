@@ -257,7 +257,6 @@ def execute_stage(
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
     from ..core.result_models import StageResult
-    from ..core.folder_delivery import format_action_line
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="stage")
@@ -283,9 +282,7 @@ def execute_stage(
         logger.info("No changes staged. All files are up-to-date.")
     else:
         for plan in res.plans:
-            logger.info(f"Package '{plan.package}' staged changes:")
-            for action in plan.actions:
-                logger.info(format_action_line(action))
+            logger.info(f"✨ Package '{plan.package}' staged successfully.")
 
 
 def execute_apply(
