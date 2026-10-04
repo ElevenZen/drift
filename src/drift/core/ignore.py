@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List, Optional, Protocol, runtime_checkable, Sequence
 
 from .constants import (
-    MANAGED_CONFIG_FILES,
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
@@ -14,6 +13,7 @@ from .constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_IGNORE_PATTERNS,
 )
+from ..utils.path_utils import to_relative_path
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def _validate_no_other_ignore_files(package_dir: Path, resolved_path: Optional[P
             raise ValueError(
                 f"Nested ignore files are not allowed. "
                 f"Found nested '{name}' inside subdirectory: "
-                f"{path.parent.relative_to(package_dir)}"
+                f"{to_relative_path(path.parent, package_dir)}"
             )
 
 
@@ -216,7 +216,7 @@ class DriftIgnore(IgnoreHandler):
             return True
 
         filename = rel_path.name
-        if filename in MANAGED_CONFIG_FILES or (self.ignore_keep_file and filename == DRIFT_KEEP_FILE_NAME):
+        if self.ignore_keep_file and filename == DRIFT_KEEP_FILE_NAME:
             return True
 
         normalized_rel_path = rel_path.as_posix()

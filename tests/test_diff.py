@@ -452,6 +452,46 @@ class TestDiff(unittest.TestCase):
         self.assertNotIn("pkg_a/nested/sub/deep", paths)
         self.assertNotIn("pkg_a/obsolete", paths)
 
+    def test_diff_preserves_user_render_lock_file(self) -> None:
+        """Verifies that user configuration files named render_lock.json outside .drift/
+        are included in diffs, while internal .drift/render_lock.json is excluded.
+        """
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"\n')
+        # User config file named render_lock.json
+        user_conf_lock = pkg_src_dir / "custom" / "render_lock.json"
+        user_conf_lock.parent.mkdir(parents=True, exist_ok=True)
+        user_conf_lock.write_text('{"user_config": 1}\n')
+
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
+        from drift.core.constants import DRIFT_INTERNAL_DIR_NAME, RENDER_LOCK_FILE_NAME
+        from drift.core.result_models import DiffType
+
+        # 1. Full Deploy and commit
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # 2. Modify both user render_lock.json and internal .drift/render_lock.json
+        user_conf_lock.write_text('{"user_config": 2}\n')
+        internal_lock = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME
+        internal_lock.write_text('{"internal_state": "changed"}\n')
+
+        # 3. Diff Δ (Pending Delta) must display user render_lock.json, but NOT .drift/render_lock.json
+        with io.StringIO() as stdout, patch("sys.stdout", stdout):
+            run_primitive_15_workspace_diff(self.workspace_config, diff_type=DiffType.PENDING)
+            out = stdout.getvalue()
+            self.assertIn("custom/render_lock.json", out)
+            self.assertIn("user_config", out)
+            self.assertNotIn(".drift/render_lock.json", out)
+            self.assertNotIn("internal_state", out)
+
 
 if __name__ == "__main__":
     unittest.main()

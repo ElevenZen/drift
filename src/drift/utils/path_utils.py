@@ -155,3 +155,15 @@ def compute_relative_symlink_target(source_path: Path, link_parent_dir: Path) ->
     except Exception:
         return resolved_source
 
+
+def to_relative_path(path: Path, base_dir: Path) -> Path:
+    """Returns a relative Path if path is relative to base_dir, else the path itself."""
+    return path.relative_to(base_dir) if is_relative_to(path, base_dir) else path
+
+
+def to_relative_posix(path: Path, base_dir: Path) -> str:
+    """Returns a relative POSIX path string if path is relative to base_dir, else the path as POSIX."""
+    return to_relative_path(path, base_dir).as_posix()
+
+
+

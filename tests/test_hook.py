@@ -323,7 +323,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertEqual(res_pkg_without_render_no_hooks.status, "SKIPPED")
 
     def test_render_package_ensures_hooks_executable(self) -> None:
-        from drift.render.render_package import render_package
+        from drift.render.render_package import render_package, RenderOptions
         if sys.platform == "win32":
             return
 
@@ -332,7 +332,7 @@ class TestPackageHook(unittest.TestCase):
         post_render_file.chmod(0o644)  # Explicitly non-executable
 
         render_package(
-            self.workspace_config, self.src_pkg_dir, flags=HookExecFlags(streaming=False)
+            self.workspace_config, self.src_pkg_dir, options=RenderOptions(flags=HookExecFlags(streaming=False))
         )
 
         # Verify src copy became 0755

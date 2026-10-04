@@ -67,7 +67,7 @@ Drift's architecture is powered by four primary operational primitives:
 ### 3. 📦 Stage (Primitive 4: `drift stage`)
 * **Inter-Package Dependency DAG**: Sequences packages in topological order using Kahn's algorithm so prerequisites stage before dependents.
 * **Delta Computation**: Compares `render/` against `install/`, identifying added, modified, and deleted files.
-* **Database Commit**: Commits changes into `install/` with 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`) and writes staging manifests.
+* **Database Commit**: Commits changes into `install/` with 100% 1:1 structural fidelity and writes staging manifests.
 
 ### 4. 🚀 Apply & Commit (Primitive 5 & 6: `drift apply` & `drift install-commit`)
 * **Collision Audit & Backups**: Proactively checks for host collisions and archives untracked blocking files into `backup/`.

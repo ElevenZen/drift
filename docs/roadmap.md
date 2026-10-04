@@ -124,7 +124,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 
 ### 15. Declarative Staging Architecture & Strongly Typed `StageResult` (`stage_repo.py`)
 - **Declarative Stage Planning**: Unified Primitive 4 (`drift stage`) onto the declarative delivery engine with `PackageStagePlan` compiled via `plan_package_stage`, mirroring install and uninstall planning architectures.
-- **Structural Fidelity Invariant**: Preserved 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`) between `render/` and `install/`, mirroring payload files and control plane metadata (`.drift/hooks/`, `.drift_ignore`, `drift_package.toml`).
+- **Structural Fidelity Invariant**: Preserved 100% 1:1 structural fidelity between `render/` and `install/`, mirroring payload files and control plane metadata (`.drift/hooks/`, `.drift_ignore`, `drift_package.toml`).
 - **Dead Code & Field Elimination**: Removed legacy `PackageStageChanges` and unused `deployable_changes` fields.
 - **Strongly Typed `StageResult`**: Replaced raw dictionary returns from `run_primitive_4_stage_render_to_install` and `execute_stage_packages` with `StageResult`, featuring structured properties (`has_changes`, `packages_changed`, `plans`), human-readable terminal formatting (`format_text()`), and complete dictionary-compatible accessors (`keys()`, `values()`, `items()`, `__getitem__`, `__contains__`, `__len__`, `__bool__`).
 - **Zero-Mutation Dry-Run Simulation (`--dry-run`)**: Added `dry_run` support to `execute_stage_packages` and `run_primitive_4_stage_render_to_install` (and CLI `drift stage --dry-run`), allowing users to simulate and inspect planned staging operations without modifying `install/` files or the `state.toml` registry.
@@ -144,7 +144,17 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 - **Strict File Primitive Safety & Directory Collision Guards**: Hardened `copy_file`, `create_symlink`, `copy_symlink`, and `write_file` in [`file_ops.py`](src/drift/utils/file_ops.py) to raise `IsADirectoryError` if `dst` (or `src`) is an existing directory instead of silently destroying it with `remove()`. Directory-to-file and file-to-directory type transitions are handled explicitly and declaratively in higher-level planners (`plan_folder_delivery`, `plan_actions_from_folder_diff`).
 
 ### 18. Test Suite Expansion & Cleanliness
-- Total passing tests maintained at **1027/1027 tests OK** with zero warnings, providing complete coverage across declarative staging, staging simulation (`--dry-run`), resource import planning (`prepare_add_resources`), physical/dry-run execution (`execute_add_resources`), permission synchronization, unified delivery actions, dependency DAG ordering, multiline TOML parsing, error boundaries, and uninstallation plans.
+- Total passing tests maintained at **1142/1142 tests OK** with zero warnings, providing complete coverage across declarative staging, staging simulation (`--dry-run`), resource import planning (`prepare_add_resources`), physical/dry-run execution (`execute_add_resources`), permission synchronization, unified delivery actions, dependency DAG ordering, multiline TOML parsing, error boundaries, uninstallation plans, and incremental render DAG pipelines.
+
+### 19. Incremental Render Subsystem (3-Phase Merkle DAG: Steps 1–4 Completed)
+- **On-Demand 3-Phase Merkle DAG Architecture**: Replacing destructive `shutil.rmtree` cleansing with an incremental, topological Merkle DAG pipeline. Unchanged files remain untouched in-place with zero disk I/O, preserving file `mtime` and Git index status. (Steps 1–4 integrated Phase 1 Config and Phase 2 Hooks; Step 5 will integrate Phase 3 Payload).
+- **Universal AST & PathNode Model**: Introduced [`PathNode`](src/drift/render/render_dag.py) as the common base for filesystem path nodes (`FileNode`, `DirectoryNode`, `UnknownPathNode`), strictly standardizing on `dst_path` and `src_path` and eliminating all legacy aliases (`output_path`, `input_path`, `file_path`). [`UnknownPathNode`](src/drift/render/render_dag.py) strictly takes `src_path` as unexpanded input with `dst_path=None`.
+- **Per-Workspace In-Memory Cache (`RenderCache`)**: Injected into expansion and digestion contexts via `WorkspaceConfig.render_cache`. Features sub-microsecond nanosecond stat fingerprinting (`st_mtime_ns`, `st_size`) to automatically invalidate entries when source files are touched on disk without requiring manual cache clearing.
+- **3-Bucket Self-Pruning Lockfile (`render.lock`)**: Persists cryptographic SHA-256 Merkle hashes in TOML format across three isolated buckets (`config_hashes`, `hook_hashes`, `payload_hashes`). Each phase replaces only its own bucket after digestion without clobbering other phases.
+- **Multi-Phase Execution & Scoped Pruning**:
+  - Phase 1 (PackageConfig): Compiles package configurations and stitches variables within workspace environment scope.
+  - Phase 2 (Hooks): Compiles hook scripts within package environment scope, enforces `0o755` permissions, prunes obsolete hooks in `.drift/hooks/`, and triggers `probe` and `pre_source`.
+  - Phase 3 (Payload): Expands dotfile payloads post-`pre_source`, handles templates and directory sentinels (`.drift_keep`), prunes obsolete payload files while strictly shielding the entire `.drift/` internal directory, and triggers `post_render`.
 
 ---
 
@@ -225,7 +235,9 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **Sample workspace repository.** Add a `samples/` directory with real-world examples: frp config (networks among machines), package manager configs (mise / nix home-manager / linuxbrew), common shell setups. (from old roadmap)
 
-- [ ] **`drift deploy` can call `drift health` at the end.** Post-deployment health verification as an opt-in step. (from old roadmap)
+- [ ] **`drift deploy` can call `drift health` at the end.** Post-deployment health verification as an opt-in step. (from old roadmap)  
+
+- [ ] **Backup files listing** The files written to the backup folder can be printed out after the execution of a File Action List.
 
 - [ ] **`drift revert` command.** Quickly revert installed version to a previous Git commit in the install repo, without full rollback semantics. A lighter-weight "undo last deploy." (from old roadmap)
 

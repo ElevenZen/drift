@@ -36,6 +36,7 @@ from typing import List, Optional, Set, Sequence, Dict
 from ..core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DirMode,
@@ -113,6 +114,12 @@ class DigestionContext:
         if not self.result.updated_lockfile.get_all_hashes():
             self.result.updated_lockfile = self.lockfile
 
+    def save_lockfile(self) -> None:
+        """Saves updated lockfile to package render directory unless dry_run is set."""
+        if not self.dry_run:
+            self.lockfile.save_to_dir(self.drift_root / self.package_render_dir)
+
+
 
 def check_and_apply_cache(
     node: Node,
@@ -149,11 +156,14 @@ def prune_obsolete_config_files(
     dry_run: bool = False,
 ) -> List[Path]:
     """Prunes unrendered config files (drift_package.toml, drift_package.local.toml) from .drift/ and .drift/render/."""
+    render_internal = drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
     candidates = [
         drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
         drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
-        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
-        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+        render_internal / PACKAGE_CONFIG_FILE_NAME,
+        render_internal / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+        render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
+        render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
     ]
     active_set = set(active_paths)
     pruned: List[Path] = []

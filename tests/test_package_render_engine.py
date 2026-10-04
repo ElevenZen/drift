@@ -16,6 +16,7 @@ from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
 )
 from drift.config.workspace_config import WorkspaceConfig
 from drift.config.package_config import PackageConfig
@@ -197,9 +198,14 @@ class TestPackageRenderEngine(unittest.TestCase):
         res = run_primitive_2_render_packages(workspace_config, ["pkg_chain"])
         self.assertEqual(res.status, "SUCCESS")
 
-        # 4. Check intermediate rendered input in render/pkg_chain/.drift/render/pkg_data.json
+        # 4. Check intermediate rendered input in render/pkg_chain/.drift/render/package/pkg_data.json
         pkg_internal_drift_dir = (
-            self.drift_root / "render" / "pkg_chain" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
+            self.drift_root
+            / "render"
+            / "pkg_chain"
+            / DRIFT_INTERNAL_DIR_NAME
+            / DRIFT_INTERNAL_RENDER_DIR_NAME
+            / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME
         )
         rendered_input_json = pkg_internal_drift_dir / "pkg_data.json"
         self.assertTrue(rendered_input_json.is_file())

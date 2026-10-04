@@ -25,11 +25,6 @@ from drift.core.constants import (
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
 from drift.render.render_core import render_template, render_template_to_file, RenderError
-from drift.render.render_input import (
-    resolve_dependencies,
-    assert_no_cyclic_dependencies,
-    render_input_templates,
-)
 from drift.utils.toml_utils import parse_toml
 from drift.utils.env_utils import env_scope
 from drift.utils.host_facts import get_system_facts, inject_system_facts
@@ -354,235 +349,6 @@ class TestDependencyResolver(unittest.TestCase):
             "file.envst.extra.json"
         )
 
-    def test_resolve_dependencies(self) -> None:
-        registry = RenderEngineRegistry({
-            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("env.bash"), suffix="envst", render_command="cmd"),
-            "mustache": RenderEngineConfig(name="mustache", input_file=Path("mustache.envst.json"), suffix="mustache", render_command="cmd")
-        })
-        deps = resolve_dependencies(registry)
-        self.assertEqual(deps, {"envsubst": None, "mustache": "envsubst"})
-
-        # Self-dependency should be mapped to None (treated as static)
-        self_dep_registry = RenderEngineRegistry({
-            "envsubst": RenderEngineConfig(name="envsubst", input_file=Path("envsubst.envst.bash"), suffix="envst", render_command="cmd")
-        })
-        self_deps = resolve_dependencies(self_dep_registry)
-        self.assertEqual(self_deps, {"envsubst": None})
-
-    def test_assert_no_cyclic_dependencies(self) -> None:
-        # No cycle
-        clean_deps = {"envsubst": None, "mustache": "envsubst"}
-        assert_no_cyclic_dependencies(clean_deps)  # should not raise error
-
-        # Direct cycle
-        cyclic_deps = {"envsubst": "mustache", "mustache": "envsubst"}
-        with self.assertRaises(ValueError) as ctx:
-            assert_no_cyclic_dependencies(cyclic_deps)
-        self.assertIn("Cyclic dependency detected", str(ctx.exception))
-
-        # Self cycle
-        self_cycle = {"self_engine": "self_engine"}
-        with self.assertRaises(ValueError) as ctx:
-            assert_no_cyclic_dependencies(self_cycle)
-        self.assertIn("Cyclic dependency detected", str(ctx.exception))
-
-    def test_render_input_templates_success(self) -> None:
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        env_file_path = config_dir / "env.sh"
-        env_file_path.write_text("export MY_TEST_VAR='templated_env_value'", encoding="utf-8")
-
-        mustache_template_path = config_dir / "mustache.envst.json"
-        mustache_template_path.write_text("echo '{\"var\": \"'$MY_TEST_VAR'\"}'", encoding="utf-8")
-
-        # Define the engines
-        envsubst_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=env_file_path,
-            suffix="envst",
-            render_command="bash -c 'source %i && source %s'"
-        )
-
-        mustache_engine = RenderEngineConfig(
-            name="mustache",
-            input_file=mustache_template_path,
-            suffix="mustache",
-            render_command="cat %s # %i"
-        )
-
-        engines = RenderEngineRegistry({
-            "envsubst": envsubst_engine,
-            "mustache": mustache_engine
-        })
-
-        output_dir = self.drift_root / "render" / ".drift"
-        # Call render_input_templates
-        render_input_templates(engines, self.drift_root, output_dir)
-
-        # Verify output file render/.drift/mustache.json exists and contains correct rendered json
-        expected_output_path = output_dir / "mustache.json"
-        self.assertTrue(expected_output_path.is_file())
-        self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "templated_env_value"}')
-
-        # Config inputs are updated with the rendered paths
-        self.assertEqual(envsubst_engine.input_file, env_file_path)
-        self.assertEqual(mustache_engine.input_file, expected_output_path)
-
-    def test_render_input_templates_missing_file_raises_error(self) -> None:
-        envsubst_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=Path("non_existent.sh"),
-            suffix="envst",
-            render_command="bash -c 'source %i && source %s'"
-        )
-        # Calling render_input_templates should not raise FileNotFoundError anymore.
-        # It logs a warning and updates input_file to Path("").
-        render_input_templates(
-            RenderEngineRegistry({"envsubst": envsubst_engine}),
-            self.drift_root,
-            self.drift_root / "render" / ".drift"
-        )
-        self.assertIsNone(envsubst_engine.input_file)
-
-    def test_multi_level_dependency_tree(self) -> None:
-        # Create config directory
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        # Write files
-        static_file = config_dir / "static.txt"
-        static_file.write_text("Hello A", encoding="utf-8")
-
-        template_b = config_dir / "b.suf_a"
-        template_b.write_text("Hello B from A", encoding="utf-8")
-
-        template_c = config_dir / "c.suf_a"
-        template_c.write_text("Hello C from A", encoding="utf-8")
-
-        template_d = config_dir / "d.suf_c"
-        template_d.write_text("Hello D from C", encoding="utf-8")
-
-        # 4 engines: A, B, C, D representing:
-        # A -> B
-        # A -> C -> D
-        engine_a = RenderEngineConfig(name="engine_a", input_file=static_file, suffix="suf_a", render_command="cat %s # %i")
-        engine_b = RenderEngineConfig(name="engine_b", input_file=template_b, suffix="suf_b", render_command="cat %s # %i")
-        engine_c = RenderEngineConfig(name="engine_c", input_file=template_c, suffix="suf_c", render_command="cat %s # %i")
-        engine_d = RenderEngineConfig(name="engine_d", input_file=template_d, suffix="suf_d", render_command="cat %s # %i")
-
-        engines = RenderEngineRegistry({
-            "engine_a": engine_a,
-            "engine_b": engine_b,
-            "engine_c": engine_c,
-            "engine_d": engine_d,
-        })
-
-        # 1. Resolve and check dependencies
-        from drift.render.render_input import resolve_dependencies
-        dep_map = resolve_dependencies(engines)
-
-        # Assert correct 1-to-1 dependency resolution mapping
-        self.assertEqual(dep_map["engine_a"], None)
-        self.assertEqual(dep_map["engine_b"], "engine_a")
-        self.assertEqual(dep_map["engine_c"], "engine_a")
-        self.assertEqual(dep_map["engine_d"], "engine_c")
-
-        # 2. Run transitive template input rendering
-        output_dir = self.drift_root / "render" / ".drift"
-        render_input_templates(engines, self.drift_root, output_dir)
-
-        # 3. Check that the transitive files compiled successfully inside the sandbox
-        rendered_b_input = output_dir / "b"
-        rendered_c_input = output_dir / "c"
-        rendered_d_input = output_dir / "d"
-
-        self.assertTrue(rendered_b_input.is_file())
-        self.assertTrue(rendered_c_input.is_file())
-        self.assertTrue(rendered_d_input.is_file())
-
-        self.assertEqual(rendered_b_input.read_text(encoding="utf-8").strip(), "Hello B from A")
-        self.assertEqual(rendered_c_input.read_text(encoding="utf-8").strip(), "Hello C from A")
-        self.assertEqual(rendered_d_input.read_text(encoding="utf-8").strip(), "Hello D from C")
-
-    def test_render_input_templates_custom_render_directory(self) -> None:
-        # Setup config files:
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        env_file_path = config_dir / "env.sh"
-        env_file_path.write_text("export MY_TEST_VAR='custom_val'", encoding="utf-8")
-
-        mustache_template_path = config_dir / "mustache.envst.json"
-        mustache_template_path.write_text("echo '{\"var\": \"'$MY_TEST_VAR'\"}'", encoding="utf-8")
-
-        # Engines
-        envsubst_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=env_file_path,
-            suffix="envst",
-            render_command="bash -c 'source %i && source %s'"
-        )
-        mustache_engine = RenderEngineConfig(
-            name="mustache",
-            input_file=mustache_template_path,
-            suffix="mustache",
-            render_command="cat %s # %i"
-        )
-        engines = RenderEngineRegistry({
-            "envsubst": envsubst_engine,
-            "mustache": mustache_engine
-        })
-
-        # Test custom render directory name
-        output_dir = self.drift_root / "my_custom_render_sandbox" / ".drift"
-        render_input_templates(engines, self.drift_root, output_dir)
-
-        # Expected output should reside inside "my_custom_render_sandbox/.drift/"
-        expected_output_path = output_dir / "mustache.json"
-        self.assertTrue(expected_output_path.is_file())
-        self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "custom_val"}')
-
-    def test_render_input_templates_absolute_template_path(self) -> None:
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        env_file_path = config_dir / "env.sh"
-        env_file_path.write_text("export MY_TEST_VAR='abs_val'", encoding="utf-8")
-
-        # Create the template with an absolute path
-        abs_template_path = config_dir / "abs_mustache.envst.json"
-        abs_template_path.write_text("echo '{\"var\": \"'$MY_TEST_VAR'\"}'", encoding="utf-8")
-
-        # Define the engines, setting mustache engine's input file as an absolute path
-        envsubst_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=env_file_path,
-            suffix="envst",
-            render_command="bash -c 'source %i && source %s'"
-        )
-
-        mustache_engine = RenderEngineConfig(
-            name="mustache",
-            input_file=abs_template_path, # Absolute path template file
-            suffix="mustache",
-            render_command="cat %s # %i"
-        )
-
-        engines = RenderEngineRegistry({
-            "envsubst": envsubst_engine,
-            "mustache": mustache_engine
-        })
-
-        output_dir = self.drift_root / "render" / ".drift"
-        # Render
-        render_input_templates(engines, self.drift_root, output_dir)
-
-        # Output should be stripped from abs_mustache.envst.json -> abs_mustache.json
-        expected_output_path = output_dir / "abs_mustache.json"
-        self.assertTrue(expected_output_path.is_file())
-        self.assertEqual(expected_output_path.read_text(encoding="utf-8").strip(), '{"var": "abs_val"}')
-
 
 class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
@@ -849,6 +615,65 @@ class TestRenderPackage(unittest.TestCase):
         self.assertFalse((render_pkg_dir / "package.envst.toml").exists())
         self.assertFalse((render_pkg_dir / "drift_package.envst.toml").exists())
 
+    def test_render_package_with_chained_engine_inputs(self) -> None:
+        """Verifies that the incremental Merkle DAG natively renders chained engine input dependencies."""
+        from drift.render.render_package import render_package
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+
+        drift_root = self.drift_root
+
+        # 1. Setup config files for chained engines: env.sh -> mustache.envst.json -> mustache.json
+        config_dir = drift_root / "config"
+        config_dir.mkdir(parents=True, exist_ok=True)
+        env_sh = config_dir / "env.sh"
+        env_sh.write_text("export APP_GREETING='hello_from_chain'\n", encoding="utf-8")
+
+        mustache_input_template = config_dir / "mustache.envst.json"
+        mustache_input_template.write_text('{"greeting": "$APP_GREETING"}', encoding="utf-8")
+
+        envsubst_engine = RenderEngineConfig(
+            name="envsubst",
+            input_file=env_sh,
+            suffix="envst",
+            render_command="bash -c 'source %i && envsubst < %s'",
+        )
+        mustache_engine = RenderEngineConfig(
+            name="mustache",
+            input_file=mustache_input_template,
+            suffix="mustache",
+            render_command="bash -c 'cat %i %s'",
+        )
+
+        workspace_config = WorkspaceConfig(drift_root=drift_root)
+        workspace_config.render_engine_configs = RenderEngineRegistry({
+            "envsubst": envsubst_engine,
+            "mustache": mustache_engine,
+        })
+
+        # 2. Setup package with a template using mustache
+        pkg_dir = drift_root / "src" / "chain_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_dir / "drift_package.toml").write_text("[package]\nenable_render = true\n", encoding="utf-8")
+        (pkg_dir / "app_config.mustache").write_text("payload_data\n", encoding="utf-8")
+
+        # 3. Render package
+        res = render_package(workspace_config, pkg_dir)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIn("app_config", res.rendered_files)
+
+        # 4. Check intermediate engine input was compiled into render/chain_pkg/.drift/render/workspace/
+        compiled_input = drift_root / "render" / "chain_pkg" / ".drift" / "render" / "workspace" / "mustache.json"
+        self.assertTrue(compiled_input.is_file())
+        self.assertEqual(compiled_input.read_text(encoding="utf-8").strip(), '{"greeting": "hello_from_chain"}')
+
+        # 5. Check output file in render/chain_pkg/app_config
+        output_file = drift_root / "render" / "chain_pkg" / "app_config"
+        self.assertTrue(output_file.is_file())
+        output_text = output_file.read_text(encoding="utf-8")
+        self.assertIn('{"greeting": "hello_from_chain"}', output_text)
+        self.assertIn("payload_data", output_text)
+
     def test_render_all_packages(self) -> None:
         from drift.render.render_package import run_primitive_2_render_packages
         from drift.config.workspace_config import WorkspaceConfig
@@ -1065,7 +890,7 @@ class TestRenderPackage(unittest.TestCase):
         run_primitive_2_render_packages(workspace_config)
 
         # 5. Verify engine input was rendered
-        rendered_mustache_json = drift_root / "render" / ".drift" / "render" / "mustache.json"
+        rendered_mustache_json = drift_root / "render" / "my_pkg" / ".drift" / "render" / "workspace" / "mustache.json"
         self.assertTrue(rendered_mustache_json.is_file())
         self.assertIn('"the_value": "orchestrated_value"', rendered_mustache_json.read_text(encoding="utf-8"))
 
@@ -1076,72 +901,6 @@ class TestRenderPackage(unittest.TestCase):
         # Since our simulated mustache command was 'cat %i %s', it should contain both
         self.assertIn('"the_value": "orchestrated_value"', content)
         self.assertIn("Template content", content)
-
-    def test_render_input_templates_graceful_missing_static_input(self) -> None:
-        """Tests that a missing static input file results in a warning, sets input_file to empty path, and subsequent rendering raises ValueError."""
-        # Setup config directory
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create an engine config pointing to a non-existent input file
-        engine_config = RenderEngineConfig(
-            name="missing_static_engine",
-            input_file=Path("non_existent_env.sh"),
-            suffix="sh",
-            render_command="bash -c 'source %i && source %s'"
-        )
-
-        # Calling render_input_templates should not raise FileNotFoundError anymore
-        # It logs a warning and updates engine_config.input_file to Path("")
-        render_input_templates(
-            RenderEngineRegistry({"missing_static_engine": engine_config}),
-            self.drift_root,
-            self.drift_root / "render" / ".drift"
-        )
-        self.assertIsNone(engine_config.input_file)
-
-        # Create a mock template
-        template_path = self.drift_root / "template.sh"
-        template_path.write_text("echo -n 'hello'", encoding="utf-8")
-
-        # Calling render_template with this engine should raise a RenderError
-        with self.assertRaises(RenderError) as ctx:
-            render_template(
-                engine_config=engine_config,
-                drift_root=self.drift_root,
-                template_file_path=template_path
-            )
-        self.assertIn("is disabled or has an invalid/empty input file", str(ctx.exception))
-
-    def test_render_input_templates_graceful_missing_templated_input(self) -> None:
-        """Tests that a missing input template file for a dependent engine results in a warning and updates input_file to empty path."""
-        # Setup config directory
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create a dependent engine where its input template file is missing
-        dep_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=config_dir / "env.sh", # we can let env.sh exist or not
-            suffix="envst",
-            render_command="bash -c 'source %i && envsubst < %s'"
-        )
-        mustache_engine = RenderEngineConfig(
-            name="mustache",
-            input_file=config_dir / "non_existent_mustache.envst.json", # Missing template input!
-            suffix="mustache",
-            render_command="mustache %i %s"
-        )
-
-        render_input_templates(
-            RenderEngineRegistry({
-                "envsubst": dep_engine,
-                "mustache": mustache_engine
-            }),
-            self.drift_root,
-            self.drift_root / "render" / ".drift"
-        )
-        self.assertIsNone(mustache_engine.input_file)
 
     def test_render_package_name_starts_with_dot_dash(self) -> None:
         """Verifies that rendering a package whose name starts with 'dot-' preserves the name exactly."""
@@ -1406,10 +1165,10 @@ class TestRenderPackage(unittest.TestCase):
             drift_root=self.drift_root,
         )
 
-        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.render.render_package import run_primitive_2_render_packages, RenderOptions
         from drift.hooks.lifecycle_hooks import HookExecFlags
         res = run_primitive_2_render_packages(
-            workspace_config, ["pkg_failing_hook"], flags=HookExecFlags(streaming=False)
+            workspace_config, ["pkg_failing_hook"], options=RenderOptions(flags=HookExecFlags(streaming=False))
         )
         self.assertEqual(res.status, "FAILED")
         self.assertIn("failed with exit code 1", cast(str, res.error_message))
@@ -1466,46 +1225,6 @@ class TestRenderPackage(unittest.TestCase):
         self.assertNotIn("drift_package_name", os.environ)
         self.assertNotIn("drift_package_target_dir", os.environ)
         self.assertNotIn("drift_package_install_method", os.environ)
-
-    def test_render_input_template_command_failure_disables_engine(self) -> None:
-        """Tests that when an input template render command fails (e.g. command not found), the engine is disabled."""
-        config_dir = self.drift_root / "config"
-        config_dir.mkdir(parents=True, exist_ok=True)
-        (config_dir / "env.sh").write_text("export FOO=bar\n", encoding="utf-8")
-        (config_dir / "jinja2.mustache.json").write_text('{"foo": "bar"}', encoding="utf-8")
-
-        envsubst_engine = RenderEngineConfig(
-            name="envsubst",
-            input_file=config_dir / "env.sh",
-            suffix="envst",
-            render_command="bash -c 'source %i && cp %s %s'"
-        )
-        mustache_engine = RenderEngineConfig(
-            name="mustache",
-            input_file=config_dir / "mustache.json", # static input
-            suffix="mustache",
-            render_command="non_existent_command_12345 %i %s" # command will fail
-        )
-        (config_dir / "mustache.json").write_text("{}", encoding="utf-8")
-        jinja2_engine = RenderEngineConfig(
-            name="jinja2",
-            input_file=config_dir / "jinja2.mustache.json", # depends on mustache!
-            suffix="jinja2",
-            render_command="jinja2 %i %s"
-        )
-
-        # render_input_templates should not throw, but should gracefully set jinja2.input_file = Path("")
-        render_input_templates(
-            RenderEngineRegistry({
-                "envsubst": envsubst_engine,
-                "mustache": mustache_engine,
-                "jinja2": jinja2_engine
-            }),
-            self.drift_root,
-            self.drift_root / "render" / ".drift"
-        )
-        self.assertIsNone(jinja2_engine.input_file)
-        self.assertTrue(jinja2_engine.is_disabled)
 
     def test_primitive_2_partial_failure_proceeds_with_other_packages(self) -> None:
         """Tests that Primitive 2 continues rendering remaining packages when one package fails, and returns FAILED status."""
@@ -1744,7 +1463,6 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
     def test_rendered_file_preserves_template_permissions(self) -> None:
         """Verifies that rendered files preserve the exact file permissions (modes) of their template files."""
         from drift.render.render_core import render_template_to_file
-        from drift.render.render_package import render_or_copy_file, render_package_files
 
         template_script = self.drift_root / "test_exec.sh.envst"
         template_script.write_text("#!/bin/sh\necho '$GREETING'\n", encoding="utf-8")
@@ -1773,7 +1491,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
     def test_no_hooks_bypasses_pre_source_and_post_render_hooks(self) -> None:
         """Verifies that no_hooks=True completely bypasses pre_source and post_render hook execution."""
         from drift.hooks.lifecycle_hooks import trigger_pre_source_hook
-        from drift.render.render_package import render_package
+        from drift.render.render_package import render_package, RenderOptions
 
         workspace_config = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1811,7 +1529,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         )
 
         # 2. Rendering package with no_hooks=True should succeed without executing failing hooks
-        result = render_package(workspace_config, pkg_src_dir, flags=HookExecFlags(no_hooks=True))
+        result = render_package(workspace_config, pkg_src_dir, options=RenderOptions(flags=HookExecFlags(no_hooks=True)))
         self.assertEqual(result.status, "SUCCESS")
 
     def test_render_package_with_subfolder_source_directory(self) -> None:
@@ -2121,6 +1839,77 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertIn("Render collision", pkg_res.error or "")
         self.assertIn("app.yml", pkg_res.error or "")
 
+    def test_render_options_defaults_and_hook_flags(self) -> None:
+        """Verifies RenderOptions default values and conversion to HookExecFlags."""
+        from drift.render.render_package import RenderOptions
+        from drift.hooks.lifecycle_hooks import HookExecFlags
+
+        opts = RenderOptions()
+        self.assertFalse(opts.no_cache)
+        self.assertFalse(opts.dry_run)
+        self.assertIsNone(opts.flags)
+
+        hook_flags = opts.get_hook_flags()
+        self.assertFalse(hook_flags.no_cache)
+        self.assertFalse(hook_flags.dry_run)
+
+        opts_custom = RenderOptions(no_cache=True, dry_run=True, flags=HookExecFlags(no_hooks=True))
+        hook_flags_custom = opts_custom.get_hook_flags()
+        self.assertTrue(hook_flags_custom.no_cache)
+        self.assertTrue(hook_flags_custom.dry_run)
+        self.assertTrue(hook_flags_custom.no_hooks)
+
+        # resolve from HookExecFlags
+        resolved = RenderOptions.resolve(HookExecFlags(no_cache=True, dry_run=True))
+        self.assertTrue(resolved.no_cache)
+        self.assertTrue(resolved.dry_run)
+
+    def test_render_package_dry_run_leaves_filesystem_untouched(self) -> None:
+        """Verifies that render_package with dry_run=True produces plan without mutating filesystem."""
+        from drift.render.render_package import render_package, RenderOptions
+        from drift.core.constants import RENDER_LOCK_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+
+        pkg_src = self.drift_root / "src" / "pkg_dry"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        (pkg_src / "drift_package.toml").write_text("[package]\nname = 'pkg_dry'\n", encoding="utf-8")
+        (pkg_src / "file.txt").write_text("dry run content\n", encoding="utf-8")
+
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True))
+        self.assertTrue(res.is_success)
+
+        render_dest = self.drift_root / "render" / "pkg_dry"
+        self.assertFalse(render_dest.exists())
+        self.assertFalse((render_dest / "file.txt").exists())
+        self.assertFalse((render_dest / DRIFT_INTERNAL_DIR_NAME / "hooks").exists())
+        self.assertFalse((render_dest / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME).exists())
+
+    def test_render_package_dry_run_with_failing_hook_does_not_execute(self) -> None:
+        """Verifies that dry_run=True skips executing hooks that would otherwise fail."""
+        from drift.render.render_package import render_package, RenderOptions
+
+        pkg_src = self.drift_root / "src" / "pkg_failing_hook_dry"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_failing_hook_dry"
+
+        [hooks]
+        pre_source = "drift_hooks/failing.sh"
+        """, encoding="utf-8")
+
+        failing_script = hooks_dir / "failing.sh"
+        failing_script.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+        failing_script.chmod(0o755)
+
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True))
+        self.assertTrue(res.is_success)
+
 
 if __name__ == "__main__":
     unittest.main()
+

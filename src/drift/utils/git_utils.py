@@ -8,8 +8,9 @@ from typing import List, Optional, Sequence, Union
 from dataclasses import dataclass, field
 
 from .process_utils import run_command
-from .file_inspect import is_temp_file
-from ..core.constants import DRIFT_GENERATED_FILES
+from .file_inspect import is_temp_file, is_diff_candidate
+from .path_utils import to_relative_path
+from ..core.constants import DEFAULT_DIFF_EXCLUDE_PATTERNS
 from ..core.exceptions import mark_logged
 
 logger = logging.getLogger(__name__)
@@ -44,13 +45,16 @@ class GitStatusDiff:
 def get_git_status_porcelain(
     repo_path: Path,
     pkg_path: Optional[Union[str, Path]] = None,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[str]:
     """Returns the output lines of git status --porcelain for a given repository and package/sub path."""
     if not repo_path.exists():
         return []
     cmd = ["git", "-C", str(repo_path), "status", "--porcelain"]
     if pkg_path:
-        cmd.append(str(pkg_path))
+        cmd.extend(["--", str(pkg_path), *exclude_patterns])
+    elif exclude_patterns:
+        cmd.extend(["--", *exclude_patterns])
     # check=False is intentional: non-zero returncode indicates error/clean/untracked, handled explicitly below.
     res = run_command(cmd, text=True, check=False, suppress_output=True)
     if res.returncode != 0 or not res.stdout or not res.stdout.strip():
@@ -61,31 +65,29 @@ def get_git_status_porcelain(
 def has_uncommitted_modifications(
     repo_path: Path,
     sub_path: Optional[Union[Path, str]] = None,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> bool:
     """Checks if a git repository (or a specific path inside it) has uncommitted local modifications.
 
     Uncommitted modifications include staged changes, unstaged changes, and untracked files.
     """
-    return bool(get_git_status_porcelain(repo_path, sub_path))
+    return bool(get_git_status_porcelain(repo_path, sub_path, exclude_patterns=exclude_patterns))
 
 
 def _normalize_pkg_relative_path(path: Path, pkg_name: Optional[str]) -> Path:
     """Trims leading pkg_name directory prefix from path if present."""
-    if pkg_name and path.parts and path.parts[0] == pkg_name:
-        return path.relative_to(Path(pkg_name))
-    return path
+    return to_relative_path(path, Path(pkg_name)) if pkg_name else path
 
 
 def _parse_rename_entry(
     path_str: str,
-    pkg_name: Optional[str],
-    ignored_files: Sequence[str],
+    pkg_name: Optional[str] = None,
 ) -> Optional[GitRename]:
     """Parses a git rename status string ('old -> new') into a GitRename object."""
     old_str, new_str = path_str.split(" -> ", 1)
     old_p = Path(old_str.strip('" '))
     new_p = Path(new_str.strip('" '))
-    if new_p.name in ignored_files or is_temp_file(new_p):
+    if not is_diff_candidate(new_p):
         return None
     return GitRename(
         old_path=_normalize_pkg_relative_path(old_p, pkg_name),
@@ -96,10 +98,14 @@ def _parse_rename_entry(
 def parse_git_status_porcelain(
     repo_path: Path,
     pkg_name: Optional[str] = None,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> GitStatusDiff:
     """Parses git status --porcelain for a repository (scoped to pkg_name) into GitStatusDiff."""
-    lines = get_git_status_porcelain(repo_path, f"{pkg_name}/" if pkg_name else None)
+    lines = get_git_status_porcelain(
+        repo_path,
+        f"{pkg_name}/" if pkg_name else None,
+        exclude_patterns=exclude_patterns,
+    )
     if not lines:
         return GitStatusDiff()
 
@@ -116,13 +122,13 @@ def parse_git_status_porcelain(
         path_str = line[3:].strip()
 
         if " -> " in path_str:
-            rename_entry = _parse_rename_entry(path_str, pkg_name, ignored_files)
+            rename_entry = _parse_rename_entry(path_str, pkg_name)
             if rename_entry:
                 renamed.append(rename_entry)
             continue
 
         p = Path(path_str.strip('" '))
-        if p.name in ignored_files or is_temp_file(p):
+        if not is_diff_candidate(p):
             continue
 
         rel_p = _normalize_pkg_relative_path(p, pkg_name)

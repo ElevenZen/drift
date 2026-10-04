@@ -351,6 +351,11 @@ def build_completion_schema() -> CompletionSchema:
                         description="Bypass missing required package dependency errors and proceed with deployment",
                         dest="no_deps"
                     ),
+                    OptionSpec(
+                        flags=["-c", "--clean", "--no-cache"],
+                        description="Bypass render cache and force clean re-rendering of all files",
+                        dest="no_cache"
+                    ),
                 ]
             ),
             "health": CommandSpec(
@@ -595,6 +600,16 @@ def build_completion_schema() -> CompletionSchema:
                     )
                 ],
                 options=[
+                    OptionSpec(
+                        flags=["-c", "--clean", "--no-cache"],
+                        description="Bypass render cache and force clean re-rendering of all files",
+                        dest="no_cache"
+                    ),
+                    OptionSpec(
+                        flags=["-n", "--dry-run"],
+                        description="Simulate render planning and digestion without modifying filesystem or executing hooks",
+                        dest="dry_run"
+                    ),
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",

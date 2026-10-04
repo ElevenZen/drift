@@ -49,7 +49,6 @@ from pathlib import Path
 from typing import List, Tuple, Sequence, Iterable
 
 from ..core.constants import (
-    DRIFT_GENERATED_FILES,
     DEFAULT_DIFF_EXCLUDE_PATTERNS,
     DirMode,
 )
@@ -114,7 +113,7 @@ def collect_repo_diff_pairs(
     repo_path: Path,
     packages: Sequence[str],
     temp_dir: Path,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[Tuple[Path, Path]]:
     """
     Finds modified, added, and deleted files in a git repo against HEAD,
@@ -132,7 +131,7 @@ def collect_repo_diff_pairs(
         cmd = [
             "git", "-C", str(repo_path), "diff", "--name-status", "HEAD", "--",
             f"{pkg}/",
-            *(f":!{pkg}/{f}" for f in ignored_files),
+            *exclude_patterns,
         ]
         # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -145,10 +144,9 @@ def collect_repo_diff_pairs(
                 continue
             status, rel_path_str = parts[0], parts[1]
             rel_path = Path(rel_path_str)
-            if is_temp_file(rel_path):
-                continue
-
             working_file = repo_path / rel_path
+            if not is_diff_candidate(working_file):
+                continue
 
             if status.startswith("A"):
                 empty_left = ensure_empty_file(temp_dir / "empty" / rel_path)
@@ -181,7 +179,7 @@ def collect_pending_delta_pairs(
     workspace_config: WorkspaceConfig,
     packages: Sequence[str],
     temp_dir: Path,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[Tuple[Path, Path]]:
     """
     Collects file pairs between install/ (left/deployed) and render/ (right/candidate).
@@ -194,13 +192,13 @@ def collect_pending_delta_pairs(
 
     for pkg in new_pkgs:
         render_pkg = workspace_config.render_path / pkg
-        for rel_f in (f for f in tree_files(render_pkg) if is_diff_candidate(render_pkg / f, ignored_files)):
+        for rel_f in (f for f in tree_files(render_pkg) if is_diff_candidate(render_pkg / f)):
             empty_left = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((empty_left, render_pkg / rel_f))
 
     for pkg in orphan_pkgs:
         install_pkg = workspace_config.install_path / pkg
-        for rel_f in (f for f in tree_files(install_pkg) if is_diff_candidate(install_pkg / f, ignored_files)):
+        for rel_f in (f for f in tree_files(install_pkg) if is_diff_candidate(install_pkg / f)):
             empty_right = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((install_pkg / rel_f, empty_right))
 
@@ -209,12 +207,12 @@ def collect_pending_delta_pairs(
         render_pkg = workspace_config.render_path / pkg
 
         diff = compare_folders(render_pkg, install_pkg, resolve_symlinks=False, dir_mode=DirMode.NO_DIR)
-        for rel_f in (f for f in diff.modified if is_diff_candidate(render_pkg / f, ignored_files) and is_diff_candidate(install_pkg / f, ignored_files)):
+        for rel_f in (f for f in diff.modified if is_diff_candidate(render_pkg / f) and is_diff_candidate(install_pkg / f)):
             pairs.append((install_pkg / rel_f, render_pkg / rel_f))
-        for rel_f in (f for f in diff.added if is_diff_candidate(render_pkg / f, ignored_files)):
+        for rel_f in (f for f in diff.added if is_diff_candidate(render_pkg / f)):
             empty_left = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((empty_left, render_pkg / rel_f))
-        for rel_f in (f for f in diff.deleted if is_diff_candidate(install_pkg / f, ignored_files)):
+        for rel_f in (f for f in diff.deleted if is_diff_candidate(install_pkg / f)):
             empty_right = ensure_empty_file(temp_dir / "empty" / pkg / rel_f)
             pairs.append((install_pkg / rel_f, empty_right))
 
@@ -228,10 +226,10 @@ def collect_pending_delta_pairs(
 def collect_git_repo_diff_details(
     repo_path: Path,
     pkg: str,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[FileDiffDetail]:
     """Collects FileDiffDetail list for a package in a git repository against HEAD."""
-    diff = parse_git_status_porcelain(repo_path, pkg, ignored_files=ignored_files)
+    diff = parse_git_status_porcelain(repo_path, pkg)
     files: List[FileDiffDetail] = []
     for p in diff.added:
         files.append(FileDiffDetail(path=str(Path(pkg) / p), change_type="added"))
@@ -247,7 +245,7 @@ def collect_git_repo_diff_details(
 def collect_pending_folder_diff_details(
     workspace_config: WorkspaceConfig,
     pkg: str,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> List[FileDiffDetail]:
     """Collects FileDiffDetail list between install/ and render/ for a package."""
     render_pkg = workspace_config.render_path / pkg
@@ -259,31 +257,31 @@ def collect_pending_folder_diff_details(
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="added")
             for p in diff.added
-            if is_diff_candidate(render_pkg / p, ignored_files)
+            if is_diff_candidate(render_pkg / p)
         )
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="modified")
             for p in diff.modified
-            if is_diff_candidate(render_pkg / p, ignored_files) and is_diff_candidate(install_pkg / p, ignored_files)
+            if is_diff_candidate(render_pkg / p) and is_diff_candidate(install_pkg / p)
         )
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted")
             for p in diff.deleted
-            if is_diff_candidate(install_pkg / p, ignored_files)
+            if is_diff_candidate(install_pkg / p)
         )
     elif render_pkg.exists() and not install_pkg.exists():
         from ..utils.file_inspect import tree_files
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="added")
             for p in tree_files(render_pkg)
-            if is_diff_candidate(render_pkg / p, ignored_files)
+            if is_diff_candidate(render_pkg / p)
         )
     elif not render_pkg.exists() and install_pkg.exists():
         from ..utils.file_inspect import tree_files
         files.extend(
             FileDiffDetail(path=str(Path(pkg) / p), change_type="deleted")
             for p in tree_files(install_pkg)
-            if is_diff_candidate(install_pkg / p, ignored_files)
+            if is_diff_candidate(install_pkg / p)
         )
 
     return files
@@ -293,7 +291,7 @@ def run_repo_diff(
     repo_path: Path,
     packages: Sequence[str],
     git_options: Sequence[str],
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
+    exclude_patterns: Sequence[str] = DEFAULT_DIFF_EXCLUDE_PATTERNS,
 ) -> bool:
     """Helper to run git diff within a specific repository for a set of packages.
     Returns True if any diff output was produced, False otherwise.
@@ -309,7 +307,7 @@ def run_repo_diff(
             "git", "-C", str(repo_path), "diff",
             *git_options,
             "--", f"{pkg}/",
-            *(f":!{pkg}/{f}" for f in ignored_files),
+            *exclude_patterns,
         ]
         # check=False is intentional: git diff returns exit code 1 when differences exist.
         res = subprocess.run(cmd, capture_output=True, text=True, check=False)

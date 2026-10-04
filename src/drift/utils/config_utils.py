@@ -4,9 +4,33 @@ Provides helpers for safely accessing, traversing, setting, validating, and coer
 configuration mappings and values across Drift packages and workspace configs.
 """
 
-from typing import Any, Iterable, Optional, Mapping, Union, Sequence
+from typing import Any, Callable, Iterable, List, Optional, Mapping, Sequence, Tuple, TypeVar, Union
 
 from ..core.exceptions import ConfigError
+
+T = TypeVar("T")
+
+
+def partition(
+    pred: Callable[[T], bool],
+    items: Iterable[T],
+) -> Tuple[List[T], List[T]]:
+    """Partitions an iterable into two lists based on a predicate: (matches, non_matches).
+
+    Args:
+        pred: Predicate function evaluated on each element.
+        items: Sequence or iterable of elements to partition.
+
+    Returns:
+        A tuple of (trues, falses) where trues contains items for which pred(x) is True,
+        and falses contains items for which pred(x) is False.
+    """
+    trues: List[T] = []
+    falses: List[T] = []
+    for item in items:
+        (trues if pred(item) else falses).append(item)
+    return trues, falses
+
 
 
 def get_first_from(

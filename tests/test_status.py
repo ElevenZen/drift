@@ -301,6 +301,66 @@ class TestStatus(unittest.TestCase):
         self.assertEqual(status, "CLEAN")
         self.assertIsNone(diff)
 
+    def test_status_ignores_render_lockfile(self) -> None:
+        """Verifies drift status ignores render_lock.json in render/ and install/ repositories."""
+        pkg = "pkg_a"
+        pkg_src_dir = self.source_dir / pkg
+        pkg_src_dir.mkdir(parents=True, exist_ok=True)
+        (pkg_src_dir / "drift_package.toml").write_text(f'[package]\nname="{pkg}"\ninstall_method="copy"')
+        (pkg_src_dir / "file.txt").write_text("content")
+
+        from drift.render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install, run_primitive_6_commit_install_repo
+        from drift.core.constants import RENDER_LOCK_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_3_commit_render_repo(self.workspace_config, "initial render")
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+        run_primitive_5_install(self.workspace_config)
+        run_primitive_6_commit_install_repo(self.workspace_config, "initial install")
+
+        # Initial status should be clean
+        res = run_primitive_status(self.workspace_config)
+        self.assertEqual(res.overall_status, "CLEAN")
+        self.assertEqual(res[0].template_status, "CLEAN")
+        self.assertEqual(res[0].pending_status, "CLEAN")
+
+        # Manually alter render_lock.json in render/ and install/
+        render_lock = self.render_dir / pkg / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME
+        render_lock.parent.mkdir(parents=True, exist_ok=True)
+        render_lock.write_text('{"nodes": {"changed": 1}}\n')
+
+        install_lock = self.install_dir / pkg / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME
+        install_lock.parent.mkdir(parents=True, exist_ok=True)
+        install_lock.write_text('{"nodes": {"changed": 2}}\n')
+
+        # Status should remain CLEAN because lockfile is excluded from diff/status
+        res2 = run_primitive_status(self.workspace_config)
+        self.assertEqual(res2.overall_status, "CLEAN")
+        self.assertEqual(res2[0].template_status, "CLEAN")
+        self.assertEqual(res2[0].pending_status, "CLEAN")
+        self.assertEqual(res2[0].system_status, "CLEAN")
+
+        # If a package in git only contains render_lock.json, it should be audited as NEW
+        from drift.primitives.workspace_status import audit_repo_package_status
+        (self.render_dir / "pkg_only_lock" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+        (self.render_dir / "pkg_only_lock" / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME).write_text("{}\n")
+        subprocess.run(["git", "-C", str(self.render_dir), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(self.render_dir), "commit", "-m", "add lock only"], capture_output=True, check=True)
+        status, diff = audit_repo_package_status(self.render_dir, "pkg_only_lock", "MODIFIED")
+        self.assertEqual(status, "NEW")
+        self.assertIsNone(diff)
+
+        # If a package contains a user file named render_lock.json outside .drift/, it is NOT treated as NEW
+        (self.render_dir / "pkg_user_lock" / "my_config").mkdir(parents=True, exist_ok=True)
+        (self.render_dir / "pkg_user_lock" / "my_config" / RENDER_LOCK_FILE_NAME).write_text("{}\n")
+        subprocess.run(["git", "-C", str(self.render_dir), "add", "."], capture_output=True, check=True)
+        subprocess.run(["git", "-C", str(self.render_dir), "commit", "-m", "add user lock"], capture_output=True, check=True)
+        status, diff = audit_repo_package_status(self.render_dir, "pkg_user_lock", "MODIFIED")
+        self.assertEqual(status, "CLEAN")
+        self.assertIsNone(diff)
+
 
 if __name__ == "__main__":
     unittest.main()

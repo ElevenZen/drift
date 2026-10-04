@@ -78,7 +78,7 @@ Declaratively control which packages deploy on the active machine:
 Compile dotfile templates using extensible, declarative engines:
 *   **Engine DAG Dependencies**: Declare input files (`input_file`) and shell render commands (`render_command`). If an input file is itself a template (e.g. `mustache.envst.json`), Drift compiles it first via topological dependency sorting.
 *   **Built-In Engines**: Native zero-dependency variable substitution (`var`), `envsubst`, and external CLI tools (`mustache`, `jinja2`).
-*   **Phase 1 Sandboxing**: Compiles workspace-level meta-templates and package configuration templates into `render/.drift/render/`.
+*   **Phase 1 Sandboxing**: Compiles package configuration templates and intermediate engine inputs into isolated `.drift/render/` sandboxes.
 
 ### 7. 🗄️ Decoupled 2-Stage Staging & State Tracking Database (`render/` and `install/`)
 Eliminate side-effects and deployment surprises:

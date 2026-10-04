@@ -1,240 +1,197 @@
-"""Renders packages and compiles templates using pathlib."""
+"""Phase 3 Package Payload rendering, Merkle DAG digestion, and primitive orchestration.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 3: Primitive Orchestration & Multi-Package Batch
+    - run_primitive_2_render_packages(workspace_config, target_pkgs, options) -> RenderResult
+        Coordinates multi-package template rendering with shared workspace RenderCache.
+    - run_primitive_3_commit_render_repo(workspace_config, commit_message, target_pkgs) -> None
+        Stages and commits changes inside the render sandbox Git repository.
+
+Layer 2: Single-Package Pipeline Orchestration
+    - render_package(workspace_config, package_dir, options) -> PackageRenderResult
+        Orchestrates Phase 1 (Config) -> Phase 2 (Hooks) -> Requirements -> Phase 3 (Payload).
+    - render_package_files(workspace_config, package_dir, pkg_config, render_pkg_dir, options, render_engines) -> PackageRenderResult
+        Digests Phase 3 Merkle DAG under pkg_config.package_envs(), updates lockfile, triggers post_render.
+    - handle_driftignore_file(package_dir, render_pkg_dir, dry_run) -> None
+        Synchronizes root .drift_ignore into .drift/ control plane.
+
+Layer 1: DAG Construction & Candidate Filtering
+    - build_phase3_payload_dag(workspace_config, pkg_config, package_dir, effective_engines) -> PackagePayloadNode
+        Discovers payload candidates, excludes control plane files, and expands AST Merkle DAG.
+===============================================================================
+"""
 
 from __future__ import annotations
 
 import sys
-import shutil
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import List, Tuple, Optional, Sequence, Dict, TYPE_CHECKING
+from typing import List, Tuple, Optional, Sequence, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.workspace_config import WorkspaceConfig
     from ..config.package_config import PackageConfig
-    from ..config.render_engine_config import RenderEngineConfig, RenderEngineRegistry
+    from ..config.render_engine_config import RenderEngineRegistry
 
 from ..core.constants import (
     DRIFT_IGNORE_FILE_NAME,
     DRIFT_IGNORE_LEGACY_FILE_NAME,
     DRIFT_IGNORE_FILE_NAME_LIST,
-    DRIFT_KEEP_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
-    DRIFT_INTERNAL_HOOKS_DIR_NAME,
-    DRIFT_INTERNAL_RENDER_DIR_NAME,
     DirMode,
 )
 from ..config.package_config import PackageConfig
-from .render_input import render_input_templates
-from .render_core import render_template_to_file, RenderError
-from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged, is_drift_error
+from .render_core import RenderError
+from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.result_models import PackageRenderResult, RenderResult
-from ..utils.file_ops import remove_tree, copy_file
-from ..utils.path_utils import encode_dot_prefix, is_relative_to
+from ..utils.file_ops import copy_file
+from ..utils.path_utils import is_relative_to, to_relative_posix
+from ..utils.config_utils import partition
+from ..core.folder_diff import list_folder_paths
+from .render_dag import (
+    Node,
+    PathNode,
+    JsonNode,
+    UnknownPathNode,
+    EngineOutputFileNode,
+    PackagePayloadNode,
+)
+from .render_expansion import (
+    ExpansionContext,
+    expand_node_dependencies,
+)
+from .render_digester import (
+    DigestionContext,
+    digest_render_dag,
+)
+from .render_lock import RenderLockfile, RenderBucket
 
 logger = logging.getLogger(__name__)
 
 
-def clear_render_package_dir(workspace_config: WorkspaceConfig, package_name: str) -> None:
-    """Clears the sandbox package directory inside the render folder while preserving .drift/ internal metadata."""
-    render_pkg_dir = workspace_config.render_path / package_name
-    if not render_pkg_dir.exists():
-        return
-    if render_pkg_dir.is_symlink():
-        render_pkg_dir.unlink()
-        return
-    for child in render_pkg_dir.iterdir():
-        if child.name == DRIFT_INTERNAL_DIR_NAME:
-            continue
-        if child.is_dir() and not child.is_symlink():
-            remove_tree(child)
-        else:
-            child.unlink()
+@dataclass
+class RenderOptions:
+    """Options controlling package rendering behavior.
 
-
-def _validate_not_driftignore_target(
-    file_path: Path,
-    target_rel_path: str,
-    package_name: str,
-    is_template: bool = False,
-) -> None:
-    """Validates that a template or pseudo-dot file is not used to dynamically generate .driftignore."""
-    target_name = Path(target_rel_path).name
-    translated_name = encode_dot_prefix(Path(target_name)).name
-    if translated_name in DRIFT_IGNORE_FILE_NAME_LIST:
-        if is_template:
-            raise ConfigError(
-                f"Package '{package_name}' cannot render template '{file_path.name}' to '{target_rel_path}'. "
-                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
-            )
-        # check if the any file not in package root is being used to represent .driftignore
-        if target_rel_path not in DRIFT_IGNORE_FILE_NAME_LIST:
-            raise ConfigError(
-                f"Package '{package_name}' cannot use '{file_path.name}' to represent '{DRIFT_IGNORE_FILE_NAME}'. "
-                f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
-            )
-
-
-def render_or_copy_file(
-    rel_path: Path,
-    src_dir: Path,
-    dest_dir: Path,
-    drift_root: Path,
-    pkg_config: PackageConfig,
-    render_engines: RenderEngineRegistry,
-) -> Tuple[str, bool]:
-    """Renders a single file using a matched engine, or copies it if no engine matches or rendering is disabled.
-
-    Rendered files will have the engine suffix stripped in the output path.
-    Returns (relative_dest_path, is_rendered).
+    Attributes:
+        no_cache: When True, bypasses cache and forces clean re-rendering.
+        dry_run: When True, simulates render planning and digestion without modifying
+            the filesystem or executing lifecycle hooks.
+        flags: Optional HookExecFlags controlling hook execution options.
     """
-    file_path = src_dir / rel_path
+    no_cache: bool = False
+    dry_run: bool = False
+    flags: Optional[HookExecFlags] = None
 
-    # If the item is a directory (only empty directory), create it in dest_dir with .drift_keep stub
-    if file_path.is_dir():
-        assert not any(file_path.iterdir()), f"Expected empty directory in ONLY_EMPTY_DIR mode, got: {file_path}"
-        dest_path = dest_dir / rel_path
-        logger.info(f"📁 Directory: {rel_path}")
-        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
-        dest_path.mkdir(parents=True, exist_ok=True)
-        (dest_path / DRIFT_KEEP_FILE_NAME).touch()
-        return (rel_path.as_posix(), False)
+    def get_hook_flags(self, settings=None) -> HookExecFlags:
+        """Derives HookExecFlags, assigning dry_run and no_cache from RenderOptions to HookExecFlags."""
+        base = HookExecFlags.resolve(self.flags, settings=settings)
+        return replace(base, no_cache=self.no_cache, dry_run=self.dry_run)
 
-    engine: Optional[RenderEngineConfig] = None
-    if pkg_config.package.enable_render:
-        engine = render_engines.find_engine_for_file(rel_path.as_posix())
-
-    if engine:
-        stripped_relative_path = engine.strip_suffix(rel_path.as_posix())
-        dest_path = dest_dir / stripped_relative_path
-        logger.info(f"🎨 Rendering: {rel_path} ({engine.name})")
-        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
-        render_template_to_file(
-            engine_config=engine,
-            drift_root=drift_root,
-            template_file_path=file_path,
-            output_file_path=dest_path
-        )
-        dest_rel = stripped_relative_path
-        is_rendered = True
-    else:
-        dest_path = dest_dir / rel_path
-        logger.info(f"📄 Copying: {rel_path}")
-        logger.debug(f"   -> {dest_path.relative_to(drift_root)}")
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(file_path, dest_path)
-        dest_rel = rel_path.as_posix()
-        is_rendered = False
-
-    return (dest_rel, is_rendered)
+    @classmethod
+    def resolve(
+        cls,
+        options: Optional[Union["RenderOptions", HookExecFlags]] = None,
+    ) -> "RenderOptions":
+        """Resolves RenderOptions from either RenderOptions or HookExecFlags."""
+        if isinstance(options, RenderOptions):
+            return options
+        if isinstance(options, HookExecFlags):
+            return cls(
+                no_cache=options.no_cache,
+                dry_run=options.dry_run,
+                flags=options,
+            )
+        return cls()
 
 
-def render_package_file_entry(
-    rel_path: Path,
-    src_dir: Path,
-    dest_dir: Path,
-    drift_root: Path,
+# =====================================================================
+# Layer 1: DAG Construction & Candidate Filtering
+# =====================================================================
+
+def build_phase3_payload_dag(
+    workspace_config: WorkspaceConfig,
     pkg_config: PackageConfig,
-    render_engines: RenderEngineRegistry,
-    skip_drift_hooks: bool = False,
-) -> Optional[Tuple[Path, bool]]:
-    """Renders or copies a package file entry.
+    package_dir: Path,
+    effective_engines: RenderEngineRegistry,
+) -> PackagePayloadNode:
+    """Constructs and expands the Phase 3 AST Merkle DAG for package payload dotfiles."""
+    pkg_name = pkg_config.name
+    src_dir_to_render = pkg_config.get_source_directory_to_render(package_dir)
+    if not src_dir_to_render.exists() or not src_dir_to_render.is_dir():
+        raise FileNotFoundError(f"Package '{pkg_name}' source directory not found: '{src_dir_to_render}'")
 
-    Filters out package config files, .drift_ignore, unmapped hidden files,
-    and optionally drift_hooks/ when rendering the payload pass.
-    Returns (output_subpath, was_rendered) where output_subpath is relative to dest_dir,
-    or None if the file should be skipped.
-    """
-    file_path = src_dir / rel_path
+    render_pkg_dir = workspace_config.render_path / pkg_name
+    translation_map = {src_dir_to_render: render_pkg_dir}
 
-    # 1. Skip if the file is the package config file or its template itself
-    if pkg_config.is_package_config_file(file_path):
-        return None
-
-    # 2. Skip any '.*' files (except .drift_ignore) in rendering process and print info
-    if rel_path.name.startswith(".") and rel_path.name not in DRIFT_IGNORE_FILE_NAME_LIST:
-        logger.info(
-            f"ℹ️  [SKIP] Skipping hidden file '{rel_path}' in package rendering. "
-            "All hidden files must use the 'dot-' prefix in source templates."
-        )
-        return None
-
-    # 3. Handle root .drift_ignore (already handled by handle_driftignore_file) or reject nested ignore files
-    if rel_path.name in DRIFT_IGNORE_FILE_NAME_LIST:
-        return None
-
-    # 4. Skip drift_hooks/ if requested (e.g. during payload rendering pass)
-    # This flag is for allowing 'drift_hooks/drift_hooks' directory.
-    if skip_drift_hooks and is_relative_to(rel_path, Path(DRIFT_HOOKS_DIR_NAME)):
-        return None
-
-    dest_rel_str, was_rendered = render_or_copy_file(
-        rel_path=rel_path,
-        src_dir=src_dir,
-        dest_dir=dest_dir,
-        drift_root=drift_root,
-        pkg_config=pkg_config,
-        render_engines=render_engines,
+    all_items = list_folder_paths(
+        src_dir=src_dir_to_render,
+        base_rel=src_dir_to_render,
+        resolve_symlinks=True,
+        dir_mode=DirMode.ONLY_EMPTY_DIR,
     )
 
-    _validate_not_driftignore_target(
-        file_path=file_path,
-        target_rel_path=dest_rel_str,
-        package_name=pkg_config.name,
-        is_template=was_rendered,
-    )
+    initial_nodes: list[Node] = []
+    for item in all_items:
+        rel = item.relative_to(src_dir_to_render)
 
-    return Path(dest_rel_str), was_rendered
-
-
-def render_subfolder_entries(
-    src_dir: Path,
-    dest_dir: Path,
-    drift_root: Path,
-    pkg_config: PackageConfig,
-    render_engines: RenderEngineRegistry,
-    written_destinations: Optional[Dict[str, Path]] = None,
-    rendered_files: Optional[List[str]] = None,
-    copied_files: Optional[List[str]] = None,
-    dest_prefix: Path = Path("."),
-    skip_drift_hooks: bool = False,
-) -> None:
-    """Renders or copies all files in src_dir into dest_dir, tracking collisions and file manifests."""
-    from ..core.folder_diff import list_folder_paths
-
-    written = written_destinations if written_destinations is not None else {}
-    files = list_folder_paths(src_dir, resolve_symlinks=True, dir_mode=DirMode.ONLY_EMPTY_DIR)
-    for file in files:
-        res = render_package_file_entry(
-            rel_path=file,
-            src_dir=src_dir,
-            dest_dir=dest_dir,
-            drift_root=drift_root,
-            pkg_config=pkg_config,
-            render_engines=render_engines,
-            skip_drift_hooks=skip_drift_hooks,
-        )
-        if res is None:
+        # 1. Skip if the file is the package config file or its template
+        if pkg_config.is_package_config_file(item):
             continue
 
-        output_subpath, was_rendered = res
-        dest_key = (dest_prefix / output_subpath).as_posix() if dest_prefix != Path(".") else output_subpath.as_posix()
-        if dest_key in written:
-            prev_file = written[dest_key]
-            raise RenderCollisionError(
-                f"Multiple source files in package '{pkg_config.name}' render to the same destination path '{dest_key}': "
-                f"'{prev_file}' and '{src_dir / file}'."
+        # 2. Skip any '.*' files (except .drift_ignore) in rendering process and print info
+        if rel.name.startswith(".") and rel.name not in DRIFT_IGNORE_FILE_NAME_LIST:
+            logger.info(
+                f"ℹ️  [SKIP] Skipping hidden file '{rel}' in package rendering. "
+                "All hidden files must use the 'dot-' prefix in source templates."
             )
-        written[dest_key] = src_dir / file
-        if rendered_files is not None and was_rendered:
-            rendered_files.append(dest_key)
-        elif copied_files is not None and not was_rendered:
-            copied_files.append(dest_key)
+            continue
+
+        # 3. Skip root .drift_ignore (already handled by handle_driftignore_file)
+        if rel.name in DRIFT_IGNORE_FILE_NAME_LIST:
+            continue
+
+        # 4. Skip drift_hooks/ (handled in Phase 2)
+        if is_relative_to(rel, Path(DRIFT_HOOKS_DIR_NAME)):
+            continue
+
+        # 5. Skip .drift/ internal directory if present
+        if is_relative_to(rel, Path(DRIFT_INTERNAL_DIR_NAME)):
+            continue
+
+        initial_nodes.append(UnknownPathNode(item))
+
+    payload_root = PackagePayloadNode(pkg_name=pkg_name, payload_nodes=initial_nodes)
+
+    env_node = JsonNode(pkg_config.env_resolve.effective_dict)
+    exp_ctx = ExpansionContext(
+        package_name=pkg_name,
+        enable_render=pkg_config.package.enable_render,
+        env_node=env_node,
+        render_engines=effective_engines,
+        cache=workspace_config.render_cache,
+        path_translation=translation_map,
+        drift_root=workspace_config.drift_root,
+    )
+    expand_node_dependencies(payload_root, exp_ctx)
+    return payload_root
 
 
-def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
+# =====================================================================
+# Layer 2: Single-Package Pipeline Orchestration
+# =====================================================================
+
+def handle_driftignore_file(
+    package_dir: Path,
+    render_pkg_dir: Path,
+    dry_run: bool = False,
+) -> None:
     """Handles warning and copying of drift ignore files into .drift/ control plane."""
     package_name = package_dir.name
     misspelled_path = package_dir / DRIFT_IGNORE_LEGACY_FILE_NAME
@@ -249,15 +206,20 @@ def handle_driftignore_file(package_dir: Path, render_pkg_dir: Path) -> None:
                 f"Both '{DRIFT_IGNORE_FILE_NAME}' and legacy '{DRIFT_IGNORE_LEGACY_FILE_NAME}' exist in package '{package_name}'. "
                 f"The misspelled file '{DRIFT_IGNORE_LEGACY_FILE_NAME}' will be ignored; using '{DRIFT_IGNORE_FILE_NAME}'."
             )
-        dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(correct_path, dest_correct)
+        if not dry_run:
+            dest_correct.parent.mkdir(parents=True, exist_ok=True)
+            copy_file(correct_path, dest_correct)
     elif misspelled_path.is_file():
         logger.warning(
             f"Package '{package_name}' contains a misspelled ignore file '{DRIFT_IGNORE_LEGACY_FILE_NAME}'. "
             f"Please rename it to '{DRIFT_IGNORE_FILE_NAME}'."
         )
-        dest_correct.parent.mkdir(parents=True, exist_ok=True)
-        copy_file(misspelled_path, dest_correct)
+        if not dry_run:
+            dest_correct.parent.mkdir(parents=True, exist_ok=True)
+            copy_file(misspelled_path, dest_correct)
+    elif dest_correct.is_file():
+        if not dry_run:
+            dest_correct.unlink()
 
 
 def render_package_files(
@@ -265,113 +227,124 @@ def render_package_files(
     package_dir: Path,
     pkg_config: PackageConfig,
     render_pkg_dir: Path,
-    hook_flags: HookExecFlags,
-    render_engines: RenderEngineRegistry,
+    options: Optional[RenderOptions] = None,
+    render_engines: Optional[RenderEngineRegistry] = None,
 ) -> PackageRenderResult:
-    """
-    Renders package source files, copies static assets, and triggers lifecycle hooks.
-    Package-Level Env should be loaded by the caller of this function.
-    """
+    """Renders package source files, copies static assets, and triggers lifecycle hooks via Merkle DAG digestion."""
     from ..core.ignore import DriftIgnore
     package_name = package_dir.name
     logger.info(f"📦 Rendering package '{package_name}'...")
 
-    # Trigger pre_source hook before reading / processing source files
+    opts = RenderOptions.resolve(options)
+    resolved_hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
+    effective_engines = (
+        render_engines
+        if render_engines is not None
+        else pkg_config.package_render_engines(workspace_config)
+    )
+
+    # 1. Trigger pre_source hook before reading / processing source files
     trigger_pre_source_hook(
         workspace_config=workspace_config,
         package_name=package_name,
-        flags=hook_flags,
+        flags=resolved_hook_flags,
         pkg_config_override=pkg_config,
-        engines_override=render_engines,
+        engines_override=effective_engines,
     )
 
-    handle_driftignore_file(package_dir, render_pkg_dir)
+    # 2. Control plane ignore metadata
+    handle_driftignore_file(package_dir, render_pkg_dir, dry_run=opts.dry_run)
 
-    # 3. Recursively process all other files inside the package source directory to render
-    # Proactively check for nested ignore files and trigger clean validation
+    # 3. Proactively check for nested ignore files and trigger clean validation
     DriftIgnore.load_from_dir(package_dir, is_source=True)
 
-    src_dir_to_render = pkg_config.get_source_directory_to_render(package_dir)
-    if not src_dir_to_render.exists() or not src_dir_to_render.is_dir():
-        raise FileNotFoundError(f"Package '{package_name}' source directory not found: '{src_dir_to_render}'")
-
-    rendered_files: List[str] = []
-    copied_files: List[str] = []
-    written_destinations: Dict[str, Path] = {}
-
-    # Pass 1: Render deployable payload from src_dir_to_render into render_pkg_dir
-    render_subfolder_entries(
-        src_dir=src_dir_to_render,
-        dest_dir=render_pkg_dir,
-        drift_root=workspace_config.drift_root,
+    # 4. Phase 3 AST Merkle DAG construction & expansion
+    payload_root = build_phase3_payload_dag(
+        workspace_config=workspace_config,
         pkg_config=pkg_config,
-        render_engines=render_engines,
-        written_destinations=written_destinations,
-        rendered_files=rendered_files,
-        copied_files=copied_files,
-        skip_drift_hooks=True,
+        package_dir=package_dir,
+        effective_engines=effective_engines,
     )
 
-    # Trigger post_render hook
+    # 5. Digestion & scoped pruning (strictly shielding .drift/)
+    lockfile = RenderLockfile.load_from_dir(render_pkg_dir)
+    ctx = DigestionContext(
+        drift_root=workspace_config.drift_root,
+        package_name=package_name,
+        package_render_dir=render_pkg_dir,
+        lockfile=lockfile,
+        bucket=RenderBucket.PAYLOAD,
+        cache=workspace_config.render_cache,
+        force=opts.no_cache,
+        dry_run=opts.dry_run,
+    )
+
+    digest_render_dag(payload_root, ctx)
+
+    # 6. Gather rendered vs copied files for PackageRenderResult
+    rendered_set = set(ctx.result.rendered_paths)
+    active_path_nodes = [
+        node for node in payload_root.depends_on
+        if isinstance(node, PathNode) and node.dst_path is not None and node.dst_path in rendered_set
+    ]
+    template_nodes, static_nodes = partition(
+        lambda n: isinstance(n, EngineOutputFileNode), active_path_nodes
+    )
+    rendered_files = [
+        to_relative_posix(n.dst_path, render_pkg_dir)
+        for n in template_nodes
+        if n.dst_path is not None
+    ]
+    copied_files = [
+        to_relative_posix(n.dst_path, render_pkg_dir)
+        for n in static_nodes
+        if n.dst_path is not None
+    ]
+
+    # 7. Trigger post_render hook
     pkg_config.hooks.trigger_post_render(
-        flags=hook_flags,
+        flags=resolved_hook_flags,
     )
     logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
+    status = (
+        "UP_TO_DATE"
+        if (ctx.result.rendered_count == 0 and ctx.result.pruned_count == 0 and ctx.result.skipped_count > 0)
+        else "SUCCESS"
+    )
+
     return PackageRenderResult(
         package=package_name,
-        status="SUCCESS",
+        status=status,
         rendered_files=rendered_files,
-        copied_static_files=copied_files
+        copied_static_files=copied_files,
     )
-
-
-def prepare_package_render_engines(
-    workspace_config: WorkspaceConfig,
-    pkg_config: PackageConfig,
-    render_pkg_dir: Path,
-) -> RenderEngineRegistry:
-    """
-    Overlays package-level render engine configurations onto the workspace registry
-    and renders any input file templates into the package's internal sandbox (.drift/render/).
-    """
-    effective_engines = pkg_config.package_render_engines(workspace_config)
-    render_input_templates(
-        engines=effective_engines,
-        drift_root=workspace_config.drift_root,
-        output_dir=render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
-    )
-    return effective_engines
 
 
 def render_package(
     workspace_config: WorkspaceConfig,
     package_dir: Path,
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[RenderOptions] = None,
 ) -> PackageRenderResult:
     """Renders all templates and copies static files in a package folder into the render directory."""
     package_name = package_dir.name
-    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
-
-    # Clear the target package render directory first to avoid sequence issues with template-rendered config files
-    clear_render_package_dir(workspace_config, package_name)
+    opts = RenderOptions.resolve(options)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
 
     render_pkg_dir = workspace_config.render_path / package_name
 
     pkg_config = PackageConfig.from_source_dir(
         package_dir=package_dir,
-        workspace_config=workspace_config
+        workspace_config=workspace_config,
+        dry_run=opts.dry_run,
     )
 
     scoped_flags = replace(hook_flags, load_envs=False)
+    scoped_opts = replace(opts, flags=scoped_flags)
 
     with pkg_config.package_envs():
-        # Stage 2 & 2.5: Merge package render engines and render intermediate input templates
-        effective_engines = prepare_package_render_engines(
-            workspace_config=workspace_config,
-            pkg_config=pkg_config,
-            render_pkg_dir=render_pkg_dir,
-        )
+        # Stage 2: Merge package render engines
+        effective_engines = pkg_config.package_render_engines(workspace_config)
 
         # Phase 2: Render lifecycle hooks into render/<pkg>/.drift/hooks/
         from .render_hooks import render_hooks
@@ -379,6 +352,7 @@ def render_package(
             workspace_config=workspace_config,
             pkg_config=pkg_config,
             engines_override=effective_engines,
+            dry_run=scoped_opts.dry_run,
         )
 
         # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
@@ -390,42 +364,41 @@ def render_package(
             return PackageRenderResult(
                 package=package_name,
                 status="SKIPPED",
-                skip_reason=failure_reason
+                skip_reason=failure_reason,
             )
-            
+
         return render_package_files(
             workspace_config=workspace_config,
             pkg_config=pkg_config,
             package_dir=package_dir,
             render_pkg_dir=render_pkg_dir,
-            hook_flags=scoped_flags,
+            options=scoped_opts,
             render_engines=effective_engines,
         )
 
 
+# =====================================================================
+# Layer 3: Primitive Orchestration & Multi-Package Batch
+# =====================================================================
+
 def run_primitive_2_render_packages(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    flags: Optional[HookExecFlags] = None,
+    options: Optional[RenderOptions] = None,
 ) -> RenderResult:
     """Renders specific packages (if provided) or all enabled packages in the workspace."""
-    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
+    opts = RenderOptions.resolve(options)
+
     results: List[PackageRenderResult] = []
     errors: List[Tuple[str, str, Exception]] = []
-    # 1. Resolve and render engine input dependencies first (e.g. mustache.envst.json -> mustache.json)
-    render_input_templates(
-        engines=workspace_config.render_engine_configs,
-        drift_root=workspace_config.drift_root,
-        output_dir=workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME,
-    )
 
-    # 2. Identify and render packages
+    # 1. Identify and render packages
     active_packages = workspace_config.filter_source_packages_by_target(target_packages=target_pkgs or None)
     for package_name in active_packages:
         package_dir = workspace_config.source_path / package_name
         try:
             pkg_res = render_package(
-                workspace_config, package_dir, flags=hook_flags
+                workspace_config, package_dir, options=opts
             )
             results.append(pkg_res)
         except Exception as e:
@@ -451,7 +424,7 @@ def run_primitive_2_render_packages(
             results.append(PackageRenderResult(
                 package=package_name,
                 status="FAILED",
-                error=err_msg
+                error=err_msg,
             ))
 
     if errors:
@@ -460,12 +433,12 @@ def run_primitive_2_render_packages(
             status="FAILED",
             packages=results,
             error_package=errors[0][0],
-            error_message=f"Template rendering failed for package(s): {failed_pkgs_str}"
+            error_message=f"Template rendering failed for package(s): {failed_pkgs_str}",
         )
 
     return RenderResult(
         status="SUCCESS",
-        packages=results
+        packages=results,
     )
 
 
@@ -482,14 +455,14 @@ def run_primitive_3_commit_render_repo(
     from ..utils.git_utils import commit_repo_changes
 
     render_dir = workspace_config.render_path
-    
+
     committed = commit_repo_changes(
         repo_path=render_dir,
         commit_message=commit_message,
         target_pkgs=target_pkgs,
-        repo_name="render repo"
+        repo_name="render repo",
     )
-    
+
     if committed:
         logger.info(f"✨ Committed render repo changes with message: '{commit_message}'")
     else:

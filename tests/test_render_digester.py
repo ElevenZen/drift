@@ -10,9 +10,12 @@ from drift.config.render_engine_config import RenderEngineConfig
 from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     RENDER_LOCK_FILE_NAME,
+    DRIFT_KEEP_FILE_NAME,
 )
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_lock import RenderLockfile, RenderBucket
@@ -73,21 +76,28 @@ class TestScopedPruning(unittest.TestCase):
             main_cfg = pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
             local_cfg = pkg_render / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
 
+            intermediate_dir = pkg_render / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME
+            intermediate_dir.mkdir(parents=True)
+            intermediate_local_cfg = intermediate_dir / PACKAGE_CONFIG_LOCAL_FILE_NAME
+
             main_cfg.write_text("name = 'pkg_a'")
             local_cfg.write_text("enabled = true")
+            intermediate_local_cfg.write_text("enabled = true")
 
-            # Active set only includes main_cfg; local_cfg is obsolete
+            # Active set only includes main_cfg; local_cfg and intermediate_local_cfg are obsolete
             active_paths = [main_cfg]
 
             # 1. Dry run
             dry_pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=True)
-            self.assertEqual(dry_pruned, [local_cfg])
+            self.assertEqual(sorted(dry_pruned), sorted([local_cfg, intermediate_local_cfg]))
             self.assertTrue(local_cfg.is_file())
+            self.assertTrue(intermediate_local_cfg.is_file())
 
             # 2. Live execution
             pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=False)
-            self.assertEqual(pruned, [local_cfg])
+            self.assertEqual(sorted(pruned), sorted([local_cfg, intermediate_local_cfg]))
             self.assertFalse(local_cfg.exists())
+            self.assertFalse(intermediate_local_cfg.exists())
             self.assertTrue(main_cfg.is_file())
 
     def test_prune_obsolete_hooks(self) -> None:
@@ -327,7 +337,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             result = digest_render_dag(payload_root, ctx)
 
             # Verifications
-            self.assertEqual(result.rendered_count, 3)
+            self.assertEqual(result.rendered_count, 4)  # static + tmpl + dir + .drift_keep
             self.assertEqual(result.skipped_count, 0)
             self.assertEqual(result.pruned_count, 0)
 
@@ -339,6 +349,7 @@ class TestDigestRenderDAG(unittest.TestCase):
             self.assertEqual(tmpl_out.read_text(), "KEY=VALUE")
 
             self.assertTrue(dir_out.is_dir())
+            self.assertTrue((dir_out / DRIFT_KEEP_FILE_NAME).is_file())
 
             # Lockfile created on disk
             lock_disk = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / RENDER_LOCK_FILE_NAME

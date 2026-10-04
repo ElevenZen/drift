@@ -220,17 +220,25 @@ def execute_init(drift_root: Path, force: bool = False, no_git_root: bool = Fals
         print(SerializableModel().to_json())
 
 
-def execute_render(drift_root: Path, package_names: Sequence[str] = (), json_mode: bool = False, no_hooks: bool = False) -> None:
+def execute_render(
+    drift_root: Path,
+    package_names: Sequence[str] = (),
+    json_mode: bool = False,
+    no_hooks: bool = False,
+    no_cache: bool = False,
+    dry_run: bool = False,
+) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
-    from ..render.render_package import run_primitive_2_render_packages
+    from ..render.render_package import run_primitive_2_render_packages, RenderOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="render")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
+    options = RenderOptions(no_cache=no_cache, dry_run=dry_run, flags=flags)
     res = run_primitive_2_render_packages(
-        workspace_config, target_pkgs=package_names, flags=flags
+        workspace_config, target_pkgs=package_names, options=options
     )
     if json_mode:
         print(res.to_json())
@@ -582,6 +590,7 @@ def execute_deploy(
     no_hooks: bool = False,
     reinstall: bool = False,
     no_deps: bool = False,
+    no_cache: bool = False,
 ) -> None:
     """Core function to execute transactional deploy workflow, shared by both CLI backends."""
     from ..primitives.deploy_repo import run_primitive_deploy_pipeline_with_error_handling
@@ -590,7 +599,7 @@ def execute_deploy(
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="deploy")
     workspace_config = load_workspace_config_default(drift_root)
-    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
+    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode, no_cache=no_cache)
     res = run_primitive_deploy_pipeline_with_error_handling(
         workspace_config=workspace_config,
         packages_to_deploy=package_names,

@@ -18,6 +18,7 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
     DRIFT_HOOKS_DIR_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
@@ -97,7 +98,14 @@ class TestRenderPhase1AndPhase2(unittest.TestCase):
         self.assertEqual(pkg_config.env_resolve.effective_dict.get("greeting"), "hello_phase1_success")
 
         # Check intermediate rendered candidate file
-        intermediate = self.render_dir / "my_pkg" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        intermediate = (
+            self.render_dir
+            / "my_pkg"
+            / DRIFT_INTERNAL_DIR_NAME
+            / DRIFT_INTERNAL_RENDER_DIR_NAME
+            / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME
+            / PACKAGE_CONFIG_FILE_NAME
+        )
         self.assertTrue(intermediate.is_file())
         self.assertIn("hello_phase1_success", intermediate.read_text(encoding="utf-8"))
 
@@ -143,7 +151,14 @@ def configure_package(context):
 
         # First run creates both in intermediate sandbox
         load_package_config_from_source_dir(pkg_dir, self.workspace_config)
-        local_rendered = self.render_dir / "prune_pkg" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME
+        local_rendered = (
+            self.render_dir
+            / "prune_pkg"
+            / DRIFT_INTERNAL_DIR_NAME
+            / DRIFT_INTERNAL_RENDER_DIR_NAME
+            / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME
+            / PACKAGE_CONFIG_LOCAL_FILE_NAME
+        )
         self.assertTrue(local_rendered.is_file())
 
         # Delete local config in src/

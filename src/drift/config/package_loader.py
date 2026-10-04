@@ -39,6 +39,7 @@ from ..core.constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
 )
 from ..core.exceptions import ConfigError, mark_logged
 from ..utils.path_utils import is_relative_to
@@ -261,18 +262,41 @@ def load_package_config_rendered(
 def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional["WorkspaceConfig"] = None,
+    dry_run: bool = False,
 ) -> PackageConfig:
     """Loads, transforms, and validates the package configuration from its source directory."""
     if workspace_config is not None:
-        return _load_package_config_with_workspace(package_dir, workspace_config)
+        return _load_package_config_with_workspace(package_dir, workspace_config, dry_run=dry_run)
     return _load_package_config_static_fallback(package_dir)
 
 
 def _load_package_config_with_workspace(
     package_dir: Path,
     workspace_config: "WorkspaceConfig",
+    dry_run: bool = False,
 ) -> PackageConfig:
     """Full Phase 1 Merkle DAG compilation pipeline for package configuration."""
+    if dry_run:
+        with tempfile.TemporaryDirectory(prefix=f"{package_dir.name}_cfg_dry_") as tmp_dir:
+            temp_pkg_render_dir = Path(tmp_dir) / package_dir.name
+            return _execute_load_package_config_dag(
+                package_dir=package_dir,
+                workspace_config=workspace_config,
+                pkg_render_dir=temp_pkg_render_dir,
+            )
+    return _execute_load_package_config_dag(
+        package_dir=package_dir,
+        workspace_config=workspace_config,
+        pkg_render_dir=workspace_config.render_path / package_dir.name,
+    )
+
+
+def _execute_load_package_config_dag(
+    package_dir: Path,
+    workspace_config: "WorkspaceConfig",
+    pkg_render_dir: Path,
+) -> PackageConfig:
+    """Executes the Phase 1 Merkle DAG compilation pipeline into specified pkg_render_dir."""
     pkg_name = package_dir.name
     candidate_rendered_names = [PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_LOCAL_FILE_NAME]
     candidate_source_files: List[Path] = []
@@ -296,7 +320,12 @@ def _load_package_config_with_workspace(
     from ..utils.env_utils import env_resolve_scope
 
     src_prefix = workspace_config.source_path / pkg_name
-    dst_prefix = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
+    dst_prefix = (
+        pkg_render_dir
+        / DRIFT_INTERNAL_DIR_NAME
+        / DRIFT_INTERNAL_RENDER_DIR_NAME
+        / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME
+    )
     translation_map = {
         src_prefix / PACKAGE_CONFIG_FILE_NAME: dst_prefix / PACKAGE_CONFIG_FILE_NAME,
         src_prefix / PACKAGE_CONFIG_LOCAL_FILE_NAME: dst_prefix / PACKAGE_CONFIG_LOCAL_FILE_NAME,
@@ -323,7 +352,7 @@ def _load_package_config_with_workspace(
     for cand in candidate_source_files:
         cand_nodes.append(UnknownPathNode(cand))
 
-    dst_path = workspace_config.render_path / pkg_name / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+    dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
     cfg_node = PackageConfigNode(
         dst_path=dst_path,
         sources=cand_nodes,
@@ -334,7 +363,6 @@ def _load_package_config_with_workspace(
 
     expand_node_dependencies(cfg_node, exp_ctx)
 
-    pkg_render_dir = workspace_config.render_path / pkg_name
     lockfile = RenderLockfile.load_from_dir(pkg_render_dir)
     ctx = DigestionContext(
         drift_root=workspace_config.drift_root,

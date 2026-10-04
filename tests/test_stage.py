@@ -269,10 +269,6 @@ class TestStageRepo(unittest.TestCase):
         # Check .drift_ignore was copied to install/.drift/
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_ignored", DRIFT_INTERNAL_DIR_NAME, DRIFT_IGNORE_FILE_NAME)))
 
-        # Native linker maintains 1:1 structural fidelity: no synthetic ignore files are generated
-        from drift.primitives.stage_repo import DRIFT_GENERATED_FILES
-        self.assertEqual(DRIFT_GENERATED_FILES, ())
-
     def test_stage_structural_fidelity_without_drift_ignore(self) -> None:
         """Verifies that even if a package does not have a .drift_ignore file, 1:1 fidelity is maintained with no generated ignore file."""
         from drift.render.render_package import render_package
@@ -293,8 +289,6 @@ class TestStageRepo(unittest.TestCase):
         run_primitive_4_stage_render_to_install(self.workspace_config, "pkg_no_ignore")
 
         # Verify 1:1 structural fidelity
-        from drift.primitives.stage_repo import DRIFT_GENERATED_FILES
-        self.assertEqual(DRIFT_GENERATED_FILES, ())
         self.assertTrue(os.path.isfile(os.path.join(self.install_dir, "pkg_no_ignore", "config.txt")))
 
     def test_stage_misspelled_driftignore_warning_and_handling(self) -> None:

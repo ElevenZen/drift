@@ -7,6 +7,8 @@ from .path_utils import (
     decode_dot_prefix,
     relative_path_between,
     compute_relative_symlink_target,
+    to_relative_path,
+    to_relative_posix,
 )
 from .file_inspect import (
     file_hash,
@@ -18,6 +20,7 @@ from .file_inspect import (
     tree_files,
     is_temp_file,
     is_concrete_dir,
+    is_internal_lock_file,
     is_diff_candidate,
     find_symlink_ancestor,
 )
@@ -51,6 +54,7 @@ from .toml_utils import (
     merge_toml,
 )
 from .config_utils import (
+    partition,
     get_first_from,
     get_nested_from,
     set_nested_val,
@@ -132,6 +136,8 @@ __all__ = [
     "decode_dot_prefix",
     "relative_path_between",
     "compute_relative_symlink_target",
+    "to_relative_path",
+    "to_relative_posix",
     "file_hash",
     "is_binary_file",
     "normalize_newlines",
@@ -141,6 +147,7 @@ __all__ = [
     "tree_files",
     "is_temp_file",
     "is_concrete_dir",
+    "is_internal_lock_file",
     "is_diff_candidate",
     "find_symlink_ancestor",
     "copy_file",
@@ -165,6 +172,7 @@ __all__ = [
     "parse_toml",
     "dump_toml",
     "merge_toml",
+    "partition",
     "get_first_from",
     "get_nested_from",
     "set_nested_val",

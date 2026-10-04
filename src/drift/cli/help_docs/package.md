@@ -93,7 +93,7 @@ For complex packages requiring programmatic adjustments:
 Each package can encapsulate its own template compilation rules:
 *   Define custom package-specific engines or selectively patch global workspace engines.
 *   **Field-Level Inheritance**: Override only `input_file` while inheriting `suffix` and `render_command` from workspace defaults.
-*   **Intermediate Sandboxing (`.drift/render/`)**: Package-specific input templates compile into `render/<pkg>/.drift/render/`, keeping control-plane artifacts strictly isolated from deployable dotfiles.
+*   **Intermediate Sandboxing (`.drift/render/`)**: Package-specific input templates compile into `render/<pkg>/.drift/render/package/`, keeping control-plane artifacts strictly isolated from deployable dotfiles.
 
 ### 8. 🔍 Fully-Controlled Directories (`fully_controlled_dirs` / FCDs)
 Designate directories under `target_directory` (e.g. `plugins/`, `themes/`) that are 100% owned by the package:

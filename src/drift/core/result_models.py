@@ -11,7 +11,6 @@ from datetime import datetime
 from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
-from ..utils.path_utils import is_relative_to
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry
@@ -132,11 +131,16 @@ class ReverseSyncResult(SerializableModel):
 @dataclass
 class PackageRenderResult(SerializableModel):
     package: str
-    status: str = "SUCCESS"  # "SUCCESS", "SKIPPED", "FAILED"
+    status: str = "SUCCESS"  # "SUCCESS", "SKIPPED", "FAILED", "UP_TO_DATE"
     rendered_files: List[str] = field(default_factory=list)
     copied_static_files: List[str] = field(default_factory=list)
     skip_reason: Optional[str] = None
     error: Optional[str] = None
+
+    @property
+    def is_success(self) -> bool:
+        """Returns True if the package rendered successfully or was already up-to-date."""
+        return self.status in ("SUCCESS", "UP_TO_DATE")
 
 
 @dataclass

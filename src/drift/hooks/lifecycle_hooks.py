@@ -56,7 +56,7 @@ from ..core.constants import (
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
 )
 from ..utils.env_utils import env_scope
-from ..utils.path_utils import is_relative_to
+from ..utils.path_utils import to_relative_path
 from ..core.exceptions import HookExecutionError, HookMissingError, mark_logged
 
 logger = logging.getLogger(__name__)
@@ -79,6 +79,8 @@ class HookExecFlags:
     inject_non_interactive_envs: bool = True
     raise_on_error: bool = True
     load_envs: bool = True
+    no_cache: bool = False
+    dry_run: bool = False
 
     @classmethod
     def resolve(
@@ -346,6 +348,24 @@ def execute_hook_script(
     if not cwd.is_absolute():
         raise ValueError(f"Working directory '{cwd}' must be absolute.")
 
+    exec_flags = HookExecFlags.resolve(flags)
+
+    if exec_flags.dry_run:
+        logger.info(f"🪝  [DRY-RUN] Would run hook: {hook_name} ({pkg}) -> {hook_path}")
+        return HookResult(
+            command="hook",
+            package=pkg,
+            hook_name=hook_name,
+            status="SUCCESS",
+            exit_code=0,
+            hook_path=str(hook_path),
+            cwd=str(cwd),
+            sudo=False,
+            duration_ms=0.0,
+            stdout="",
+            stderr="",
+        )
+
     logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
     logger.debug(f"   Script: {hook_path}")
     logger.debug(f"   CWD:    {cwd}")
@@ -354,7 +374,6 @@ def execute_hook_script(
     timeout_seconds = timeout_override if timeout_override is not None else metadata.hooks.timeout
 
     start_time = time.perf_counter()
-    exec_flags = HookExecFlags.resolve(flags)
 
     env_injections = (
         DEFAULT_HOOK_NON_INTERACTIVE_ENVS
@@ -488,12 +507,7 @@ def resolve_hook_exec_path(
         pkg_config=pkg_config,
         engines_override=engines_override,
     )
-    sub_rel = (
-        rel_hook_path.relative_to(Path(DRIFT_HOOKS_DIR_NAME))
-        if is_relative_to(rel_hook_path, Path(DRIFT_HOOKS_DIR_NAME))
-        else rel_hook_path
-    )
-    hook_exec_path = hook_dest_dir / sub_rel
+    hook_exec_path = hook_dest_dir / to_relative_path(rel_hook_path, Path(DRIFT_HOOKS_DIR_NAME))
     if not hook_exec_path.exists():
         raise HookMissingError(
             f"Lifecycle hook file '{rel_hook_path}' was not produced after rendering.",

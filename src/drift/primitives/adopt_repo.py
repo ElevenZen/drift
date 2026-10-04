@@ -121,6 +121,7 @@ from ..utils.git_utils import (
     commit_staged_repo_changes,
 )
 from ..utils.file_ops import remove_file_or_empty_dir, remove_tree, copy_file, ensure_dir
+from ..utils.path_utils import to_relative_path, to_relative_posix
 from ..hooks.lifecycle_hooks import HookExecFlags, trigger_pre_source_hook
 from ..utils.editor_utils import launch_single_file_editor, launch_side_by_side_editor
 
@@ -173,10 +174,7 @@ def assert_source_file_clean(
         )
         return
 
-    try:
-        rel_dirty = src_file.relative_to(drift_root)
-    except ValueError:
-        rel_dirty = src_file
+    rel_dirty = to_relative_path(src_file, drift_root)
 
     raise RuntimeError(
         f"The source file '{rel_dirty}' has uncommitted local modifications!\n"
@@ -830,7 +828,7 @@ def _prompt_non_empty_directory_deletion_interactive(
     print(f"\n⚠️  [NON-EMPTY] Host deleted directory '{rel_path}', but source directory contains files!")
     contained_items = (
         sorted(
-            p.relative_to(src_dir).as_posix() + ("/" if p.is_dir() else "")
+            to_relative_posix(p, src_dir) + ("/" if p.is_dir() else "")
             for p in src_dir.rglob("*")
         )
         if src_dir.is_dir()

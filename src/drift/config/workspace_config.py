@@ -58,6 +58,7 @@ from ..utils.env_utils import (
 )
 from ..utils.path_utils import expand_path
 from ..utils.config_utils import (
+    partition,
     get_first_from,
     get_nested_from,
     parse_bool_value,
@@ -492,7 +493,9 @@ class WorkspaceConfig:
         if not target_packages:
             return []
 
-        remaining_packages = [x for x in target_packages if x not in available_packages]
+        matching_packages, remaining_packages = partition(
+            lambda x: x in available_packages, target_packages
+        )
         if remaining_packages:
             if not missing_ok:
                 if error_context_dir:
@@ -506,7 +509,7 @@ class WorkspaceConfig:
                 else:
                     logger.info(f"Package '{pkg}' not found. Skipping.")
 
-        return [x for x in target_packages if x in available_packages]
+        return matching_packages
 
     @classmethod
     def from_dict(

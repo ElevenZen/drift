@@ -97,7 +97,7 @@ install/
 └── .git/                       # Dedicated state Git repository
 ```
 
-* **100% 1:1 Structural Fidelity**: Every package directory `install/<pkg>/` mirrors `render/<pkg>/` strictly (`DRIFT_GENERATED_FILES = ()`). All payload files, `.drift_ignore`, `drift_package.toml`, and control-plane directories (`.drift/hooks/`, `.drift/render/`) are preserved strictly 1:1.
+* **100% 1:1 Structural Fidelity**: Every package directory `install/<pkg>/` mirrors `render/<pkg>/` strictly. All payload files, `.drift_ignore`, `drift_package.toml`, and control-plane directories (`.drift/hooks/`, `.drift/render/`) are preserved strictly 1:1.
 * **State Registry Database (`state.toml`)**:
   * Authoritative record of package statuses (`installed`, `installing`, `failed`, `migrating`).
   * Records active target directories, deployment methods, and file manifests.

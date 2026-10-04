@@ -65,7 +65,7 @@ import logging
 import shutil
 from collections import Counter
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
 
@@ -90,6 +90,7 @@ from ..core.folder_delivery import (
 from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, RestoredBackup, UninstallResult
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
 from ..hooks.lifecycle_hooks import HookExecFlags
+from ..utils.config_utils import partition
 from ..utils.file_ops import prune_empty_parents, remove_tree
 from ..utils.path_utils import decode_dot_prefix, encode_dot_prefix, is_relative_to
 from ..utils.process_utils import assert_can_escalate
@@ -114,6 +115,11 @@ class UninstallConfig:
     detach: bool = False
     no_deps: bool = False
     flags: Optional[HookExecFlags] = None
+
+    def get_hook_flags(self, settings=None) -> HookExecFlags:
+        """Derives HookExecFlags, assigning dry_run from UninstallConfig to HookExecFlags."""
+        base = HookExecFlags.resolve(self.flags, settings=settings)
+        return replace(base, dry_run=self.dry_run)
 
 
 @dataclass(frozen=True)
@@ -472,12 +478,12 @@ def assert_packages_uninstall_ready(
         SubprocessError: If sudo escalation is required but unavailable.
         HookMissingError: If any configured uninstall hook files are missing.
     """
-    hook_flags = HookExecFlags.resolve(config.flags, settings=workspace_config.settings)
+    hook_flags = config.get_hook_flags(settings=workspace_config.settings)
 
     # 1. Dependency integrity check on remaining installed packages
     if not (config.force or config.no_deps):
         all_installed = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
-        remaining_pkgs = set(all_installed) - set(packages_to_uninstall.keys())
+        _, remaining_pkgs = partition(lambda pkg: pkg in packages_to_uninstall, all_installed)
         remaining_metadata = {
             pkg: (
                 PackageConfig.from_install_dir(workspace_config.install_path / pkg, workspace_config)
@@ -625,7 +631,7 @@ def execute_uninstall_packages(
     if cfg.dry_run:
         logger.info(f"🔍 [DRY-RUN] Simulating uninstallation for {len(plan.ordered_packages)} package(s).")
 
-    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
 
     for pkg in plan.ordered_packages:
         ctx = plan.contexts[pkg]

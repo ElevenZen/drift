@@ -667,6 +667,61 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         output = stderr_capture.getvalue()
         self.assertIn("'drift install' is not a Drift command", output)
 
+    def test_cli_render_dry_run_flags_across_backends(self) -> None:
+        """Verifies that --dry-run and -n flags on render pass dry_run=True."""
+        from drift.cli import run_argparse_cli
+
+        for cmd, handler_target in [("render", "execute_render")]:
+            for flag in ["--dry-run", "-n"]:
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        main(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Typer {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("dry_run"), f"Typer {cmd} with {flag} did not pass dry_run=True")
+
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        run_argparse_cli(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Argparse {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("dry_run"), f"Argparse {cmd} with {flag} did not pass dry_run=True")
+
+    def test_cli_deploy_rejects_dry_run_flag(self) -> None:
+        """Verifies that --dry-run and -n flags are rejected on 'deploy' command."""
+        from drift.cli import run_argparse_cli
+
+        for flag in ["--dry-run", "-n"]:
+            with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    run_argparse_cli(["-C", self.drift_root, "deploy", flag, "pkg_a"])
+                self.assertEqual(ctx.exception.code, 2)
+
+            with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+                with self.assertRaises(SystemExit) as ctx:
+                    main(["-C", self.drift_root, "deploy", flag, "pkg_a"])
+                self.assertEqual(ctx.exception.code, 2)
+
+    def test_cli_no_cache_flags_across_backends(self) -> None:
+        """Verifies that -c, --clean, and --no-cache flags on render and deploy pass no_cache=True."""
+        from drift.cli import run_argparse_cli
+
+        for cmd, handler_target in [("render", "execute_render"), ("deploy", "execute_deploy")]:
+            for flag in ["-c", "--clean", "--no-cache"]:
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        main(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Typer {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("no_cache"), f"Typer {cmd} with {flag} did not pass no_cache=True")
+
+                with patch(f"drift.cli.cli_handlers.{handler_target}") as mock_action:
+                    with patch("sys.stdout", StringIO()):
+                        run_argparse_cli(["-C", self.drift_root, cmd, flag, "pkg_a"])
+                    self.assertTrue(mock_action.called, f"Argparse {cmd} with {flag} was not called")
+                    _, kwargs = mock_action.call_args
+                    self.assertTrue(kwargs.get("no_cache"), f"Argparse {cmd} with {flag} did not pass no_cache=True")
+
 
 if __name__ == "__main__":
     unittest.main()

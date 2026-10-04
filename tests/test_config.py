@@ -22,6 +22,7 @@ from drift.core.constants import (
 )
 from drift.utils.toml_utils import parse_toml
 from drift.utils.config_utils import (
+    partition,
     get_first_from,
     get_nested_from,
     validate_known_keys,
@@ -70,6 +71,27 @@ package_config_template_name = add_envst(PACKAGE_CONFIG_FILE_NAME)
 set_test_mode(True)
 
 class TestConfigParser(unittest.TestCase):
+    def test_partition(self) -> None:
+        numbers = [1, 2, 3, 4, 5, 6]
+        evens, odds = partition(lambda n: n % 2 == 0, numbers)
+        self.assertEqual(evens, [2, 4, 6])
+        self.assertEqual(odds, [1, 3, 5])
+
+        # All true
+        trues, falses = partition(lambda x: True, [1, 2])
+        self.assertEqual(trues, [1, 2])
+        self.assertEqual(falses, [])
+
+        # All false
+        trues, falses = partition(lambda x: False, [1, 2])
+        self.assertEqual(trues, [])
+        self.assertEqual(falses, [1, 2])
+
+        # Empty iterable
+        trues, falses = partition(lambda x: True, [])
+        self.assertEqual(trues, [])
+        self.assertEqual(falses, [])
+
     def test_get_first_from(self) -> None:
         data = {"alias_b": "value_b", "disabled_flag": False}
         self.assertEqual(get_first_from(data, ["alias_a", "alias_b", "alias_c"]), "value_b")
@@ -1360,16 +1382,7 @@ class TestConfigLoaders(unittest.TestCase):
             sudo = $MY_PKG_SUDO
             """, encoding="utf-8")
 
-        # 4. Resolve engines input file dependencies first (which resolves envsubst input_file to absolute env.sh path)
-        from drift.render.render_input import render_input_templates
-        from drift.core.constants import DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_RENDER_DIR_NAME
-        render_input_templates(
-            workspace_config.render_engine_configs,
-            workspace_config.drift_root,
-            workspace_config.render_path / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
-        )
-
-        # 5. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
+        # 4. Load package config from directory (which should render package.envst.toml -> render/my_pkg/drift_package.toml)
         pkg_config = PackageConfig.from_source_dir(pkg_dir, workspace_config)
 
         # Verify fields and values
@@ -2608,37 +2621,6 @@ class TestPathSuffixHelpers(unittest.TestCase):
             add_envst_str("drift_root/config/drift.local.toml"),
             "drift_root/config/drift.local.envst.toml"
         )
-
-
-class TestPackageHooksConfiguredPaths(unittest.TestCase):
-    def test_package_hooks_get_configured_hook_paths(self) -> None:
-        from drift.config.package_hooks import PackageHooks
-
-        base1 = Path("/workspace/src/pkg1")
-        base2 = Path("/workspace/render/pkg1")
-        external = Path("/opt/shared/hooks/global.sh")
-
-        hooks = PackageHooks(
-            pre_source=base1 / "scripts/pre_source.sh",
-            post_render=base2 / "scripts/post_render.sh",
-            post_install=external,
-        )
-
-        # 1. Without relative_to, returns absolute POSIX paths
-        abs_paths = hooks.get_configured_hook_paths()
-        self.assertEqual(abs_paths, {
-            "/workspace/src/pkg1/scripts/pre_source.sh",
-            "/workspace/render/pkg1/scripts/post_render.sh",
-            "/opt/shared/hooks/global.sh",
-        })
-
-        # 2. With relative_to bases, returns relative paths for matched bases and absolute for external
-        rel_paths = hooks.get_configured_hook_paths(relative_to=[base1, base2])
-        self.assertEqual(rel_paths, {
-            "scripts/pre_source.sh",
-            "scripts/post_render.sh",
-            "/opt/shared/hooks/global.sh",
-        })
 
 
 class TestLegacyPackageConfigFallback(unittest.TestCase):

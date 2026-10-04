@@ -71,6 +71,8 @@ DRIFT_INTERNAL_DIR_NAME = ".drift"
 DRIFT_HOOKS_DIR_NAME = "drift_hooks"
 DRIFT_INTERNAL_HOOKS_DIR_NAME = "hooks"
 DRIFT_INTERNAL_RENDER_DIR_NAME = "render"
+DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME = "workspace"
+DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME = "package"
 RENDER_LOCK_FILE_NAME = "render_lock.json"
 FORBIDDEN_RENDER_ENGINE_SUFFIXES: frozenset = frozenset({
     "drift_package",
@@ -81,11 +83,8 @@ FORBIDDEN_RENDER_ENGINE_SUFFIXES: frozenset = frozenset({
     "drift",
 })
 INTERNAL_RENDER_COMMAND = "internal"
-DRIFT_GENERATED_FILES: Tuple[str, ...] = ()
 DEFAULT_PACKAGE_HOOK_FILE_NAME = "drift_package.py"
 PACKAGE_HOOK_FUNCTION_NAME = "configure_package"
-
-MANAGED_CONFIG_FILES = DRIFT_GENERATED_FILES
 FORBIDDEN_PACKAGE_NAMES: frozenset = frozenset({
     CONFIG_DIR_NAME,
     "install",
@@ -442,7 +441,7 @@ TEMPORARY_FILE_PATTERNS = (
 )
 
 DEFAULT_DIFF_EXCLUDE_PATTERNS = tuple(f":(exclude){p}" for p in TEMPORARY_FILE_PATTERNS) + (
-    f":(exclude)*{RENDER_LOCK_FILE_NAME}*",
+    f":(exclude,glob)**/{DRIFT_INTERNAL_DIR_NAME}/{RENDER_LOCK_FILE_NAME}",
 )
 
 DEFAULT_INTERNAL_GITIGNORE_CONTENT = (

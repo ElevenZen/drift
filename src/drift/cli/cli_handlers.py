@@ -190,6 +190,7 @@ def handle_deploy(
     no_hooks: bool = False,
     reinstall: bool = False,
     no_deps: bool = False,
+    no_cache: bool = False,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
     cli_ctx = _extract_cli_context(ctx)
@@ -204,6 +205,7 @@ def handle_deploy(
             no_hooks=no_hooks,
             reinstall=reinstall,
             no_deps=no_deps,
+            no_cache=no_cache,
         )
 
 
@@ -361,20 +363,30 @@ def handle_reverse_sync(
 def handle_render(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    no_cache: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """(Low-Level) Render templates of a package or all enabled packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_render(drift_root, pkgs, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_render(
+            drift_root,
+            pkgs,
+            json_mode=cli_ctx.json_mode,
+            no_hooks=no_hooks,
+            no_cache=no_cache,
+            dry_run=dry_run,
+        )
         if not cli_ctx.json_mode:
+            prefix = "[DRY-RUN] " if dry_run else ""
             if pkgs:
                 pkgs_str = ", ".join(pkgs)
-                cli_ctx.print_message(f"[bold yellow]✨[/bold yellow] [bold green]Successfully rendered package(s) '{pkgs_str}'![/bold green]", f"✨ Successfully rendered package(s) '{pkgs_str}'!")
+                cli_ctx.print_message(f"[bold yellow]✨[/bold yellow] [bold green]{prefix}Successfully rendered package(s) '{pkgs_str}'![/bold green]", f"✨ {prefix}Successfully rendered package(s) '{pkgs_str}'!")
             else:
-                cli_ctx.print_message("[bold yellow]✨[/bold yellow] [bold green]Successfully rendered all enabled packages![/bold green]", "✨ Successfully rendered all enabled packages!")
+                cli_ctx.print_message(f"[bold yellow]✨[/bold yellow] [bold green]{prefix}Successfully rendered all enabled packages![/bold green]", f"✨ {prefix}Successfully rendered all enabled packages!")
 
 
 def handle_render_commit(

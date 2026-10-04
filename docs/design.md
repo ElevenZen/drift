@@ -172,7 +172,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
-*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`), including `.drift_keep` stub files. No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
+*   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity, including `.drift_keep` stub files. No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
 *   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
 *   **Mechanism**: Compiles a declarative staging plan (`PackageStagePlan`) detailing operations (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`) via single-pass folder comparison between `render/` and `install/`. Synchronizes files using the unified delivery engine.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
@@ -546,8 +546,8 @@ Render engines often require dynamic input parameters (such as `mustache` needin
 *   **The Transitive Resolution Chain**: 
     If the system detects that an engine's `input_file` matches another engine's template suffix, it automatically compiles the input file first. This resolution is fully transitive/recursive: a multi-level dependency chain (e.g., Engine A -> Engine B -> Engine C -> Engine D) is allowed and gets compiled in topological order from leaf to root.
     *   *Example*: The `mustache` engine registers `input_file = "mustache.envst.json"`. Since `.envst.json` matches the `envsubst` suffix (`envst`), the compiler first renders `config/mustache.envst.json` via the `envsubst` engine.
-    *   The compiled static output is saved inside the sandbox under `render/.drift/render/mustache.json`.
-    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/.drift/render/mustache.json`).
+    *   The compiled static output is saved inside the package's sandbox under `render/<pkg>/.drift/render/workspace/mustache.json` (or `render/<pkg>/.drift/render/package/<rel_path>` for package-scoped engine inputs).
+    *   The `mustache` engine is then invoked, substituting `%i` with the absolute path of this rendered file (`render/<pkg>/.drift/render/workspace/mustache.json`).
 
 #### 3. Single-Dependency Constraint per Engine
 While multi-level transitive chains are fully supported, each engine's input file can match at most one other engine's suffix pattern. Thus, every engine is limited to a single direct dependency (a 1-to-1 matching relationship per level), forming a dependency tree/forest (without cycles) rather than a complex multi-parent DAG. Double extensions or nested suffixes are strictly evaluated at the outermost matching level:
@@ -555,13 +555,13 @@ While multi-level transitive chains are fully supported, each engine's input fil
 
 #### 4. Directed Acyclic Graph (DAG) Cyclic Detection
 Because inputs can depend on the outputs of other engines, compilation order must follow a strictly sequential pipeline.
-*   Before any rendering begins, the compiler builds a dependency graph of all registered render engines and executes a **Cycle Detection** algorithm.
-*   If any circular dependency is detected (e.g., Engine A's input depends on Engine B's output, and Engine B's input depends on Engine A's output), compilation is instantly aborted with a `CyclicDependencyError` to prevent infinite rendering loops.
+*   During AST Merkle DAG expansion (`expand_node_dependencies`), candidate files and their engine input dependencies are resolved recursively.
+*   During tree expansion, Drift tracks visiting engines and active path expansion chains to detect circular dependency loops (e.g., Engine A's input depends on Engine B's output, and Engine B's input depends on Engine A's output). If a cycle is detected, expansion immediately halts with a descriptive `ValueError` detailing the cyclic chain (`A -> B -> A`).
 
-#### 5. Graceful Disabling & Deferred Execution Check
-If a registered engine's `input_file` is not specified, is empty, or is missing on disk (whether as a static path or a templated dependency), the compilation engine handles it gracefully:
-*   **Initialization Warning**: During the workspace bootstrapping phase (`render_input_templates`), instead of raising a fatal crash, the engine logs a clear, descriptive warning and sets the engine's resolved input file to `Path("")` (an empty path). This allows other independent render processes to initialize and compile normally.
-*   **Deferred Runtime Check**: The safety safeguard is deferred to actual template rendering. If any template file in the repository relies on a gracefully disabled engine, the core rendering pipeline (`resolve_render_template_args`) checks for the empty `Path("")` input path. If found, it halts compilation immediately with a descriptive `ValueError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
+#### 5. Graceful Disabling & Runtime Safety Check
+If a registered engine's `input_file` is not specified or is disabled, the compilation engine handles it gracefully:
+*   **Disabled Status**: If an engine configures an empty or missing input file, it is marked as disabled (`is_disabled = True`).
+*   **Runtime Safeguard**: If any template file in the repository relies on a disabled engine, the core rendering pipeline checks the engine status and halts compilation immediately with a descriptive `RenderError` (e.g., `Render engine '<name>' is disabled or has an invalid/empty input file`), ensuring that no silent partial configurations are deployed.
 
 #### 6. Package-Level Render Engines & Workspace Engine Cooperation
 The primary motivation of **Package-Level Render Engine Configuration** (`[render.<name>]` tables in `drift_package.toml`) is to provide a **self-contained configuration space** for each package. Rather than forcing packages to rely on ambient global workspace settings or shared external inputs, packages encapsulate their own render engines, custom template rules, and localized input files (e.g. `src/<pkg>/env.sh` or `src/<pkg>/data.json`) directly within their directory boundary, ensuring complete modularity and portability across diverse workspaces.
@@ -578,10 +578,10 @@ The primary motivation of **Package-Level Render Engine Configuration** (`[rende
      - Package configuration: `base_dir = src/<package_name>/`
    - All downstream engine stages operate strictly on canonical, absolute file paths without ambiguous working directory guessing. Resolving paths outside `base_dir` or using `base_dir` itself as `input_file` is strictly prohibited and guarded at ingestion.
 
-3. **Multi-Phase Compilation & Intermediate Sandboxing (`.drift/`)**:
-   - **Phase 1 (Workspace Bootstrap)**: Global workspace render engines compile workspace inputs into `render/.drift/render/` and render the package configuration (`drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
-   - **Phase 2 (Engine Overlay & Package Dependency Re-evaluation)**: Effective render engines re-evaluate their input dependency tree (`render_input_templates`) and compile package-specific input templates directly into the package intermediate sandbox `render/<pkg>/.drift/render/`.
-   - **Phase 3 (Package File Compilation)**: Source templates under `src/<pkg>/` are compiled into `render/<pkg>/` using the effective engines under active package environment scope (`drift_package_*`, `[env.override]`, etc.).
+3. **Multi-Phase Merkle DAG Compilation & Sandboxing (`.drift/`)**:
+   - **Phase 1 (Package Config Compilation)**: Global workspace render engines compile package configuration templates via Merkle DAG into `render/<pkg>/.drift/drift_package.toml`.
+   - **Phase 2 (Lifecycle Hooks)**: Effective render engines compile hooks under `drift_hooks/` via Merkle DAG into `render/<pkg>/.drift/hooks/`.
+   - **Phase 3 (Package Payload & Native Engine Input Digestion)**: AST Merkle DAG expands payload dotfiles and intermediate engine input templates natively (e.g. `config/<rel_path> -> render/<pkg>/.drift/render/workspace/<rel_path>` and `src/<pkg>/<rel_path> -> render/<pkg>/.drift/render/package/<rel_path>`), topologically digesting and caching compilation steps with granular Merkle hashing.
    - **Phase 4 (Downstream Cooperation)**: Downstream primitives (`drift reverse-sync`, `drift adopt`, `drift add`) resolve template suffixes against these effective package engines, ensuring seamless two-way synchronization.
 
 4. **Engine Scope & Boundary Invariants**:
@@ -1383,12 +1383,12 @@ Deployment can be triggered in **Bulk Mode** (evaluating all declared active pac
     - **Sandbox Render Commit (Primitive 3)**: Automatically commits the sandbox changes inside the local `render/` repository to maintain a full history of declarative rendering.
 
 *   **Staging Database (Primitive 4 - `stage_repo.py`)**:
-    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 100% 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`), including `.drift_keep` sentinel files. No synthetic files or ignore artifacts are generated in `install/`.
+    - **Structural Fidelity Invariant**: Staging preserves the physical directory structure and contents of `render/<package>` into `install/<package>` with 100% 1:1 fidelity, including `.drift_keep` sentinel files. No synthetic files or ignore artifacts are generated in `install/`.
     - **Installation Exclusions**: Skips any packages that declared `enable_install` as `false` (this declarative exclusion is strictly preserved and never bypassed, even when `--force` is used).
     - **Staging Conflict Safeguard**: If any targeted package in the state database `install/` contains uncommitted local modifications, staging aborts immediately (unless `--force` is used).
     - **Staging Transaction Interlock**: Sets the package state to transient `"staging"` inside `state.toml` before any changes are written. If a package is found in `"staging"` or `"installing"` state from a previous crash, staging is aborted unless `--force` is provided.
     - **Reconciliation & Synchronization Pipeline**:
-        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity (`DRIFT_GENERATED_FILES = ()`). Compiles changes into an inspectable `PackageStagePlan` with `FileAction`s (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`).
+        1. *Single-Pass Plan Compilation (`plan_package_stage`)*: Compares `render/<package>` and `install/<package>` without ignore filtering (`ignore_handler=None`), maintaining 100% 1:1 structural fidelity. Compiles changes into an inspectable `PackageStagePlan` with `FileAction`s (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`).
         2. *Unified Delivery Execution (`execute_package_stage`)*: Dispatches actions to `execute_delivery_actions`, performing physical file deletion, directory creation, file copying, and fast permission synchronization.
         3. *Ignore & Metadata Synchronization*: All `.drift/` control plane metadata (`.drift_ignore`, `drift_package.toml`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1 without extra ignore shims.
     - **Staged Transaction Complete (or Dry-Run Simulation)**: In live execution, updates the state registry database to stable `"staged"` and returns a structured `StageResult` containing changed packages and their `PackageStagePlan`s. In dry-run mode (`dry_run=True`), compiles and returns the full `StageResult` with zero mutations to `install/` or `state.toml`.

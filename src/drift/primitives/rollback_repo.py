@@ -53,6 +53,7 @@ from .install_repo import run_primitive_5_install, InstallConfig
 from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
 from .package_assertions import resolve_package_uninstall_order
 from ..hooks.lifecycle_hooks import HookExecFlags
+from ..utils.config_utils import partition
 
 logger = logging.getLogger(__name__)
 
@@ -106,16 +107,18 @@ def validate_rollback_packages(
 
     eligible_pkgs = state_registry.get_rollback_eligible_packages(discovered_packages)
     packages_to_rollback = {pkg for pkg, _ in eligible_pkgs}
-    packages_state_wrong = set(discovered_packages) - packages_to_rollback
+    valid_pkgs, packages_state_wrong = partition(
+        lambda pkg: pkg in packages_to_rollback, discovered_packages
+    )
     if packages_state_wrong:
         raise RuntimeError(
             "The following packages are not in a failed midway/conflict state ('staging', 'staged', or 'installing'): "
-            f"[{','.join(sorted(packages_state_wrong))}]. "
+            f"[{','.join(sorted(set(packages_state_wrong)))}]. "
             "Running 'rollback' now will bypass reverse synchronization and hard-reset "
             "all configuration files on your system, destroying any local drift. "
             "Use --force to override and rollback anyway."
         )
-    return sorted(packages_to_rollback)
+    return sorted(set(valid_pkgs))
 
 
 # =====================================================================
@@ -223,16 +226,13 @@ def run_primitive_8_rollback_recovery(
     logger.info(f"Reverting local state database for packages: {packages_to_rollback}")
 
     install_base = workspace_config.install_path
-    packages_to_reinstall: List[str] = []
-    packages_to_uninstall: List[str] = []
-
     # 3. Classify packages into previously committed (reinstallable) vs first-time (uninstallable)
-    for pkg in packages_to_rollback:
-        if is_package_committed_in_install_head(install_base, pkg):
-            packages_to_reinstall.append(pkg)
-            reset_install_package_to_head(install_base, pkg)
-        else:
-            packages_to_uninstall.append(pkg)
+    packages_to_reinstall, packages_to_uninstall = partition(
+        lambda pkg: is_package_committed_in_install_head(install_base, pkg),
+        packages_to_rollback,
+    )
+    for pkg in packages_to_reinstall:
+        reset_install_package_to_head(install_base, pkg)
 
     # 4. Resolve unified reverse topological order across all packages being rolled back
     rollback_metadata = {

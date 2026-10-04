@@ -315,11 +315,11 @@ The `[render.<name>]` section defines how templates in `src/` are compiled into 
 If an engine's `input_file` is itself a template produced by another render engine (for example, `mustache.envst.json` which has the `.envst` suffix of the `envsubst` engine):
 1. Drift detects the dependency relationship between engines.
 2. Drift compiles the input template first using the prerequisite engine.
-3. The compiled artifact in `render/.drift/render/` is then supplied as the input file `%i` to the downstream engine.
+3. The compiled artifact in `render/<pkg>/.drift/render/workspace/` is then supplied as the input file `%i` to the downstream engine.
 
 ### 3. Two-Phase Sandbox Compilation
-* **Phase 1 (Workspace Scope)**: Global workspace engines compile workspace input templates into `render/.drift/render/` and compile package configuration templates (e.g. `drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`).
-* **Phase 2 (Package Scope)**: Package-level engines (defined in `drift_package.toml`) are overlaid onto workspace engines, and package payload files are compiled into `render/<pkg>/`.
+* **Phase 1 (Workspace Scope)**: Global workspace engines compile package configuration templates (e.g. `drift_package.envst.toml` $\rightarrow$ intermediate `render/<pkg>/.drift/render/package/drift_package.toml` $\rightarrow$ final evaluated `render/<pkg>/.drift/drift_package.toml`).
+* **Phase 2 (Package Scope)**: Package-level engines (defined in `drift_package.toml`) are overlaid onto workspace engines, workspace and package engine input templates are rendered into `render/<pkg>/.drift/render/workspace/` and `render/<pkg>/.drift/render/package/`, and package payload files are compiled into `render/<pkg>/`.
 
 
 ## 📦 Package Enablement & Fleet Targeting Rules ([packages.enable])

@@ -36,12 +36,11 @@ Drift executes template compilation through an orchestrated two-phase pipeline:
   * **Built-in `python_envsubst`**: Native environment variable substitution requiring zero external subprocesses or external dependencies.
   * **External Engines**: Executes third-party CLI tools (`envsubst`, `mustache`, `jinja2`, `tera-cli`) with automatic fallback to built-in `python_envsubst` if external `envsubst` command encounters issues.
 * **Phase 1: Workspace Global Compilation Pipeline**:
-  * Compiles workspace-level engine input dependencies into `render/.drift/render/`.
-  * Compiles templated package configuration files (`drift_package.*.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). Only global workspace engines can compile package configs.
+  * Compiles templated package configuration files (`drift_package.*.toml` $\rightarrow$ intermediate `render/<pkg>/.drift/render/package/drift_package.toml` $\rightarrow$ final evaluated `render/<pkg>/.drift/drift_package.toml`). Only global workspace engines can compile package configs.
 * **Phase 2: Package-Scoped Compilation Pipeline**:
   * Loads the compiled package configuration from `render/<pkg>/.drift/drift_package.toml`.
   * Evaluates package requirements and overlays package-level render engines.
-  * Compiles package-level input dependencies into `render/<pkg>/.drift/render/`.
+  * Compiles engine input dependencies into `render/<pkg>/.drift/render/workspace/` (for workspace inputs) and `render/<pkg>/.drift/render/package/` (for package inputs).
   * Triggers the `pre_source` lifecycle hook.
   * Copies `.drift_ignore` into `render/<pkg>/.drift/.drift_ignore`.
   * **Pass 1 (Payload Pass)**: Compiles deployable dotfiles from `src/<pkg>/` into `render/<pkg>/`, stripping engine suffixes (e.g. `dot-zshrc.drift.envst` $\rightarrow$ `dot-zshrc`). Skips hidden files not using the required `dot-` prefix and excludes `drift_hooks/`.

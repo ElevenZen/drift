@@ -62,7 +62,6 @@ from pathlib import Path
 from typing import List, Union, Optional, Sequence, Tuple, Dict, Mapping, Iterable
 from dataclasses import dataclass, field
 
-from ..core.constants import DRIFT_GENERATED_FILES
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import (
     PackageConfig,
@@ -173,9 +172,6 @@ def plan_package_stage(
         ignore_handler=None,
         resolve_symlinks=False,
     )
-
-    # Exclude DRIFT_GENERATED_FILES from deleted list as they are generated directly in install/
-    diff.deleted = [p for p in diff.deleted if p.name not in DRIFT_GENERATED_FILES]
 
     actions = plan_actions_from_folder_diff(
         diff=diff,

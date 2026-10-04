@@ -31,14 +31,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional, Callable, cast, TYPE_CHECKING
+from typing import Dict, List, Set, Optional, Callable, cast, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry, RenderEngineConfig
 
-from ..core.constants import CONFIG_DIR_NAME
-from ..core.exceptions import RenderCollisionError
-from ..utils.path_utils import is_relative_to
+from ..core.constants import (
+    CONFIG_DIR_NAME,
+    DRIFT_IGNORE_FILE_NAME,
+    DRIFT_IGNORE_FILE_NAME_LIST,
+    DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
+)
+from ..core.exceptions import RenderCollisionError, ConfigError
+from ..utils.path_utils import is_relative_to, encode_dot_prefix, to_relative_posix
 from .render_cache import RenderCache
 from .render_dag import (
     Node,
@@ -70,6 +78,8 @@ class ExpansionContext:
     path_translation: Dict[Path, Path] = field(default_factory=dict)
     node_refs: Dict[str, Node] = field(default_factory=dict)
     collision_map: Dict[Path, Path] = field(default_factory=dict)
+    visiting_paths: Set[str] = field(default_factory=set)
+    visiting_engines: List[str] = field(default_factory=list)
 
     def get_or_register_node(self, key: str, factory: Callable[[], Node]) -> Node:
         """Retrieves existing node by canonical key or creates and registers it."""
@@ -101,18 +111,21 @@ class ExpansionContext:
         """Generates path translation rules for engine input files.
 
         Workspace engine inputs:
-            config/<rel_path> -> render/.drift/render/<rel_path>
+            config/<rel_path> -> render/<package_name>/.drift/render/workspace/<rel_path>
         Package engine inputs:
-            src/<package_name>/<rel_path> -> render/<package_name>/.drift/render/<rel_path>
+            src/<package_name>/<rel_path> -> render/<package_name>/.drift/render/package/<rel_path>
         """
+        pkg_render_dir = self.drift_root / "render" / self.package_name
+        render_internal = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
         return {
-            self.drift_root / Path("config"): self.drift_root / Path("render/.drift/render"),
-            self.drift_root / Path(f"src/{self.package_name}"): self.drift_root / Path(f"render/{self.package_name}/.drift/render"),
+            self.drift_root / CONFIG_DIR_NAME: render_internal / DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
+            self.drift_root / "src" / self.package_name: render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
         }
 
     def derive_engine_input_context(self) -> "ExpansionContext":
         """Creates an ExpansionContext specialized for expanding engine input files,
-        using engine input translation rules while sharing node_refs and collision_map.
+        using engine input translation rules while sharing node_refs, collision_map,
+        and circularity detection state.
         """
         return ExpansionContext(
             package_name=self.package_name,
@@ -123,6 +136,8 @@ class ExpansionContext:
             path_translation=self.get_engine_input_translation_rules(),
             node_refs=self.node_refs,
             collision_map=self.collision_map,
+            visiting_paths=self.visiting_paths,
+            visiting_engines=self.visiting_engines,
             drift_root=self.drift_root,
         )
 
@@ -188,6 +203,27 @@ def assert_no_render_collisions(
         )
 
 
+def assert_not_driftignore_template_target(
+    dst_path: Path,
+    file_path: Path,
+    package_name: str,
+    drift_root: Path,
+) -> None:
+    """Validates that a template does not dynamically target .drift_ignore.
+
+    Raises:
+        ConfigError: If dst_path decodes or matches .drift_ignore.
+    """
+    target_name = encode_dot_prefix(Path(dst_path.name)).name
+    if target_name in DRIFT_IGNORE_FILE_NAME_LIST:
+        pkg_render_dir = drift_root / f"render/{package_name}"
+        target_rel = to_relative_posix(dst_path, pkg_render_dir)
+        raise ConfigError(
+            f"Package '{package_name}' cannot render template '{file_path.name}' to '{target_rel}'. "
+            f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
+        )
+
+
 def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
     """Creates a concrete Node for a file path based on running cache, engine matching,
     path translation, and collision detection.
@@ -214,11 +250,21 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
     ctx.collision_map[dst_path] = file_path
 
     if engine:
+        assert_not_driftignore_template_target(dst_path, file_path, ctx.package_name, ctx.drift_root)
         # Recursively expand input template if engine declares an input_file
         input_node: Optional[Node] = None
         if engine.input_file is not None:
-            input_ctx = ctx.derive_engine_input_context()
-            input_node = expand_unknown_path(engine.input_file, input_ctx)
+            if engine.name in ctx.visiting_engines:
+                cycle_str = " -> ".join(ctx.visiting_engines + [engine.name])
+                raise ValueError(
+                    f"Cyclic dependency detected: render engine inputs form a cycle: {cycle_str}."
+                )
+            ctx.visiting_engines.append(engine.name)
+            try:
+                input_ctx = ctx.derive_engine_input_context()
+                input_node = expand_unknown_path(engine.input_file, input_ctx)
+            finally:
+                ctx.visiting_engines.pop()
         template_node = IndependentFileNode(file_path)
         engine_node = ctx.get_engine_node(engine)
 
@@ -239,6 +285,8 @@ def create_node_for_dir(dir_path: Path, ctx: ExpansionContext) -> Node:
     cached_hashes = ctx.cache.get(dst_path, src_path=dir_path)
     if cached_hashes is not None:
         return CachedNode(dst_path, src_path=dir_path, hashes=cached_hashes)
+    assert_no_render_collisions(dst_path, dir_path, ctx.collision_map, ctx.package_name)
+    ctx.collision_map[dst_path] = dir_path
     return DirectoryNode(dst_path=dst_path, src_path=dir_path)
 
 
@@ -246,10 +294,21 @@ def expand_unknown_path(path: Path, ctx: ExpansionContext) -> Node:
     """Expands an UnknownPathNode into its concrete cached, template, or static node,
     reusing existing references from node_refs via get_or_register_path_node.
     """
-    return ctx.get_or_register_path_node(
-        path,
-        lambda: create_node_for_dir(path, ctx) if path.is_dir() else create_node_for_file(path, ctx),
-    )
+    key = to_node_key(path)
+    if key in ctx.node_refs:
+        return ctx.node_refs[key]
+    if key in ctx.visiting_paths:
+        raise ValueError(
+            f"Cyclic dependency detected: path '{path.as_posix()}' forms a cycle during expansion."
+        )
+    ctx.visiting_paths.add(key)
+    try:
+        return ctx.get_or_register_path_node(
+            path,
+            lambda: create_node_for_dir(path, ctx) if path.is_dir() else create_node_for_file(path, ctx),
+        )
+    finally:
+        ctx.visiting_paths.discard(key)
 
 
 def expand_node_dependencies(root: Node, ctx: ExpansionContext) -> None:

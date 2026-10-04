@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from drift.core.ignore import DriftIgnore
-from drift.core.constants import MANAGED_CONFIG_FILES, DRIFT_IGNORE_FILE_NAME
+from drift.core.constants import DRIFT_IGNORE_FILE_NAME
 
 
 class TestDriftIgnore(unittest.TestCase):
@@ -18,8 +18,8 @@ class TestDriftIgnore(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_managed_config_files_always_ignored_even_without_ignore_file(self) -> None:
-        """Verifies that MANAGED_CONFIG_FILES and .drift/ control plane paths are always ignored."""
+    def test_control_plane_paths_always_ignored_even_without_ignore_file(self) -> None:
+        """Verifies that .drift/ control plane paths are always ignored."""
         # Create a DriftIgnore with no patterns
         ignore = DriftIgnore([])
 
@@ -37,8 +37,8 @@ class TestDriftIgnore(unittest.TestCase):
         self.assertFalse(ignore.match_path(Path("normal_file.txt")))
         self.assertFalse(ignore.match_path(Path("subdir/normal_file.txt")))
 
-    def test_filter_deployable_files_excludes_managed_config_files(self) -> None:
-        """Verifies that filter_deployable_files filters out MANAGED_CONFIG_FILES, .drift/, and ignored patterns."""
+    def test_filter_deployable_files_excludes_control_plane_paths(self) -> None:
+        """Verifies that filter_deployable_files filters out .drift/ control plane paths and ignored patterns."""
         # Setup files in pkg_dir
         (self.pkg_dir / ".drift").mkdir(parents=True, exist_ok=True)
         (self.pkg_dir / ".drift" / "drift_package.toml").touch()

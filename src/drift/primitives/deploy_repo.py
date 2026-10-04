@@ -9,7 +9,11 @@ from typing import List, Optional, Tuple, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..utils.git_utils import get_git_status_porcelain, assert_repo_can_commit
 from .reverse_sync import run_primitive_1_reverse_sync
-from ..render.render_package import run_primitive_2_render_packages, run_primitive_3_commit_render_repo
+from ..render.render_package import (
+    run_primitive_2_render_packages,
+    run_primitive_3_commit_render_repo,
+    RenderOptions,
+)
 from .stage_repo import (
     prepare_stage_packages,
     execute_stage_packages,
@@ -180,7 +184,9 @@ def execute_sequential_compile_and_apply(
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
         render_res = run_primitive_2_render_packages(
-            workspace_config, target_pkgs=target_pkgs, flags=hook_flags
+            workspace_config,
+            target_pkgs=target_pkgs,
+            options=RenderOptions.resolve(hook_flags),
         )
         if render_res.status == "FAILED":
             raise RuntimeError(render_res.error_message or f"{failed_step} failed.")

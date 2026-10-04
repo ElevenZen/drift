@@ -90,7 +90,7 @@ import datetime
 import shlex
 import collections
 import itertools
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Sequence, Mapping, Iterable, Union, Iterator
 from contextlib import contextmanager
@@ -164,6 +164,11 @@ class InstallConfig:
     dry_run: bool = False
     no_deps: bool = False
     flags: Optional[HookExecFlags] = None
+
+    def get_hook_flags(self, settings=None) -> HookExecFlags:
+        """Derives HookExecFlags, assigning dry_run from InstallConfig to HookExecFlags."""
+        base = HookExecFlags.resolve(self.flags, settings=settings)
+        return replace(base, dry_run=self.dry_run)
 
 
 @dataclass(frozen=True)
@@ -523,7 +528,7 @@ def install_one_package(
             status="SUCCESS",
         )
 
-    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
     return execute_package_install(
         context=context,
         plan=plan,
@@ -621,7 +626,7 @@ def prepare_install(
     cfg = config if config is not None else InstallConfig()
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
-    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
 
     state_registry = load_state_registry(state_file)
 
@@ -732,7 +737,7 @@ def execute_install(
             dry_run=True,
         )
 
-    hook_flags = HookExecFlags.resolve(cfg.flags, settings=workspace_config.settings)
+    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
     results: List[PackageInstallResult] = []
 
     for pkg in plan.packages_to_install:

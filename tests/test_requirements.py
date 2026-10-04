@@ -346,8 +346,9 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         (pkg_dir / "app.conf").write_text("app settings", encoding="utf-8")
 
+        from drift.render.render_package import RenderOptions
         res = render_package(
-            self.workspace_config, pkg_dir, flags=HookExecFlags(streaming=False)
+            self.workspace_config, pkg_dir, options=RenderOptions(flags=HookExecFlags(streaming=False))
         )
         self.assertEqual(res.status, "SKIPPED")
         self.assertIsNotNone(res.skip_reason)
@@ -380,7 +381,8 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
 
         # Running with no_hooks=True should ignore failing probe hook
         from drift.hooks.lifecycle_hooks import HookExecFlags
-        res = render_package(self.workspace_config, pkg_dir, flags=HookExecFlags(no_hooks=True))
+        from drift.render.render_package import RenderOptions
+        res = render_package(self.workspace_config, pkg_dir, options=RenderOptions(flags=HookExecFlags(no_hooks=True)))
         self.assertEqual(res.status, "SUCCESS")
 
     def test_render_package_templated_probe_hook(self) -> None:

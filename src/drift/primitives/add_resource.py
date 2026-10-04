@@ -68,6 +68,7 @@ from ..core.result_models import (
 from ..utils.path_utils import (
     decode_dot_prefix,
     is_relative_to,
+    to_relative_path,
 )
 from ..core.ignore import DriftIgnore, IgnoreHandler
 from ..core.constants import DirMode
@@ -202,7 +203,7 @@ def assert_no_import_conflicts(
     )
     if conflicts:
         src_on_system, conflict_path = conflicts[0]
-        rel_conflict = conflict_path.relative_to(drift_root)
+        rel_conflict = to_relative_path(conflict_path, drift_root)
         raise RuntimeError(f"Conflict detected: '{src_on_system}' would overwrite existing source '{rel_conflict}'")
 
 
@@ -322,11 +323,7 @@ def execute_add_resources(
 
     if plan.dry_run:
         for action in plan.actions:
-            rel_dest = (
-                action.dst_path.relative_to(workspace_config.drift_root)
-                if action.dst_path and is_relative_to(action.dst_path, workspace_config.drift_root)
-                else action.dst_path
-            )
+            rel_dest = to_relative_path(action.dst_path, workspace_config.drift_root) if action.dst_path else None
             logger.info(f"🔍 [DRY RUN] Would import '{action.src_path}' to '{rel_dest}'")
         return AddResourceResult(
             command="add",
@@ -338,11 +335,7 @@ def execute_add_resources(
         )
 
     for action in plan.actions:
-        rel_dest = (
-            action.dst_path.relative_to(workspace_config.drift_root)
-            if action.dst_path and is_relative_to(action.dst_path, workspace_config.drift_root)
-            else action.dst_path
-        )
+        rel_dest = to_relative_path(action.dst_path, workspace_config.drift_root) if action.dst_path else None
         logger.info(f"📥 Importing: {action.src_path}")
         logger.debug(f"   -> {rel_dest}")
 

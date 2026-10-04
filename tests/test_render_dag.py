@@ -392,14 +392,14 @@ class TestRenderDAG(unittest.TestCase):
         # Main payload output path
         self.assertEqual(root.dst_path, Path("/workspace/render/test_pkg/rendered.html"))
 
-        # Input node should be recursively expanded and translated to .drift/render/
+        # Input node should be recursively expanded and translated to .drift/render/package/
         self.assertIsNotNone(root.input_node)
         self.assertIsInstance(root.input_node, EngineOutputFileNode)
         assert isinstance(root.input_node, EngineOutputFileNode)
-        self.assertEqual(root.input_node.dst_path, Path("/workspace/render/test_pkg/.drift/render/data.json"))
+        self.assertEqual(root.input_node.dst_path, Path("/workspace/render/test_pkg/.drift/render/package/data.json"))
 
     def test_workspace_engine_input_translation(self) -> None:
-        """Validates that workspace engine inputs under config/ are translated to render/.drift/render/."""
+        """Validates that workspace engine inputs under config/ are translated to render/<package>/.drift/render/workspace/."""
         envsubst_engine = MagicMock()
         envsubst_engine.name = "envsubst"
         envsubst_engine.suffix = "envst"
@@ -424,7 +424,7 @@ class TestRenderDAG(unittest.TestCase):
         node = expand_unknown_path(Path("/workspace/config/mustache.envst.json"), input_ctx)
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
-        self.assertEqual(node.dst_path, Path("/workspace/render/.drift/render/mustache.json"))
+        self.assertEqual(node.dst_path, Path("/workspace/render/test_pkg/.drift/render/workspace/mustache.json"))
 
     def test_render_cache_produces_cached_node(self) -> None:
         """Validates that a path pre-populated in RenderCache emits a CachedNode."""
@@ -546,6 +546,129 @@ class TestRenderDAG(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             topological_sort_nodes(node_a)
         self.assertIn("Cyclic dependency detected in render graph", str(cm.exception))
+
+    def test_expand_tree_detects_direct_circular_engine_inputs(self) -> None:
+        """Validates that direct 2-engine cycles (A -> B -> A) raise ValueError during tree expansion."""
+        # Engine A has input handled by Engine B
+        engine_a = MagicMock()
+        engine_a.name = "engine_a"
+        engine_a.suffix = "suf_a"
+        engine_a.input_file = Path("/workspace/src/test_pkg/b.suf_b")
+        engine_a.strip_suffix.return_value = "/workspace/src/test_pkg/output.txt"
+
+        # Engine B has input handled by Engine A
+        engine_b = MagicMock()
+        engine_b.name = "engine_b"
+        engine_b.suffix = "suf_b"
+        engine_b.input_file = Path("/workspace/src/test_pkg/a.suf_a")
+        engine_b.strip_suffix.return_value = "/workspace/src/test_pkg/b.txt"
+
+        def find_engine(f_str: str) -> Any:
+            if f_str.endswith(".suf_a"):
+                return engine_a
+            if f_str.endswith(".suf_b"):
+                return engine_b
+            return None
+
+        mock_registry = MagicMock()
+        mock_registry.find_engine_for_file.side_effect = find_engine
+
+        ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
+            package_name="test_pkg",
+            enable_render=True,
+            env_node=JsonNode({}),
+            render_engines=mock_registry,
+            cache=self.render_cache,
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
+        )
+
+        with self.assertRaises(ValueError) as cm:
+            expand_unknown_path(Path("/workspace/src/test_pkg/main.suf_a"), ctx)
+        self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_b -> engine_a", str(cm.exception))
+
+    def test_expand_tree_detects_self_referencing_engine_inputs(self) -> None:
+        """Validates that self-referencing engine inputs (A -> A) raise ValueError during tree expansion."""
+        engine_a = MagicMock()
+        engine_a.name = "engine_a"
+        engine_a.suffix = "suf_a"
+        engine_a.input_file = Path("/workspace/src/test_pkg/self.suf_a")
+        engine_a.strip_suffix.return_value = "/workspace/src/test_pkg/output.txt"
+
+        mock_registry = MagicMock()
+        mock_registry.find_engine_for_file.side_effect = lambda f: engine_a if f.endswith(".suf_a") else None
+
+        ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
+            package_name="test_pkg",
+            enable_render=True,
+            env_node=JsonNode({}),
+            render_engines=mock_registry,
+            cache=self.render_cache,
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
+        )
+
+        with self.assertRaises(ValueError) as cm:
+            expand_unknown_path(Path("/workspace/src/test_pkg/main.suf_a"), ctx)
+        self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_a", str(cm.exception))
+
+    def test_expand_tree_detects_transitive_circular_engine_inputs(self) -> None:
+        """Validates that multi-level engine cycles (A -> B -> C -> A) raise ValueError during tree expansion."""
+        engine_a = MagicMock(name="engine_a", suffix="suf_a", input_file=Path("/workspace/src/test_pkg/b.suf_b"))
+        engine_a.name = "engine_a"
+        engine_a.strip_suffix.return_value = "/workspace/src/test_pkg/a.txt"
+
+        engine_b = MagicMock(name="engine_b", suffix="suf_b", input_file=Path("/workspace/src/test_pkg/c.suf_c"))
+        engine_b.name = "engine_b"
+        engine_b.strip_suffix.return_value = "/workspace/src/test_pkg/b.txt"
+
+        engine_c = MagicMock(name="engine_c", suffix="suf_c", input_file=Path("/workspace/src/test_pkg/a.suf_a"))
+        engine_c.name = "engine_c"
+        engine_c.strip_suffix.return_value = "/workspace/src/test_pkg/c.txt"
+
+        def find_engine(f_str: str) -> Any:
+            if f_str.endswith(".suf_a"):
+                return engine_a
+            if f_str.endswith(".suf_b"):
+                return engine_b
+            if f_str.endswith(".suf_c"):
+                return engine_c
+            return None
+
+        mock_registry = MagicMock()
+        mock_registry.find_engine_for_file.side_effect = find_engine
+
+        ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
+            package_name="test_pkg",
+            enable_render=True,
+            env_node=JsonNode({}),
+            render_engines=mock_registry,
+            cache=self.render_cache,
+            path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
+        )
+
+        with self.assertRaises(ValueError) as cm:
+            expand_unknown_path(Path("/workspace/src/test_pkg/start.suf_a"), ctx)
+        self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_b -> engine_c -> engine_a", str(cm.exception))
+
+    def test_expand_unknown_path_detects_cyclic_path_expansion(self) -> None:
+        """Validates that a path recursively referencing itself during expansion raises ValueError."""
+        ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
+            package_name="test_pkg",
+            enable_render=False,
+            env_node=JsonNode({}),
+            render_engines=MagicMock(),
+            cache=self.render_cache,
+        )
+
+        test_path = Path("/workspace/loop.txt")
+        ctx.visiting_paths.add(to_node_key(test_path))
+
+        with self.assertRaises(ValueError) as cm:
+            expand_unknown_path(test_path, ctx)
+        self.assertIn("Cyclic dependency detected: path '/workspace/loop.txt' forms a cycle during expansion", str(cm.exception))
 
 
 if __name__ == "__main__":

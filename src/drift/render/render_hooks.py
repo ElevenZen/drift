@@ -32,7 +32,7 @@ from ..core.constants import (
     DirMode,
 )
 from ..core.folder_diff import list_folder_paths
-from ..utils.path_utils import is_relative_to
+from ..utils.path_utils import to_relative_path
 from .render_dag import (
     Node,
     JsonNode,
@@ -144,12 +144,7 @@ def ensure_configured_hook_permissions(
                 logger.debug(f"Could not chmod source hook file '{match.path}': {e}")
 
         # Check rendered file in render/.drift/hooks/
-        sub_rel = (
-            rel_hook.relative_to(Path(DRIFT_HOOKS_DIR_NAME))
-            if is_relative_to(rel_hook, Path(DRIFT_HOOKS_DIR_NAME))
-            else rel_hook
-        )
-        dest_path = hook_dest_dir / sub_rel
+        dest_path = hook_dest_dir / to_relative_path(rel_hook, Path(DRIFT_HOOKS_DIR_NAME))
         if dest_path.is_file():
             try:
                 dest_mode = dest_path.stat().st_mode

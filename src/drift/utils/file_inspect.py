@@ -16,7 +16,8 @@ without modifying it.
     tree_files(dir_path) — Recursive glob returning sorted relative paths.
     is_temp_file(file_name_or_path) — Editor/OS temp file pattern matching.
     is_concrete_dir(path) — Read-only check returning True if the path is a concrete directory (not a symlink).
-    is_diff_candidate(path, ignored_files, base_dir) — Read-only check returning True if path is a candidate file/symlink for diffing.
+    is_internal_lock_file(path, base_dir) — Read-only check returning True if path is the internal render lockfile in .drift/.
+    is_diff_candidate(path, base_dir) — Read-only check returning True if path is a candidate file/symlink for diffing.
     find_symlink_ancestor(file_path, link_target_range) — Walks up to find symlink pointing into range.
 
 ===============================================================================
@@ -30,7 +31,12 @@ import logging
 from pathlib import Path
 from typing import Optional, Union, List, Sequence
 
-from ..core.constants import LineEnding, TEMPORARY_FILE_PATTERNS, DRIFT_GENERATED_FILES
+from ..core.constants import (
+    LineEnding,
+    TEMPORARY_FILE_PATTERNS,
+    RENDER_LOCK_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+)
 from .path_utils import is_relative_to
 
 logger = logging.getLogger(__name__)
@@ -154,18 +160,25 @@ def is_concrete_dir(path: Path) -> bool:
     return path.is_dir() and not path.is_symlink()
 
 
+def is_internal_lock_file(path: Path, base_dir: Optional[Path] = None) -> bool:
+    """Read-only check returning True if the path represents Drift's internal render lockfile in .drift/."""
+    target = (base_dir / path) if base_dir is not None else path
+    return target.name == RENDER_LOCK_FILE_NAME and (
+        target.parent.name == DRIFT_INTERNAL_DIR_NAME or DRIFT_INTERNAL_DIR_NAME in target.parts
+    )
+
+
 def is_diff_candidate(
     path: Path,
-    ignored_files: Sequence[str] = DRIFT_GENERATED_FILES,
     base_dir: Optional[Path] = None,
 ) -> bool:
     """Read-only predicate determining if an entry is a valid candidate file or symlink for diffing.
 
-    Returns False if the entry matches ignored_files or temporary file patterns,
-    or if it is a concrete directory (not a symlink).
+    Returns False if the entry matches the internal render lockfile (.drift/render_lock.json)
+    or temporary file patterns, or if it is a concrete directory (not a symlink).
     """
     target = (base_dir / path) if base_dir is not None else path
-    if target.name in ignored_files or is_temp_file(target):
+    if is_internal_lock_file(target) or is_temp_file(target):
         return False
     return not is_concrete_dir(target)
 

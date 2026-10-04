@@ -119,8 +119,9 @@ This document provides a concise, high-density architecture reference, primitive
 ### [`render/`](../src/drift/render/) (Incremental Render DAG, Cache, & Lockfile)
 *   [`RenderCache`](../src/drift/render/render_cache.py): In-memory cache mapping destination paths (`dst_path`) to `CachedFileEntry(hashes, source_mtime_ns, source_size)`. Injected via `WorkspaceConfig.render_cache`. Features sub-microsecond nanosecond stat fingerprinting (`st_mtime_ns` and `st_size`) to automatically invalidate entries when source files are touched on disk.
 *   [`NodeHashes(own_hash, merkle_hash)`](../src/drift/render/render_cache.py): Immutable container storing own hash and topological Merkle tree hash.
-*   [`PathNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py): Common AST base class for filesystem path nodes (`FileNode`, `DirectoryNode`, `UnknownPathNode`), encapsulating `dst_path` and `src_path` fields and eliminating duplicated path state across derived node types.
+*   [`PathNode(dst_path=None, src_path=None)`](../src/drift/render/render_dag.py): Common AST base class for filesystem path nodes (`FileNode`, `DirectoryNode`, `UnknownPathNode`), encapsulating `dst_path` and `src_path` fields and eliminating duplicated path state across derived node types.
 *   [`FileNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py) & [`DirectoryNode(dst_path, src_path=None)`](../src/drift/render/render_dag.py): Sibling subclasses of `PathNode` representing file assets and directory synchronization targets respectively.
+*   [`UnknownPathNode(src_path)`](../src/drift/render/render_dag.py): Placeholder AST dependency holding an unexpanded input `src_path` in the package source tree before concrete expansion.
 *   [`ExpansionContext(drift_root, package_name, enable_render, env_node, render_engines, cache, ...)`](../src/drift/render/render_expansion.py): Context holding required `cache: RenderCache` and path translation tables to expand files and directories into Merkle tree nodes.
 *   [`DigestionContext(drift_root, package_name, package_render_dir, lockfile, bucket, cache, ...)`](../src/drift/render/render_digester.py): Context carrying required `cache: RenderCache` and `RenderLockfile` into recursive DAG digestion.
 *   [`digest_render_dag(root_node, context) -> DigestionResult`](../src/drift/render/render_digester.py): Digestion engine performing zero-diff file skipping against lockfiles, incremental node caching, and scoped pruning of obsolete `.drift/` internal artifacts and payload files.
@@ -209,7 +210,7 @@ This document provides a concise, high-density architecture reference, primitive
     *   Prohibits running CLI under `sudo` on user-owned workspaces to prevent target path mismatch (`$HOME`/`~` expanding to `/root`) and root-owned file corruption in `render/.git` and `install/.git`.
     *   Permitted only if running as true root (`SUDO_USER` unset) or workspace directory is root-owned (`uid == 0`). Elevated deployment is configured per-package via `sudo = true`.
 7.  **Stage Structural Fidelity Invariant**:
-    *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with complete 1:1 fidelity (`DRIFT_GENERATED_FILES = ()`).
+    *   `install/<pkg>/` mirrors the structure and contents of `render/<pkg>/` with complete 1:1 fidelity.
     *   All package metadata and internal control plane files (`.drift/drift_package.toml`, `.drift/.drift_ignore`, `.drift/hooks/`, `.drift/render/`) are mirrored strictly 1:1.
 8.  **Render Engine Scope & Invariants**:
     *   **Global Engines Only for Package Config**: Dynamic package configuration templates (`src/<pkg>/drift_package.envst.toml`) can only be compiled by global workspace render engines (`drift_workspace.toml`), evaluated during workspace bootstrap.

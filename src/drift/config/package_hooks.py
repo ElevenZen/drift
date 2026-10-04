@@ -9,7 +9,6 @@ Layer 1: Hook Model, Path Normalization & Execution Triggers
         - validate(): Schema and field integrity checks
         - from_dict(): Factory parser with stage base directory resolution
         - get_relative_path(): Package-internal relative path inspector
-        - get_configured_hook_paths(): Multi-base path string resolver
         - trigger(), trigger_probe(), trigger_pre_source(), ...: Execution wrappers
         - assert_hooks_exist(): Read-only validation guard for hook files
     normalize_hook_value(val, base_dir): Normalizes hook string/Path or disabled state
@@ -357,36 +356,6 @@ class PackageHooks:
         )
         hooks.validate(package_name)
         return hooks
-
-    def get_configured_hook_paths(
-        self,
-        relative_to: Optional[Union[Path, Sequence[Path]]] = None
-    ) -> Set[str]:
-        """Returns a set of normalized POSIX path strings for configured hooks.
-
-        If a hook path is inside one of the `relative_to` bases, its relative POSIX path
-        is returned; otherwise, its absolute POSIX path is returned.
-        """
-        bases: List[Path] = (
-            [Path(relative_to)] if isinstance(relative_to, (str, Path))
-            else [Path(b) for b in relative_to] if isinstance(relative_to, (list, tuple, set))
-            else []
-        )
-
-        def _resolve_hook_path_strings(val: Path) -> Set[str]:
-            matching_rel_paths = {
-                val.relative_to(b).as_posix()
-                for b in bases
-                if is_relative_to(val, b)
-            }
-            return matching_rel_paths or {val.as_posix()}
-
-        configured_hooks = filter(None, (getattr(self, h, None) for h in LIFECYCLE_HOOK_NAMES))
-        return {
-            p
-            for hook_val in configured_hooks
-            for p in _resolve_hook_path_strings(hook_val)
-        }
 
     def trigger(
         self,

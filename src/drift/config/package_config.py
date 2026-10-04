@@ -624,12 +624,14 @@ class PackageConfig:
         cls,
         package_dir: Path,
         workspace_config: Optional["WorkspaceConfig"] = None,
+        dry_run: bool = False,
     ) -> "PackageConfig":
         """Loads and resolves package configuration from a package source directory."""
         from .package_loader import load_package_config_from_source_dir
         return load_package_config_from_source_dir(
             package_dir=package_dir,
             workspace_config=workspace_config,
+            dry_run=dry_run,
         )
 
     @classmethod

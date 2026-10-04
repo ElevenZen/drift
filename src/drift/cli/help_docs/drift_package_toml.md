@@ -205,7 +205,7 @@ health = "drift_hooks/health_check.ps1"
 # When overriding an existing engine from drift_workspace.toml, unspecified fields (suffix, render_command)
 # are inherited from workspace configuration, while input_file is overridden.
 # Relative input_file paths are resolved relative to this package's directory (src/<pkg>/). Paths outside the package directory are forbidden.
-# Intermediate input file template outputs are rendered into render/<pkg>/.drift/render/ sandbox.
+# Intermediate input file template outputs are rendered into render/<pkg>/.drift/render/package/ sandbox.
 #
 # Note: 'input_file' fields in render engines are specified as names BEFORE rendering
 # (e.g. "config_data.envst.json" rather than "config_data.json"). Because input files frequently contain
@@ -374,8 +374,8 @@ When a package defines a `[render.<name>]` table for an engine already defined i
 
 ### 2. Multi-Phase Compilation Chain & Sandbox Isolation
 Drift evaluates compilation pipelines across two distinct, isolated phases:
-1. **Phase 1 (Workspace Scope)**: Global workspace engines render workspace input templates into `render/.drift/render/` and compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ `render/<pkg>/.drift/drift_package.toml`). *(Only global workspace engines can compile package configuration templates).*
-2. **Phase 2 (Package Scope)**: Package configurations are loaded from `render/<pkg>/.drift/drift_package.toml`, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/render/`). Package files and templates under `src/<pkg>/` are then compiled using the effective engine registry. *(Engines defined in `drift_package.toml` operate exclusively on package source files).*
+1. **Phase 1 (Workspace Scope)**: Global workspace engines compile templated package configuration files (e.g. `src/<pkg>/drift_package.envst.toml` $\rightarrow$ intermediate `render/<pkg>/.drift/render/package/drift_package.toml` $\rightarrow$ final evaluated `render/<pkg>/.drift/drift_package.toml`). *(Only global workspace engines can compile package configuration templates).*
+2. **Phase 2 (Package Scope)**: Package configurations are loaded from `render/<pkg>/.drift/drift_package.toml`, package engines are overlaid onto workspace engines, and any package-level input templates are rendered into the package's internal sandbox (`render/<pkg>/.drift/render/package/`). Package files and templates under `src/<pkg>/` are then compiled using the effective engine registry. *(Engines defined in `drift_package.toml` operate exclusively on package source files).*
 
 ### 3. Reverse Sync, Add, & Adopt Integration
 All downstream primitives (`drift adopt`, `drift add`, `drift reverse-sync`) automatically respect package-level render engine definitions and suffix mappings when reconciling file modifications, renames, and imports.

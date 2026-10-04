@@ -10,6 +10,8 @@ from unittest.mock import patch, MagicMock
 from drift.core.constants import set_test_mode
 from drift.utils.path_utils import (
     is_relative_to,
+    to_relative_path,
+    to_relative_posix,
     encode_dot_prefix,
     decode_dot_prefix,
     relative_path_between,
@@ -20,6 +22,7 @@ from drift.utils.file_inspect import (
     contents_differ,
     find_symlink_ancestor,
     is_concrete_dir,
+    is_internal_lock_file,
     is_diff_candidate,
 )
 from drift.utils.file_ops import (
@@ -63,6 +66,28 @@ class TestFileUtils(unittest.TestCase):
         mock_path.relative_to.side_effect = ValueError("Different drives: C: vs D:")
         self.assertFalse(is_relative_to(mock_path, self.root))
 
+    def test_to_relative_path(self) -> None:
+        """Verifies to_relative_path returns relative Path when relative, and self as Path fallback otherwise."""
+        child = self.root / "subdir" / "file.txt"
+        self.assertEqual(to_relative_path(child, self.root), Path("subdir/file.txt"))
+        self.assertEqual(to_relative_path(self.root, self.root), Path("."))
+
+        # Unrelated path fallback
+        unrelated = Path("/outside/file.txt")
+        self.assertEqual(to_relative_path(unrelated, self.root), unrelated)
+        self.assertEqual(to_relative_path(self.root, unrelated), self.root)
+
+    def test_to_relative_posix(self) -> None:
+        """Verifies to_relative_posix returns relative POSIX string when relative, and as_posix fallback otherwise."""
+        child = self.root / "subdir" / "file.txt"
+        self.assertEqual(to_relative_posix(child, self.root), "subdir/file.txt")
+        self.assertEqual(to_relative_posix(self.root, self.root), ".")
+
+        # Unrelated path fallback
+        unrelated = Path("/outside/file.txt")
+        self.assertEqual(to_relative_posix(unrelated, self.root), "/outside/file.txt")
+        self.assertEqual(to_relative_posix(self.root, unrelated), self.root.as_posix())
+
     def test_is_concrete_dir(self) -> None:
         """Verifies is_concrete_dir returns True only for real directories and False for files, symlinks, and missing paths."""
         real_dir = self.root / "real_dir"
@@ -86,15 +111,28 @@ class TestFileUtils(unittest.TestCase):
         self.assertFalse(is_concrete_dir(missing_path))
 
     def test_is_diff_candidate(self) -> None:
-        """Verifies is_diff_candidate filters out concrete directories, temp files, and ignored files."""
+        """Verifies is_diff_candidate filters out concrete directories, temp files, and internal lockfiles."""
         sub_dir = self.root / "sub_dir"
         sub_dir.mkdir()
         valid_file = sub_dir / "valid.txt"
         valid_file.write_text("ok")
         temp_file = sub_dir / ".DS_Store"
         temp_file.write_text("junk")
-        ignored_file = sub_dir / "custom_ignored.txt"
-        ignored_file.write_text("ignore me")
+
+        # User file named render_lock.json outside .drift/
+        user_lock_file = sub_dir / "render_lock.json"
+        user_lock_file.write_text("{}")
+
+        # Internal Drift render lockfile inside .drift/
+        internal_drift_dir = sub_dir / ".drift"
+        internal_drift_dir.mkdir()
+        internal_lock_file = internal_drift_dir / "render_lock.json"
+        internal_lock_file.write_text("{}")
+
+        # Other files in .drift/ (must remain valid diff candidates)
+        pkg_toml_file = internal_drift_dir / "drift_package.toml"
+        pkg_toml_file.write_text("[package]\nname = 'test'\n")
+
         symlink_to_file = sub_dir / "link_to_file"
         symlink_to_file.symlink_to(valid_file)
         symlink_to_dir = sub_dir / "link_to_dir"
@@ -103,15 +141,24 @@ class TestFileUtils(unittest.TestCase):
         # 1. Direct path checks
         self.assertTrue(is_diff_candidate(valid_file))
         self.assertTrue(is_diff_candidate(symlink_to_file))
-        self.assertTrue(is_diff_candidate(symlink_to_dir))  # symlinks are inspectable candidates
-        self.assertFalse(is_diff_candidate(sub_dir))        # concrete directory rejected
-        self.assertFalse(is_diff_candidate(temp_file))      # editor/OS temp file rejected
-        self.assertFalse(is_diff_candidate(ignored_file, ignored_files=["custom_ignored.txt"]))
+        self.assertTrue(is_diff_candidate(symlink_to_dir))          # symlinks are inspectable candidates
+        self.assertFalse(is_diff_candidate(sub_dir))                # concrete directory rejected
+        self.assertFalse(is_diff_candidate(temp_file))              # editor/OS temp file rejected
+
+        # Internal lockfile rejected, but user lockfile and control plane configs accepted
+        self.assertTrue(is_internal_lock_file(internal_lock_file))
+        self.assertFalse(is_diff_candidate(internal_lock_file))     # internal lockfile in .drift/ rejected
+        self.assertFalse(is_internal_lock_file(user_lock_file))
+        self.assertTrue(is_diff_candidate(user_lock_file))          # user file named render_lock.json outside .drift/ accepted
+        self.assertFalse(is_internal_lock_file(pkg_toml_file))
+        self.assertTrue(is_diff_candidate(pkg_toml_file))           # drift_package.toml in .drift/ accepted
 
         # 2. Checks with base_dir resolution
         self.assertTrue(is_diff_candidate(Path("sub_dir/valid.txt"), base_dir=self.root))
         self.assertFalse(is_diff_candidate(Path("sub_dir"), base_dir=self.root))
         self.assertFalse(is_diff_candidate(Path("sub_dir/.DS_Store"), base_dir=self.root))
+        self.assertFalse(is_diff_candidate(Path("sub_dir/.drift/render_lock.json"), base_dir=self.root))
+        self.assertTrue(is_diff_candidate(Path("sub_dir/render_lock.json"), base_dir=self.root))
 
     def test_translate_dot_prefixes(self) -> None:
         """Verifies encode_dot_prefix converts 'dot-' to leading '.', skips 'dot-'/'dot-.',

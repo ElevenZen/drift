@@ -184,19 +184,24 @@ class DirectoryNode(PathNode):
         super().__init__(dst_path=dst_path, src_path=src_path)
 
     def digest(self, context: "DigestionContext") -> None:
+        from ..core.constants import DRIFT_KEEP_FILE_NAME
         from .render_digester import check_and_apply_cache
         from .render_hasher import hash_directory_disk, compute_merkle_node_hash
 
+        keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
         if check_and_apply_cache(self, self.dst_path, context):
+            context.result.skipped_paths.append(keep_file)
             return
 
         if not context.dry_run:
             self.dst_path.mkdir(parents=True, exist_ok=True)
+            keep_file.touch()
 
         own_h = hash_directory_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
+        context.result.rendered_paths.append(keep_file)
         context.active_hashes.add(m_h)
         if context.cache is not None:
             context.cache.set(self.dst_path, self.hashes, src_path=self.src_path or self.dst_path)
@@ -215,7 +220,12 @@ class CachedNode(FileNode):
         super().__init__(dst_path=dst_path, src_path=src_path, hashes=hashes)
 
     def digest(self, context: "DigestionContext") -> None:
+        from ..core.constants import DRIFT_KEEP_FILE_NAME
+
         context.result.skipped_paths.append(self.dst_path)
+        keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
+        if keep_file.is_file():
+            context.result.skipped_paths.append(keep_file)
         if self.hashes and self.hashes.merkle_hash:
             context.active_hashes.add(self.hashes.merkle_hash)
 
@@ -312,7 +322,6 @@ class PackageConfigNode(FileNode):
         from ..config.package_config import PackageConfig
         from ..config.package_loader import resolve_and_interpolate_package_config
         from ..hooks.package_hook import apply_package_hook
-        from ..utils.path_utils import is_relative_to
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
         from .render_digester import prune_obsolete_config_files
@@ -374,8 +383,7 @@ class PackageConfigNode(FileNode):
 
         # 7. Update lockfile bucket
         context.lockfile.update_bucket_hashes(RenderBucket.CONFIG, context.active_hashes)
-        if not context.dry_run:
-            context.lockfile.save_to_dir(context.drift_root / context.package_render_dir)
+        context.save_lockfile()
 
         # 8. Model construction
         self.source_files = source_files
@@ -413,8 +421,7 @@ class PackageHooksNode(Node):
         )
         context.result.pruned_paths.extend(pruned)
         context.lockfile.update_bucket_hashes(RenderBucket.HOOKS, context.active_hashes)
-        if not context.dry_run:
-            context.lockfile.save_to_dir(context.drift_root / context.package_render_dir)
+        context.save_lockfile()
 
 
 @dataclass(init=False)
@@ -440,6 +447,5 @@ class PackagePayloadNode(Node):
         )
         context.result.pruned_paths.extend(pruned)
         context.lockfile.update_bucket_hashes(RenderBucket.PAYLOAD, context.active_hashes)
-        if not context.dry_run:
-            context.lockfile.save_to_dir(context.drift_root / context.package_render_dir)
+        context.save_lockfile()
 
