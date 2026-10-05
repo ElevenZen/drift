@@ -330,14 +330,14 @@ Drift provides a strongly typed **6-tier environment variable precedence hierarc
 
 #### 📊 6-Tier Environment Precedence
 
-| Tier | Name | Scope / Source | Description |
-| :--- | :--- | :--- | :--- |
-| **Tier 1** | **CLI Context** | Ambient process / `INITIAL_ENV` | Command-line environment variables (`FOO=bar drift deploy`) always win over configuration files. |
-| **Tier 2** | **Override** | `[env.override]` (Package > Workspace) | Explicit high-priority overrides (e.g. forced application paths or theme variants). |
-| **Tier 3** | **Facts** | Package Facts (`drift_package_*`) > System Facts (`drift_*`) | Auto-probed hardware/OS attributes (`$drift_os`, `$drift_arch`) and package paths. |
-| **Tier 4** | **Secrets** | `[env.secrets]` (Package > Workspace) > `config/secrets.env` | Private credentials and API tokens with log masking (`KEY=****`) and transient scope. |
-| **Tier 5** | **Default** | `[env.default]` (Package > Workspace) | Standard user configuration values and baseline service endpoints. |
-| **Tier 6** | **Fallback** | `[env.fallback]` (Package > Workspace) | Soft floor defaults populated only if unset in all higher tiers. |
+| Tier | Name | Source | Description |
+| :---: | :--- | :--- | :--- |
+| **1** | **CLI Context** | Ambient process / `INITIAL_ENV` | Command-line environment variables |
+| **2** | **Override** | `[env.override]` | Explicit high-priority overrides |
+| **3** | **Facts** | Package & system facts (`drift_*`) | Auto-probed host attributes and paths |
+| **4** | **Secrets** | `[env.secrets]`, `secrets.env` | Private credentials and tokens |
+| **5** | **Default** | `[env.default]` | Standard package/workspace values |
+| **6** | **Fallback** | `[env.fallback]` | Soft floor defaults |
 
 #### 🔄 Resolution Cascade (`secret >> fallback >> default >> override`)
 Environment tables are resolved using Kahn's topological DAG algorithm with strict unidirectional evaluation flow:
@@ -597,33 +597,33 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 
 | Command | Description |
 | :--- | :--- |
-| `drift clone <url> [dir]` | Clones a Git repo and auto-bootstraps/repairs the Drift workspace (or converts legacy dotfiles). |
-| `drift init` | Initializes a new Git-backed Drift workspace, databases, templates, and `secrets.env`. |
-| `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
-| `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
-| `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
-| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `-r`/`--reinstall`, `-c`/`--clean`, `--no-deps`, `--no-hooks`). |
-| `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
-| `drift uninstall <pkgs>` | Removes symlinked/copied mappings on host target paths, reverting backups (or `--detach`). |
-| `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
-| `drift status [pkgs]` | Audits and inspects current workspace template, staging, and system-drift status. |
-| `drift diff [pkgs]` | Compares and visualizes template (`-t`), system (`-s`), or pending (`Diff Δ`) layers (supports `-y` / `--side-by-side` editor diffing). |
-| `drift gc` | Purges orphan packages and zombie database directories in `render/` and `install/`. |
-| `drift repair` | Audits and self-heals workspace structure, repositories, config templates, and secrets. |
-| `drift complete [<shell>]` | Generates or installs native interactive shell tab-completion scripts (Bash, Zsh, Fish). |
-| `drift help [topic]` | Interactive mini user manual with pager fallback support. |
+| `drift clone <url> [dir]` | Clone repository and bootstrap workspace |
+| `drift init` | Initialize new Git-backed Drift workspace |
+| `drift new <pkg>` | Scaffold package directory and config |
+| `drift add <pkg> <paths>` | Import host configs into package source |
+| `drift adopt [pkgs]` | Backport host drift into package templates |
+| `drift deploy [pkgs]` | Compile, stage, and deploy packages |
+| `drift health [pkgs]` | Run package health check hooks |
+| `drift uninstall <pkgs>` | Remove deployed files and restore backups |
+| `drift rollback [pkgs]` | Revert failed transaction to stable state |
+| `drift status [pkgs]` | Inspect template, stage, and drift status |
+| `drift diff [pkgs]` | Compare template, system, or staged layers |
+| `drift gc` | Purge orphan packages and stale state |
+| `drift repair` | Audit and self-heal workspace state |
+| `drift complete [<shell>]` | Generate shell tab-completion scripts |
+| `drift help [topic]` | Display manual and topic documentation |
 
 ### 🔧 Low-Level Control Commands (Troubleshooting & Automation)
 
 | Command | Description |
 | :--- | :--- |
-| `drift reverse-sync` | Force-syncs active host system changes back into the `install/` state base. |
-| `drift render` | Incremental Merkle DAG compilation of templates into `render/` (`-c`/`--clean`, `-n`/`--dry-run`, `--with-hooks`, `--no-hooks`). |
-| `drift render-commit` | Manually commits compiled sandbox changes to the `render/` repository. |
-| `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
-| `drift apply` | Installs files from `install/` to package target directories. |
-| `drift install-commit` | Manually commits deployment state database changes inside `install/`. |
-| `drift hook <pkg> <hook>` | Directly triggers a specific lifecycle hook script (`--from source` or `--from install`). |
+| `drift reverse-sync` | Sync host files back to `install/` state |
+| `drift render` | Incremental Merkle DAG compilation |
+| `drift render-commit` | Commit sandbox changes to `render/` repo |
+| `drift stage` | Stage sandbox files to `install/` base |
+| `drift apply` | Deploy files from `install/` to host |
+| `drift install-commit` | Commit deployment state in `install/` |
+| `drift hook <pkg> <hook>` | Trigger specific lifecycle hook script |
 
 ---
 
@@ -631,14 +631,14 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 
 Drift supports two deployment mechanisms declared in `drift_package.toml` (or defaulted via `default_install_method` in `drift_workspace.toml`):
 
-| Feature | `install_method = "symlink"` (Default on POSIX) | `install_method = "copy"` (Default on Windows) |
+| Feature | `symlink` (POSIX Default) | `copy` (Windows Default) |
 | :--- | :--- | :--- |
-| **Mechanism** | Relative symlinks from host files to `install/<pkg>/` via Drift's native linker | Pure atomic physical file copy |
-| **Dot-Prefix Translation** | Automated `dot-` $\rightarrow$ `.` translation | Automated `dot-` $\rightarrow$ `.` translation |
-| **Storage Overhead** | Zero extra disk usage (symlink pointers) | Duplicate physical file on disk |
-| **Hot-Edits & Inotify** | Edits reflected instantly through symlink | Managed strictly via deploy passes |
-| **Windows Behavior** | Automatically falls back to safe copies | Native file copy |
-| **Lifecycle Event Order** | Content live at Staging before `pre_update` | **Strict event order** (`pre_update` $\rightarrow$ copy $\rightarrow$ `post_update`) |
+| **Mechanism** | Relative symlink to `install/<pkg>/` | Atomic physical file copy |
+| **Dot Translation** | `dot-` $\rightarrow$ `.` | `dot-` $\rightarrow$ `.` |
+| **Storage Overhead** | Zero (symlink pointer) | Duplicate physical file |
+| **Hot-Edits & Inotify** | Instant via symlink | Managed via deploy passes |
+| **Windows Behavior** | Falls back to copy | Native file copy |
+| **Lifecycle Ordering** | Content live at Staging | Strict (`pre_update` $\rightarrow$ copy $\rightarrow$ `post_update`) |
 
 ### ⚠️ Event Ordering & Lifecycle Hook Semantics
 
@@ -687,18 +687,18 @@ Because this evaluation occurs **prior to template compilation**:
 ### Hook Reference & Unified Working Directory (`cwd`)
 Drift executes all lifecycle hooks with **unified working directories** (`cwd = hook_path.parent`, the directory containing the executed script) and automatic 6-tier environment variable injection (including host facts and package configs). The host target directory is accessible via `$drift_package_target_dir`.
 
-| Hook Name | Lifecycle Trigger Stage |
-| :--- | :--- |
-| `probe` | Pre-flight requirement checks (`deploy`, `render`, `status`) |
-| `pre_source` | Before reading/writing templates (`render`, `adopt`, `add`, `deploy`) |
-| `post_render` | After sandbox compilation (`render`, `deploy`) |
-| `pre_install` | Before first-time deployment (`apply`, `deploy`, `rollback`) |
-| `post_install` | After first-time deployment (`apply`, `deploy`, `rollback`) |
-| `pre_update` | Before updating an installed package (`apply`, `deploy`, `rollback`) |
-| `post_update` | After updating an installed package (`apply`, `deploy`, `rollback`) |
-| `pre_uninstall` | Before unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
-| `post_uninstall` | After unlinking/deleting files (`uninstall`, `gc`, `deploy`) |
-| `health` | During `drift health` probe execution |
+| Hook | Trigger Timing | Commands |
+| :--- | :--- | :--- |
+| `probe` | Pre-flight requirement check | `deploy`, `render`, `status` |
+| `pre_source` | Before reading or writing templates | `deploy`, `render`, `adopt`, `add` |
+| `post_render` | After sandbox compilation | `deploy`, `render` |
+| `pre_install` | Before initial package installation | `deploy`, `apply`, `rollback` |
+| `post_install` | After initial package installation | `deploy`, `apply`, `rollback` |
+| `pre_update` | Before updating installed package | `deploy`, `apply`, `rollback` |
+| `post_update` | After updating installed package | `deploy`, `apply`, `rollback` |
+| `pre_uninstall` | Before unlinking or deleting files | `deploy`, `uninstall`, `gc` |
+| `post_uninstall` | After unlinking or deleting files | `deploy`, `uninstall`, `gc` |
+| `health` | Runtime service health verification | `health` |
 
 > [!IMPORTANT]
 > **Unified Hook Working Directory (`cwd`)**: Across all lifecycle hooks, the execution working directory defaults to `hook_path.parent` (the directory containing the executed script). This allows sibling helper scripts (e.g., `. ./helper.sh` or `. ./lib/utils.sh`) to be sourced naturally relative to the script regardless of execution stage. The destination target directory is accessible via `$drift_package_target_dir`.
