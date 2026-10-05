@@ -12,7 +12,7 @@ from drift.primitives.add_resource import (
     plan_add_resources,
     AddResourcePlan,
 )
-from drift.core.folder_delivery import FileActionType
+from drift.core.file_action import FileActionType
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,

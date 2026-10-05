@@ -904,7 +904,7 @@ class TestStageRepo(unittest.TestCase):
     def test_package_stage_plan_properties(self) -> None:
         """Verifies PackageStagePlan properties and helper methods."""
         from drift.core.result_models import PackageStagePlan
-        from drift.core.folder_delivery import FileAction, FileActionType
+        from drift.core.file_action import FileAction, FileActionType
 
         actions = [
             FileAction(action_type=FileActionType.CREATE_COPY, src_path=Path("/tmp/render/a.txt"), dst_path=Path("/tmp/a.txt")),
@@ -943,7 +943,8 @@ class TestStageRepo(unittest.TestCase):
     def test_plan_actions_from_folder_diff(self) -> None:
         """Verifies that plan_actions_from_folder_diff compiles FolderDiff into planned actions."""
         from drift.core.folder_diff import FolderDiff
-        from drift.core.folder_delivery import plan_actions_from_folder_diff, FileActionType
+        from drift.core.folder_delivery import plan_actions_from_folder_diff
+        from drift.core.file_action import FileActionType
 
         src_dir = self.render_dir / "pkg_diff_test"
         dst_dir = self.install_dir / "pkg_diff_test"
@@ -1511,7 +1512,7 @@ class TestStageDependencies(unittest.TestCase):
 
     def test_stage_result_container_and_methods(self) -> None:
         """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
-        from drift.core.folder_delivery import FileAction, FileActionType
+        from drift.core.file_action import FileAction, FileActionType
 
         # 1. Empty StageResult
         empty_res = StageResult()

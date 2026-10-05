@@ -49,10 +49,10 @@ from ..config.package_config import PackageConfig
 from .render_core import RenderError
 from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
+from ..core.file_action import FileActionType
 from ..core.result_models import PackageRenderResult, RenderResult
 from ..utils.file_ops import copy_file
 from ..utils.path_utils import is_relative_to, to_relative_posix
-from ..utils.config_utils import partition
 from ..core.folder_diff import list_folder_paths
 from .render_dag import (
     Node,
@@ -69,6 +69,7 @@ from .render_expansion import (
 from .render_digester import (
     DigestionContext,
     digest_render_dag,
+    is_drift_internal_path,
 )
 from .render_lock import RenderLockfile, RenderBucket
 
@@ -282,23 +283,17 @@ def render_package_files(
     digest_render_dag(payload_root, ctx)
 
     # 6. Gather rendered vs copied files for PackageRenderResult
-    rendered_set = set(ctx.result.rendered_paths)
-    active_path_nodes = [
-        node for node in payload_root.depends_on
-        if isinstance(node, PathNode) and node.dst_path is not None and node.dst_path in rendered_set
-    ]
-    template_nodes, static_nodes = partition(
-        lambda n: isinstance(n, EngineOutputFileNode), active_path_nodes
-    )
     rendered_files = [
-        to_relative_posix(n.dst_path, render_pkg_dir)
-        for n in template_nodes
-        if n.dst_path is not None
+        to_relative_posix(a.dst_path, render_pkg_dir)
+        for a in ctx.result.actions
+        if a.action_type == FileActionType.RENDER_ITEM and a.dst_path is not None
     ]
     copied_files = [
-        to_relative_posix(n.dst_path, render_pkg_dir)
-        for n in static_nodes
-        if n.dst_path is not None
+        to_relative_posix(a.dst_path, render_pkg_dir)
+        for a in ctx.result.actions
+        if a.action_type in (FileActionType.CREATE_COPY, FileActionType.UPDATE_COPY)
+        and a.dst_path is not None
+        and not is_drift_internal_path(a.dst_path, render_pkg_dir)
     ]
 
     # 7. Trigger post_render hook
@@ -316,6 +311,7 @@ def render_package_files(
     return PackageRenderResult(
         package=package_name,
         status=status,
+        actions=ctx.result.actions,
         rendered_files=rendered_files,
         copied_static_files=copied_files,
     )
@@ -434,11 +430,13 @@ def run_primitive_2_render_packages(
             packages=results,
             error_package=errors[0][0],
             error_message=f"Template rendering failed for package(s): {failed_pkgs_str}",
+            dry_run=opts.dry_run,
         )
 
     return RenderResult(
         status="SUCCESS",
         packages=results,
+        dry_run=opts.dry_run,
     )
 
 

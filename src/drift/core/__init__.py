@@ -106,20 +106,27 @@ from .exceptions import (
     is_logged,
     is_drift_error,
 )
-from .folder_delivery import (
+from .file_action import (
     FileActionType,
     FileAction,
     FileActionExecutionContext,
-    DeliveryInspectionContext,
+    RENDER_ACTION_TYPES,
+    BACKUP_ACTION_TYPES,
+    DELETE_ACTION_TYPES,
+    BACKUP_OR_DELETE_ACTION_TYPES,
+    CREATE_ACTION_TYPES,
     format_action_line,
     format_action_summary,
+    execute_single_action,
+    execute_delivery_actions,
+)
+from .folder_delivery import (
+    DeliveryInspectionContext,
     plan_folder_delivery,
     plan_backup_restoration,
     plan_file_removals,
     plan_symlink_conversions,
     plan_actions_from_folder_diff,
-    execute_single_action,
-    execute_delivery_actions,
     assert_target_dir_outside_drift_root,
 )
 from .result_models import (

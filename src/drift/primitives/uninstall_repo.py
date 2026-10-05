@@ -78,11 +78,13 @@ from ..core.constants import (
     BackupSubfolder,
     InstallMethod,
 )
-from ..core.folder_delivery import (
+from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
     FileAction,
     execute_delivery_actions,
+)
+from ..core.folder_delivery import (
     plan_backup_restoration,
     plan_file_removals,
     plan_symlink_conversions,

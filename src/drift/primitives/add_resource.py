@@ -55,7 +55,7 @@ from typing import List, Optional, Tuple, Sequence
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..config.render_engine_config import RenderEngineRegistry
-from ..core.folder_delivery import (
+from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
     FileAction,

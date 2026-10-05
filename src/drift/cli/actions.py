@@ -242,6 +242,10 @@ def execute_render(
     )
     if json_mode:
         print(res.to_json())
+    elif dry_run:
+        text = res.format_text(drift_root=drift_root)
+        if text:
+            print(text)
     if res.status != "SUCCESS":
         raise RuntimeError(res.error_message or "Template rendering failed.")
 

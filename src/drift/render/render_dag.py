@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from .render_digester import DigestionContext
 
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME
+from ..core.file_action import FileAction, FileActionType, format_action_line
 from .render_cache import NodeHashes
 
 
@@ -157,7 +158,7 @@ class StaticFileNode(FileNode[Path]):
         super().__init__(dst_path=dst_path, src_path=src_path, depends_on=[IndependentFileNode(src_path)])
 
     def digest(self, context: "DigestionContext") -> None:
-        from .render_digester import check_and_apply_cache, format_render_action_line
+        from .render_digester import check_and_apply_cache
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
 
         if check_and_apply_cache(self, self.dst_path, context):
@@ -166,14 +167,18 @@ class StaticFileNode(FileNode[Path]):
         if not self.src_path.is_file():
             raise FileNotFoundError(f"Static source file not found: {self.src_path}")
 
-        logger.info(
-            format_render_action_line(
-                "COPY",
-                self.dst_path,
-                src_path=self.src_path,
-                drift_root=context.drift_root,
-            )
+        action_type = (
+            FileActionType.UPDATE_COPY
+            if self.dst_path.is_file()
+            else FileActionType.CREATE_COPY
         )
+        action = FileAction(
+            action_type=action_type,
+            src_path=self.src_path,
+            dst_path=self.dst_path,
+        )
+        context.result.actions.append(action)
+        logger.info(format_action_line(action, drift_root=context.drift_root))
 
         if not context.dry_run:
             self.dst_path.parent.mkdir(parents=True, exist_ok=True)
@@ -198,7 +203,7 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
 
     def digest(self, context: "DigestionContext") -> None:
         from ..core.constants import DRIFT_KEEP_FILE_NAME
-        from .render_digester import check_and_apply_cache, format_render_action_line
+        from .render_digester import check_and_apply_cache
         from .render_hasher import hash_directory_disk, compute_merkle_node_hash
 
         keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
@@ -211,11 +216,13 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
             self.dst_path.mkdir(parents=True, exist_ok=True)
             keep_file.touch()
 
-        action_line = format_render_action_line(
-                "ENSURE_DIR",
-                self.dst_path,
-                drift_root=context.drift_root,
-            )
+        action = FileAction(
+            action_type=FileActionType.ENSURE_DIR,
+            src_path=self.src_path,
+            dst_path=self.dst_path,
+        )
+        context.result.actions.append(action)
+        action_line = format_action_line(action, drift_root=context.drift_root)
 
         if dir_existed:
             logger.debug(action_line)
@@ -246,7 +253,6 @@ class CachedNode(FileNode[Path]):
 
     def digest(self, context: "DigestionContext") -> None:
         from ..core.constants import DRIFT_KEEP_FILE_NAME
-        from .render_digester import format_render_action_line
 
         context.result.skipped_paths.append(self.dst_path)
         keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
@@ -254,14 +260,13 @@ class CachedNode(FileNode[Path]):
             context.result.skipped_paths.append(keep_file)
         if self.hashes and self.hashes.merkle_hash:
             context.active_hashes.add(self.hashes.merkle_hash)
-        logger.debug(
-            format_render_action_line(
-                "SKIP_IDENTICAL",
-                self.dst_path,
-                src_path=self.src_path,
-                drift_root=context.drift_root,
-            )
+        action = FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=self.src_path,
+            dst_path=self.dst_path,
         )
+        context.result.actions.append(action)
+        logger.debug(format_action_line(action, drift_root=context.drift_root))
 
 
 @dataclass(init=False)
@@ -292,7 +297,7 @@ class EngineOutputFileNode(FileNode[Path]):
         self.engine_config = engine_config
 
     def digest(self, context: "DigestionContext") -> None:
-        from .render_digester import check_and_apply_cache, format_render_action_line
+        from .render_digester import check_and_apply_cache
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_core import render_template_to_file
 
@@ -309,15 +314,14 @@ class EngineOutputFileNode(FileNode[Path]):
         if self.engine_config is None:
             raise ValueError(f"EngineOutputFileNode for '{self.dst_path}' lacks engine_config")
 
-        logger.info(
-            format_render_action_line(
-                "RENDER",
-                dst,
-                src_path=tmpl,
-                reason=self.engine_config.name,
-                drift_root=context.drift_root,
-            )
+        action = FileAction(
+            action_type=FileActionType.RENDER_ITEM,
+            src_path=tmpl,
+            dst_path=dst,
+            reason=self.engine_config.name,
         )
+        context.result.actions.append(action)
+        logger.info(format_action_line(action, drift_root=context.drift_root))
 
         if not context.dry_run:
             render_template_to_file(
@@ -368,7 +372,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         from ..hooks.package_hook import apply_package_hook
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
-        from .render_digester import prune_obsolete_config_files, format_render_action_line
+        from .render_digester import prune_obsolete_config_files
         from .render_hasher import hash_file_disk, compute_merkle_node_hash
         from .render_lock import RenderBucket
         
@@ -403,15 +407,16 @@ class PackageConfigNode(FileNode[Optional[Path]]):
 
         # 4. Write final stitched TOML to render/<pkg>/.drift/drift_package.toml
         target_path = self.dst_path
-        target_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(
-            format_render_action_line(
-                "CONFIG",
-                target_path,
-                drift_root=context.drift_root,
-            )
+        action = FileAction(
+            action_type=FileActionType.WRITE_CONFIG,
+            src_path=self.src_path,
+            dst_path=target_path,
         )
+        context.result.actions.append(action)
+        logger.info(format_action_line(action, drift_root=context.drift_root))
+
         if not context.dry_run:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
 
         # 5. Merkle hash calculation
@@ -431,6 +436,10 @@ class PackageConfigNode(FileNode[Optional[Path]]):
             dry_run=context.dry_run,
         )
         context.result.pruned_paths.extend(pruned)
+        for p in pruned:
+            context.result.actions.append(
+                FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
+            )
 
         # 7. Update lockfile bucket
         context.lockfile.update_bucket_hashes(RenderBucket.CONFIG, context.active_hashes)
@@ -471,6 +480,10 @@ class PackageHooksNode(Node):
             dry_run=context.dry_run,
         )
         context.result.pruned_paths.extend(pruned)
+        context.result.actions.extend(
+            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)
+            for p in pruned
+        )
         context.lockfile.update_bucket_hashes(RenderBucket.HOOKS, context.active_hashes)
         context.save_lockfile()
 
@@ -497,6 +510,10 @@ class PackagePayloadNode(Node):
             dry_run=context.dry_run,
         )
         context.result.pruned_paths.extend(pruned)
+        context.result.actions.extend(
+            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)
+            for p in pruned
+        )
         context.lockfile.update_bucket_hashes(RenderBucket.PAYLOAD, context.active_hashes)
         context.save_lockfile()
 

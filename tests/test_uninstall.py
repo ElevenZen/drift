@@ -19,7 +19,7 @@ from drift.primitives.uninstall_repo import (
     uninstall_missing_package,
     assert_packages_uninstall_ready,
 )
-from drift.core.folder_delivery import FileActionType
+from drift.core.file_action import FileActionType
 from drift.core.result_models import PackageUninstallPlan
 from drift.hooks.lifecycle_hooks import HookExecFlags
 from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, InstallMethod, BackupSubfolder

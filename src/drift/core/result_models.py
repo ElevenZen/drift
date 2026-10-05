@@ -37,7 +37,7 @@ class DiffType(str, Enum):
 from .serialization import serialize_for_json, SerializableModel
 
 
-from .folder_delivery import (
+from .file_action import (
     FileActionType,
     FileAction,
     format_action_line,
@@ -132,6 +132,7 @@ class ReverseSyncResult(SerializableModel):
 class PackageRenderResult(SerializableModel):
     package: str
     status: str = "SUCCESS"  # "SUCCESS", "SKIPPED", "FAILED", "UP_TO_DATE"
+    actions: List[FileAction] = field(default_factory=list)
     rendered_files: List[str] = field(default_factory=list)
     copied_static_files: List[str] = field(default_factory=list)
     skip_reason: Optional[str] = None
@@ -150,6 +151,37 @@ class RenderResult(SerializableModel):
     packages: List[PackageRenderResult] = field(default_factory=list)
     error_package: Optional[str] = None
     error_message: Optional[str] = None
+    dry_run: bool = False
+
+    def format_text(self, drift_root: Optional[Path] = None) -> str:
+        """Formats the render result for human-readable terminal output."""
+        if not self.packages:
+            if self.dry_run:
+                return "🔍 [DRY-RUN] No packages to render."
+            return "No packages rendered."
+        if self.dry_run:
+            lines = [
+                "🔍 [DRY-RUN] Planned Render Operations (src/ -> render/):",
+                "=" * 60,
+            ]
+            for pkg_res in self.packages:
+                lines.append(f"📦 Package '{pkg_res.package}':")
+                if pkg_res.actions:
+                    lines.extend(format_action_line(action, drift_root=drift_root) for action in pkg_res.actions)
+                    lines.append(f"  Summary: {format_action_summary(pkg_res.actions)}")
+                else:
+                    lines.append("  (No render actions)")
+                lines.append("")
+            total_actions = sum(len(p.actions) for p in self.packages)
+            lines.append("=" * 60)
+            lines.append(
+                f"✨ [DRY-RUN] Render simulation completed for {len(self.packages)} package(s). "
+                f"Total planned actions: {total_actions} (zero render/ mutations performed)."
+            )
+            return "\n".join(lines)
+        return "\n".join(
+            f"📦 Package '{p.package}': {format_action_summary(p.actions)}" for p in self.packages
+        )
 
 
 # =============================================================================

@@ -1,32 +1,33 @@
-"""Core Folder Delivery Engine.
+"""Core Folder Delivery Planning Engine.
 
 Provides unified filesystem action planning, ancestor directory conflict resolution,
-and deterministic execution across package installation, uninstallation, backup restoration,
-and symlink detachment.
+backup routing, and declarative action generation across package installation,
+uninstallation, backup restoration, and symlink detachment.
 """
+
+from __future__ import annotations
 
 import logging
 import os
 from dataclasses import dataclass, field
-from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
 from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod, DRIFT_KEEP_FILE_NAME
 from .exceptions import InstallCollisionError
-from .folder_diff import FolderDiff
-from .serialization import SerializableModel
-from ..utils.file_inspect import contents_differ, permissions_differ, tree_files, is_concrete_dir
-from ..utils.file_ops import (
-    copy_file,
-    copy_permissions,
-    create_symlink,
-    ensure_dir,
-    remove_tree,
-    remove_file_or_empty_dir,
-    write_file,
+from .file_action import (
+    FileAction,
+    FileActionType,
+    FileActionExecutionContext,
+    BACKUP_ACTION_TYPES,
+    BACKUP_OR_DELETE_ACTION_TYPES,
+    CREATE_ACTION_TYPES,
+    DELETE_ACTION_TYPES,
+    format_action_line,
+    format_action_summary,
 )
-from .sync_ops import backup_file_or_dir_external
+from .folder_diff import FolderDiff
+from ..utils.file_inspect import contents_differ, permissions_differ, tree_files, is_concrete_dir
 from ..utils.path_utils import (
     compute_relative_symlink_target,
     decode_dot_prefix,
@@ -38,72 +39,8 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
-# Action Enums & Context Models
+# Delivery Context Models
 # =============================================================================
-
-class FileActionType(str, Enum):
-    """Specific filesystem operation planned or executed during delivery."""
-    # Creations & Updates
-    CREATE_SYMLINK = "CREATE_SYMLINK"
-    CREATE_COPY = "CREATE_COPY"
-    CREATE_KEEP_FILE = "CREATE_KEEP_FILE"
-    UPDATE_COPY = "UPDATE_COPY"
-    UPDATE_PERMISSION = "UPDATE_PERMISSION"
-    ENSURE_DIR = "ENSURE_DIR"
-
-    # Skips (already matching desired state)
-    SKIP_IDENTICAL = "SKIP_IDENTICAL"
-
-    # Collisions & Cleanups
-    BACKUP_OVERWRITE = "BACKUP_OVERWRITE"  # Existing host node backed up and removed
-    BACKUP_PRUNE = "BACKUP_PRUNE"          # Historical host orphan backed up and removed
-    DELETE_ITEM = "DELETE_ITEM"            # Direct file/symlink/empty dir deletion without backup
-    DELETE_TREE = "DELETE_TREE"            # Direct directory tree deletion without backup
-
-    # Workflow Notifications
-    INFO_MESSAGE = "INFO_MESSAGE"          # Informational message logged during execution
-
-
-BACKUP_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
-    FileActionType.BACKUP_OVERWRITE,
-    FileActionType.BACKUP_PRUNE,
-})
-
-DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
-    FileActionType.DELETE_ITEM,
-    FileActionType.DELETE_TREE,
-})
-
-BACKUP_OR_DELETE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset(
-    BACKUP_ACTION_TYPES | DELETE_ACTION_TYPES
-)
-
-CREATE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
-    FileActionType.CREATE_SYMLINK,
-    FileActionType.CREATE_COPY,
-    FileActionType.CREATE_KEEP_FILE,
-})
-
-
-@dataclass
-class FileAction(SerializableModel):
-    """Declarative specification of a single file/directory operation on the host system."""
-    action_type: FileActionType
-    src_path: Optional[Path] = None
-    dst_path: Optional[Path] = None
-    reason: Optional[str] = None
-
-    def __post_init__(self) -> None:
-        if self.action_type == FileActionType.SKIP_IDENTICAL and self.src_path is None:
-            raise ValueError(f"FileActionType.SKIP_IDENTICAL must have src_path set, got dst_path='{self.dst_path}'")
-
-
-@dataclass(frozen=True)
-class FileActionExecutionContext:
-    """Encapsulates host filesystem permissions and symlink resolution flags for executing file actions."""
-    sudo: bool = False
-    resolve_symlinks: bool = True
-
 
 @dataclass(frozen=True)
 class DeliveryInspectionContext:
@@ -157,67 +94,6 @@ class DeliveryInspectionContext:
     def translate_path(self, rel_path: Path) -> Tuple[Path, Path]:
         """Translates a relative file path to (source_file, system_target) respecting reverse_mode."""
         return self.translate_source_path(rel_path), self.translate_target_path(rel_path)
-
-
-# =============================================================================
-# Centralized Action Formatting Helpers
-# =============================================================================
-
-def format_action_line(action: FileAction) -> str:
-    """Formats a single FileAction into a clean terminal line."""
-    reason_str = f" ({action.reason})" if action.reason else ""
-    if action.action_type == FileActionType.ENSURE_DIR:
-        return f"    📁 [ENSURE_DIR]      {action.dst_path}"
-    elif action.action_type == FileActionType.CREATE_SYMLINK:
-        return f"    🔗 [CREATE_SYMLINK]  {action.src_path} -> {action.dst_path}"
-    elif action.action_type == FileActionType.CREATE_COPY:
-        return f"    📄 [CREATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.CREATE_KEEP_FILE:
-        return f"    📌 [CREATE_KEEP_FILE] {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.UPDATE_COPY:
-        return f"    📝 [UPDATE_COPY]     {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.UPDATE_PERMISSION:
-        return f"    🔒 [UPDATE_PERMISSION] {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.SKIP_IDENTICAL:
-        return f"    ⏭️ [SKIP_IDENTICAL]  {action.src_path} -> {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.BACKUP_OVERWRITE:
-        target = action.src_path or action.dst_path
-        return f"    🛡️ [BACKUP_OVERWRITE] {target}{reason_str}"
-    elif action.action_type == FileActionType.BACKUP_PRUNE:
-        target = action.src_path or action.dst_path
-        return f"    📦 [BACKUP_PRUNE]    {target}{reason_str}"
-    elif action.action_type in DELETE_ACTION_TYPES:
-        return f"    🗑️ [{action.action_type}]    {action.dst_path}{reason_str}"
-    elif action.action_type == FileActionType.INFO_MESSAGE:
-        return f"    📢 [INFO]            {action.reason}"
-    return f"    [{action.action_type}] {action.src_path} -> {action.dst_path}{reason_str}"
-
-
-def format_action_summary(actions: Sequence[FileAction]) -> str:
-    """Formats a concise summary string of action counts."""
-    counts = []
-    created = [a for a in actions if a.action_type in CREATE_ACTION_TYPES]
-    if created:
-        counts.append(f"{len(created)} to create")
-    updated = [a for a in actions if a.action_type == FileActionType.UPDATE_COPY]
-    if updated:
-        counts.append(f"{len(updated)} to update")
-    permissions = [a for a in actions if a.action_type == FileActionType.UPDATE_PERMISSION]
-    if permissions:
-        counts.append(f"{len(permissions)} permissions to update")
-    skipped = [a for a in actions if a.action_type == FileActionType.SKIP_IDENTICAL]
-    if skipped:
-        counts.append(f"{len(skipped)} up-to-date")
-    removed = [a for a in actions if a.action_type in DELETE_ACTION_TYPES]
-    if removed:
-        counts.append(f"{len(removed)} to remove")
-    backups = [a for a in actions if a.action_type in BACKUP_ACTION_TYPES]
-    if backups:
-        counts.append(f"{len(backups)} to backup")
-    ensured = [a for a in actions if a.action_type == FileActionType.ENSURE_DIR]
-    if ensured:
-        counts.append(f"{len(ensured)} directories")
-    return ", ".join(counts) if counts else "0 actions"
 
 
 
@@ -894,6 +770,8 @@ def plan_file_removals(
     ]
 
 
+# TODO: add a optional reason dict arg, Dict[FileAction, str] to replace the placeholder constant reasons.
+# and update the usage in stage_repo.py to reflect the reason for each action.
 def plan_actions_from_folder_diff(
     diff: FolderDiff,
     source_dir: Path,
@@ -907,7 +785,7 @@ def plan_actions_from_folder_diff(
         actions.append(FileAction(
             action_type=FileActionType.DELETE_ITEM,
             dst_path=target_dir / rel,
-            reason="Deleted in source",
+            reason="Deleted",
         ))
 
     # 2. Additions
@@ -963,91 +841,3 @@ def plan_actions_from_folder_diff(
             ))
 
     return actions
-
-
-# =============================================================================
-# Unified Plan Execution Engine
-# =============================================================================
-
-def execute_single_action(
-    context: FileActionExecutionContext,
-    action: FileAction,
-) -> None:
-    """Executes a single planned file/directory delivery action on the host system."""
-    if action.action_type == FileActionType.SKIP_IDENTICAL:
-        logger.debug(format_action_line(action))
-        return
-
-    if action.action_type == FileActionType.INFO_MESSAGE:
-        if action.reason:
-            logger.info(action.reason)
-        return
-
-    if action.action_type != FileActionType.ENSURE_DIR:
-        logger.info(format_action_line(action))
-
-    if action.action_type in BACKUP_ACTION_TYPES:
-        if action.src_path and action.dst_path:
-            logger.debug(f"   Backing up to: {action.dst_path}")
-            backup_file_or_dir_external(
-                action.src_path,
-                action.dst_path,
-                context.sudo,
-                resolve_symlinks=context.resolve_symlinks,
-            )
-        if action.src_path:
-            if action.action_type == FileActionType.BACKUP_PRUNE:
-                remove_file_or_empty_dir(action.src_path, context.sudo)
-            else:
-                remove_tree(action.src_path, context.sudo)
-
-    elif action.action_type == FileActionType.ENSURE_DIR:
-        if action.dst_path:
-            if action.dst_path.is_symlink() or (action.dst_path.exists() and not action.dst_path.is_dir()):
-                raise NotADirectoryError(
-                    f"Cannot ensure directory '{action.dst_path}': path exists and is not a directory."
-                )
-            dir_existed = action.dst_path.is_dir()
-            ensure_dir(action.dst_path, context.sudo)
-            if dir_existed:
-                logger.debug(format_action_line(action))
-            else:
-                logger.info(format_action_line(action))
-
-    elif action.action_type == FileActionType.CREATE_SYMLINK:
-        if action.src_path and action.dst_path:
-            relative_target = compute_relative_symlink_target(action.src_path, action.dst_path.parent)
-            create_symlink(relative_target, action.dst_path, context.sudo)
-
-    elif action.action_type in (FileActionType.CREATE_COPY, FileActionType.UPDATE_COPY):
-        if action.src_path and action.dst_path:
-            copy_file(action.src_path, action.dst_path, context.sudo, follow_symlinks=context.resolve_symlinks)
-
-    elif action.action_type == FileActionType.UPDATE_PERMISSION:
-        if action.src_path and action.dst_path:
-            copy_permissions(action.src_path, action.dst_path, sudo=context.sudo)
-
-    elif action.action_type == FileActionType.DELETE_TREE:
-        if action.dst_path:
-            remove_tree(action.dst_path, context.sudo)
-
-    elif action.action_type == FileActionType.DELETE_ITEM:
-        if action.dst_path:
-            remove_file_or_empty_dir(action.dst_path, context.sudo)
-
-    elif action.action_type == FileActionType.CREATE_KEEP_FILE:
-        if action.dst_path:
-            ensure_dir(action.dst_path.parent, context.sudo)
-            write_file(action.dst_path, b"", sudo=context.sudo)
-
-
-def execute_delivery_actions(
-    context: FileActionExecutionContext,
-    actions: Sequence[FileAction],
-) -> None:
-    """Deterministically executes a sequence of planned delivery actions on the host system."""
-    for action in actions:
-        execute_single_action(context, action)
-
-
-

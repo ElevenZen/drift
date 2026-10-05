@@ -4,6 +4,7 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 from typing import Optional, List, Dict, Set, Sequence
@@ -57,19 +58,21 @@ from drift.primitives.install_repo import (
         PackageInstallContext,
         assert_packages_install_ready,
 )
-from drift.core.folder_delivery import (
-        DeliveryInspectionContext,
-        execute_single_action,
-        execute_delivery_actions,
+from drift.core.file_action import (
         FileActionExecutionContext,
-        format_action_line,
-        format_action_summary,
-        plan_folder_delivery,
-        DELETE_ACTION_TYPES,
-)
-from drift.core.result_models import (
         FileActionType,
         FileAction,
+        DELETE_ACTION_TYPES,
+        execute_single_action,
+        execute_delivery_actions,
+        format_action_line,
+        format_action_summary,
+)
+from drift.core.folder_delivery import (
+        DeliveryInspectionContext,
+        plan_folder_delivery,
+)
+from drift.core.result_models import (
         PackageInstallPlan,
 )
 from drift.utils.path_utils import compute_relative_symlink_target
@@ -2232,7 +2235,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(system_valid.is_symlink())
         self.assertEqual(system_valid.resolve(), (pkg_install_dir / "valid_link.txt").resolve())
 
-    @patch("drift.core.folder_delivery.create_symlink")
+    @patch("drift.core.file_action.create_symlink")
     def test_execute_single_action_skips_when_already_pointing_to_source(self, mock_create_symlink) -> None:
         """Verifies execute_single_action and plan_package_install skip recreating symlink if target already points to source."""
         from drift.core.ignore import DriftIgnore
@@ -3982,9 +3985,9 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
                     src_path=src_file,
                     dst_path=dst_file,
                 )
-                with self.assertLogs("drift.core.folder_delivery", level="INFO") as cm:
+                with self.assertLogs("drift.core.file_action", level="INFO") as cm:
                     execute_single_action(exec_ctx, copy_action)
-                self.assertTrue(any("📄 [CREATE_COPY]" in msg for msg in cm.output))
+                self.assertTrue(any("➕ [CREATE_COPY]" in msg for msg in cm.output))
                 self.assertTrue(dst_file.is_file())
 
                 # 2. SKIP_IDENTICAL logs at DEBUG (and NOT at INFO)
@@ -3993,12 +3996,12 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
                     src_path=src_file,
                     dst_path=dst_file,
                 )
-                with self.assertLogs("drift.core.folder_delivery", level="DEBUG") as cm_debug:
+                with self.assertLogs("drift.core.file_action", level="DEBUG") as cm_debug:
                     execute_single_action(exec_ctx, skip_action)
                 self.assertTrue(any("⏭️ [SKIP_IDENTICAL]" in msg for msg in cm_debug.output))
 
                 with self.assertRaises(AssertionError):
-                    with self.assertLogs("drift.core.folder_delivery", level="INFO"):
+                    with self.assertLogs("drift.core.file_action", level="INFO"):
                         execute_single_action(exec_ctx, skip_action)
 
                 # 3. ENSURE_DIR conditional logging:
@@ -4008,21 +4011,60 @@ class TestFolderDeliveryActionLogging(unittest.TestCase):
                     dst_path=new_dir,
                 )
                 # First execution: dir does not exist -> created -> logs at INFO
-                with self.assertLogs("drift.core.folder_delivery", level="INFO") as cm_dir:
+                with self.assertLogs("drift.core.file_action", level="INFO") as cm_dir:
                     execute_single_action(exec_ctx, dir_action)
                 self.assertTrue(any("📁 [ENSURE_DIR]" in msg for msg in cm_dir.output))
                 self.assertTrue(new_dir.is_dir())
 
                 # Second execution: dir already exists -> logs at DEBUG (not INFO)
-                with self.assertLogs("drift.core.folder_delivery", level="DEBUG") as cm_dir_debug:
+                with self.assertLogs("drift.core.file_action", level="DEBUG") as cm_dir_debug:
                     execute_single_action(exec_ctx, dir_action)
                 self.assertTrue(any("📁 [ENSURE_DIR]" in msg for msg in cm_dir_debug.output))
 
                 with self.assertRaises(AssertionError):
-                    with self.assertLogs("drift.core.folder_delivery", level="INFO"):
+                    with self.assertLogs("drift.core.file_action", level="INFO"):
                         execute_single_action(exec_ctx, dir_action)
         finally:
             set_test_mode(True, enable_logging=False)
+
+    def test_render_action_types_rejected_and_info_logging(self) -> None:
+        """Verifies execute_single_action rejects render actions and logs INFO_MESSAGE properly."""
+        exec_ctx = FileActionExecutionContext()
+        render_act = FileAction(
+            action_type=FileActionType.RENDER_ITEM,
+            src_path=Path("/tmp/tpl"),
+            dst_path=Path("/tmp/out"),
+        )
+        with self.assertRaises(ValueError) as cm:
+            execute_single_action(exec_ctx, render_act)
+        self.assertIn("cannot be executed by the host delivery engine", str(cm.exception))
+
+        config_act = FileAction(
+            action_type=FileActionType.WRITE_CONFIG,
+            dst_path=Path("/tmp/cfg"),
+        )
+        with self.assertRaises(ValueError) as cm2:
+            execute_single_action(exec_ctx, config_act)
+        self.assertIn("cannot be executed by the host delivery engine", str(cm2.exception))
+
+        # Test INFO_MESSAGE logging
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                info_act = FileAction(
+                    action_type=FileActionType.INFO_MESSAGE,
+                    reason="Package hook executed successfully",
+                )
+                with self.assertLogs("drift.core.file_action", level="INFO") as cm_info:
+                    execute_single_action(exec_ctx, info_act)
+                self.assertTrue(any("📢 [INFO]" in msg and "Package hook executed successfully" in msg for msg in cm_info.output))
+        finally:
+            set_test_mode(True, enable_logging=False)
+
+        # Test summary formatting with render actions
+        summary = format_action_summary([render_act, config_act])
+        self.assertIn("1 to render", summary)
+        self.assertIn("1 config", summary)
 
 
 if __name__ == "__main__":

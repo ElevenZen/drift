@@ -55,27 +55,37 @@ This document provides a concise, high-density architecture reference, primitive
 ### [`core/folder_diff.py`](../src/drift/core/folder_diff.py) & [`utils/file_utils.py`](../src/drift/utils/file_utils.py)
 *   [`compare_folders(src, dst, ignore_handler=None, translate_mode=None) -> FolderDiff`](../src/drift/core/folder_diff.py): Computes `added`, `modified`, `deleted`, `matches` between directory trees.
 *   [`resolve_system_target(rel_file, target_dir) -> Path`](../src/drift/utils/file_utils.py): Translates relative path to target host path applying `dot-` prefix translation.
-*   [`translate_dot_prefixes(rel_path) -> Path`](../src/drift/utils/file_utils.py): Translates path segments (`dot-config` $\rightarrow$ `.config`).
-*   [`translate_dot_prefixes_reverse(rel_path) -> Path`](../src/drift/utils/file_utils.py): Reverses path segments (`.config` $\rightarrow$ `dot-config`).
+*   [`translate_dot_prefixes(rel_path) -> Path`](../src/drift/utils/file_utils.py): Translates path segments (`dot-config` → `.config`).
+*   [`translate_dot_prefixes_reverse(rel_path) -> Path`](../src/drift/utils/file_utils.py): Reverses path segments (`.config` → `dot-config`).
 *   [`tree_relative_files(base_path) -> List[Path]`](../src/drift/utils/file_utils.py): Recursively gathers all relative file paths under `base_path`.
 *   [`backup_file_or_dir_external(src, backup_path, sudo, resolve_symlinks=False)`](../src/drift/core/sync_ops.py): Backs up host paths to `backup/<pkg>/`.
 *   [`remove_file_or_dir_with_sudo(path, sudo)`](../src/drift/utils/file_utils.py): Deletes a file or directory safely (with `sudo` if configured).
 *   [`check_sudo_privilege() -> bool`](../src/drift/utils/process_utils.py): Verifies sudo permissions without password prompts (`sudo -n true`).
 
+### [`core/file_action.py`](../src/drift/core/file_action.py)
+*   [`FileActionType`](../src/drift/core/file_action.py): Enum of discrete planned host and render operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_FILE`, `DELETE_ITEM`, `RENDER_ITEM`, `WRITE_CONFIG`, `INFO_MESSAGE`).
+*   [`FileAction`](../src/drift/core/file_action.py): Dataclass representing a discrete single-file/directory operation (`action_type`, `src_path`, `dst_path`, `reason`).
+*   [`FileActionExecutionContext`](../src/drift/core/file_action.py): Execution context encapsulating execution flags (`sudo`, `resolve_symlinks`).
+*   [`execute_delivery_actions(context, actions) -> None`](../src/drift/core/file_action.py): Unified sequential executor applying planned file and backup actions to the host system.
+*   [`execute_single_action(context, action) -> None`](../src/drift/core/file_action.py): Executes an individual planned file action using pre-resolved `src_path` and `dst_path`.
+*   [`format_action_line(action) -> str`](../src/drift/core/file_action.py) & [`format_action_summary(counts) -> str`](../src/drift/core/file_action.py): Formatting helpers generating uniform action logs and summaries.
+
 ### [`core/folder_delivery.py`](../src/drift/core/folder_delivery.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
-*   [`FileActionType`](../src/drift/core/folder_delivery.py): Enum of discrete planned host operations (`CREATE_SYMLINK`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `SKIP_IDENTICAL`, `BACKUP_OVERWRITE`, `BACKUP_PRUNE`, `DELETE_FILE`, `INFO_MESSAGE`).
-*   [`FileAction`](../src/drift/core/folder_delivery.py): Dataclass representing a discrete single-file/directory host operation (`action_type`, `src_path`, `dst_path`, `reason`).
 *   [`DeliveryInspectionContext`](../src/drift/core/folder_delivery.py): Planning and inspection context encapsulating invariant paths (`target_dir`, `source_dir`, `drift_root`), install mode (`install_method`), first-time flags, and backup routing (`backup_pkg_dir`, `backup_subfolder`).
-*   [`FileActionExecutionContext`](../src/drift/core/folder_delivery.py): Execution context encapsulating execution flags (`sudo`, `resolve_symlinks`).
 *   [`PackageInstallPlan`](../src/drift/core/result_models.py) & [`PackageUninstallPlan`](../src/drift/core/result_models.py): Strongly-typed dataclass containers for planned package actions, supporting `.format_text(dry_run=False)` summaries.
 *   [`plan_folder_delivery(context, deployable_files, deployed_files=()) -> List[FileAction]`](../src/drift/core/folder_delivery.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file delivery actions.
 *   [`plan_backup_restoration(backup_overwritten_dir, target_dir, drift_root) -> List[FileAction]`](../src/drift/core/folder_delivery.py): Compiles backup restoration into discrete `INFO_MESSAGE`, `ENSURE_DIR`, and `CREATE_COPY` actions with intermediate ancestor collision detection via `plan_folder_delivery`.
 *   [`plan_file_removals(deployed_files, target_dir) -> List[FileAction]`](../src/drift/core/folder_delivery.py): Compiles `DELETE_FILE` actions for deployed host items.
 *   [`plan_symlink_conversions(deployed_files, target_dir, install_pkg_dir) -> List[FileAction]`](../src/drift/core/folder_delivery.py): Compiles `DELETE_FILE` and `CREATE_COPY` actions converting managed symlinks into physical copies for package detachment.
-*   [`execute_delivery_actions(context, actions) -> None`](../src/drift/core/folder_delivery.py): Unified sequential executor applying planned file and backup actions to the host system.
-*   [`execute_single_action(context, action) -> None`](../src/drift/core/folder_delivery.py): Executes an individual planned file action using pre-resolved `src_path` and `dst_path`.
-*   [`format_action_line(action) -> str`](../src/drift/core/folder_delivery.py) & [`format_action_summary(counts) -> str`](../src/drift/core/folder_delivery.py): Formatting helpers generating uniform action logs and summaries.
 *   [`serialize_for_json(obj) -> Any`](../src/drift/core/serialization.py) & [`SerializableModel`](../src/drift/core/serialization.py): Decoupled serialization primitives eliminating circular imports between models and deployment planners.
+
+### Render DAG Subsystem (Consult [`docs/render_dag.md`](render_dag.md) for full design)
+*   [`render/render_dag.py`](../src/drift/render/render_dag.py): Universal dependency Merkle DAG nodes (`Node`, `PathNode`, `FileNode`, `DirectoryNode`, `StaticFileNode`, `EngineOutputFileNode`, `PackageConfigNode`, `PackageHooksNode`, `PackagePayloadNode`, `CachedNode`).
+*   [`render/render_expansion.py`](../src/drift/render/render_expansion.py): AST expansion engine, path translation, engine circularity checks, and destination collision prevention (`assert_no_render_collisions`).
+*   [`render/render_digester.py`](../src/drift/render/render_digester.py): Topological sorting (`topological_sort_nodes`), polymorphic DAG digestion (`digest_render_dag`), lockfile cache verification (`check_and_apply_cache`), and scoped pruning (`prune_obsolete_payload_files`).
+*   [`render/render_lock.py`](../src/drift/render/render_lock.py): Atomic 3-bucket lockfile (`RenderLockfile`) managing `config_hashes`, `hook_hashes`, and `payload_hashes`.
+*   [`render/render_cache.py`](../src/drift/render/render_cache.py): In-memory workspace session cache (`RenderCache`) with nanosecond stat fingerprinting.
+*   [`render/render_hasher.py`](../src/drift/render/render_hasher.py): Cryptographic hash primitives (`hash_file_disk`, `compute_merkle_node_hash`).
 
 ### [`core/ignore.py`](../src/drift/core/ignore.py) (Ignore Engine & GNU Stow Rules Lineage)
 *   [`DriftIgnore.load_from_dir(package_dir, is_source: bool) -> DriftIgnore`](../src/drift/core/ignore.py): Loads `.drift_ignore` PCRE patterns (from package root if `is_source=True`, else `.drift/.drift_ignore`; rejects nested ignore files).
@@ -190,7 +200,7 @@ This document provides a concise, high-density architecture reference, primitive
 ## 4. Key Domain Invariants & Rules
 
 1.  **Source Template `dot-` Prefix Rule**:
-    *   Files/directories in `src/<pkg>/` targeting hidden host paths **must** use `dot-` (`dot-bashrc` $\rightarrow$ `.bashrc`, `dot-config/` $\rightarrow$ `.config/`).
+    *   Files/directories in `src/<pkg>/` targeting hidden host paths **must** use `dot-` (`dot-bashrc` → `.bashrc`, `dot-config/` → `.config/`).
     *   Raw `.*` files in `src/` (except `.drift_ignore`) are strictly skipped with warning logs.
 2.  **Template Engine Suffix Rule**:
     *   Format: `[filename].[engine_suffix].[target_ext]` (e.g. `dot-bashrc.envst.sh`, `home.mustache.nix`).
@@ -226,6 +236,11 @@ This document provides a concise, high-density architecture reference, primitive
 11. **Python Preprocessor Hook Clean-Room Invariant**:
     *   Dynamic Python preprocessor hooks (`drift_workspace.py` / `drift_package.py`) execute purely in-memory with **zero footprint on `os.environ`**.
     *   Ambient `os.environ` is never mutated during Python hook execution; all secrets, system facts, package facts, and CLI variables are passed strictly via `context.env`, `context.facts`, and `context.package_facts`.
+12. **Render DAG & Incremental Merkle Invariance Invariant**:
+    *   All compilation operations are modeled as a typed dependency DAG ([`render/render_dag.py`](../src/drift/render/render_dag.py)) executed in 3 non-overlapping phases: Phase 1 (Config) $\to$ Phase 2 (Hooks) $\to$ Phase 3 (Payload).
+    *   **Principle of Change Invariance**: If inputs, templates, environment variables, and engine definitions are identical ($\Delta [I, T, V, E] = \emptyset$), re-rendering is skipped via cryptographic Merkle proofs ($\text{SHA256}(\text{NodeType} \parallel \text{own_hash} \parallel \text{":"} \parallel \text{deps_str})$).
+    *   **3-Bucket Lockfile Isolation**: `.drift/render_lock.json` maintains strict isolation between `config_hashes`, `hook_hashes`, and `payload_hashes` without cross-phase clobbering.
+    *   **Scoped Shielding**: Phase 3 payload pruning strictly shields the `.drift/` internal control plane. For complete mathematical proofs and design specifications, consult [`docs/render_dag.md`](render_dag.md).
 
 ---
 

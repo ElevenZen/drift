@@ -40,20 +40,20 @@ from typing import List, Optional, Sequence, Set, Tuple
 
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
-from ..core.constants import STATE_REGISTRY_FILE_NAME, DirMode
+from ..core.constants import STATE_REGISTRY_FILE_NAME, DirMode, InstallMethod, BackupSubfolder
 from ..core.folder_diff import list_folder_paths
 from ..core.ignore import DriftIgnore, resolve_deployable_paths_with_empty_dirs
 from ..core.state_registry import StateRegistry, load_state_registry
-from ..core.folder_delivery import (
-    DeliveryInspectionContext,
+from ..core.file_action import (
     FileAction,
     FileActionExecutionContext,
     FileActionType,
     DELETE_ACTION_TYPES,
-    InstallMethod,
-    BackupSubfolder,
-    plan_folder_delivery,
     execute_delivery_actions,
+)
+from ..core.folder_delivery import (
+    DeliveryInspectionContext,
+    plan_folder_delivery,
 )
 from ..core.result_models import (
     PackageReverseSyncPlan,

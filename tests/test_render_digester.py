@@ -3,8 +3,10 @@
 import os
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from typing import Dict, List
+from unittest.mock import patch
 
 from drift.config.render_engine_config import RenderEngineConfig
 from drift.core.constants import (
@@ -18,6 +20,7 @@ from drift.core.constants import (
     DRIFT_KEEP_FILE_NAME,
     set_test_mode,
 )
+from drift.core.file_action import FileAction, FileActionType, format_action_line
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_lock import RenderLockfile, RenderBucket
 from drift.render.render_dag import (
@@ -36,7 +39,6 @@ from drift.render.render_digester import (
     DigestionResult,
     DigestionContext,
     check_and_apply_cache,
-    format_render_action_line,
     prune_obsolete_config_files,
     prune_obsolete_hooks,
     prune_obsolete_payload_files,
@@ -655,131 +657,197 @@ class TestRenderActionLogging(unittest.TestCase):
         dst = Path("/workspace/render/pkg_a/app.conf")
         src = Path("/workspace/src/pkg_a/app.conf.j2")
 
-        # COPY
-        copy_line = format_render_action_line("COPY", dst, src, drift_root=drift_root)
-        self.assertIn("📄 [COPY]", copy_line)
-        self.assertIn("src/pkg_a/app.conf.j2 -> render/pkg_a/app.conf", copy_line)
+        # CREATE_COPY
+        create_line = format_action_line(
+            FileAction(FileActionType.CREATE_COPY, src_path=src, dst_path=dst),
+            drift_root=drift_root,
+        )
+        self.assertIn("➕ [CREATE_COPY]", create_line)
+        self.assertIn("src/pkg_a/app.conf.j2 -> render/pkg_a/app.conf", create_line)
 
-        # RENDER
-        render_line = format_render_action_line("RENDER", dst, src, reason="jinja2", drift_root=drift_root)
-        self.assertIn("🧪 [RENDER]", render_line)
+        # UPDATE_COPY
+        update_line = format_action_line(
+            FileAction(FileActionType.UPDATE_COPY, src_path=src, dst_path=dst),
+            drift_root=drift_root,
+        )
+        self.assertIn("✏️ [UPDATE_COPY]", update_line)
+        self.assertIn("src/pkg_a/app.conf.j2 -> render/pkg_a/app.conf", update_line)
+
+        # RENDER_ITEM
+        render_line = format_action_line(
+            FileAction(FileActionType.RENDER_ITEM, src_path=src, dst_path=dst, reason="jinja2"),
+            drift_root=drift_root,
+        )
+        self.assertIn("🎨 [RENDER]", render_line)
         self.assertIn("src/pkg_a/app.conf.j2 -> render/pkg_a/app.conf (jinja2)", render_line)
 
         # ENSURE_DIR
-        dir_line = format_render_action_line("ENSURE_DIR", Path("/workspace/render/pkg_a/dir"), drift_root=drift_root)
+        dir_line = format_action_line(
+            FileAction(FileActionType.ENSURE_DIR, dst_path=Path("/workspace/render/pkg_a/dir")),
+            drift_root=drift_root,
+        )
         self.assertIn("📁 [ENSURE_DIR]", dir_line)
         self.assertIn("render/pkg_a/dir", dir_line)
 
-        # CONFIG
-        cfg_line = format_render_action_line("CONFIG", Path("/workspace/render/pkg_a/.drift/drift_package.toml"), drift_root=drift_root)
+        # WRITE_CONFIG
+        cfg_line = format_action_line(
+            FileAction(FileActionType.WRITE_CONFIG, dst_path=Path("/workspace/render/pkg_a/.drift/drift_package.toml")),
+            drift_root=drift_root,
+        )
         self.assertIn("⚙️ [CONFIG]", cfg_line)
         self.assertIn("render/pkg_a/.drift/drift_package.toml", cfg_line)
 
-        # PRUNE
-        prune_line = format_render_action_line("PRUNE", Path("/workspace/render/pkg_a/old.txt"), drift_root=drift_root)
-        self.assertIn("🗑️ [PRUNE]", prune_line)
+        # DELETE_ITEM (Pruning)
+        prune_line = format_action_line(
+            FileAction(FileActionType.DELETE_ITEM, dst_path=Path("/workspace/render/pkg_a/old.txt")),
+            drift_root=drift_root,
+        )
+        self.assertIn("🗑️ [DELETE_ITEM]", prune_line)
         self.assertIn("render/pkg_a/old.txt", prune_line)
 
         # SKIP_IDENTICAL with src and reason
-        skip_line = format_render_action_line("SKIP_IDENTICAL", dst, src, reason="jinja2", drift_root=drift_root)
+        skip_line = format_action_line(
+            FileAction(FileActionType.SKIP_IDENTICAL, src_path=src, dst_path=dst, reason="jinja2"),
+            drift_root=drift_root,
+        )
         self.assertIn("⏭️ [SKIP_IDENTICAL]", skip_line)
         self.assertIn("src/pkg_a/app.conf.j2 -> render/pkg_a/app.conf (jinja2)", skip_line)
 
-        # SKIP_IDENTICAL without src
-        skip_single = format_render_action_line("SKIP_IDENTICAL", dst, drift_root=drift_root)
-        self.assertIn("⏭️ [SKIP_IDENTICAL]", skip_single)
-        self.assertIn("render/pkg_a/app.conf", skip_single)
+    def test_static_file_node_create_vs_update_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            drift_root = Path(tmp_dir)
+            pkg_render_dir = drift_root / "render" / "pkg_a"
+            src_dir = drift_root / "src" / "pkg_a"
+            src_dir.mkdir(parents=True)
+            pkg_render_dir.mkdir(parents=True)
+
+            src_file = src_dir / "file.txt"
+            src_file.write_text("v1", encoding="utf-8")
+            dst_file = pkg_render_dir / "file.txt"
+
+            ctx = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_a",
+                package_render_dir=pkg_render_dir,
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.PAYLOAD,
+                cache=RenderCache(),
+                force=True,
+            )
+
+            # 1. dst_file does not exist -> CREATE_COPY
+            node1 = StaticFileNode(dst_path=dst_file, src_path=src_file)
+            node1.digest(ctx)
+            self.assertEqual(len(ctx.result.actions), 1)
+            self.assertEqual(ctx.result.actions[0].action_type, FileActionType.CREATE_COPY)
+            self.assertEqual(ctx.result.actions[0].src_path, src_file)
+            self.assertEqual(ctx.result.actions[0].dst_path, dst_file)
+            self.assertTrue(dst_file.is_file())
+
+            # 2. dst_file already exists on disk -> UPDATE_COPY
+            src_file.write_text("v2", encoding="utf-8")
+            node2 = StaticFileNode(dst_path=dst_file, src_path=src_file)
+            node2.digest(ctx)
+            self.assertEqual(len(ctx.result.actions), 2)
+            self.assertEqual(ctx.result.actions[1].action_type, FileActionType.UPDATE_COPY)
+            self.assertEqual(ctx.result.actions[1].src_path, src_file)
+            self.assertEqual(ctx.result.actions[1].dst_path, dst_file)
 
     def test_render_actions_log_levels(self) -> None:
         set_test_mode(True, enable_logging=True)
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                drift_root = Path(tmp_dir)
-                pkg_render_dir = drift_root / "render" / "pkg_a"
-                src_dir = drift_root / "src" / "pkg_a"
-                src_dir.mkdir(parents=True)
-                pkg_render_dir.mkdir(parents=True)
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    drift_root = Path(tmp_dir)
+                    pkg_render_dir = drift_root / "render" / "pkg_a"
+                    src_dir = drift_root / "src" / "pkg_a"
+                    src_dir.mkdir(parents=True)
+                    pkg_render_dir.mkdir(parents=True)
 
-                src_file = src_dir / "static.txt"
-                src_file.write_text("hello", encoding="utf-8")
-                dst_file = pkg_render_dir / "static.txt"
+                    src_file = src_dir / "static.txt"
+                    src_file.write_text("hello", encoding="utf-8")
+                    dst_file = pkg_render_dir / "static.txt"
 
-                ctx = DigestionContext(
-                    drift_root=drift_root,
-                    package_name="pkg_a",
-                    package_render_dir=pkg_render_dir,
-                    lockfile=RenderLockfile(),
-                    bucket=RenderBucket.PAYLOAD,
-                    cache=RenderCache(),
-                )
+                    ctx = DigestionContext(
+                        drift_root=drift_root,
+                        package_name="pkg_a",
+                        package_render_dir=pkg_render_dir,
+                        lockfile=RenderLockfile(),
+                        bucket=RenderBucket.PAYLOAD,
+                        cache=RenderCache(),
+                    )
 
-                from drift.render.render_hasher import compute_merkle_node_hash, hash_file_disk, hash_text
+                    from drift.render.render_hasher import compute_merkle_node_hash, hash_file_disk, hash_text
 
-                # 1. StaticFileNode logs at INFO when executed
-                node = StaticFileNode(dst_path=dst_file, src_path=src_file)
-                indep = node.depends_on[0]
-                compute_merkle_node_hash(indep)
+                    # 1. StaticFileNode logs at INFO when executed
+                    node = StaticFileNode(dst_path=dst_file, src_path=src_file)
+                    indep = node.depends_on[0]
+                    compute_merkle_node_hash(indep)
 
-                with self.assertLogs("drift.render.render_dag", level="INFO") as cm:
-                    node.digest(ctx)
-                self.assertTrue(any("📄 [COPY]" in log and "static.txt" in log for log in cm.output))
+                    with self.assertLogs("drift.render.render_dag", level="INFO") as cm:
+                        node.digest(ctx)
+                    self.assertTrue(any("➕ [CREATE_COPY]" in log and "static.txt" in log for log in cm.output))
+                    self.assertTrue(any(a.action_type == FileActionType.CREATE_COPY for a in ctx.result.actions))
 
-                # Update lockfile with expected merkle hash for cache hit
-                own_h = hash_file_disk(dst_file)
-                expected_m = hash_text(f"StaticFileNode:{own_h}:{indep.merkle_hash}")
-                ctx.lockfile.update_payload_hashes([expected_m])
+                    # Update lockfile with expected merkle hash for cache hit
+                    own_h = hash_file_disk(dst_file)
+                    expected_m = hash_text(f"StaticFileNode:{own_h}:{indep.merkle_hash}")
+                    ctx.lockfile.update_payload_hashes([expected_m])
 
-                # 2. check_and_apply_cache logs at DEBUG (not INFO) on cache hit
-                with self.assertLogs("drift.render.render_digester", level="DEBUG") as cm_debug:
-                    is_cached = check_and_apply_cache(node, dst_file, ctx)
-                    self.assertTrue(is_cached)
-                self.assertTrue(any("⏭️ [SKIP_IDENTICAL]" in log for log in cm_debug.output))
+                    # 2. check_and_apply_cache logs at DEBUG (not INFO) on cache hit
+                    with self.assertLogs("drift.render.render_digester", level="DEBUG") as cm_debug:
+                        is_cached = check_and_apply_cache(node, dst_file, ctx)
+                        self.assertTrue(is_cached)
+                    self.assertTrue(any("⏭️ [SKIP_IDENTICAL]" in log for log in cm_debug.output))
+                    self.assertTrue(any(a.action_type == FileActionType.SKIP_IDENTICAL for a in ctx.result.actions))
 
-                # Verify no INFO log was emitted during cache hit
-                with self.assertRaises(AssertionError):
-                    with self.assertLogs("drift.render.render_digester", level="INFO"):
-                        check_and_apply_cache(node, dst_file, ctx)
+                    # Verify no INFO log was emitted during cache hit
+                    with self.assertRaises(AssertionError):
+                        with self.assertLogs("drift.render.render_digester", level="INFO"):
+                            check_and_apply_cache(node, dst_file, ctx)
         finally:
             set_test_mode(True, enable_logging=False)
 
     def test_directory_node_conditional_logging(self) -> None:
         set_test_mode(True, enable_logging=True)
         try:
-            with tempfile.TemporaryDirectory() as tmp_dir:
-                drift_root = Path(tmp_dir)
-                pkg_render_dir = drift_root / "render" / "pkg_a"
-                target_dir = pkg_render_dir / "empty_dir"
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+                with tempfile.TemporaryDirectory() as tmp_dir:
+                    drift_root = Path(tmp_dir)
+                    pkg_render_dir = drift_root / "render" / "pkg_a"
+                    target_dir = pkg_render_dir / "empty_dir"
 
-                ctx = DigestionContext(
-                    drift_root=drift_root,
-                    package_name="pkg_a",
-                    package_render_dir=pkg_render_dir,
-                    lockfile=RenderLockfile(),
-                    bucket=RenderBucket.PAYLOAD,
-                    cache=RenderCache(),
-                )
+                    ctx = DigestionContext(
+                        drift_root=drift_root,
+                        package_name="pkg_a",
+                        package_render_dir=pkg_render_dir,
+                        lockfile=RenderLockfile(),
+                        bucket=RenderBucket.PAYLOAD,
+                        cache=RenderCache(),
+                    )
 
-                dir_node = DirectoryNode(dst_path=target_dir)
+                    dir_node = DirectoryNode(dst_path=target_dir)
 
-                # 1. Directory does not exist -> created -> logs at INFO
-                with self.assertLogs("drift.render.render_dag", level="INFO") as cm:
-                    dir_node.digest(ctx)
-                self.assertTrue(any("📁 [ENSURE_DIR]" in log for log in cm.output))
-                self.assertTrue(target_dir.is_dir())
+                    # 1. Directory does not exist -> created -> logs at INFO
+                    with self.assertLogs("drift.render.render_dag", level="INFO") as cm:
+                        dir_node.digest(ctx)
+                    self.assertTrue(any("📁 [ENSURE_DIR]" in log for log in cm.output))
+                    self.assertTrue(target_dir.is_dir())
+                    self.assertTrue(any(a.action_type == FileActionType.ENSURE_DIR for a in ctx.result.actions))
 
-                # 2. Directory already exists and force=True to bypass lockfile cache -> logs at DEBUG
-                ctx_force = DigestionContext(
-                    drift_root=drift_root,
-                    package_name="pkg_a",
-                    package_render_dir=pkg_render_dir,
-                    lockfile=RenderLockfile(),
-                    bucket=RenderBucket.PAYLOAD,
-                    cache=RenderCache(),
-                    force=True,
-                )
-                with self.assertLogs("drift.render.render_dag", level="DEBUG") as cm_debug:
-                    dir_node.digest(ctx_force)
-                self.assertTrue(any("📁 [ENSURE_DIR]" in log for log in cm_debug.output))
+                    # 2. Directory already exists and force=True to bypass lockfile cache -> logs at DEBUG
+                    ctx_force = DigestionContext(
+                        drift_root=drift_root,
+                        package_name="pkg_a",
+                        package_render_dir=pkg_render_dir,
+                        lockfile=RenderLockfile(),
+                        bucket=RenderBucket.PAYLOAD,
+                        cache=RenderCache(),
+                        force=True,
+                    )
+                    with self.assertLogs("drift.render.render_dag", level="DEBUG") as cm_debug:
+                        dir_node.digest(ctx_force)
+                    self.assertTrue(any("📁 [ENSURE_DIR]" in log for log in cm_debug.output))
         finally:
             set_test_mode(True, enable_logging=False)
 

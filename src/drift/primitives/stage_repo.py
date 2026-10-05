@@ -68,11 +68,13 @@ from ..config.package_config import (
     PackageDependencies,
     PackageSectionConfig,
 )
-from ..core.folder_delivery import (
+from ..core.file_action import (
     FileActionExecutionContext,
     execute_delivery_actions,
-    plan_actions_from_folder_diff,
     format_action_summary,
+)
+from ..core.folder_delivery import (
+    plan_actions_from_folder_diff,
 )
 from ..core.result_models import PackageStagePlan, StageResult
 from ..utils.process_utils import assert_can_escalate

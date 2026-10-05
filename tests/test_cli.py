@@ -655,6 +655,47 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         self.assertGreaterEqual(len(data["packages"][0]["plan"]["actions"]), 1)
         self.assertFalse(os.path.exists(os.path.join(target_dir, "file.txt")))
 
+    def test_cli_render_dry_run(self) -> None:
+        """Verifies that running 'render --dry-run' outputs structured action simulation and does not write to render/."""
+        render_file = os.path.join(self.drift_root, "render", "pkg_a", "file.txt")
+        self.assertFalse(os.path.exists(render_file))
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "render", "--dry-run", "pkg_a"])
+
+        output = stdout.getvalue()
+        self.assertIn("[DRY-RUN] Planned Render Operations (src/ -> render/):", output)
+        self.assertIn("Package 'pkg_a':", output)
+        self.assertIn("[CREATE_COPY]", output)
+        self.assertIn("src/pkg_a/file.txt -> render/pkg_a/file.txt", output)
+        self.assertIn("1 to create", output)
+        self.assertIn("zero render/ mutations performed", output)
+
+        # Verify that render/pkg_a/file.txt was NOT created
+        self.assertFalse(os.path.exists(render_file))
+
+    def test_cli_render_dry_run_json(self) -> None:
+        """Verifies that running 'render --dry-run --json' outputs structured JSON with action list."""
+        render_file = os.path.join(self.drift_root, "render", "pkg_a", "file.txt")
+        self.assertFalse(os.path.exists(render_file))
+
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "render", "--dry-run", "--json", "pkg_a"])
+
+        data = json.loads(stdout.getvalue())
+        self.assertEqual(data["command"], "render")
+        self.assertEqual(data["status"], "SUCCESS")
+        self.assertTrue(data.get("dry_run"))
+        self.assertEqual(len(data["packages"]), 1)
+        self.assertEqual(data["packages"][0]["package"], "pkg_a")
+        actions = data["packages"][0]["actions"]
+        self.assertGreaterEqual(len(actions), 1)
+        action_types = [a["action_type"] for a in actions]
+        self.assertIn("CREATE_COPY", action_types)
+        self.assertFalse(os.path.exists(render_file))
+
     def test_install_command_stub_guidance_with_dry_run(self) -> None:
         """Verifies that 'drift install --dry-run' prints didactic guidance and exits with code 1."""
         from drift.cli import run_argparse_cli

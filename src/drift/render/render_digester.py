@@ -11,8 +11,6 @@ Layer 3: Top-Level Graph Digester & Orchestrator
         Coordinates topological evaluation across node.digest(context).
 
 Layer 2: Scoped Pruning Subsystems & Cache Helper
-    - format_render_action_line(action_type, dst_path, src_path, reason, drift_root) -> str
-        Formats a single render DAG digestion action into a clean terminal line.
     - check_and_apply_cache(node, target_rel_path, context) -> bool
         Checks lockfile match, populates hashes, and updates skipped list on hit.
     - prune_obsolete_config_files(drift_root, package_render_dir, active_paths, dry_run) -> List[Path]
@@ -46,6 +44,7 @@ from ..core.constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DirMode,
 )
+from ..core.file_action import FileAction, FileActionType, format_action_line
 from ..core.folder_diff import list_folder_paths
 from ..utils.file_ops import prune_empty_parents
 from .render_cache import NodeHashes, RenderCache
@@ -74,6 +73,7 @@ def is_drift_internal_path(rel_path: Path, package_render_dir: Path) -> bool:
 class DigestionResult:
     """Structured result container summarizing digestion execution."""
 
+    actions: List[FileAction] = field(default_factory=list)
     rendered_paths: List[Path] = field(default_factory=list)
     skipped_paths: List[Path] = field(default_factory=list)
     pruned_paths: List[Path] = field(default_factory=list)
@@ -126,46 +126,6 @@ class DigestionContext:
 
 
 
-def _display_render_path(path: Optional[Path], drift_root: Optional[Path] = None) -> str:
-    if path is None:
-        return ""
-    if drift_root is not None:
-        try:
-            return str(path.relative_to(drift_root))
-        except ValueError:
-            pass
-    return str(path)
-
-
-def format_render_action_line(
-    action_type: str,
-    dst_path: Path,
-    src_path: Optional[Path] = None,
-    reason: Optional[str] = None,
-    drift_root: Optional[Path] = None,
-) -> str:
-    """Formats a single render DAG digestion action into a clean terminal line."""
-    dst_str = _display_render_path(dst_path, drift_root)
-    src_str = _display_render_path(src_path, drift_root) if src_path is not None else None
-    reason_str = f" ({reason})" if reason else ""
-
-    if action_type == "ENSURE_DIR":
-        return f"    📁 [ENSURE_DIR]      {dst_str}"
-    elif action_type == "COPY":
-        return f"    📄 [COPY]            {src_str} -> {dst_str}"
-    elif action_type == "RENDER":
-        return f"    🧪 [RENDER]          {src_str} -> {dst_str}{reason_str}"
-    elif action_type == "CONFIG":
-        return f"    ⚙️ [CONFIG]          {dst_str}"
-    elif action_type == "PRUNE":
-        return f"    🗑️ [PRUNE]           {dst_str}"
-    elif action_type == "SKIP_IDENTICAL":
-        if src_str:
-            return f"    ⏭️ [SKIP_IDENTICAL]  {src_str} -> {dst_str}{reason_str}"
-        return f"    ⏭️ [SKIP_IDENTICAL]  {dst_str}{reason_str}"
-    return f"    [{action_type}] {dst_str}{reason_str}"
-
-
 def check_and_apply_cache(
     node: Node,
     target_path: Path,
@@ -189,12 +149,16 @@ def check_and_apply_cache(
             context.cache.set(target_path, cached, src_path=src_path)
 
         engine_name = getattr(getattr(node, "engine_config", None), "name", None)
+        action = FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=src_path or target_path,
+            dst_path=target_path,
+            reason=engine_name,
+        )
+        context.result.actions.append(action)
         logger.debug(
-            format_render_action_line(
-                "SKIP_IDENTICAL",
-                target_path,
-                src_path=src_path,
-                reason=engine_name,
+            format_action_line(
+                action,
                 drift_root=context.drift_root,
             )
         )
@@ -229,7 +193,8 @@ def prune_obsolete_config_files(
         if cand.is_file() and cand not in active_set:
             if not dry_run:
                 cand.unlink()
-            logger.info(format_render_action_line("PRUNE", cand, drift_root=drift_root))
+            action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=cand)
+            logger.info(format_action_line(action, drift_root=drift_root))
             pruned.append(cand)
 
     return sorted(pruned)
@@ -257,14 +222,16 @@ def prune_obsolete_hooks(
                 if not dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, disk_hooks)
-                logger.info(format_render_action_line("PRUNE", disk_cand, drift_root=drift_root))
+                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                logger.info(format_action_line(action, drift_root=drift_root))
                 pruned.append(cand)
             elif disk_cand.is_dir():
                 if not dry_run:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, disk_hooks)
-                logger.info(format_render_action_line("PRUNE", disk_cand, drift_root=drift_root))
+                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                logger.info(format_action_line(action, drift_root=drift_root))
                 pruned.append(cand)
 
     return sorted(pruned)
@@ -297,14 +264,16 @@ def prune_obsolete_payload_files(
                 if not dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, disk_pkg)
-                logger.info(format_render_action_line("PRUNE", disk_cand, drift_root=drift_root))
+                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                logger.info(format_action_line(action, drift_root=drift_root))
                 pruned.append(cand)
             elif disk_cand.is_dir():
                 if not dry_run:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, disk_pkg)
-                logger.info(format_render_action_line("PRUNE", disk_cand, drift_root=drift_root))
+                action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
+                logger.info(format_action_line(action, drift_root=drift_root))
                 pruned.append(cand)
 
     return sorted(pruned)

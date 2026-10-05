@@ -132,14 +132,16 @@ from .package_assertions import (
 )
 from ..utils.process_utils import run_command
 from ..core.sync_ops import backup_file_or_dir_external
-from ..core.folder_delivery import (
+from ..core.file_action import (
     FileActionExecutionContext,
     FileActionType,
-    DeliveryInspectionContext,
     FileAction,
+    execute_delivery_actions,
+)
+from ..core.folder_delivery import (
+    DeliveryInspectionContext,
     plan_folder_delivery,
     plan_file_removals,
-    execute_delivery_actions,
     assert_target_dir_outside_drift_root,
 )
 from ..core.result_models import (
