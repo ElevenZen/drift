@@ -785,7 +785,7 @@ def plan_actions_from_folder_diff(
         actions.append(FileAction(
             action_type=FileActionType.DELETE_ITEM,
             dst_path=target_dir / rel,
-            reason="Deleted",
+            reason="Deleted in rendered package",
         ))
 
     # 2. Additions
@@ -803,22 +803,23 @@ def plan_actions_from_folder_diff(
                 action_type=FileActionType.CREATE_COPY,
                 src_path=src,
                 dst_path=dst,
-                reason="New file",
+                reason="File created",
             ))
 
     # 3. Modifications
     for rel in diff.modified:
         src = source_dir / rel
         dst = target_dir / rel
+        src_mode = oct(src.stat().st_mode & 0o777)
+        dst_mode = oct(dst.stat().st_mode & 0o777)
+        permission_reason = f"Permissions changed ({dst_mode} -> {src_mode})"
         if is_concrete_dir(src):
             if is_concrete_dir(dst) and permissions_differ(src, dst):
-                src_mode = oct(src.stat().st_mode & 0o777)
-                dst_mode = oct(dst.stat().st_mode & 0o777)
                 actions.append(FileAction(
                     action_type=FileActionType.UPDATE_PERMISSION,
                     src_path=src,
                     dst_path=dst,
-                    reason=f"Permissions differ ({dst_mode} -> {src_mode})",
+                    reason=permission_reason
                 ))
             else:
                 raise RuntimeError(
@@ -830,7 +831,7 @@ def plan_actions_from_folder_diff(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=src,
                 dst_path=dst,
-                reason="Permissions updated",
+                reason=permission_reason
             ))
         else:
             actions.append(FileAction(

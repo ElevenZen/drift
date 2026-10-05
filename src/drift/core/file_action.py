@@ -154,7 +154,7 @@ def format_action_line(action: FileAction, drift_root: Optional[Path] = None) ->
     elif action.action_type == FileActionType.CREATE_COPY:
         return f"    ➕ [CREATE_COPY]     {src_str} -> {dst_str}{reason_str}"
     elif action.action_type == FileActionType.CREATE_KEEP_FILE:
-        return f"    📌 [CREATE_KEEP_FILE] {dst_str}{reason_str}"
+        return f"    📌 [CREATE_KEEP]     {dst_str}{reason_str}"
     elif action.action_type == FileActionType.UPDATE_COPY:
         return f"    ✏️ [UPDATE_COPY]     {src_str} -> {dst_str}{reason_str}"
     elif action.action_type == FileActionType.UPDATE_PERMISSION:
@@ -162,7 +162,7 @@ def format_action_line(action: FileAction, drift_root: Optional[Path] = None) ->
     elif action.action_type == FileActionType.RENDER_ITEM:
         return f"    🎨 [RENDER]          {src_str} -> {dst_str}{reason_str}"
     elif action.action_type == FileActionType.WRITE_CONFIG:
-        return f"    ⚙️ [CONFIG]          {dst_str}{reason_str}"
+        return f"    ⚙️ [WRITE_CONFIG]    {dst_str}{reason_str}"
     elif action.action_type == FileActionType.SKIP_IDENTICAL:
         return f"    ⏭️ [SKIP_IDENTICAL]  {src_str} -> {dst_str}{reason_str}"
     elif action.action_type == FileActionType.BACKUP_OVERWRITE:
@@ -170,7 +170,7 @@ def format_action_line(action: FileAction, drift_root: Optional[Path] = None) ->
     elif action.action_type == FileActionType.BACKUP_PRUNE:
         return f"    📦 [BACKUP_PRUNE]    {src_str}{reason_str}"
     elif action.action_type in DELETE_ACTION_TYPES:
-        return f"    🗑️ [{action.action_type}]    {dst_str}{reason_str}"
+        return f"    🗑️ [{action.action_type}]     {dst_str}{reason_str}"
     elif action.action_type == FileActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
     return f"    [{action.action_type}] {src_str} -> {dst_str}{reason_str}"
