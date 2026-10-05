@@ -694,7 +694,7 @@ class TestRenderActionLogging(unittest.TestCase):
             FileAction(FileActionType.WRITE_CONFIG, dst_path=Path("/workspace/render/pkg_a/.drift/drift_package.toml")),
             drift_root=drift_root,
         )
-        self.assertIn("⚙️ [CONFIG]", cfg_line)
+        self.assertIn("⚙️ [WRITE_CONFIG]", cfg_line)
         self.assertIn("render/pkg_a/.drift/drift_package.toml", cfg_line)
 
         # DELETE_ITEM (Pruning)
@@ -704,6 +704,14 @@ class TestRenderActionLogging(unittest.TestCase):
         )
         self.assertIn("🗑️ [DELETE_ITEM]", prune_line)
         self.assertIn("render/pkg_a/old.txt", prune_line)
+
+        # DELETE_TREE
+        tree_line = format_action_line(
+            FileAction(FileActionType.DELETE_TREE, dst_path=Path("/workspace/render/pkg_a/old_dir")),
+            drift_root=drift_root,
+        )
+        self.assertIn("🗑️ [DELETE_TREE]", tree_line)
+        self.assertIn("render/pkg_a/old_dir", tree_line)
 
         # SKIP_IDENTICAL with src and reason
         skip_line = format_action_line(

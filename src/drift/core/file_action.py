@@ -166,14 +166,17 @@ def format_action_line(action: FileAction, drift_root: Optional[Path] = None) ->
     elif action.action_type == FileActionType.SKIP_IDENTICAL:
         return f"    ⏭️ [SKIP_IDENTICAL]  {src_str} -> {dst_str}{reason_str}"
     elif action.action_type == FileActionType.BACKUP_OVERWRITE:
-        return f"    🛡️ [BACKUP_OVERWRITE] {src_str}{reason_str}"
+        return f"    🛡️ [BACKUP_OVERWRITE]  {src_str}{reason_str}"
     elif action.action_type == FileActionType.BACKUP_PRUNE:
         return f"    📦 [BACKUP_PRUNE]    {src_str}{reason_str}"
-    elif action.action_type in DELETE_ACTION_TYPES:
-        return f"    🗑️ [{action.action_type}]     {dst_str}{reason_str}"
+    elif action.action_type == FileActionType.DELETE_ITEM:
+        return f"    🗑️ [DELETE_ITEM]     {dst_str}{reason_str}"
+    elif action.action_type == FileActionType.DELETE_TREE:
+        return f"    🗑️ [DELETE_TREE]     {dst_str}{reason_str}"
     elif action.action_type == FileActionType.INFO_MESSAGE:
         return f"    📢 [INFO]            {action.reason}"
-    return f"    [{action.action_type}] {src_str} -> {dst_str}{reason_str}"
+    action_name = action.action_type.value if hasattr(action.action_type, "value") else action.action_type
+    return f"    [{action_name}] {src_str} -> {dst_str}{reason_str}"
 
 
 def format_action_summary(actions: Sequence[FileAction]) -> str:

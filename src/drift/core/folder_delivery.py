@@ -160,6 +160,8 @@ def _inspect_directory_node(
     if has_backed_up_ancestor or not (target_dir.exists() or target_dir.is_symlink()):
         return [FileAction(action_type=FileActionType.ENSURE_DIR, dst_path=target_dir)]
 
+    # already a directory, check for permission differences.
+    # in reverse mode, if the directory is populated, we should prune the .drift_keep file if it exists
     if is_concrete_dir(target_dir):
         node_actions: List[FileAction] = []
         if context.reverse_mode and prune_keep_file:
@@ -490,6 +492,45 @@ def _resolve_leaf_symlink(
     return resolved_src
 
 
+def _inspect_directory_leaf(
+    context: DeliveryInspectionContext,
+    source_dir: Path,
+    system_target: Path,
+    rel_path: Path,
+    backed_up_ancestor_targets: Set[Path],
+) -> List[FileAction]:
+    """Inspects a source directory leaf, planning directory creation, permission updates, or empty folder tracking."""
+    has_backed_up_parent = _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets)
+    dir_actions = _inspect_directory_node(
+        context=context,
+        target_dir=system_target,
+        source_dir=source_dir,
+        rel_path=rel_path,
+        has_backed_up_ancestor=has_backed_up_parent,
+        prune_keep_file=False,
+    )
+    if any(
+        a.action_type in BACKUP_OR_DELETE_ACTION_TYPES
+        and (a.src_path == system_target or a.dst_path == system_target)
+        for a in dir_actions
+    ):
+        backed_up_ancestor_targets.add(system_target)
+
+    actions = list(dir_actions)
+
+    # In reverse_mode, if host folder is a concrete empty directory, track it with .drift_keep in install/
+    if context.reverse_mode and not source_dir.is_symlink() and not any(source_dir.iterdir()):
+        keep_file = system_target / DRIFT_KEEP_FILE_NAME
+        if not keep_file.exists():
+            actions.append(FileAction(
+                action_type=FileActionType.CREATE_KEEP_FILE,
+                dst_path=keep_file,
+                reason="Track empty folder with .drift_keep",
+            ))
+
+    return actions
+
+
 def _inspect_leaf(
     context: DeliveryInspectionContext,
     rel_file: Path,
@@ -505,39 +546,13 @@ def _inspect_leaf(
 
     # 1. Directory or symlink-to-directory inspection
     if source_file.is_dir():
-        has_backed_up_parent = _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets)
-        dir_actions = _inspect_directory_node(
+        actions.extend(_inspect_directory_leaf(
             context=context,
-            target_dir=system_target,
             source_dir=source_file,
+            system_target=system_target,
             rel_path=rel_file,
-            has_backed_up_ancestor=has_backed_up_parent,
-            prune_keep_file=False,
-        )
-        if any(
-            a.action_type in BACKUP_OR_DELETE_ACTION_TYPES
-            and (a.src_path == system_target or a.dst_path == system_target)
-            for a in dir_actions
-        ):
-            backed_up_ancestor_targets.add(system_target)
-        actions.extend(dir_actions)
-
-        # In reverse_mode, if host folder is a concrete empty directory, track it with .drift_keep in install/
-        if context.reverse_mode and not source_file.is_symlink() and not any(source_file.iterdir()):
-            keep_file = system_target / DRIFT_KEEP_FILE_NAME
-            if not keep_file.exists():
-                actions.append(FileAction(
-                    action_type=FileActionType.CREATE_KEEP_FILE,
-                    dst_path=keep_file,
-                    reason="Track empty folder with .drift_keep",
-                ))
-            else:
-                actions.append(FileAction(
-                    action_type=FileActionType.SKIP_IDENTICAL,
-                    src_path=source_file,
-                    dst_path=keep_file,
-                    reason="Keep file already exists",
-                ))
+            backed_up_ancestor_targets=backed_up_ancestor_targets,
+        ))
         return
 
     # 2. Leaf file symlink resolution
@@ -770,8 +785,6 @@ def plan_file_removals(
     ]
 
 
-# TODO: add a optional reason dict arg, Dict[FileAction, str] to replace the placeholder constant reasons.
-# and update the usage in stage_repo.py to reflect the reason for each action.
 def plan_actions_from_folder_diff(
     diff: FolderDiff,
     source_dir: Path,
@@ -810,16 +823,15 @@ def plan_actions_from_folder_diff(
     for rel in diff.modified:
         src = source_dir / rel
         dst = target_dir / rel
-        src_mode = oct(src.stat().st_mode & 0o777)
-        dst_mode = oct(dst.stat().st_mode & 0o777)
-        permission_reason = f"Permissions changed ({dst_mode} -> {src_mode})"
         if is_concrete_dir(src):
             if is_concrete_dir(dst) and permissions_differ(src, dst):
+                src_mode = oct(src.stat().st_mode & 0o777)
+                dst_mode = oct(dst.stat().st_mode & 0o777)
                 actions.append(FileAction(
                     action_type=FileActionType.UPDATE_PERMISSION,
                     src_path=src,
                     dst_path=dst,
-                    reason=permission_reason
+                    reason=f"Permissions changed ({dst_mode} -> {src_mode})",
                 ))
             else:
                 raise RuntimeError(
@@ -827,11 +839,17 @@ def plan_actions_from_folder_diff(
                     f"but source '{src}' and destination '{dst}' do not represent a valid directory permission modification."
                 )
         elif rel in diff.permissions_differ:
+            if src.exists() and dst.exists():
+                src_mode = oct(src.stat().st_mode & 0o777)
+                dst_mode = oct(dst.stat().st_mode & 0o777)
+                permission_reason = f"Permissions changed ({dst_mode} -> {src_mode})"
+            else:
+                permission_reason = "Permissions changed"
             actions.append(FileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
                 src_path=src,
                 dst_path=dst,
-                reason=permission_reason
+                reason=permission_reason,
             ))
         else:
             actions.append(FileAction(

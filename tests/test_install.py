@@ -3818,13 +3818,13 @@ class TestInstallDependencies(unittest.TestCase):
         self.assertTrue(keep_path.is_file())
         self.assertEqual(keep_path.stat().st_size, 0)
 
-        # Plan again: should SKIP_IDENTICAL for .drift_keep
+        # Plan again: empty folder already tracked with .drift_keep, so no CREATE_KEEP_FILE planned
         actions_repeat = plan_folder_delivery(
             rev_ctx,
             deployable_files=[Path("host_empty_dir")],
             deployed_files=(),
         )
-        self.assertTrue(any(a.action_type == FileActionType.SKIP_IDENTICAL and a.dst_path == keep_path for a in actions_repeat))
+        self.assertFalse(any(a.action_type == FileActionType.CREATE_KEEP_FILE for a in actions_repeat))
 
     def test_empty_folder_ancestor_prune_in_reverse_mode(self) -> None:
         """Verifies ancestor inspection prunes .drift_keep when an empty folder becomes populated in reverse mode."""

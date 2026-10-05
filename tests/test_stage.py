@@ -989,7 +989,7 @@ class TestStageRepo(unittest.TestCase):
         self.assertEqual(len(dir_actions), 1)
         self.assertEqual(dir_actions[0].action_type, FileActionType.UPDATE_PERMISSION)
         self.assertEqual(dir_actions[0].dst_path, dst_dir / "mod_dir")
-        self.assertIn("Permissions differ", dir_actions[0].reason or "")
+        self.assertIn("Permissions changed", dir_actions[0].reason or "")
 
         # 5. Directory with matching permissions in modified -> raises RuntimeError
         (dst_dir / "mod_dir").chmod(0o700)
