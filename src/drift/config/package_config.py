@@ -458,7 +458,7 @@ class PackageConfig:
                 workspace_config=workspace_config,
                 flags=exec_flags,
             )
-            if res.status != "SUCCESS" or res.exit_code != 0:
+            if res.status == "FAILED" or res.exit_code != 0:
                 err_detail = (res.stderr or "").strip() or (res.stdout or "").strip() or f"exit code {res.exit_code}"
                 return False, f"Probe hook failed ({err_detail})"
 

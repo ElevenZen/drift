@@ -1911,7 +1911,144 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True))
         self.assertTrue(res.is_success)
 
+    def test_render_package_dry_run_does_not_render_hooks_to_disk(self) -> None:
+        """Verifies that render_package(dry_run=True) does not create render/<pkg>/.drift/hooks/."""
+        from drift.render.render_package import render_package, RenderOptions
+
+        pkg_src = self.drift_root / "src" / "pkg_dry_hooks"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_dry_hooks"
+
+        [hooks]
+        pre_source = "drift_hooks/pre_source.sh"
+        post_render = "drift_hooks/post_render.sh"
+        """, encoding="utf-8")
+
+        (hooks_dir / "pre_source.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (hooks_dir / "post_render.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        (hooks_dir / "pre_source.sh").chmod(0o755)
+        (hooks_dir / "post_render.sh").chmod(0o755)
+
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True))
+        self.assertTrue(res.is_success)
+
+        render_hooks_dir = self.drift_root / "render" / "pkg_dry_hooks" / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        self.assertFalse(render_hooks_dir.exists())
+
+    def test_render_package_pure_dry_run_skips_pre_source_with_notice(self) -> None:
+        """Verifies that pure dry-run skips pre_source hook and logs notice regarding --with-hooks."""
+        from drift.render.render_package import render_package, RenderOptions
+        from drift.core.constants import set_test_mode
+
+        pkg_src = self.drift_root / "src" / "pkg_dry_notice"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_dry_notice"
+
+        [hooks]
+        pre_source = "drift_hooks/pre_source.sh"
+        """, encoding="utf-8")
+
+        dynamic_src = pkg_src / "generated.txt"
+        (hooks_dir / "pre_source.sh").write_text(f"#!/bin/sh\necho 'hello' > '{dynamic_src}'\n", encoding="utf-8")
+        (hooks_dir / "pre_source.sh").chmod(0o755)
+
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        set_test_mode(True, enable_logging=True)
+        try:
+            with patch("sys.stdout", StringIO()):
+                with self.assertLogs("drift.render.render_package", level="INFO") as cm:
+                    res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True))
+        finally:
+            set_test_mode(True, enable_logging=False)
+        self.assertTrue(res.is_success)
+        self.assertFalse(dynamic_src.exists())
+        self.assertTrue(any("Pass '--with-hooks' to execute pre-flight hooks" in log for log in cm.output))
+
+    def test_render_package_dry_run_with_hooks_failing_probe_skips(self) -> None:
+        """Verifies that dry-run with hooks executes probe hook and skips package when probe fails."""
+        from drift.render.render_package import render_package, RenderOptions
+        from drift.hooks.lifecycle_hooks import HookExecFlags
+
+        pkg_src = self.drift_root / "src" / "pkg_dry_failing_probe"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_dry_failing_probe"
+
+        [hooks]
+        probe = "drift_hooks/probe.sh"
+        """, encoding="utf-8")
+
+        probe_script = hooks_dir / "probe.sh"
+        probe_script.write_text("#!/bin/sh\necho 'Missing system requirement' >&2\nexit 1\n", encoding="utf-8")
+        probe_script.chmod(0o755)
+
+        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
+        flags = HookExecFlags(dry_run=True, no_hooks=False, streaming=False)
+        res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True, flags=flags))
+        self.assertEqual(res.status, "SKIPPED")
+        self.assertIn("Probe hook failed", res.skip_reason or "")
+        self.assertFalse((self.drift_root / "render" / "pkg_dry_failing_probe").exists())
+
+    def test_render_package_dry_run_with_hooks_executes_pre_source_and_plans_payload(self) -> None:
+        """Verifies that dry-run with hooks executes pre_source to generate dynamic files into plan."""
+        from drift.render.render_package import render_package, RenderOptions
+        from drift.hooks.lifecycle_hooks import HookExecFlags
+        from drift.core.file_action import FileActionType
+        from drift.config.render_engine_config import RenderEngineRegistry, RenderEngineConfig
+        from drift.core.constants import INTERNAL_RENDER_COMMAND
+
+        pkg_src = self.drift_root / "src" / "pkg_dry_dynamic"
+        pkg_src.mkdir(parents=True, exist_ok=True)
+        hooks_dir = pkg_src / DRIFT_HOOKS_DIR_NAME
+        hooks_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_src / "drift_package.toml").write_text("""
+        [package]
+        name = "pkg_dry_dynamic"
+
+        [hooks]
+        pre_source = "drift_hooks/pre_source.sh"
+        """, encoding="utf-8")
+
+        dynamic_src = pkg_src / "dynamic_template.envst.json"
+        (hooks_dir / "pre_source.sh").write_text(
+            f"#!/bin/sh\necho '{{\"dynamic\": true}}' > '{dynamic_src}'\n",
+            encoding="utf-8",
+        )
+        (hooks_dir / "pre_source.sh").chmod(0o755)
+
+        workspace_config = WorkspaceConfig(
+            drift_root=self.drift_root,
+            render_engine_configs=RenderEngineRegistry({
+                "envst": RenderEngineConfig(name="envst", suffix="envst", render_command=INTERNAL_RENDER_COMMAND)
+            })
+        )
+        flags = HookExecFlags(dry_run=True, no_hooks=False, streaming=False)
+        res = render_package(workspace_config, pkg_src, options=RenderOptions(dry_run=True, flags=flags))
+        self.assertTrue(res.is_success)
+        self.assertTrue(dynamic_src.is_file())
+        action_types = [a.action_type for a in res.actions]
+        self.assertIn(FileActionType.RENDER_ITEM, action_types)
+        # Ensure render/ directory was not created or modified
+        self.assertFalse((self.drift_root / "render" / "pkg_dry_dynamic").exists())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

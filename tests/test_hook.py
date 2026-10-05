@@ -1515,8 +1515,91 @@ echo "CUSTOM_PKG_VAR=$CUSTOM_PKG_VAR"
             )
         self.assertIn("must be absolute", str(ctx.exception))
 
+    def test_execute_hook_script_dry_run_skips_non_dry_run_hooks(self) -> None:
+        """Verifies execute_hook_script returns SKIPPED for hooks not in DRY_RUN_ENABLED_HOOKS when dry_run=True."""
+        from drift.hooks.lifecycle_hooks import execute_hook_script
+        from drift.config.package_config import PackageConfig
+
+        script = self.drift_hooks_dir / "post_render.sh"
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
+
+        res = execute_hook_script(
+            hook_path=script,
+            pkg="pkg_hook",
+            hook_name="post_render",
+            metadata=pkg_config,
+            cwd=self.drift_hooks_dir,
+            flags=HookExecFlags(dry_run=True, no_hooks=False),
+        )
+        self.assertEqual(res.status, "SKIPPED")
+        self.assertEqual(res.exit_code, 0)
+        self.assertFalse((self.drift_hooks_dir / "post_render_out.txt").exists())
+
+    def test_execute_hook_script_dry_run_runs_probe_and_pre_source(self) -> None:
+        """Verifies execute_hook_script executes probe and pre_source when dry_run=True and no_hooks=False."""
+        from drift.hooks.lifecycle_hooks import execute_hook_script
+        from drift.config.package_config import PackageConfig
+
+        pkg_config = PackageConfig.from_source_dir(self.src_pkg_dir, self.workspace_config)
+        script = self.drift_hooks_dir / "pre_source.sh"
+
+        res = execute_hook_script(
+            hook_path=script,
+            pkg="pkg_hook",
+            hook_name="pre_source",
+            metadata=pkg_config,
+            cwd=self.drift_hooks_dir,
+            flags=HookExecFlags(dry_run=True, no_hooks=False),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertEqual(res.exit_code, 0)
+        self.assertTrue((self.drift_hooks_dir / "pre_source_out.txt").is_file())
+
+    def test_trigger_hook_with_render_dry_run_no_hooks_skips(self) -> None:
+        """Verifies trigger_hook_with_render immediately returns SKIPPED when no_hooks is True in dry-run."""
+        from drift.hooks.lifecycle_hooks import trigger_hook_with_render
+
+        res = trigger_hook_with_render(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+            hook_name="pre_source",
+            flags=HookExecFlags(dry_run=True, no_hooks=True),
+        )
+        self.assertEqual(res.status, "SKIPPED")
+        render_hooks_dir = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        self.assertFalse(render_hooks_dir.exists())
+
+    def test_trigger_hook_with_render_templated_hook_dry_run_isolation(self) -> None:
+        """Verifies templated hook under dry_run + no_hooks=False renders to temp_dir and leaves render/ clean."""
+        from drift.hooks.lifecycle_hooks import trigger_hook_with_render
+        from drift.config.render_engine_config import RenderEngineRegistry, RenderEngineConfig
+
+        tmpl_hook = self.drift_hooks_dir / "pre_source.sh.envst"
+        tmpl_hook.write_text("#!/bin/sh\necho 'TEMPLATED_HOOK' > templated_out.txt\n", encoding="utf-8")
+        tmpl_hook.chmod(0o755)
+
+        (self.src_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_hook"
+        target_directory = "{self.target_dir.as_posix()}"
+
+        [hooks]
+        pre_source = "drift_hooks/pre_source.sh"
+        """, encoding="utf-8")
+
+        res = trigger_hook_with_render(
+            workspace_config=self.workspace_config,
+            package_name="pkg_hook",
+            hook_name="pre_source",
+            flags=HookExecFlags(dry_run=True, no_hooks=False),
+        )
+        self.assertEqual(res.status, "SUCCESS")
+        render_hooks_dir = self.drift_root / "render" / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks"
+        self.assertFalse(render_hooks_dir.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

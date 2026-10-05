@@ -343,6 +343,12 @@ UNINSTALL_HOOK_NAMES = (
     "post_uninstall",
 )
 
+# Pre-flight hooks permitted to execute during dry-run when hooks are explicitly enabled (--with-hooks)
+DRY_RUN_ENABLED_HOOKS = (
+    "probe",
+    "pre_source",
+)
+
 HOOK_CONFIG_OPTIONS = (*LIFECYCLE_HOOK_NAMES, "timeout", "rollback_on_failure")
 HOOK_CONFIG_OPTION_SET = set(HOOK_CONFIG_OPTIONS)
 

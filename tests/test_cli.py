@@ -763,7 +763,41 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     _, kwargs = mock_action.call_args
                     self.assertTrue(kwargs.get("no_cache"), f"Argparse {cmd} with {flag} did not pass no_cache=True")
 
+    def test_cli_render_with_hooks_flag_across_backends(self) -> None:
+        """Verifies that --with-hooks and --with-hook flags on render pass with_hooks=True."""
+        from drift.cli import run_argparse_cli
+
+        for flag in ["--with-hooks", "--with-hook"]:
+            with patch("drift.cli.cli_handlers.execute_render") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    main(["-C", self.drift_root, "render", flag, "pkg_a"])
+                self.assertTrue(mock_action.called, f"Typer render with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertTrue(kwargs.get("with_hooks"), f"Typer render with {flag} did not pass with_hooks=True")
+
+            with patch("drift.cli.cli_handlers.execute_render") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    run_argparse_cli(["-C", self.drift_root, "render", flag, "pkg_a"])
+                self.assertTrue(mock_action.called, f"Argparse render with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertTrue(kwargs.get("with_hooks"), f"Argparse render with {flag} did not pass with_hooks=True")
+
+    def test_cli_render_mutually_exclusive_hooks_flags(self) -> None:
+        """Verifies that passing both --no-hooks and --with-hooks fails across both backends."""
+        from drift.cli import run_argparse_cli
+
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                run_argparse_cli(["-C", self.drift_root, "render", "--no-hooks", "--with-hooks", "pkg_a"])
+            self.assertEqual(ctx.exception.code, 2)
+
+        with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
+            with self.assertRaises(SystemExit) as ctx:
+                main(["-C", self.drift_root, "render", "--no-hooks", "--with-hooks", "pkg_a"])
+            self.assertIn(ctx.exception.code, (1, 2))
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

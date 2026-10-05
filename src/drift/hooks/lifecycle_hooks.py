@@ -36,6 +36,7 @@ import time
 import logging
 import shlex
 import subprocess
+import tempfile
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -54,6 +55,7 @@ from ..core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
+    DRY_RUN_ENABLED_HOOKS,
 )
 from ..utils.env_utils import env_scope
 from ..utils.path_utils import to_relative_path
@@ -335,9 +337,13 @@ def execute_hook_script(
 ) -> HookResult:
     """Executes a hook script in user space with cwd validation, full environment inheritance, and timeout/error handling.
 
+    Note:
+        The 'no_hooks' flag is handled upstream in PackageHooks.trigger() and trigger_hook_with_render();
+        this function assumes hook execution has been authorized.
+
     Returns:
-        HookResult: Structured result with status ("SUCCESS" or "FAILED"), duration_ms, exit code,
-            hook path, CWD, stdout, stderr, and sudo elevation flag (always False).
+        HookResult: Structured result with status ("SUCCESS", "FAILED", or "SKIPPED" if bypassed in dry-run mode),
+            duration_ms, exit code, hook path, CWD, stdout, stderr, and sudo elevation flag (always False).
 
     Raises:
         HookMissingError: If the hook script file does not exist on disk or is not a regular file.
@@ -350,21 +356,15 @@ def execute_hook_script(
 
     exec_flags = HookExecFlags.resolve(flags)
 
-    if exec_flags.dry_run:
+    if exec_flags.dry_run and hook_name not in DRY_RUN_ENABLED_HOOKS:
         logger.info(f"🪝  [DRY-RUN] Would run hook: {hook_name} ({pkg}) -> {hook_path}")
-        return HookResult(
-            command="hook",
+        res = HookResult.skipped(
             package=pkg,
             hook_name=hook_name,
-            status="SUCCESS",
-            exit_code=0,
-            hook_path=str(hook_path),
-            cwd=str(cwd),
-            sudo=False,
-            duration_ms=0.0,
-            stdout="",
-            stderr="",
+            cwd=cwd,
         )
+        res.hook_path = str(hook_path)
+        return res
 
     logger.info(f"🪝  Triggering hook: {hook_name} ({pkg})")
     logger.debug(f"   Script: {hook_path}")
@@ -486,15 +486,51 @@ def resolve_hook_exec_path(
     hook_name: str,
     hook_source_path: Path,
     engines_override: Optional["RenderEngineRegistry"] = None,
+    dry_run: bool = False,
+    temp_dir: Optional[Path] = None,
 ) -> Path:
     """Resolves executable hook path, rendering package-internal hooks into the render sandbox if needed.
 
+    In dry-run mode, templated hooks are rendered into an isolated temporary directory
+    instead of the live render/ directory, preserving clean repository state.
+    Static hooks are returned directly from the source directory.
+
     Raises:
-        RuntimeError: If rendered hook file was not produced after rendering.
+        HookMissingError: If rendered hook file was not produced after rendering.
     """
     rel_hook_path = pkg_config.hooks.get_relative_path(hook_name)
     if rel_hook_path is None:
         return hook_source_path
+
+    hook_engines = (
+        engines_override
+        if engines_override is not None
+        else pkg_config.package_render_engines(workspace_config)
+    )
+    engine = hook_engines.find_engine_for_file(hook_source_path.name)
+
+    if dry_run:
+        if engine is None:
+            return hook_source_path
+
+        from ..render.render_core import render_template_to_file
+
+        if temp_dir is None:
+            temp_dir = Path(tempfile.mkdtemp(prefix="drift_hook_dry_run_"))
+        dest_filename = to_relative_path(rel_hook_path, Path(DRIFT_HOOKS_DIR_NAME)).name
+        hook_exec_path = temp_dir / dest_filename
+        render_template_to_file(
+            engine_config=engine,
+            drift_root=workspace_config.drift_root,
+            template_file_path=hook_source_path,
+            output_file_path=hook_exec_path,
+        )
+        if sys.platform != "win32":
+            try:
+                hook_exec_path.chmod(0o755)
+            except OSError:
+                pass
+        return hook_exec_path
 
     from ..render.render_hooks import render_hooks
 
@@ -541,6 +577,9 @@ def trigger_hook_with_render(
     if exec_flags.no_hooks:
         return HookResult.skipped(package=package_name, hook_name=hook_name)
 
+    if exec_flags.dry_run and hook_name not in DRY_RUN_ENABLED_HOOKS:
+        return HookResult.skipped(package=package_name, hook_name=hook_name)
+
     src_pkg_dir = workspace_config.source_path / package_name
     if not src_pkg_dir.exists() or not src_pkg_dir.is_dir():
         raise FileNotFoundError(
@@ -569,25 +608,29 @@ def trigger_hook_with_render(
 
     env_ctx = pkg_config.package_envs() if exec_flags.load_envs else nullcontext()
     with env_ctx:
-        hook_exec_path = resolve_hook_exec_path(
-            workspace_config=workspace_config,
-            pkg_config=pkg_config,
-            hook_name=hook_name,
-            hook_source_path=hook_source_path,
-            engines_override=engines_override,
-        )
-        effective_cwd = cwd_override or hook_exec_path.parent
-        res = execute_hook_script(
-            hook_path=hook_exec_path,
-            pkg=package_name,
-            hook_name=hook_name,
-            metadata=pkg_config,
-            cwd=effective_cwd,
-            timeout_override=timeout_override,
-            flags=exec_flags,
-        )
-        res.hook_base_dir = str(src_pkg_dir)
-        return res
+        with (tempfile.TemporaryDirectory() if exec_flags.dry_run else nullcontext()) as tmp_dir:
+            temp_dir_path = Path(tmp_dir) if tmp_dir else None
+            hook_exec_path = resolve_hook_exec_path(
+                workspace_config=workspace_config,
+                pkg_config=pkg_config,
+                hook_name=hook_name,
+                hook_source_path=hook_source_path,
+                engines_override=engines_override,
+                dry_run=exec_flags.dry_run,
+                temp_dir=temp_dir_path,
+            )
+            effective_cwd = cwd_override or hook_exec_path.parent
+            res = execute_hook_script(
+                hook_path=hook_exec_path,
+                pkg=package_name,
+                hook_name=hook_name,
+                metadata=pkg_config,
+                cwd=effective_cwd,
+                timeout_override=timeout_override,
+                flags=exec_flags,
+            )
+            res.hook_base_dir = str(src_pkg_dir)
+            return res
 
 
 def trigger_pre_source_hook(

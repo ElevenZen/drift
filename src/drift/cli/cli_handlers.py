@@ -366,11 +366,14 @@ def handle_render(
     no_hooks: bool = False,
     no_cache: bool = False,
     dry_run: bool = False,
+    with_hooks: bool = False,
 ) -> None:
     """(Low-Level) Render templates of a package or all enabled packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        if no_hooks and with_hooks:
+            raise ValueError("Cannot specify both --no-hooks and --with-hooks.")
         drift_root = cli_ctx.get_drift_root()
         execute_render(
             drift_root,
@@ -379,6 +382,7 @@ def handle_render(
             no_hooks=no_hooks,
             no_cache=no_cache,
             dry_run=dry_run,
+            with_hooks=with_hooks,
         )
         if not cli_ctx.json_mode:
             prefix = "[DRY-RUN] " if dry_run else ""

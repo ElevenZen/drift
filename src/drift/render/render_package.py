@@ -91,7 +91,15 @@ class RenderOptions:
     flags: Optional[HookExecFlags] = None
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
-        """Derives HookExecFlags, assigning dry_run and no_cache from RenderOptions to HookExecFlags."""
+        """Derives HookExecFlags, assigning dry_run and no_cache from RenderOptions to HookExecFlags.
+
+        When flags is not explicitly specified, defaults no_hooks to True in dry_run mode
+        (zero mutation simulation), and False in normal mode.
+        """
+        if self.flags is None:
+            base = HookExecFlags.resolve(None, settings=settings)
+            default_no_hooks = True if self.dry_run else base.no_hooks
+            return replace(base, no_cache=self.no_cache, dry_run=self.dry_run, no_hooks=default_no_hooks)
         base = HookExecFlags.resolve(self.flags, settings=settings)
         return replace(base, no_cache=self.no_cache, dry_run=self.dry_run)
 
@@ -245,6 +253,13 @@ def render_package_files(
     )
 
     # 1. Trigger pre_source hook before reading / processing source files
+    if resolved_hook_flags.dry_run and resolved_hook_flags.no_hooks:
+        if getattr(pkg_config.hooks, "pre_source", None):
+            logger.info(
+                f"🪝  [DRY-RUN] Skipped pre_source hook for '{package_name}' (zero-mutation mode). "
+                f"Note: Dynamically generated templates will not appear in this plan. "
+                f"Pass '--with-hooks' to execute pre-flight hooks."
+            )
     trigger_pre_source_hook(
         workspace_config=workspace_config,
         package_name=package_name,

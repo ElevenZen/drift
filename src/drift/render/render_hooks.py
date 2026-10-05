@@ -108,13 +108,15 @@ def ensure_configured_hook_permissions(
     workspace_config: "WorkspaceConfig",
     pkg_config: "PackageConfig",
     engines_override: Optional["RenderEngineRegistry"] = None,
+    dry_run: bool = False,
 ) -> None:
     """Ensures configured lifecycle hook files have executable permissions (0o755) on POSIX.
 
     Operates strictly as a post-process on the hook files referenced in pkg_config.hooks,
     updating both the source file in src/ (whether static or template) and the rendered file in render/.drift/hooks/.
+    When dry_run is True, permissions modification is skipped.
     """
-    if sys.platform == "win32":
+    if dry_run or sys.platform == "win32":
         return
 
     src_pkg_dir = workspace_config.source_path / pkg_config.name
@@ -187,5 +189,10 @@ def render_hooks(
     with pkg_config.package_envs():
         digest_render_dag(hooks_root, ctx)
 
-    ensure_configured_hook_permissions(workspace_config, pkg_config, engines_override=engines_override)
+    ensure_configured_hook_permissions(
+        workspace_config=workspace_config,
+        pkg_config=pkg_config,
+        engines_override=engines_override,
+        dry_run=dry_run,
+    )
     return ctx.result

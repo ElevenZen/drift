@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org)
-[![Build Status](https://img.shields.io/badge/tests-961%20passed-brightgreen)](tests/)
+[![Build Status](https://img.shields.io/badge/tests-1166%20passed-brightgreen)](tests/)
 
 **Drift** is a declarative, modular configuration and dotfile deployment engine designed for power users who demand system safety, predictability, and complete visibility.  
 
@@ -17,6 +17,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 > **Drift is a transactional, two-stage Git-backed dotfile engine that isolates template compilation in a sandbox and seamlessly audits, protects, and bidirectionally synchronizes live system edits without lost updates.**
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
+* ⚡ **Incremental Merkle DAG Compilation & Caching**: Replaces slow, redundant procedural re-rendering with an AST Directed Acyclic Graph (DAG) backed by cryptographic Merkle hashing and lockfiles (`.drift_lock.json`). Unchanged templates and static assets are skipped instantly (`SKIP_IDENTICAL` / 0ms overhead).
 * 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, define declarative host requirements (`[requirements]`), or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
@@ -448,7 +449,35 @@ render_command = "python3 render_template.py %i %s"
 *   **Intermediate Sandboxing (`.drift/render/`)**: Package-specific input templates compile into `render/<pkg>/.drift/render/`, keeping control plane compilation cleanly isolated from deployable dotfiles.
 *   **Two-Way Synchronization**: Downstream commands (`drift reverse-sync`, `drift adopt`, `drift add`) seamlessly resolve template suffixes against these package-level engines.
 
-### 🛑 6. Proactive Collision Guard & Safeguards
+### ⚡ 6. Incremental Merkle DAG Compilation & Caching
+
+Instead of relying on slow, procedural loops that blindly re-render templates and copy files on every run, Drift models the entire rendering subsystem as an **Abstract Syntax Tree (AST) Directed Acyclic Graph (DAG)** governed by **mathematical change invariance**:
+
+*   **Cryptographic Merkle Invariance**: Every compilable entity computes a SHA-256 hash incorporating raw file bytes, POSIX file permissions mode (`0o755` vs `0o644`), destination paths, engine configuration, and deterministic scoped environment variables. If inputs, templates, environments, and engine rules haven't changed:
+    $$(\Delta I = \varnothing) \land (\Delta T = \varnothing) \land (\Delta V = \varnothing) \land (\Delta E = \varnothing) \implies (\Delta O = \varnothing)$$
+    where:
+    *   $I$: Render engine input file (optional auxiliary asset or parent template output).
+    *   $T$: Template source leaf file ($T : []$).
+    *   $V$: Deterministic environment variable dictionary in the current scope.
+    *   $E$: Render engine definition (suffix pattern, render command template).
+    *   $O$: Compiled destination artifact in the `render/` sandbox ($O : [I, T, V, E]$).
+
+    Drift binds each node to its direct prerequisites through dual-component Merkle cryptographic hashing:
+    $$\text{own_hash}(F) = \text{SHA256}(\text{path} \parallel \text{mode} \parallel \text{bytes})$$
+    $$\text{children_hash}(N) = \operatorname{join}\big(\text{merkle_hash}(D) \mid D \in \text{depends_on}\big)$$
+    $$\text{merkle_hash}(N) = \text{SHA256}\big(\text{NodeType} \parallel \text{own_hash}(N) \parallel \text{children_hash}(N) \big)$$
+
+    If $\text{merkle_hash}(N)$ matches the stored lockfile proof, compilation is bypassed instantly ($\mathcal{O}(1)$ cache hit / `SKIP_IDENTICAL` / 0ms overhead), avoiding redundant filesystem I/O and costly subprocess template engines.
+*   **3-Phase AST Compilation Pipeline**:
+    *   **Phase 1: Package Config & Environment AST**: Resolves inheritance, dynamic Python preprocessor hooks, and variable stitching into immutable, validated configuration objects.
+    *   **Phase 2: Lifecycle Hooks AST**: Compiles `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` and enforces executable `0o755` permissions across both source and sandbox files.
+    *   **Phase 3: Payload Dotfiles AST**: Resolves engine dependencies, compiles templates, copies static assets, and automatically prunes obsolete rendered files while strictly protecting internal control plane metadata (`.drift/`).
+*   **Lockfile Persistence (`.drift_lock.json`)**: Drift tracks digested cryptographic hashes in `render/<pkg>/.drift/render/.drift_lock.json`. Even across terminal sessions, repeated runs verify lockfile hashes for lightning-fast incremental synchronization. Force a clean re-compilation anytime with `-c / --clean / --no-cache`.
+*   **Inspectable Dry-Run & Simulation (`--dry-run` & `--with-hooks`)**:
+    *   **Pure Simulation (`drift render --dry-run`)**: Traverses the Merkle DAG and produces a complete execution plan of strongly typed `FileAction`s (`RENDER_ITEM`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `ENSURE_DIR`, `DELETE_FILE`, `PRUNE_DIR`) without modifying the filesystem or Git state.
+    *   **Accurate Planning with Pre-Flight Hooks (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift render --dry-run --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) inside isolated temporary sandboxes, giving you a 100% accurate deployment plan while keeping `render/` 100% clean and untouched.
+
+### 🛑 7. Proactive Collision Guard & Safeguards
 Drift values your data integrity. Before any physical stage or deployment execution, the **Collision Guard** runs a multi-category safety audit:
 *   **Zero Overwrite of Manual Files**: Any conflicting manual file on the host system is safely backed up to `backup/<package>/overwritten/` before deployment.
 *   **Pruned Files Swept**: Deleted files are cleanly swept to `backup/<package>/deleted_files/`.
@@ -457,12 +486,12 @@ Drift values your data integrity. Before any physical stage or deployment execut
 > [!IMPORTANT]
 > **Transient `backup/` Policy & User Responsibility**: The `backup/` folder stores displaced original files and pruned artifacts created during deployment collisions. **`backup/` is a local, unversioned directory that is neither tracked nor saved in Git by Drift.** Users are responsible for inspecting `backup/`, preserving critical historical assets, or committing them to private archival storage as needed.
 
-### 🕵️ 7. PCRE-Based Ignorance Rules
+### 🕵️ 8. PCRE-Based Ignorance Rules
 Drift uses standard Perl-Compatible Regular Expressions (PCRE) for its package ignore files (`.drift_ignore`). Its pattern matching syntax is derived from GNU Stow's ignore file specification (matching both relative path prefixes and basenames), with the sole architectural exception that Drift's internal control plane (`.drift/`) is always automatically ignored and never deployed to the host.
 *   **Single Ignore File Restriction**: Drift strictly enforces exactly one `.drift_ignore` per package root, preventing fragmented and hard-to-audit nested ignore rules.
 *   **Match Timing Guard**: Patterns are matched against native repository filenames *before* prefix expansion (e.g., matching `dot-bashrc` instead of `.bashrc`), eliminating translation bypasses.
 
-### 🧹 8. Autonomous Garbage Collection (Self-Cleaning)  
+### 🧹 9. Autonomous Garbage Collection (Self-Cleaning)  
 Garbage collection is triggered automatically at the end of a bulk `drift deploy` (when deploying all packages across the workspace) or executed on demand using the explicit `drift gc` command (with optional `--dry-run` inspection).
 
 When you toggle packages to `false` in `drift_workspace.toml` or delete package source folders, Drift's **Garbage Collection** automatically uninstalls the orphaned host files, purges untracked "zombie" folders inside `render/` and `install/`, and **commits the purges inside the database Git repositories**. 
@@ -470,14 +499,14 @@ When you toggle packages to `false` in `drift_workspace.toml` or delete package 
 *   **Manual Trigger**: Run `drift gc` anytime to clean orphaned state or `drift gc --dry-run` to preview purges safely.
 *   **Isolated Commit Scoping**: The GC process only commits the specific directories it purges, ensuring unrelated system modifications are left untouched and auditable.
 
-### 🔌 9. Decouple & Eject Packages on Demand (Detach Mode)
+### 🔌 10. Decouple & Eject Packages on Demand (Detach Mode)
 Sometimes, you want to stop managing a configuration through a dotfile manager but keep the configurations permanently active on your host system. 
 *   **Keep Active Configurations**: Drift supports a dedicated **Detach Mode (`drift uninstall <pkg> --detach`)** that unregisters the package without deleting any files on your system.
 *   **Symlink to Copy Conversion**: If the package was installed via symlinks, the detach engine automatically replaces every system-level symlink with its actual, physical file copy. Your configuration is "frozen" as an independent file on your host target.
 *   **Backups Untouched**: Your historical original system backups inside `backup/<package>/overwritten/` are kept completely intact (not restored or deleted).
 *   **Decoupled Registry**: Cleanly deletes database directories and unregisters the package from `state.toml`, safely letting you "eject" a package on demand.
 
-### 🔗 10. Inter-Package Dependencies & Topological Lifecycle Ordering
+### 🔗 11. Inter-Package Dependencies & Topological Lifecycle Ordering
 Packages can declare explicit runtime and staging dependencies on other packages using the `dependencies` array in `drift_package.toml`:
 ```toml
 # src/zsh/drift_package.toml
@@ -573,7 +602,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | `drift new <pkg>` | Scaffolds a new package directory with `drift_package.toml` metadata config. |
 | `drift add <pkg> <paths>` | Imports external target-system configurations into the package source directory. |
 | `drift adopt [pkgs]` | Backports uncommitted system drifts safely into package source templates. |
-| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `-r`/`--reinstall`, `--no-hooks`). |
+| `drift deploy [pkgs]` | Sandbox-compiles, stages, and deploys declarative files to target active hosts (`--force`, `-r`/`--reinstall`, `-c`/`--clean`, `--no-deps`, `--no-hooks`). |
 | `drift health [pkgs]` | Probes live runtime health check hooks on packages (`--from install` or `--from source`). |
 | `drift uninstall <pkgs>` | Removes symlinked/copied mappings on host target paths, reverting backups (or `--detach`). |
 | `drift rollback [pkgs]` | Resets staging/deploy midway transaction failures to restore stable state. |
@@ -589,7 +618,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | Command | Description |
 | :--- | :--- |
 | `drift reverse-sync` | Force-syncs active host system changes back into the `install/` state base. |
-| `drift render` | Sandbox-compiles raw source package templates into `render/`. |
+| `drift render` | Incremental Merkle DAG compilation of templates into `render/` (`-c`/`--clean`, `-n`/`--dry-run`, `--with-hooks`, `--no-hooks`). |
 | `drift render-commit` | Manually commits compiled sandbox changes to the `render/` repository. |
 | `drift stage` | Stages compiled files from sandbox `render/` to `install/` state base. |
 | `drift apply` | Installs files from `install/` to package target directories. |
@@ -684,6 +713,7 @@ Drift executes all lifecycle hooks with **unified working directories** (`cwd = 
 > **Privilege & Environment Model**: All lifecycle hooks execute **in user space without `sudo`**, preserving all 6 tiers of environment variables (`$drift_package_*`, `$drift_*`, `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`). If elevated root privileges are required for a specific command (e.g., restarting a system daemon), write `sudo` explicitly within the hook script. Note: `$drift_package_src_dir` is an alias for `$drift_package_source_dir`.
 
 *   **Bypassing Hooks**: Pass `--no-hooks` (or `--no-hook`) to skip lifecycle hooks on any deployment command (`deploy`, `apply`, `render`, `adopt`, `add`, `uninstall`, `rollback`, `gc`).
+*   **Dry-Run Hook Execution (`--with-hooks`)**: In simulation mode (`drift render --dry-run`), lifecycle hooks default to disabled (`--no-hooks` is active). Passing `--with-hooks` authorizes execution of pre-flight preparation hooks (`probe` and `pre_source`) in isolated temporary sandboxes without mutating `render/`, resolving requirements and dynamic templates for an accurate render plan.
 *   **Direct Hook Execution**: Trigger any hook in isolation via `drift hook <pkg> <hook> [--from source|install]` (where stage is `source` or `install`).
 
 ---

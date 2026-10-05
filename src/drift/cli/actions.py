@@ -227,6 +227,7 @@ def execute_render(
     no_hooks: bool = False,
     no_cache: bool = False,
     dry_run: bool = False,
+    with_hooks: bool = False,
 ) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
     from ..render.render_package import run_primitive_2_render_packages, RenderOptions
@@ -235,7 +236,8 @@ def execute_render(
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="render")
     workspace_config = load_workspace_config_default(drift_root)
-    flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
+    effective_no_hooks = no_hooks if not dry_run else (not with_hooks)
+    flags = HookExecFlags(no_hooks=effective_no_hooks, streaming=not json_mode)
     options = RenderOptions(no_cache=no_cache, dry_run=dry_run, flags=flags)
     res = run_primitive_2_render_packages(
         workspace_config, target_pkgs=package_names, options=options

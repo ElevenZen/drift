@@ -15,7 +15,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`add`** | `drift add <pkg> <paths...> [-n] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
 | **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
@@ -25,7 +25,7 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`health`** | `drift health [packages...] [-t <seconds>] [-v] [--json]` | Execute runtime health check probes on installed packages. |
 | **`complete`** | `drift complete [<shell>] [--install] [--json]` | Generate or install native interactive tab-completion scripts (bash, zsh, fish). |
 | **`help`** | `drift help [topic]` | Display interactive mini-manual documentation pages. |
-| **`render`** | `drift render [packages...] [--no-hooks] [--json]` | *(Low-Level)* Compile declarative templates into `render/` sandbox. |
+| **`render`** | `drift render [packages...] [-c] [-n] [--with-hooks\|--no-hooks] [--json]` | *(Low-Level)* Incremental Merkle DAG compilation of templates into `render/` sandbox. |
 | **`render-commit`** | `drift render-commit [packages...] -m "msg" [--json]` | *(Low-Level)* Stage and commit compiled sandbox changes. |
 | **`reverse-sync`** | `drift reverse-sync [packages...] [--json]` | *(Low-Level)* Pull active system configuration changes into `install/`. |
 | **`stage`** | `drift stage [packages...] [-f] [--no-deps] [--json]` | *(Low-Level)* Stage compiled sandbox templates into `install/` state DB. |
@@ -132,6 +132,7 @@ Deploys configurations using an atomic two-stage compilation and application eng
     - `packages...`: Optional package name(s) to deploy. If omitted, performs a global deployment of all active packages.
     - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`installing` in `install/state.toml`), bypasses uncommitted modifications safeguards in `install/`, and automatically ignores missing required package dependencies. *(Note: Does **not** bypass `enable_install = false`).*
     - `-r / --reinstall`: Force full reinstallation of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `-r` or `--reinstall` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
+    - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile, forcing clean re-rendering of all templates and static assets during the compilation phase.
     - `--no-deps`: Bypasses missing required package dependency checks during topological ordering and staging.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
@@ -295,7 +296,16 @@ Provides built-in documentation with automatic terminal pager fallback.
 
 ### P. Low-Level Control Commands
 For advanced continuous integration, scripting, and pipeline automation:
-1.  **`drift render [packages...] [--no-hooks] [--json]`**: Compiles source templates to sandbox `render/` (`Primitive 2`).
+1.  **`drift render [packages...] [-c] [-n] [--with-hooks|--no-hooks] [--json]`**:
+    Incremental Merkle DAG compilation of declarative source templates into the isolated `render/` sandbox (`Primitive 2`).
+    *   **Options & Flags**:
+        - `packages...`: Optional package name(s) to render. If omitted, renders all active packages enabled in `config/drift_workspace.toml`.
+        - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile (`.drift/render/.drift_lock.json`), forcing clean re-compilation of all templates and static assets.
+        - `-n / --dry-run`: Simulates Merkle DAG construction and digestion without modifying the filesystem or touching the live `render/` Git repository. Outputs inspectable `FileAction`s (`RENDER_ITEM`, `CREATE_COPY`, `UPDATE_COPY`, `SKIP_IDENTICAL`, `ENSURE_DIR`, `DELETE_FILE`, `PRUNE_DIR`).
+        - `--with-hooks / --with-hook`: During `--dry-run`, authorizes execution of pre-flight preparation hooks (`probe` and `pre_source`) to resolve dynamic requirements and generated source templates for an accurate plan. Templated hooks are rendered into isolated temporary directories so `render/` remains 100% clean. (Mutually exclusive with `--no-hooks`).
+        - `--no-hooks / --no-hook`: Bypasses execution of all package lifecycle hooks. Note that in `--dry-run` mode, `--no-hooks` is active by default (zero-mutation simulation).
+        - `--json`: Outputs structured `RenderResult` in machine-readable JSON format.
+    *   **Incremental Merkle DAG Engine**: Drift constructs a typed Abstract Syntax Tree (AST) dependency graph for each package. Files whose input files, template contents, environment variables, and render engine definitions are invariant are skipped instantly (`SKIP_IDENTICAL` / 0ms) via cryptographic SHA-256 Merkle hashes tracked in `.drift/render/.drift_lock.json`. Obsolete rendered files are automatically scoped and pruned without touching live dotfiles.
 2.  **`drift render-commit [packages...] -m "message" [--json]`**: Stages and commits compiled sandbox changes (`Primitive 3`).
 3.  **`drift reverse-sync [packages...] [--json]`**: Pulls live host configuration changes into `install/` (`Primitive 1`).
 4.  **`drift stage [packages...] [--force] [--no-deps] [--json]`**: Computes delta and stages sandbox to `install/` (`Primitive 4`). Pass `--force` to bypass midway failed state checks and uncommitted modifications in `install/` *(does not bypass `enable_install = false`)*. Pass `--no-deps` to bypass missing prerequisite checks.

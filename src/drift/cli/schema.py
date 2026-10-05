@@ -613,7 +613,14 @@ def build_completion_schema() -> CompletionSchema:
                     OptionSpec(
                         flags=["--no-hooks", "--no-hook"],
                         description="Bypass and do not execute package lifecycle hooks",
-                        dest="no_hooks"
+                        dest="no_hooks",
+                        mutex_group="hooks_mode",
+                    ),
+                    OptionSpec(
+                        flags=["--with-hooks", "--with-hook"],
+                        description="Execute pre-flight requirement probes (probe) and dynamic source generators (pre_source) during dry-run render planning",
+                        dest="with_hooks",
+                        mutex_group="hooks_mode",
                     ),
                 ]
             ),
