@@ -134,9 +134,13 @@ def prepare_deploy_preview(
                 f"Run 'drift rollback {pkg}' or pass '--force'."
             )
 
-    # 3. Load package configurations from source
+    # 3. Load package configurations from source (dry_run=True isolates compilation from render/)
     pkg_metadata = {
-        pkg: PackageConfig.from_source_dir(workspace_config.source_path / pkg, workspace_config)
+        pkg: PackageConfig.from_source_dir(
+            workspace_config.source_path / pkg,
+            workspace_config=workspace_config,
+            dry_run=True,
+        )
         for pkg in discovered_pkgs
     }
 

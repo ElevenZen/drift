@@ -271,6 +271,37 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         self.assertEqual(preview.packages_install_order, ["pkg_base", "pkg_mid", "pkg_top"])
 
+    def test_plan_dry_run_leaves_render_repo_clean(self) -> None:
+        """Verifies that plan loads package configurations with dry_run=True, never writing to render/."""
+        pkg_name = "pkg_unrendered"
+        self._setup_package(pkg_name, {"file.txt": "hello\n"})
+
+        render_pkg_dir = self.drift_root / "render" / pkg_name
+        self.assertFalse(render_pkg_dir.exists())
+
+        workspace_config = load_workspace_config(self.drift_root)
+        preview = prepare_deploy_preview(workspace_config, [pkg_name])
+
+        self.assertIn(pkg_name, preview.packages_install_order)
+        self.assertIn(pkg_name, preview.package_previews)
+        # Verify render/<pkg> was never created
+        self.assertFalse(render_pkg_dir.exists())
+
+        # Also verify CLI plan does not write to render/
+        stdout = io.StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", str(self.drift_root), "plan", pkg_name])
+        self.assertFalse(render_pkg_dir.exists())
+
+        # Verify git status in render/ repository remains pristine clean
+        res = subprocess.run(
+            ["git", "-C", str(self.drift_root / "render"), "status", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(res.stdout.strip(), "")
+
 
 if __name__ == "__main__":
     unittest.main()
