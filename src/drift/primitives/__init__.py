@@ -41,6 +41,7 @@ from .install_repo import (
     execute_package_install,
     execute_package_install_impl,
     plan_package_install,
+    check_package_has_mutations,
     execute_package_actions,
     assert_packages_install_ready,
 )
@@ -143,6 +144,7 @@ __all__ = [
     "execute_package_install",
     "execute_package_install_impl",
     "plan_package_install",
+    "check_package_has_mutations",
     "execute_package_actions",
     "run_primitive_7_uninstall_packages",
     "UninstallConfig",

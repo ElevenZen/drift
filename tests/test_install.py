@@ -2959,7 +2959,7 @@ class TestInstallRepo(unittest.TestCase):
         # 1. Prepare phase
         plan = prepare_install(self.workspace_config, [pkg])
         self.assertIsInstance(plan, InstallPlan)
-        self.assertEqual(plan.packages_to_install, [pkg])
+        self.assertEqual(plan.packages_install_order, [pkg])
         self.assertIn(pkg, plan.pkg_metadata_map)
         self.assertEqual(plan.pkg_metadata_map[pkg].name, pkg)
         self.assertIsInstance(plan.state_registry, StateRegistry)
@@ -3546,6 +3546,203 @@ class TestInstallRepo(unittest.TestCase):
         self.assertTrue(backed_up_tree.is_dir())
         self.assertEqual((backed_up_tree / "nested.txt").read_text(encoding="utf-8"), "saved content\n")
 
+    def test_install_defers_sudo_check_when_dry_run_or_no_changes(self) -> None:
+        """Verifies that assert_can_escalate is deferred to execution and NOT called during planning, dry-run, or when a sudo package has no changes."""
+        from unittest.mock import patch
+
+        # 1. Setup pkg_sudo with sudo = true
+        pkg_dir = self.install_dir / "pkg_sudo"
+        dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "pkg_sudo"
+        enable_install = true
+        sudo = true
+        """, encoding="utf-8")
+        (pkg_dir / "sudo_file.txt").write_text("initial sudo content", encoding="utf-8")
+        self.workspace_config.packages_enable["pkg_sudo"] = True
+
+        # 2. Planning (prepare_install): assert_can_escalate must NOT be called even though sudo=True
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo:
+            plan = prepare_install(self.workspace_config, ["pkg_sudo"])
+            self.assertEqual(len(plan.packages_install_order), 1)
+            self.assertEqual(plan.skipped_packages, [])
+            mock_sudo.assert_not_called()
+
+        # 3. Dry-run execution (execute_install with dry_run=True): assert_can_escalate must NOT be called
+        plan_dry_run = prepare_install(
+            self.workspace_config,
+            ["pkg_sudo"],
+            config=InstallConfig(dry_run=True),
+        )
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo:
+            res_dry_run = execute_install(self.workspace_config, plan_dry_run)
+            self.assertTrue(res_dry_run.dry_run)
+            mock_sudo.assert_not_called()
+
+        # 4. Live execution with changes (first-time install): assert_can_escalate MUST be called
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo, \
+             patch("drift.primitives.install_repo.execute_package_actions"):
+            res_live = execute_install(self.workspace_config, plan)
+            self.assertEqual(res_live.status, "SUCCESS")
+            mock_sudo.assert_called_once()
+
+        # 5. Second live execution with ZERO changes (reinstall=False): assert_can_escalate must NOT be called
+        # Simulate that sudo_file.txt is now deployed on host matching install/
+        target_file = self.system_target_dir / "sudo_file.txt"
+        target_file.symlink_to(self.install_dir / "pkg_sudo" / "sudo_file.txt")
+
+        plan2 = prepare_install(self.workspace_config, ["pkg_sudo"])
+        self.assertEqual(plan2.packages_install_order, [])
+        self.assertEqual(plan2.skipped_packages, ["pkg_sudo"])
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo, \
+             patch("drift.primitives.install_repo.execute_package_actions"):
+            res2 = execute_install(self.workspace_config, plan2)
+            self.assertEqual(res2.packages[0].status, "SKIPPED")
+            mock_sudo.assert_not_called()
+
+        # 6. install_one_package: verify dry_run skips sudo, while live with reinstall calls it
+        metadata = PackageConfig.from_install_dir(pkg_dir, self.workspace_config)
+        state_registry = load_state_registry(self.install_dir / "state.toml")
+
+        # install_one_package with dry_run=True: assert_can_escalate must NOT be called
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo:
+            res_one_dry = install_one_package(
+                self.workspace_config,
+                state_registry,
+                metadata,
+                config=InstallConfig(dry_run=True),
+            )
+            mock_sudo.assert_not_called()
+
+        # install_one_package with no changes: assert_can_escalate must NOT be called
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo:
+            res_one_skip = install_one_package(
+                self.workspace_config,
+                state_registry,
+                metadata,
+                config=InstallConfig(reinstall=False),
+            )
+            self.assertEqual(res_one_skip.status, "SKIPPED")
+            mock_sudo.assert_not_called()
+
+        # install_one_package with reinstall=True: assert_can_escalate MUST be called
+        with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo, \
+             patch("drift.primitives.install_repo.execute_package_actions"):
+            res_one_live = install_one_package(
+                self.workspace_config,
+                state_registry,
+                metadata,
+                config=InstallConfig(reinstall=True),
+            )
+            mock_sudo.assert_called_once()
+
+    def test_prepare_install_excludes_skipped_packages(self) -> None:
+        """Verifies that prepare_install excludes packages without mutations from packages_install_order."""
+        # 1. Setup pkg_a and pkg_b
+        pkg_a_dir = self.install_dir / "pkg_a"
+        dot_drift_a = pkg_a_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift_a.mkdir(parents=True, exist_ok=True)
+        (dot_drift_a / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_a"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        enable_install = true
+        """, encoding="utf-8")
+        (pkg_a_dir / "file_a.txt").write_text("content a\n", encoding="utf-8")
+
+        pkg_b_dir = self.install_dir / "pkg_b"
+        dot_drift_b = pkg_b_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift_b.mkdir(parents=True, exist_ok=True)
+        (dot_drift_b / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_b"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        enable_install = true
+        """, encoding="utf-8")
+        (pkg_b_dir / "file_b.txt").write_text("content b\n", encoding="utf-8")
+
+        self.workspace_config.packages_enable["pkg_a"] = True
+        self.workspace_config.packages_enable["pkg_b"] = True
+
+        # Deploy pkg_a for the first time
+        plan_a = prepare_install(self.workspace_config, ["pkg_a"])
+        self.assertEqual(plan_a.packages_install_order, ["pkg_a"])
+        self.assertEqual(plan_a.skipped_packages, [])
+        res_a = execute_install(self.workspace_config, plan_a)
+        self.assertEqual(res_a.status, "SUCCESS")
+
+        # 2. Plan both packages: pkg_a has no changes on host (already deployed), pkg_b is new
+        plan_both = prepare_install(self.workspace_config, ["pkg_a", "pkg_b"])
+        self.assertTrue(plan_both.package_plans["pkg_a"].can_skip)
+        self.assertFalse(plan_both.package_plans["pkg_a"].has_mutations)
+        self.assertFalse(plan_both.package_plans["pkg_b"].can_skip)
+        self.assertTrue(plan_both.package_plans["pkg_b"].has_mutations)
+        self.assertEqual(plan_both.packages_install_order, ["pkg_b"])
+        self.assertEqual(plan_both.skipped_packages, ["pkg_a"])
+
+        # 3. Execution: should run pkg_b and report pkg_a as SKIPPED appended at last
+        res_both = execute_install(self.workspace_config, plan_both)
+        self.assertEqual(res_both.status, "SUCCESS")
+        self.assertEqual(len(res_both.packages), 2)
+        # Packages in packages_install_order execute first, skipped packages appended at last
+        self.assertEqual([p.package for p in res_both.packages], ["pkg_b", "pkg_a"])
+        self.assertEqual(res_both.packages[0].status, "SUCCESS")
+        self.assertEqual(res_both.packages[1].status, "SKIPPED")
+
+        # 4. With reinstall=True: pkg_a should NOT be skipped, and should plan real reinstall mutations
+        plan_reinstall = prepare_install(
+            self.workspace_config,
+            ["pkg_a", "pkg_b"],
+            config=InstallConfig(reinstall=True),
+        )
+        self.assertEqual(sorted(plan_reinstall.packages_install_order), ["pkg_a", "pkg_b"])
+        self.assertEqual(plan_reinstall.skipped_packages, [])
+        self.assertFalse(plan_reinstall.package_plans["pkg_a"].can_skip)
+        self.assertTrue(plan_reinstall.package_plans["pkg_a"].has_mutations)
+        self.assertEqual(len(plan_reinstall.package_plans["pkg_a"].skipped), 0)
+        self.assertTrue(any(a.action_type == FileActionType.UPDATE_COPY for a in plan_reinstall.package_plans["pkg_a"].actions))
+
+    def test_package_install_context_reinstall_field_and_propagation(self) -> None:
+        """Verifies that PackageInstallContext encapsulates reinstall flag and propagates it to delivery_context."""
+        pkg_dir = self.install_dir / "pkg_reinstall"
+        dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        [package]
+        name = "pkg_reinstall"
+        install_method = "copy"
+        target_directory = "{self.system_target_dir}"
+        enable_install = true
+        """, encoding="utf-8")
+        (pkg_dir / "file.txt").write_text("reinstall content\\n", encoding="utf-8")
+
+        self.workspace_config.packages_enable["pkg_reinstall"] = True
+        state_registry = StateRegistry(state_file=self.drift_root / "state.toml")
+        metadata = PackageConfig.from_install_dir(pkg_dir, self.workspace_config)
+
+        # 1. Default reinstall is False
+        ctx_default = PackageInstallContext.from_package(
+            workspace_config=self.workspace_config,
+            state_registry=state_registry,
+            metadata=metadata,
+        )
+        self.assertFalse(ctx_default.reinstall)
+        self.assertFalse(ctx_default.delivery_context.reinstall)
+
+        # 2. Explicit reinstall=True
+        ctx_reinstall = PackageInstallContext.from_package(
+            workspace_config=self.workspace_config,
+            state_registry=state_registry,
+            metadata=metadata,
+            reinstall=True,
+        )
+        self.assertTrue(ctx_reinstall.reinstall)
+        self.assertTrue(ctx_reinstall.delivery_context.reinstall)
+
 
 class TestInstallDependencies(unittest.TestCase):
     """Tests for package dependency ordering, validation, and DAG resolution during install."""
@@ -3656,7 +3853,7 @@ class TestInstallDependencies(unittest.TestCase):
         self._create_install_package("pkg_a", dependencies=[])
 
         plan = prepare_install(self.workspace_config)
-        self.assertEqual(plan.packages_to_install, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertEqual(plan.packages_install_order, ["pkg_a", "pkg_b", "pkg_c"])
 
         result = execute_install(self.workspace_config, plan=plan)
         self.assertEqual(result.status, "SUCCESS")
@@ -3674,7 +3871,7 @@ class TestInstallDependencies(unittest.TestCase):
 
         # Target only pkg_c and pkg_a, while pkg_b is already installed
         plan = prepare_install(self.workspace_config, target_pkgs=["pkg_c", "pkg_a"])
-        self.assertEqual(plan.packages_to_install, ["pkg_a", "pkg_c"])
+        self.assertEqual(plan.packages_install_order, ["pkg_a", "pkg_c"])
 
     def test_prepare_install_with_disabled_installed_prerequisite(self) -> None:
         # pkg_a is installed on machine, but has enable_install = false in its config
@@ -3691,7 +3888,7 @@ class TestInstallDependencies(unittest.TestCase):
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
         plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.packages_to_install, ["pkg_b"])
+        self.assertEqual(plan.packages_install_order, ["pkg_b"])
 
     def test_prepare_install_with_missing_installed_dir(self) -> None:
         # pkg_a is recorded in state.toml as installed, but its directory is missing from install/
@@ -3703,7 +3900,7 @@ class TestInstallDependencies(unittest.TestCase):
         self._create_install_package("pkg_b", dependencies=["pkg_a"])
 
         plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.packages_to_install, ["pkg_b"])
+        self.assertEqual(plan.packages_install_order, ["pkg_b"])
 
     def test_prepare_install_missing_required_dependency(self) -> None:
         self._create_install_package("pkg_b", dependencies=["missing_pkg"])
@@ -3714,7 +3911,7 @@ class TestInstallDependencies(unittest.TestCase):
     def test_prepare_install_optional_dependency_pruned(self) -> None:
         self._create_install_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
         plan = prepare_install(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.packages_to_install, ["pkg_b"])
+        self.assertEqual(plan.packages_install_order, ["pkg_b"])
 
     def test_empty_folder_lifecycle_install_mode(self) -> None:
         """Verifies empty folder delivery in normal install mode: ENSURE_DIR on host, .drift_keep never copied."""

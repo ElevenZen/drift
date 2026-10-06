@@ -10,7 +10,6 @@ Pipeline Architecture:
             - Package Discovery & Selection (filter_install_packages_by_target)
             - Metadata Resolution (PackageConfig.from_install_dir)
             - Pre-flight Readiness (assert_packages_install_ready [Layer 4])
-                * assert_can_escalate (if any target requires sudo)
                 * assert_packages_install_dirs_exist
                 * assert_packages_not_in_midway_state (if not force)
                 * assert_packages_target_dirs_valid (absolute & outside drift_root)
@@ -21,15 +20,16 @@ Pipeline Architecture:
             - Universe Construction & Topological Ordering (resolve_package_install_order)
             - Autonomous Context Construction (PackageInstallContext.from_package)
             - Declarative Plan Compilation (plan_package_install)
-            -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_to_install, config, contexts, package_plans)
+            - Skip Partitioning (partition splits packages_install_order and skipped_packages via plan.can_skip)
+            -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_install_order, config, contexts, package_plans, skipped_packages)
 
     2. Single-Package Installation Execution:
         execute_install(workspace_config, plan: InstallPlan) [Layer 4]
-            - If dry_run -> compiles inspectable result summaries from plan.package_plans (zero host mutations)
+            - If dry_run -> compiles inspectable result summaries (packages_install_order followed by skipped_packages)
+            - Checks privilege escalation (assert_can_escalate only if non-skipped package requires sudo)
             - Resolves hook flags once per batch (HookExecFlags.resolve)
-            - Iterates over plan.packages_to_install:
+            - Iterates over plan.packages_install_order in strict topological sequence:
                 execute_package_install [Layer 2]
-                    * Skip evaluation (if no mutations and not reinstall)
                     * with context.package_envs():
                         execute_package_install_impl [Layer 2]
                             - state_registry.set_package_state("installing") & save
@@ -38,6 +38,7 @@ Pipeline Architecture:
                             - execute_package_actions (applies FileAction items deterministically)
                             - trigger post_install / post_update hook
                             - update_state_registry_post_install ("installed") & save
+            - Appends SKIPPED results for plan.skipped_packages at the end
             -> Returns Aggregated InstallResult
 
     3. Public Composite Primitive Entry Points:
@@ -64,6 +65,7 @@ Layers (ordered bottom-up by dependency):
     Layer 1: Context & Action Compilation
         PackageInstallContext
         plan_package_install
+        check_package_has_mutations
         execute_package_actions
         update_state_registry_post_install
     Layer 2: Single-Package Pipeline & Pre-flight Validation
@@ -130,7 +132,8 @@ from .package_assertions import (
     resolve_package_install_order,
     resolve_target_package_order,
 )
-from ..utils.process_utils import run_command
+from ..utils.process_utils import run_command, assert_can_escalate
+from ..utils.config_utils import partition
 from ..core.sync_ops import backup_file_or_dir_external
 from ..core.file_action import (
     FileActionExecutionContext,
@@ -178,8 +181,9 @@ class InstallPlan:
     """Pre-flight validated installation plan containing package configurations, config, and state registry."""
     pkg_metadata_map: Dict[str, PackageConfig]
     state_registry: StateRegistry
-    packages_to_install: List[str]
     config: InstallConfig
+    packages_install_order: List[str]
+    skipped_packages: List[str] = field(default_factory=list)
     contexts: Dict[str, PackageInstallContext] = field(default_factory=dict)
     package_plans: Dict[str, PackageInstallPlan] = field(default_factory=dict)
 
@@ -197,6 +201,7 @@ class PackageInstallContext:
     is_first_time: bool
     drift_root: Path
     hooks: PackageHooks = field(default_factory=PackageHooks)
+    reinstall: bool = False
 
     @property
     def file_action_context(self) -> FileActionExecutionContext:
@@ -215,6 +220,7 @@ class PackageInstallContext:
             is_first_time=self.is_first_time,
             backup_pkg_dir=self.backup_pkg_dir,
             backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            reinstall=self.reinstall,
         )
 
     @contextmanager
@@ -235,6 +241,7 @@ class PackageInstallContext:
         workspace_config: WorkspaceConfig,
         state_registry: StateRegistry,
         metadata: PackageConfig,
+        reinstall: bool = False,
     ) -> "PackageInstallContext":
         pkg = metadata.name
         target_dir = metadata.get_target_directory(workspace_config)
@@ -255,6 +262,7 @@ class PackageInstallContext:
             is_first_time=is_first_time,
             drift_root=workspace_config.drift_root,
             hooks=metadata.hooks,
+            reinstall=reinstall,
         )
 
 
@@ -316,13 +324,28 @@ def plan_package_install(
     )
     actions.extend(folder_actions)
 
+    has_mutations = any(
+        a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)
+        for a in actions
+    )
+    can_skip = not context.reinstall and not context.is_first_time and target_migrated_from is None and not has_mutations
+
     return PackageInstallPlan(
         package=context.pkg_name,
         target_directory=str(context.target_dir),
         install_method=context.install_method,
         actions=actions,
         hooks_to_trigger=hooks_to_trigger,
+        can_skip=can_skip,
     )
+
+
+def check_package_has_mutations(plan: PackageInstallPlan) -> bool:
+    """Checks whether the package install plan contains physical filesystem mutations.
+
+    Returns False if all planned actions are informational or skipped identical paths.
+    """
+    return plan.has_mutations
 
 
 def execute_package_actions(
@@ -456,12 +479,6 @@ def execute_package_install(
     config: InstallConfig,
 ) -> PackageInstallResult:
     """Applies a pre-compiled PackageInstallPlan to the host system and updates state registry."""
-    target_migrated_from = state_registry.get_target_migrated_from(context.pkg_name, context.target_dir)
-
-    has_mutations = any(
-        a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)
-        for a in plan.actions
-    )
     # NOTE [Host Mutation Heuristic & Non-Deployable File Limitation]:
     # Primitive 5's change-detection is purely host-driven: plan.actions evaluates discrepancies between
     # install/<pkg>/ deployable payload files and target host filesystem state.
@@ -474,7 +491,7 @@ def execute_package_install(
     # filtering changed packages at the staging boundary and setting config.reinstall=True. When invoking
     # Primitive 5 directly ('drift apply'), callers must supply -r / --reinstall to execute hooks when
     # only non-deployable package files have changed.
-    if not config.reinstall and not context.is_first_time and not has_mutations and target_migrated_from is None:
+    if plan.can_skip:
         logger.info(f"Skipping package '{context.pkg_name}' installation (no changes detected and reinstall is False).")
         return PackageInstallResult(
             plan=plan,
@@ -505,6 +522,7 @@ def install_one_package(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
+        reinstall=cfg.reinstall,
     )
     assert_packages_install_dirs_exist(workspace_config.install_path, [context.pkg_name])
 
@@ -529,6 +547,18 @@ def install_one_package(
             is_first_time=context.is_first_time,
             status="SUCCESS",
         )
+
+    if plan.can_skip:
+        logger.info(f"Skipping package '{context.pkg_name}' installation (no changes detected and reinstall is False).")
+        return PackageInstallResult(
+            plan=plan,
+            is_first_time=False,
+            status="SKIPPED",
+            error="No changes detected and reinstall is False",
+        )
+
+    if context.sudo:
+        assert_can_escalate()
 
     hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
     return execute_package_install(
@@ -566,10 +596,6 @@ def assert_packages_install_ready(
         for pkg, metadata in pkg_metadata_map.items()
         if metadata.package.enable_install
     }
-
-    if any(metadata.package.sudo for metadata in active_packages.values()):
-        from ..utils.process_utils import assert_can_escalate
-        assert_can_escalate()
 
     # 1. Staged install directories must exist
     assert_packages_install_dirs_exist(workspace_config.install_path, discovered_list)
@@ -653,7 +679,7 @@ def prepare_install(
         return InstallPlan(
             pkg_metadata_map={},
             state_registry=state_registry,
-            packages_to_install=[],
+            packages_install_order=[],
             config=cfg,
         )
 
@@ -681,6 +707,7 @@ def prepare_install(
             workspace_config=workspace_config,
             state_registry=state_registry,
             metadata=pkg_metadata_map[pkg],
+            reinstall=cfg.reinstall,
         )
         for pkg in action_order
         if pkg in pkg_metadata_map
@@ -697,13 +724,19 @@ def prepare_install(
         if pkg in pkg_metadata_map
     }
 
+    packages_install_order, skipped_packages = partition(
+        lambda pkg: not package_plans[pkg].can_skip,
+        [pkg for pkg in action_order if pkg in package_plans],
+    )
+
     return InstallPlan(
         pkg_metadata_map=pkg_metadata_map,
         state_registry=state_registry,
-        packages_to_install=action_order,
+        packages_install_order=packages_install_order,
         config=cfg,
         contexts=contexts,
         package_plans=package_plans,
+        skipped_packages=skipped_packages,
     )
 
 
@@ -716,7 +749,7 @@ def execute_install(
     Args:
         workspace_config: The workspace configuration instance.
         plan: Pre-flight validated InstallPlan containing package metadata, state registry,
-              packages_to_install, contexts, package_plans, and install config.
+              packages_install_order, contexts, package_plans, skipped_packages, and install config.
 
     Returns:
         InstallResult with detailed per-package install results.
@@ -724,14 +757,22 @@ def execute_install(
     cfg = plan.config
 
     if cfg.dry_run:
-        logger.info(f"🔍 [DRY-RUN] Simulating installation for {len(plan.packages_to_install)} package(s).")
+        logger.info(f"🔍 [DRY-RUN] Simulating installation for {len(plan.packages_install_order)} package(s).")
         package_results = [
             PackageInstallResult(
                 plan=plan.package_plans[pkg],
                 is_first_time=plan.contexts[pkg].is_first_time,
                 status="SUCCESS",
             )
-            for pkg in plan.packages_to_install
+            for pkg in plan.packages_install_order
+        ] + [
+            PackageInstallResult(
+                plan=plan.package_plans[pkg],
+                is_first_time=False,
+                status="SKIPPED",
+                error="No changes detected and reinstall is False",
+            )
+            for pkg in plan.skipped_packages
         ]
         return InstallResult(
             status="SUCCESS",
@@ -739,10 +780,16 @@ def execute_install(
             dry_run=True,
         )
 
+    # Check privilege escalation upfront ONLY if any non-skipped package requires sudo
+    needs_sudo = any(plan.contexts[pkg].sudo for pkg in plan.packages_install_order)
+    if needs_sudo:
+        assert_can_escalate()
+
     hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
     results: List[PackageInstallResult] = []
 
-    for pkg in plan.packages_to_install:
+    # 1. Execute physical installation strictly in topological packages_install_order
+    for pkg in plan.packages_install_order:
         context = plan.contexts[pkg]
         pkg_plan = plan.package_plans[pkg]
         try:
@@ -768,6 +815,18 @@ def execute_install(
                 err_msg += f"\nStdout:\n{stdout_str.strip()}"
             logger.error(err_msg)
             raise mark_logged(RuntimeError(err_msg)) from e
+
+    # 2. Append skipped packages results at last
+    for pkg in plan.skipped_packages:
+        logger.info(f"Skipping package '{pkg}' installation (no changes detected and reinstall is False).")
+        results.append(
+            PackageInstallResult(
+                plan=plan.package_plans[pkg],
+                is_first_time=False,
+                status="SKIPPED",
+                error="No changes detected and reinstall is False",
+            )
+        )
 
     return InstallResult(
         status="SUCCESS",

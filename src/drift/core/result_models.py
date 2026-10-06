@@ -325,6 +325,14 @@ class PackageInstallPlan(SerializableModel):
     install_method: InstallMethod = DEFAULT_INSTALL_METHOD
     actions: List[FileAction] = field(default_factory=list)
     hooks_to_trigger: List[str] = field(default_factory=list)
+    can_skip: bool = False
+
+    @property
+    def has_mutations(self) -> bool:
+        return any(
+            a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)
+            for a in self.actions
+        )
 
     @property
     def created(self) -> List[FileAction]:

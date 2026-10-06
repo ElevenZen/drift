@@ -53,6 +53,7 @@ class DeliveryInspectionContext:
     backup_pkg_dir: Optional[Path]
     backup_subfolder: BackupSubfolder
     reverse_mode: bool = False
+    reinstall: bool = False
 
     @property
     def abs_drift_root(self) -> Path:
@@ -303,6 +304,13 @@ def _inspect_symlink_leaf(
     # Check if existing symlink already points to source_file
     if _check_symlink_points_to_source(system_target, source_file):
         if context.install_method == InstallMethod.SYMLINK:
+            if context.reinstall:
+                return [FileAction(
+                    action_type=FileActionType.CREATE_SYMLINK,
+                    src_path=source_file,
+                    dst_path=system_target,
+                    reason="Reinstalling symlink",
+                )]
             return [FileAction(
                 action_type=FileActionType.SKIP_IDENTICAL,
                 src_path=source_file,
@@ -388,6 +396,14 @@ def _inspect_physical_file_leaf(
             src_path=source_file,
             dst_path=system_target,
             reason=f"Permissions differ ({dst_mode} -> {src_mode})",
+        )]
+
+    if context.reinstall:
+        return [FileAction(
+            action_type=FileActionType.UPDATE_COPY,
+            src_path=source_file,
+            dst_path=system_target,
+            reason="Reinstalling copy",
         )]
 
     return [FileAction(
