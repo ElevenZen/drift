@@ -7,7 +7,7 @@ import subprocess
 from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
-from typing import Optional, List, Dict, Set, Sequence
+from typing import Optional, List, Dict, Set, Sequence, Any
 
 from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
@@ -3772,15 +3772,21 @@ class TestInstallDependencies(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def _create_install_package(self, pkg_name: str, dependencies: Optional[list] = None) -> None:
+    def _create_install_package(
+        self,
+        pkg_name: str,
+        dependencies: Optional[list] = None,
+        target_dir: Optional[Path] = None,
+    ) -> None:
         pkg_dir = self.install_dir / pkg_name
         dot_drift = pkg_dir / DRIFT_INTERNAL_DIR_NAME
         dot_drift.mkdir(parents=True, exist_ok=True)
+        target_directory = target_dir if target_dir is not None else self.system_target_dir
         lines = [
             "[package]",
             f'name = "{pkg_name}"',
             'install_method = "copy"',
-            f'target_directory = "{self.system_target_dir}"',
+            f'target_directory = "{target_directory}"',
             "enable_install = true",
         ]
         if dependencies:
@@ -3858,6 +3864,53 @@ class TestInstallDependencies(unittest.TestCase):
         result = execute_install(self.workspace_config, plan=plan)
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual([p.package for p in result.packages], ["pkg_a", "pkg_b", "pkg_c"])
+
+    def test_execute_install_respects_topological_write_order(self) -> None:
+        """Verifies that physical file writes during installation strictly respect topological dependency order."""
+        import drift.core.file_action
+
+        # Setup 3 packages with dependency chain: pkg_c -> pkg_b -> pkg_a
+        self._create_install_package("pkg_c", dependencies=["pkg_b"], target_dir=self.system_target_dir / "pkg_c")
+        self._create_install_package("pkg_b", dependencies=["pkg_a"], target_dir=self.system_target_dir / "pkg_b")
+        self._create_install_package("pkg_a", dependencies=[], target_dir=self.system_target_dir / "pkg_a")
+
+        # Add payload files to each package
+        (self.install_dir / "pkg_a" / "payload_a.txt").write_text("data a", encoding="utf-8")
+        (self.install_dir / "pkg_b" / "payload_b.txt").write_text("data b", encoding="utf-8")
+        (self.install_dir / "pkg_c" / "payload_c.txt").write_text("data c", encoding="utf-8")
+
+        # Pass target_pkgs in reverse topological order
+        plan = prepare_install(self.workspace_config, target_pkgs=["pkg_c", "pkg_b", "pkg_a"])
+        self.assertEqual(plan.packages_install_order, ["pkg_a", "pkg_b", "pkg_c"])
+
+        copied_destinations: List[Path] = []
+        real_copy_file = drift.core.file_action.copy_file
+
+        def spy_copy_file(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+            copied_destinations.append(Path(dst))
+            return real_copy_file(src, dst, *args, **kwargs)
+
+        with patch("drift.core.file_action.copy_file", side_effect=spy_copy_file):
+            result = execute_install(self.workspace_config, plan=plan)
+
+        self.assertEqual(result.status, "SUCCESS")
+        self.assertEqual([p.package for p in result.packages], ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertTrue(len(copied_destinations) >= 3)
+
+        # Map each copied destination file back to its containing package target in system_target_dir
+        copied_packages = [
+            dst.relative_to(self.system_target_dir).parts[0]
+            for dst in copied_destinations
+        ]
+
+        # Verify all pkg_a files are copied before any pkg_b files, and all pkg_b files before pkg_c files
+        last_pkg_a_idx = max(i for i, p in enumerate(copied_packages) if p == "pkg_a")
+        first_pkg_b_idx = min(i for i, p in enumerate(copied_packages) if p == "pkg_b")
+        last_pkg_b_idx = max(i for i, p in enumerate(copied_packages) if p == "pkg_b")
+        first_pkg_c_idx = min(i for i, p in enumerate(copied_packages) if p == "pkg_c")
+
+        self.assertLess(last_pkg_a_idx, first_pkg_b_idx)
+        self.assertLess(last_pkg_b_idx, first_pkg_c_idx)
 
     def test_prepare_install_targeted_prerequisite_subset(self) -> None:
         self._create_install_package("pkg_c", dependencies=["pkg_b"])

@@ -143,6 +143,17 @@ class PackageRenderResult(SerializableModel):
         """Returns True if the package rendered successfully or was already up-to-date."""
         return self.status in ("SUCCESS", "UP_TO_DATE")
 
+    def format_text(self, drift_root: Optional[Path] = None) -> str:
+        """Formats the render plan for human-readable terminal output."""
+        lines = [f"📦 Package '{self.package}':"]
+        if not self.actions:
+            lines.append("  Render Actions: (None)")
+        else:
+            lines.append("  Render Actions:")
+            lines.extend(format_action_line(action, drift_root=drift_root) for action in self.actions)
+        lines.append(f" Summary: {format_action_summary(self.actions)}")
+        return "\n".join(lines)
+
 
 @dataclass
 class RenderResult(SerializableModel):
@@ -165,18 +176,13 @@ class RenderResult(SerializableModel):
                 "=" * 60,
             ]
             for pkg_res in self.packages:
-                lines.append(f"📦 Package '{pkg_res.package}':")
-                if pkg_res.actions:
-                    lines.extend(format_action_line(action, drift_root=drift_root) for action in pkg_res.actions)
-                    lines.append(f"  Summary: {format_action_summary(pkg_res.actions)}")
-                else:
-                    lines.append("  (No render actions)")
+                lines.append(pkg_res.format_text(drift_root))
                 lines.append("")
             total_actions = sum(len(p.actions) for p in self.packages)
             lines.append("=" * 60)
             lines.append(
                 f"✨ [DRY-RUN] Render simulation completed for {len(self.packages)} package(s). "
-                f"Total planned actions: {total_actions} (zero render/ mutations performed)."
+                f"Total planned actions: {total_actions}."
             )
             return "\n".join(lines)
         return "\n".join(
@@ -226,9 +232,12 @@ class PackageStagePlan(SerializableModel):
     def format_text(self) -> str:
         """Formats the staging plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
-        if self.actions:
+        if not self.actions:
+            lines.append("  Stage Actions: (None)")
+        else:
+            lines.append("  Stage Actions:")
             lines.extend(format_action_line(action) for action in self.actions)
-        lines.append(f"  Summary: {format_action_summary(self.actions)}")
+        lines.append(f" Summary: {format_action_summary(self.actions)}")
         return "\n".join(lines)
 
 
@@ -311,7 +320,7 @@ class StageResult(SerializableModel):
             lines.append("=" * 60)
             lines.append(
                 f"✨ [DRY-RUN] Staging simulation completed for {len(self.plans)} package(s). "
-                f"Total planned actions: {total_actions} (zero install/ mutations performed)."
+                f"Total planned actions: {total_actions}."
             )
             return "\n".join(lines)
         return "\n".join(plan.format_text() for plan in self.plans)

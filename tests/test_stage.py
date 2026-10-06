@@ -29,6 +29,7 @@ from drift.primitives.stage_repo import (
     assert_packages_stage_ready,
     prepare_stage_packages,
     execute_stage_packages,
+    stage_modified_packages,
     StagePlan,
     StageResult,
 )
@@ -1280,8 +1281,7 @@ class TestStageRepo(unittest.TestCase):
         # 2. execute_stage_packages stages the package
         changes = execute_stage_packages(
             self.workspace_config,
-            pkg_metadata=plan.pkg_metadata,
-            state_registry=plan.state_registry,
+            plan=plan,
         )
         self.assertIn(pkg_name, changes)
         self.assertTrue(changes[pkg_name].has_changes)
@@ -1301,8 +1301,7 @@ class TestStageRepo(unittest.TestCase):
         # 4. execute_stage_packages with empty pkg_metadata returns empty StageResult
         empty_changes = execute_stage_packages(
             self.workspace_config,
-            pkg_metadata={},
-            state_registry=plan.state_registry,
+            plan=empty_plan,
         )
         self.assertEqual(len(empty_changes), 0)
         self.assertFalse(empty_changes.has_changes)
@@ -1445,7 +1444,7 @@ class TestStageDependencies(unittest.TestCase):
         self._create_render_package("pkg_a", dependencies=[])
 
         plan = prepare_stage_packages(self.workspace_config)
-        self.assertEqual(plan.ordered_packages, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_a", "pkg_b", "pkg_c"])
 
     def test_prepare_stage_packages_with_installed_prerequisite(self) -> None:
         # pkg_a is already in install/ (not in render/)
@@ -1465,7 +1464,7 @@ class TestStageDependencies(unittest.TestCase):
 
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
         # pkg_a satisfies dependency, but only pkg_b was targeted for staging
-        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_b"])
 
     def test_prepare_stage_packages_with_disabled_installed_prerequisite(self) -> None:
         # pkg_a is installed on machine, but has enable_install = false in its config
@@ -1484,7 +1483,7 @@ class TestStageDependencies(unittest.TestCase):
         self._create_render_package("pkg_b", dependencies=["pkg_a"])
 
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_b"])
 
     def test_prepare_stage_packages_with_missing_installed_dir(self) -> None:
         # pkg_a is recorded in state.toml as installed, but its directory is missing from install/
@@ -1497,7 +1496,7 @@ class TestStageDependencies(unittest.TestCase):
         self._create_render_package("pkg_b", dependencies=["pkg_a"])
 
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_b"])
 
     def test_prepare_stage_packages_missing_required_dependency(self) -> None:
         self._create_render_package("pkg_b", dependencies=["missing_pkg"])
@@ -1508,7 +1507,7 @@ class TestStageDependencies(unittest.TestCase):
     def test_prepare_stage_packages_optional_dependency_pruned(self) -> None:
         self._create_render_package("pkg_b", dependencies=[{"name": "missing_pkg", "optional": True}])
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
-        self.assertEqual(plan.ordered_packages, ["pkg_b"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_b"])
 
     def test_stage_result_container_and_methods(self) -> None:
         """Verifies StageResult properties, dictionary compatibility, formatting, and serialization."""
@@ -1574,7 +1573,6 @@ class TestStageDependencies(unittest.TestCase):
         self.assertTrue(dry_res.dry_run)
         dry_text = dry_res.format_text()
         self.assertIn("[DRY-RUN]", dry_text)
-        self.assertIn("zero install/ mutations performed", dry_text)
 
         empty_dry = StageResult(dry_run=True)
         self.assertIn("[DRY-RUN]", empty_dry.format_text())
@@ -1592,9 +1590,7 @@ class TestStageDependencies(unittest.TestCase):
         plan = prepare_stage_packages(self.workspace_config, target_pkgs=[pkg_name])
         res = execute_stage_packages(
             self.workspace_config,
-            pkg_metadata=plan.pkg_metadata,
-            state_registry=plan.state_registry,
-            ordered_packages=plan.ordered_packages,
+            plan=plan,
             dry_run=True,
         )
 
@@ -1612,7 +1608,6 @@ class TestStageDependencies(unittest.TestCase):
         # Verify dry-run format_text output
         text = res.format_text()
         self.assertIn("[DRY-RUN]", text)
-        self.assertIn("zero install/ mutations performed", text)
 
     def test_run_primitive_4_dry_run(self) -> None:
         """Verifies that run_primitive_4_stage_render_to_install with dry_run=True leaves files untouched."""
@@ -1635,6 +1630,114 @@ class TestStageDependencies(unittest.TestCase):
 
         registry = load_state_registry(self.install_dir / "state.toml")
         self.assertNotEqual(registry.get_package_state(pkg_name), "staged")
+
+    def test_prepare_stage_packages_change_partitioning(self) -> None:
+        """Verifies prepare_stage_packages compiles plans and partitions packages_stage_order vs unchanged_packages."""
+        # 1. Setup pkg_a and pkg_b in render
+        self._create_render_package("pkg_a")
+        (self.render_dir / "pkg_a" / "file_a.txt").write_text("content a", encoding="utf-8")
+
+        self._create_render_package("pkg_b")
+        (self.render_dir / "pkg_b" / "file_b.txt").write_text("content b", encoding="utf-8")
+
+        # 2. Stage pkg_a first so it exists identically in install/
+        plan_initial = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_a"])
+        self.assertEqual(plan_initial.packages_stage_order, ["pkg_a"])
+        self.assertEqual(plan_initial.unchanged_packages, [])
+        self.assertTrue(plan_initial.has_changes)
+        res_initial = execute_stage_packages(self.workspace_config, plan=plan_initial)
+        self.assertEqual(res_initial.packages_changed, ["pkg_a"])
+
+        # 3. Now prepare both: pkg_a is unchanged, pkg_b has changes
+        plan_both = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_a", "pkg_b"])
+        self.assertEqual(plan_both.packages_stage_order, ["pkg_b"])
+        self.assertEqual(plan_both.unchanged_packages, ["pkg_a"])
+        self.assertTrue(plan_both.has_changes)
+        self.assertFalse(plan_both.package_plans["pkg_a"].has_changes)
+        self.assertTrue(plan_both.package_plans["pkg_b"].has_changes)
+
+        # 4. Execute staging on plan_both: only pkg_b is modified
+        res_both = execute_stage_packages(self.workspace_config, plan=plan_both)
+        self.assertEqual(res_both.packages_changed, ["pkg_b"])
+        self.assertEqual(len(res_both.plans), 1)
+        self.assertEqual(res_both.plans[0].package, "pkg_b")
+
+    def test_execute_stage_packages_respects_topological_write_order(self) -> None:
+        """Verifies that physical file writes during staging strictly respect topological dependency order."""
+        import drift.core.file_action
+
+        # Setup 3 packages with dependency chain: pkg_c -> pkg_b -> pkg_a
+        self._create_render_package("pkg_c", dependencies=["pkg_b"])
+        self._create_render_package("pkg_b", dependencies=["pkg_a"])
+        self._create_render_package("pkg_a", dependencies=[])
+
+        # Add payload files to each package
+        (self.render_dir / "pkg_a" / "payload_a.txt").write_text("data a", encoding="utf-8")
+        (self.render_dir / "pkg_b" / "payload_b.txt").write_text("data b", encoding="utf-8")
+        (self.render_dir / "pkg_c" / "payload_c.txt").write_text("data c", encoding="utf-8")
+
+        # Pass target_pkgs in reverse topological order
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_c", "pkg_b", "pkg_a"])
+        self.assertEqual(plan.packages_stage_order, ["pkg_a", "pkg_b", "pkg_c"])
+
+        copied_destinations: List[Path] = []
+        real_copy_file = drift.core.file_action.copy_file
+
+        def spy_copy_file(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+            copied_destinations.append(Path(dst))
+            return real_copy_file(src, dst, *args, **kwargs)
+
+        with patch("drift.core.file_action.copy_file", side_effect=spy_copy_file):
+            res = execute_stage_packages(self.workspace_config, plan=plan)
+
+        self.assertEqual(res.packages_changed, ["pkg_a", "pkg_b", "pkg_c"])
+        self.assertTrue(len(copied_destinations) >= 3)
+
+        # Map each copied destination file back to its containing package in install/
+        copied_packages = [
+            dst.relative_to(self.install_dir).parts[0]
+            for dst in copied_destinations
+        ]
+
+        # Verify all pkg_a files are copied before any pkg_b files, and all pkg_b files before pkg_c files
+        last_pkg_a_idx = max(i for i, p in enumerate(copied_packages) if p == "pkg_a")
+        first_pkg_b_idx = min(i for i, p in enumerate(copied_packages) if p == "pkg_b")
+        last_pkg_b_idx = max(i for i, p in enumerate(copied_packages) if p == "pkg_b")
+        first_pkg_c_idx = min(i for i, p in enumerate(copied_packages) if p == "pkg_c")
+
+        self.assertLess(last_pkg_a_idx, first_pkg_b_idx)
+        self.assertLess(last_pkg_b_idx, first_pkg_c_idx)
+
+    def test_stage_modified_packages_respects_sequence_order(self) -> None:
+        """Verifies stage_modified_packages accepts a Sequence[PackageStagePlan] and processes in sequence order."""
+        import drift.core.file_action
+
+        self._create_render_package("pkg_x")
+        self._create_render_package("pkg_y")
+        (self.render_dir / "pkg_x" / "x.txt").write_text("x", encoding="utf-8")
+        (self.render_dir / "pkg_y" / "y.txt").write_text("y", encoding="utf-8")
+
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_x", "pkg_y"])
+        # Deliberately supply custom reverse sequence
+        custom_sequence = [plan.package_plans["pkg_y"], plan.package_plans["pkg_x"]]
+
+        copied_packages: List[str] = []
+        real_copy_file = drift.core.file_action.copy_file
+
+        def spy_copy_file(src: Any, dst: Any, *args: Any, **kwargs: Any) -> Any:
+            copied_packages.append(Path(dst).relative_to(self.install_dir).parts[0])
+            return real_copy_file(src, dst, *args, **kwargs)
+
+        with patch("drift.core.file_action.copy_file", side_effect=spy_copy_file):
+            stage_modified_packages(
+                packages_to_stage=custom_sequence,
+                pkg_metadata=plan.pkg_metadata,
+                state_registry=plan.state_registry,
+            )
+
+        last_pkg_y_idx = max(i for i, p in enumerate(copied_packages) if p == "pkg_y")
+        first_pkg_x_idx = min(i for i, p in enumerate(copied_packages) if p == "pkg_x")
+        self.assertLess(last_pkg_y_idx, first_pkg_x_idx)
 
 
 if __name__ == "__main__":

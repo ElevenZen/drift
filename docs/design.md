@@ -173,7 +173,7 @@ Automatically commits any updates inside the `render/` sandbox Git repository.
 ### Primitive 4: Stage Render to Install [Low-level: `drift stage`]
 Reconciles the sandbox `render/` folder into the `install/` database:
 *   **Structural Fidelity Invariant**: Preserves the structure and file contents of `render/<pkg>/` inside `install/<pkg>/` with complete 1:1 fidelity, including `.drift_keep` stub files. No synthetic files or ignore artifacts are generated in `install/`. All payload files, `.drift/.drift_ignore`, `.drift/drift_package.toml`, `.drift/hooks/`, and `.drift/render/` are mirrored strictly 1:1.
-*   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.ordered_packages`).
+*   **Topological Staging Sequence**: `prepare_stage_packages` resolves inter-package dependencies across the package universe (`resolve_target_package_order`), sequencing staging actions in topological order (`StagePlan.packages_stage_order`).
 *   **Mechanism**: Compiles a declarative staging plan (`PackageStagePlan`) detailing operations (`DELETE_ITEM`, `DELETE_TREE`, `CREATE_COPY`, `UPDATE_COPY`, `UPDATE_PERMISSION`, `ENSURE_DIR`, `CREATE_KEEP_FILE`) via single-pass folder comparison between `render/` and `install/`. Synchronizes files using the unified delivery engine.
 *   **Stage Isolation**: Does **not** touch active system target files. All physical system file operations are deferred to Primitive 5.
 *   **State Machine**: Sets the package state to **`"staging"`** (transient guard) at the start, and transitions to **`"staged"`** (stable mid-state) upon successful completion. This indicates the database is ready but the system is not yet updated.
@@ -979,8 +979,8 @@ Drift enforces a strict separation between read-only validation guards and pure 
 Inter-package dependencies are orchestrated across every stage of the Drift lifecycle:
 
 *   **Primitive 4: Stage Render to Install**:
-    *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_target_package_order`, and records the sequence in `StagePlan.ordered_packages`.
-    *   `execute_stage_packages` stages packages in this exact topological order, preserving update sequence for shared install methods (e.g. `SYMLINK`).
+    *   `prepare_stage_packages` constructs the package universe, validates acyclicity, resolves topological order via `resolve_target_package_order`, compiles per-package stage plans, and records the sequence in `StagePlan.packages_stage_order`.
+    *   `execute_stage_packages` stages packages in this exact topological order (`StagePlan.packages_stage_order`), preserving update sequence for shared install methods (e.g. `SYMLINK`).
 *   **Primitive 5: Install Repo Deployment**:
     *   `prepare_install` validates deployment readiness (`assert_packages_install_ready`), verifies hook file permissions, audits cross-package path collisions, and resolves global topological deployment order in `InstallPlan`.
     *   `execute_install` deploys packages sequentially, guaranteeing prerequisites are installed and active before dependent packages deploy.

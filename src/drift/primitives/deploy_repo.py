@@ -253,9 +253,7 @@ def execute_sequential_compile_and_apply(
         logger.info("   [3/5] Staging rendered changes from render/ to install/ state database ...")
         stage_result = execute_stage_packages(
             workspace_config,
-            pkg_metadata=stage_plan.pkg_metadata,
-            state_registry=stage_plan.state_registry,
-            ordered_packages=stage_plan.ordered_packages,
+            plan=stage_plan,
         )
         completed_steps.append(CompletedStep(3, "sandbox_staging"))
     except Exception as e:

@@ -15,7 +15,9 @@ Pipeline Architecture:
                 * state_registry.get_midway_packages
                 * assert_install_pkg_dirs_clean [from package_assertions]
             - Staging Ordering (resolve_target_package_order)
-            -> Returns StagePlan(pkg_metadata, state_registry, ordered_packages)
+            - Declarative Plan Compilation (plan_package_stage for each package in action_order)
+            - Change Partitioning (partition splits packages_stage_order and unchanged_packages via plan.has_changes)
+            -> Returns StagePlan(pkg_metadata, state_registry, packages_stage_order, package_plans, unchanged_packages)
 
     2. Diff Computation & Planning (Read-Only):
         plan_package_stage(pkg, install_base, render_base) [Layer 2]
@@ -28,12 +30,12 @@ Pipeline Architecture:
             - Applies planned actions via execute_delivery_actions
 
     4. Staging Transaction & Orchestration:
-        stage_modified_packages(packages_to_stage, pkg_metadata, ...) [Layer 4]
+        stage_modified_packages(packages_to_stage, pkg_metadata, state_registry) [Layer 4]
             * assert_can_escalate (if sudo required)
             * state_registry.set_package_state("staging") & save
-            * execute_package_stage for each modified package
+            * execute_package_stage for each modified package in packages_stage_order
             * state_registry.set_package_state("staged") & save
-        execute_stage_packages(workspace_config, pkg_metadata, state_registry, ordered_packages, dry_run=False) [Layer 4]
+        execute_stage_packages(workspace_config, plan: StagePlan, dry_run=False) [Layer 4]
             -> Returns StageResult
 
     5. Public Composite Primitive Entry Point:
@@ -77,6 +79,7 @@ from ..core.folder_delivery import (
     plan_actions_from_folder_diff,
 )
 from ..core.result_models import PackageStagePlan, StageResult
+from ..utils.config_utils import partition
 from ..utils.process_utils import assert_can_escalate
 from ..core.folder_diff import compare_folders, FolderDiff
 from ..core.state_registry import load_state_registry, StateRegistry
@@ -95,10 +98,17 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class StagePlan:
-    """Pre-flight validated staging plan containing package configurations and state registry."""
+    """Pre-flight validated staging plan containing package configurations, plans, and state registry."""
     pkg_metadata: Dict[str, PackageConfig]
     state_registry: StateRegistry
-    ordered_packages: List[str] = field(default_factory=list)
+    packages_stage_order: List[str] = field(default_factory=list)
+    package_plans: Dict[str, PackageStagePlan] = field(default_factory=dict)
+    unchanged_packages: List[str] = field(default_factory=list)
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if any package stage plan contains actions."""
+        return bool(self.packages_stage_order)
 
 
 
@@ -204,10 +214,8 @@ def execute_package_stage(
 # =====================================================================
 
 def stage_modified_packages(
-    packages_to_stage: Mapping[str, PackageStagePlan],
+    packages_to_stage: Sequence[PackageStagePlan],
     pkg_metadata: Mapping[str, PackageConfig],
-    install_base: Path,
-    render_base: Path,
     state_registry: StateRegistry,
 ) -> None:
     """Applies physical changes and manages staging state transitions for packages with changes."""
@@ -215,26 +223,26 @@ def stage_modified_packages(
         return
 
     # 1. Check sudo privilege ONLY if any package with actual changes requires sudo
-    needs_sudo = any(pkg_metadata[pkg].package.sudo for pkg in packages_to_stage)
+    needs_sudo = any(pkg_metadata[p.package].package.sudo for p in packages_to_stage)
     if needs_sudo:
         assert_can_escalate()
 
     # 2. Set state of packages with changes to "staging" before staging to prevent partial staging issues
-    for pkg in packages_to_stage:
-        state_registry.set_package_state(pkg, "staging")
+    for p in packages_to_stage:
+        state_registry.set_package_state(p.package, "staging")
     state_registry.save()
 
     # 3. Apply stage actions to install/ directory for each package with changes
-    for pkg, plan in packages_to_stage.items():
+    for p in packages_to_stage:
         context = FileActionExecutionContext(
             sudo=False,
             resolve_symlinks=False,
         )
-        execute_package_stage(context, plan)
+        execute_package_stage(context, p)
 
     # 4. Set state of packages with changes to "staged" after successful staging
-    for pkg in packages_to_stage:
-        state_registry.set_package_state(pkg, "staged")
+    for p in packages_to_stage:
+        state_registry.set_package_state(p.package, "staged")
     state_registry.save()
 
 
@@ -246,8 +254,8 @@ def prepare_stage_packages(
 ) -> StagePlan:
     """Discovers, validates, and prepares packages for staging from render/ to install/.
 
-    Runs pre-flight assertion guards (hook existence, midway transaction state, install repo cleanliness)
-    and computes topologically sorted staging order.
+    Runs pre-flight assertion guards (hook existence, midway transaction state, install repo cleanliness),
+    computes topologically sorted staging order, and compiles per-package stage plans.
     Does NOT modify the filesystem or mutate state registry.
 
     Args:
@@ -257,7 +265,8 @@ def prepare_stage_packages(
         no_deps: If True, bypasses missing required package dependency checks.
 
     Returns:
-        StagePlan containing validated package metadata map, state registry, and ordered packages.
+        StagePlan containing validated package metadata map, state registry, packages_stage_order,
+        package_plans, and unchanged_packages.
     """
     if isinstance(target_pkgs, str):
         target_pkgs = [target_pkgs]
@@ -271,7 +280,7 @@ def prepare_stage_packages(
     active_packages = workspace_config.filter_render_packages_by_target(target_packages=target_pkgs or None)
     if not active_packages:
         logger.info("No active packages selected for staging. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry, ordered_packages=[])
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[])
 
     # 1. Collect: Load metadata for active packages from RENDER directory
     all_metadata: Dict[str, PackageConfig] = {
@@ -286,7 +295,7 @@ def prepare_stage_packages(
     }
     if not pkg_metadata:
         logger.info("No active packages are enabled for installation/deployment. Skipping.")
-        return StagePlan(pkg_metadata={}, state_registry=state_registry, ordered_packages=[])
+        return StagePlan(pkg_metadata={}, state_registry=state_registry, packages_stage_order=[])
 
     # 3. Assert: Verify hook files, transaction state, and install directory cleanliness
     # (full_universe_deps=None skips redundant DAG sort here as resolve_package_install_order validates it below)
@@ -300,100 +309,88 @@ def prepare_stage_packages(
     )
 
     # 4. Resolve topological order over universe, filtered to targeted packages
-    ordered_packages = resolve_target_package_order(
+    action_order = resolve_target_package_order(
         target_metadata=pkg_metadata,
         state_registry=state_registry,
         workspace_config=workspace_config,
         no_deps=(force or no_deps),
     )
 
-    return StagePlan(
-        pkg_metadata=pkg_metadata,
-        state_registry=state_registry,
-        ordered_packages=ordered_packages,
-    )
-
-
-def execute_stage_packages(
-    workspace_config: WorkspaceConfig,
-    pkg_metadata: Mapping[str, PackageConfig],
-    state_registry: StateRegistry,
-    ordered_packages: Optional[Sequence[str]] = None,
-    dry_run: bool = False,
-) -> StageResult:
-    """Computes stage plans and applies physical file changes and state transitions from render/ to install/.
-
-    Args:
-        workspace_config: The workspace configuration instance.
-        pkg_metadata: Pre-flight validated package metadata mapping.
-        state_registry: Active state registry for tracking staging state transitions.
-        ordered_packages: Optional topologically sorted package order. If omitted, uses pkg_metadata keys.
-        dry_run: If True, simulates staging changes without modifying files or state registry.
-
-    Returns:
-        StageResult containing all changed package plans and execution status.
-    """
-    if not pkg_metadata:
-        return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=dry_run)
-
-    render_base = workspace_config.render_path
-    install_base = workspace_config.install_path
-
-    package_order = list(ordered_packages) if ordered_packages is not None else list(pkg_metadata.keys())
-
-    if dry_run:
-        logger.info(f"🔍 [DRY-RUN] Simulating staging for {len(pkg_metadata)} packages: {', '.join(package_order)}")
-    else:
-        logger.info(f"🔍 Staging {len(pkg_metadata)} packages: {', '.join(package_order)}")
-
-    # 1. Compute stage plans for all packages in order
-    plans = {
+    # 5. Compile declarative per-package stage plans
+    package_plans = {
         pkg: plan_package_stage(
             pkg=pkg,
             install_base=install_base,
             render_base=render_base,
         )
-        for pkg in package_order
+        for pkg in action_order
     }
 
-    # Identify packages that have physical stage changes
-    packages_to_stage = {
-        pkg: plan
-        for pkg, plan in plans.items()
-        if plan.has_changes
-    }
+    packages_stage_order, unchanged_packages = partition(
+        lambda pkg: package_plans[pkg].has_changes,
+        action_order,
+    )
 
-    # 2. Apply physical changes and state transitions for modified packages in order
-    if packages_to_stage and not dry_run:
+    return StagePlan(
+        pkg_metadata=pkg_metadata,
+        state_registry=state_registry,
+        packages_stage_order=packages_stage_order,
+        package_plans=package_plans,
+        unchanged_packages=unchanged_packages,
+    )
+
+
+def execute_stage_packages(
+    workspace_config: WorkspaceConfig,
+    plan: StagePlan,
+    dry_run: bool = False,
+) -> StageResult:
+    """Applies pre-compiled stage plans and state transitions from render/ to install/.
+
+    Args:
+        workspace_config: The workspace configuration instance.
+        plan: Pre-flight validated StagePlan containing package metadata, state registry,
+              packages_stage_order, package_plans, and unchanged_packages.
+        dry_run: If True, simulates staging changes without modifying files or state registry.
+
+    Returns:
+        StageResult containing all changed package plans and execution status.
+    """
+    if not plan.pkg_metadata:
+        return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=dry_run)
+
+    package_order = plan.packages_stage_order
+
+    if dry_run:
+        logger.info(f"🔍 [DRY-RUN] Simulating staging for {len(plan.pkg_metadata)} packages: {', '.join(package_order)}")
+    else:
+        logger.info(f"🔍 Staging {len(plan.pkg_metadata)} packages: {', '.join(package_order)}")
+
+    # Packages with physical changes in topological order
+    packages_to_stage = [ plan.package_plans[pkg] for pkg in package_order ]
+
+    # Apply physical changes and state transitions for modified packages in order
+    if not dry_run and packages_to_stage:
         stage_modified_packages(
             packages_to_stage=packages_to_stage,
-            pkg_metadata=pkg_metadata,
-            install_base=install_base,
-            render_base=render_base,
-            state_registry=state_registry,
+            pkg_metadata=plan.pkg_metadata,
+            state_registry=plan.state_registry,
         )
 
-    # 3. Prepare summary of changes for logging
-    if dry_run:
-        if packages_to_stage:
-            logger.info("✨ [DRY-RUN] Staging simulation completed. Summary of planned changes:")
-            for plan in packages_to_stage.values():
-                logger.info(f"   Package '{plan.package}': {format_action_summary(plan.actions)}")
-        else:
-            logger.info("✨ [DRY-RUN] Staging simulation completed. No changes detected.")
-    else:
+    # Prepare summary of changes for logging
+    if not dry_run:
         if packages_to_stage:
             logger.info("✨ Staging completed. Summary of changes:")
-            for plan in packages_to_stage.values():
-                logger.info(f"   Package '{plan.package}': {format_action_summary(plan.actions)}")
+            for pkg_plan in packages_to_stage:
+                logger.info(f"   Package '{pkg_plan.package}': {format_action_summary(pkg_plan.actions)}")
         else:
             logger.info("✨ Staging completed. No changes detected.")
 
     return StageResult(
         command="stage",
         status="SUCCESS",
-        packages_changed=list(packages_to_stage.keys()),
-        plans=list(packages_to_stage.values()),
+        packages_changed=[p.package for p in packages_to_stage],
+        plans=packages_to_stage,
         dry_run=dry_run,
     )
 
@@ -433,9 +430,7 @@ def run_primitive_4_stage_render_to_install(
         return StageResult(command="stage", status="SUCCESS", packages_changed=[], plans=[], dry_run=dry_run)
     return execute_stage_packages(
         workspace_config,
-        pkg_metadata=plan.pkg_metadata,
-        state_registry=plan.state_registry,
-        ordered_packages=plan.ordered_packages,
+        plan=plan,
         dry_run=dry_run,
     )
 

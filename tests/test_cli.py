@@ -670,7 +670,6 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
         self.assertIn("[CREATE_COPY]", output)
         self.assertIn("src/pkg_a/file.txt -> render/pkg_a/file.txt", output)
         self.assertIn("1 to create", output)
-        self.assertIn("zero render/ mutations performed", output)
 
         # Verify that render/pkg_a/file.txt was NOT created
         self.assertFalse(os.path.exists(render_file))
