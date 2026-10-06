@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_install(workspace_config, target_pkgs, config) [Layer 4]
+        prepare_install(workspace_config, target_pkgs, options) [Layer 4]
             - Package Discovery & Selection (filter_install_packages_by_target)
             - Metadata Resolution (PackageConfig.from_install_dir)
             - Pre-flight Readiness (assert_packages_install_ready [Layer 4])
@@ -21,7 +21,7 @@ Pipeline Architecture:
             - Autonomous Context Construction (PackageInstallContext.from_package)
             - Declarative Plan Compilation (plan_package_install)
             - Skip Partitioning (partition splits packages_install_order and skipped_packages via plan.can_skip)
-            -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_install_order, config, contexts, package_plans, skipped_packages)
+            -> Returns InstallPlan(pkg_metadata_map, state_registry, packages_install_order, options, contexts, package_plans, skipped_packages)
 
     2. Single-Package Installation Execution:
         execute_install(workspace_config, plan: InstallPlan) [Layer 4]
@@ -162,7 +162,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @dataclass
-class InstallConfig:
+class InstallOptions:
     """Options controlling package installation behavior."""
     resolve_symlinks: bool = True
     force: bool = False
@@ -172,17 +172,17 @@ class InstallConfig:
     flags: Optional[HookExecFlags] = None
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
-        """Derives HookExecFlags, assigning dry_run from InstallConfig to HookExecFlags."""
+        """Derives HookExecFlags, assigning dry_run from InstallOptions to HookExecFlags."""
         base = HookExecFlags.resolve(self.flags, settings=settings)
         return replace(base, dry_run=self.dry_run)
 
 
 @dataclass(frozen=True)
 class InstallPlan:
-    """Pre-flight validated installation plan containing package configurations, config, and state registry."""
+    """Pre-flight validated installation plan containing package configurations, options, and state registry."""
     pkg_metadata_map: Dict[str, PackageConfig]
     state_registry: StateRegistry
-    config: InstallConfig
+    options: InstallOptions
     packages_install_order: List[str]
     skipped_packages: List[str] = field(default_factory=list)
     contexts: Dict[str, PackageInstallContext] = field(default_factory=dict)
@@ -396,7 +396,7 @@ def execute_package_install_impl(
     plan: PackageInstallPlan,
     state_registry: StateRegistry,
     hook_flags: HookExecFlags,
-    config: InstallConfig,
+    options: InstallOptions,
 ) -> PackageInstallResult:
     """Performs state transition, hooks, physical file actions, and registry updates under active package envs."""
     state_registry.set_package_state(context.pkg_name, "installing")
@@ -434,7 +434,7 @@ def execute_package_install_impl(
     execute_package_actions(
         context=context,
         plan=plan,
-        resolve_symlinks=config.resolve_symlinks,
+        resolve_symlinks=options.resolve_symlinks,
     )
     logger.debug(f"   File delivery completed via {context.install_method}")
 
@@ -477,7 +477,7 @@ def execute_package_install(
     plan: PackageInstallPlan,
     state_registry: StateRegistry,
     hook_flags: HookExecFlags,
-    config: InstallConfig,
+    options: InstallOptions,
 ) -> PackageInstallResult:
     """Applies a pre-compiled PackageInstallPlan to the host system and updates state registry."""
     # NOTE [Host Mutation Heuristic & Non-Deployable File Limitation]:
@@ -487,9 +487,9 @@ def execute_package_install(
     # (such as modifications to .drift/hooks/*, .drift/drift_package.toml, or .drift/.drift_ignore).
     # If only a hook script or package config was modified while deployable files on the host remain identical,
     # has_mutations evaluates to False and Primitive 5 will SKIP the package (and bypass hook execution)
-    # unless config.reinstall is True.
+    # unless options.reinstall is True.
     # When invoking Primitive 5 via the deploy pipeline ('drift deploy'), deploy_repo bridges this by
-    # filtering changed packages at the staging boundary and setting config.reinstall=True. When invoking
+    # filtering changed packages at the staging boundary and setting options.reinstall=True. When invoking
     # Primitive 5 directly ('drift apply'), callers must supply -r / --reinstall to execute hooks when
     # only non-deployable package files have changed.
     if plan.can_skip:
@@ -507,7 +507,7 @@ def execute_package_install(
             plan=plan,
             state_registry=state_registry,
             hook_flags=hook_flags,
-            config=config,
+            options=options,
         )
 
 
@@ -515,15 +515,15 @@ def install_one_package(
     workspace_config: WorkspaceConfig,
     state_registry: StateRegistry,
     metadata: PackageConfig,
-    config: Optional[InstallConfig] = None,
+    options: Optional[InstallOptions] = None,
 ) -> PackageInstallResult:
     """Executes installation planning, lifecycle hooks, file deliveries, and state registry updates for a single package."""
-    cfg = config if config is not None else InstallConfig()
+    opts = options if options is not None else InstallOptions()
     context = PackageInstallContext.from_package(
         workspace_config=workspace_config,
         state_registry=state_registry,
         metadata=metadata,
-        reinstall=cfg.reinstall,
+        reinstall=opts.reinstall,
     )
     assert_packages_install_dirs_exist(workspace_config.install_path, [context.pkg_name])
 
@@ -541,7 +541,7 @@ def install_one_package(
         target_migrated_from=target_migrated_from,
     )
 
-    if cfg.dry_run:
+    if opts.dry_run:
         logger.info(f"🔍 [DRY-RUN] Planned {len(plan.actions)} actions for package '{context.pkg_name}'.")
         return PackageInstallResult(
             plan=plan,
@@ -561,13 +561,13 @@ def install_one_package(
     if context.sudo:
         assert_can_escalate()
 
-    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
     return execute_package_install(
         context=context,
         plan=plan,
         state_registry=state_registry,
         hook_flags=hook_flags,
-        config=cfg,
+        options=opts,
     )
 
 
@@ -635,7 +635,7 @@ def assert_packages_install_ready(
 def prepare_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    config: Optional[InstallConfig] = None,
+    options: Optional[InstallOptions] = None,
 ) -> InstallPlan:
     """Pre-flight checks for permissions, lifecycle hook scripts, and cross-package conflicts before installation.
 
@@ -646,16 +646,16 @@ def prepare_install(
     Args:
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to install, or empty sequence for all installed packages.
-        config: Optional InstallConfig controlling installation behavior.
+        options: Optional InstallOptions controlling installation behavior.
 
     Returns:
         InstallPlan containing validated package metadata mapping, state registry, discovered packages in
-        topological order, and config.
+        topological order, and options.
     """
-    cfg = config if config is not None else InstallConfig()
+    opts = options if options is not None else InstallOptions()
     install_base = workspace_config.install_path
     state_file = install_base / "state.toml"
-    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
 
     state_registry = load_state_registry(state_file)
 
@@ -681,7 +681,7 @@ def prepare_install(
             pkg_metadata_map={},
             state_registry=state_registry,
             packages_install_order=[],
-            config=cfg,
+            options=opts,
         )
 
     # Pre-flight assertions on targeted packages (full_universe_deps=None skips redundant DAG sort)
@@ -691,7 +691,7 @@ def prepare_install(
         pkg_metadata_map=pkg_metadata_map,
         hook_flags=hook_flags,
         state_registry=state_registry,
-        force=cfg.force,
+        force=opts.force,
         full_universe_deps=None,
     )
 
@@ -700,7 +700,7 @@ def prepare_install(
         target_metadata=pkg_metadata_map,
         state_registry=state_registry,
         workspace_config=workspace_config,
-        no_deps=(cfg.force or cfg.no_deps),
+        no_deps=(opts.force or opts.no_deps),
     )
 
     contexts = {
@@ -708,7 +708,7 @@ def prepare_install(
             workspace_config=workspace_config,
             state_registry=state_registry,
             metadata=pkg_metadata_map[pkg],
-            reinstall=cfg.reinstall,
+            reinstall=opts.reinstall,
         )
         for pkg in action_order
         if pkg in pkg_metadata_map
@@ -734,7 +734,7 @@ def prepare_install(
         pkg_metadata_map=pkg_metadata_map,
         state_registry=state_registry,
         packages_install_order=packages_install_order,
-        config=cfg,
+        options=opts,
         contexts=contexts,
         package_plans=package_plans,
         skipped_packages=skipped_packages,
@@ -750,14 +750,14 @@ def execute_install(
     Args:
         workspace_config: The workspace configuration instance.
         plan: Pre-flight validated InstallPlan containing package metadata, state registry,
-              packages_install_order, contexts, package_plans, skipped_packages, and install config.
+              packages_install_order, contexts, package_plans, skipped_packages, and install options.
 
     Returns:
         InstallResult with detailed per-package install results.
     """
-    cfg = plan.config
+    opts = plan.options
 
-    if cfg.dry_run:
+    if opts.dry_run:
         logger.info(f"🔍 [DRY-RUN] Simulating installation for {len(plan.packages_install_order)} package(s).")
         package_results = [
             PackageInstallResult(
@@ -786,7 +786,7 @@ def execute_install(
     if needs_sudo:
         assert_can_escalate()
 
-    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
     results: List[PackageInstallResult] = []
 
     # 1. Execute physical installation strictly in topological packages_install_order
@@ -799,7 +799,7 @@ def execute_install(
                 plan=pkg_plan,
                 state_registry=plan.state_registry,
                 hook_flags=hook_flags,
-                config=cfg,
+                options=opts,
             )
             results.append(pkg_res)
         except subprocess.CalledProcessError as e:
@@ -843,14 +843,14 @@ def execute_install(
 def run_primitive_5_install(
     workspace_config: WorkspaceConfig,
     target_pkgs: Sequence[str] = (),
-    config: Optional[InstallConfig] = None,
+    options: Optional[InstallOptions] = None,
 ) -> InstallResult:
     """Applies changes from the install/ state database to the active host system (Primitive 5).
 
     Args:
         workspace_config: The workspace configuration instance.
         target_pkgs: Specific package name(s) to install, or empty/omitted for all installed packages.
-        config: Optional InstallConfig controlling install behavior (resolve_symlinks, force, reinstall, flags).
+        options: Optional InstallOptions controlling install behavior (resolve_symlinks, force, reinstall, flags).
 
     Returns:
         InstallResult with detailed per-package install results.
@@ -858,7 +858,7 @@ def run_primitive_5_install(
     plan = prepare_install(
         workspace_config=workspace_config,
         target_pkgs=target_pkgs,
-        config=config,
+        options=options,
     )
     return execute_install(workspace_config, plan=plan)
 

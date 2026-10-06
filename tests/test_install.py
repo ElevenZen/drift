@@ -54,7 +54,7 @@ from drift.primitives.install_repo import (
         execute_package_install,
         execute_package_install_impl,
         install_one_package,
-        InstallConfig,
+        InstallOptions,
         PackageInstallContext,
         assert_packages_install_ready,
 )
@@ -620,7 +620,7 @@ class TestInstallRepo(unittest.TestCase):
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=meta,
-                config=InstallConfig(resolve_symlinks=False, force=True)
+                options=InstallOptions(resolve_symlinks=False, force=True)
             )
 
         # Verifies workspace_config default target directory was properly passed and not clobbered
@@ -1201,7 +1201,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(ctx.exception.packages, [pkg])
 
         # Attempt with force=True - should proceed (and succeed here)
-        run_primitive_5_install(self.workspace_config, [pkg], config=InstallConfig(force=True))
+        run_primitive_5_install(self.workspace_config, [pkg], options=InstallOptions(force=True))
         
         # Verify success after force
         registry = load_state_registry(Path(state_file))
@@ -1264,7 +1264,7 @@ class TestInstallRepo(unittest.TestCase):
         res_disabled = run_primitive_5_install(
             workspace_config=self.workspace_config,
             target_pkgs=[pkg_disabled],
-            config=InstallConfig(resolve_symlinks=True, force=False),
+            options=InstallOptions(resolve_symlinks=True, force=False),
         )
         self.assertEqual(res_disabled.packages, [])
         # Check that state.toml did not transition this package into 'installing'
@@ -1275,7 +1275,7 @@ class TestInstallRepo(unittest.TestCase):
         res_forced = run_primitive_5_install(
             workspace_config=self.workspace_config,
             target_pkgs=[pkg_disabled],
-            config=InstallConfig(resolve_symlinks=True, force=True),
+            options=InstallOptions(resolve_symlinks=True, force=True),
         )
         self.assertEqual(res_forced.packages, [])
         reloaded = load_state_registry(state_file)
@@ -1296,7 +1296,7 @@ class TestInstallRepo(unittest.TestCase):
                 workspace_config=self.workspace_config,
                 state_registry=registry,
                 metadata=metadata_missing,
-                config=InstallConfig(resolve_symlinks=True, force=False),
+                options=InstallOptions(resolve_symlinks=True, force=False),
             )
         self.assertIn("does not exist", str(cm.exception))
         reloaded2 = load_state_registry(state_file)
@@ -2490,7 +2490,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertEqual(len(plan.pruned), 0)
 
     def test_dry_run_zero_host_and_state_mutations(self) -> None:
-        """Verifies that InstallConfig(dry_run=True) produces a complete deployment plan
+        """Verifies that InstallOptions(dry_run=True) produces a complete deployment plan
         without creating target files, making backups, triggering hooks, or modifying state.toml.
         """
         pkg = "pkg_dry_run"
@@ -2519,8 +2519,8 @@ class TestInstallRepo(unittest.TestCase):
         target_file.write_text("host_original", encoding="utf-8")
 
         # Run deployment with dry_run=True
-        cfg = InstallConfig(dry_run=True)
-        result = run_primitive_5_install(self.workspace_config, [pkg], config=cfg)
+        cfg = InstallOptions(dry_run=True)
+        result = run_primitive_5_install(self.workspace_config, [pkg], options=cfg)
 
         self.assertEqual(result.status, "SUCCESS")
         self.assertEqual(len(result.packages), 1)
@@ -2746,7 +2746,7 @@ class TestInstallRepo(unittest.TestCase):
         res_mig = run_primitive_5_install(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(reinstall=False)
+            options=InstallOptions(reinstall=False)
         )
         self.assertEqual(res_mig.status, "SUCCESS")
 
@@ -2798,7 +2798,7 @@ class TestInstallRepo(unittest.TestCase):
         res_dry = run_primitive_5_install(
             self.workspace_config,
             [pkg],
-            config=InstallConfig(dry_run=True),
+            options=InstallOptions(dry_run=True),
         )
         self.assertEqual(res_dry.status, "SUCCESS")
         plan = res_dry.packages[0].plan
@@ -2947,8 +2947,9 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies prepare_install returns InstallPlan and execute_install executes it."""
         pkg = "pkg_copy"
         install_pkg_dir = self.install_dir / pkg
-        install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        dot_drift = install_pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -2963,7 +2964,7 @@ class TestInstallRepo(unittest.TestCase):
         self.assertIn(pkg, plan.pkg_metadata_map)
         self.assertEqual(plan.pkg_metadata_map[pkg].name, pkg)
         self.assertIsInstance(plan.state_registry, StateRegistry)
-        self.assertIsInstance(plan.config, InstallConfig)
+        self.assertIsInstance(plan.options, InstallOptions)
         self.assertIn(pkg, plan.package_plans)
         self.assertIn(pkg, plan.contexts)
 
@@ -2990,8 +2991,9 @@ class TestInstallRepo(unittest.TestCase):
         from drift.hooks.lifecycle_hooks import HookExecFlags
         pkg = "pkg_direct_impl"
         install_pkg_dir = self.install_dir / pkg
-        install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        dot_drift = install_pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -3019,7 +3021,7 @@ class TestInstallRepo(unittest.TestCase):
                 plan=plan,
                 state_registry=registry,
                 hook_flags=HookExecFlags(),
-                config=InstallConfig(),
+                options=InstallOptions(),
             )
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((self.system_target_dir / "test.conf").is_file())
@@ -3033,8 +3035,9 @@ class TestInstallRepo(unittest.TestCase):
         """Verifies prepare_install runs pre-flight checks and aborts before touching host system."""
         pkg = "pkg_copy"
         install_pkg_dir = self.install_dir / pkg
-        install_pkg_dir.mkdir(parents=True, exist_ok=True)
-        (install_pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
+        dot_drift = install_pkg_dir / DRIFT_INTERNAL_DIR_NAME
+        dot_drift.mkdir(parents=True, exist_ok=True)
+        (dot_drift / PACKAGE_CONFIG_FILE_NAME).write_text(f"""
         [package]
         name = "{pkg}"
         install_method = "copy"
@@ -3574,7 +3577,7 @@ class TestInstallRepo(unittest.TestCase):
         plan_dry_run = prepare_install(
             self.workspace_config,
             ["pkg_sudo"],
-            config=InstallConfig(dry_run=True),
+            options=InstallOptions(dry_run=True),
         )
         with patch("drift.primitives.install_repo.assert_can_escalate") as mock_sudo:
             res_dry_run = execute_install(self.workspace_config, plan_dry_run)
@@ -3612,7 +3615,7 @@ class TestInstallRepo(unittest.TestCase):
                 self.workspace_config,
                 state_registry,
                 metadata,
-                config=InstallConfig(dry_run=True),
+                options=InstallOptions(dry_run=True),
             )
             mock_sudo.assert_not_called()
 
@@ -3622,7 +3625,7 @@ class TestInstallRepo(unittest.TestCase):
                 self.workspace_config,
                 state_registry,
                 metadata,
-                config=InstallConfig(reinstall=False),
+                options=InstallOptions(reinstall=False),
             )
             self.assertEqual(res_one_skip.status, "SKIPPED")
             mock_sudo.assert_not_called()
@@ -3634,7 +3637,7 @@ class TestInstallRepo(unittest.TestCase):
                 self.workspace_config,
                 state_registry,
                 metadata,
-                config=InstallConfig(reinstall=True),
+                options=InstallOptions(reinstall=True),
             )
             mock_sudo.assert_called_once()
 
@@ -3697,7 +3700,7 @@ class TestInstallRepo(unittest.TestCase):
         plan_reinstall = prepare_install(
             self.workspace_config,
             ["pkg_a", "pkg_b"],
-            config=InstallConfig(reinstall=True),
+            options=InstallOptions(reinstall=True),
         )
         self.assertEqual(sorted(plan_reinstall.packages_install_order), ["pkg_a", "pkg_b"])
         self.assertEqual(plan_reinstall.skipped_packages, [])

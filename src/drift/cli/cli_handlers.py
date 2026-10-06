@@ -19,6 +19,7 @@ from .actions import (
     execute_adopt,
     execute_rollback,
     execute_deploy,
+    execute_plan,
     execute_repair,
     execute_health,
     execute_clone,
@@ -28,6 +29,7 @@ from .actions import (
     execute_install_stub,
 )
 from ..core.result_models import DiffType
+from ..primitives.deploy_repo import DeployOptions
 from ..utils.git_utils import get_drift_root
 from .error_boundary import cli_error_boundary
 
@@ -41,12 +43,14 @@ class DriftCLIContext:
         json_mode: bool = False,
         use_rich: bool = True,
         raw_errors: bool = False,
+        verbose: bool = False,
     ) -> None:
         self.directory: Optional[str] = directory
         self.no_git_root: bool = no_git_root
         self.json_mode: bool = json_mode
         self.use_rich: bool = use_rich
         self.raw_errors: bool = raw_errors
+        self.verbose: bool = verbose
 
     def get_drift_root(self) -> Path:
         """Resolves the absolute path to the drift root repository."""
@@ -154,7 +158,7 @@ def handle_add(
     cli_ctx = _extract_cli_context(ctx)
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks)
+        execute_add(drift_root, package_name, paths, dry_run=dry_run, json_mode=cli_ctx.json_mode, no_hooks=no_hooks, verbose=cli_ctx.verbose)
 
 
 def handle_adopt(
@@ -191,8 +195,24 @@ def handle_deploy(
     reinstall: bool = False,
     no_deps: bool = False,
     no_cache: bool = False,
+    dry_run: bool = False,
 ) -> None:
     """Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts."""
+    if dry_run:
+        handle_plan(
+            ctx=ctx,
+            packages=packages,
+            force=force,
+            reinstall=reinstall,
+            no_hooks=no_hooks,
+            with_hooks=False,
+            no_deps=no_deps,
+            no_cache=no_cache,
+            show_all=False,
+            command_name="deploy",
+        )
+        return
+
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
@@ -209,19 +229,56 @@ def handle_deploy(
         )
 
 
+def handle_plan(
+    ctx: Any,
+    packages: Optional[Sequence[str]] = None,
+    force: bool = False,
+    reinstall: bool = False,
+    no_hooks: bool = False,
+    with_hooks: bool = False,
+    no_deps: bool = False,
+    no_cache: bool = False,
+    show_all: bool = False,
+    command_name: str = "plan",
+) -> None:
+    """Simulates deployment planning and previews actions without modifying system state."""
+    cli_ctx = _extract_cli_context(ctx)
+    pkgs = packages or ()
+    options = DeployOptions(
+        force=force,
+        reinstall=reinstall,
+        no_deps=no_deps,
+        no_hooks=no_hooks,
+        with_hooks=with_hooks,
+        no_cache=no_cache,
+        dry_run=True,
+        show_all=show_all,
+        verbose=cli_ctx.verbose,
+    )
+    with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        drift_root = cli_ctx.get_drift_root()
+        execute_plan(
+            drift_root=drift_root,
+            packages=pkgs,
+            options=options,
+            json_mode=cli_ctx.json_mode,
+            verbose=cli_ctx.verbose,
+            command_name=command_name,
+        )
+
+
 def handle_health(
     ctx: Any,
     packages: Optional[Sequence[str]] = None,
     timeout: Optional[int] = None,
-    verbose: bool = False,
-    from_stage: str = "install"
+    from_stage: str = "install",
 ) -> None:
     """Run runtime health check probes on packages."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
         drift_root = cli_ctx.get_drift_root()
-        execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=verbose, timeout=timeout, from_stage=from_stage)
+        execute_health(drift_root, pkgs, json_mode=cli_ctx.json_mode, verbose=cli_ctx.verbose, timeout=timeout, from_stage=from_stage)
 
 
 def handle_uninstall(
@@ -247,6 +304,7 @@ def handle_uninstall(
             json_mode=cli_ctx.json_mode,
             no_hooks=no_hooks,
             no_deps=no_deps,
+            verbose=cli_ctx.verbose,
         )
 
 
@@ -383,6 +441,7 @@ def handle_render(
             no_cache=no_cache,
             dry_run=dry_run,
             with_hooks=with_hooks,
+            verbose=cli_ctx.verbose,
         )
         if not cli_ctx.json_mode:
             prefix = "[DRY-RUN] " if dry_run else ""
@@ -425,6 +484,7 @@ def handle_stage(
             json_mode=cli_ctx.json_mode,
             no_deps=no_deps,
             dry_run=dry_run,
+            verbose=cli_ctx.verbose,
         )
 
 
@@ -451,6 +511,7 @@ def handle_apply(
             no_hooks=no_hooks,
             no_deps=no_deps,
             dry_run=dry_run,
+            verbose=cli_ctx.verbose,
         )
 
 
@@ -499,6 +560,7 @@ CLI_HANDLERS: Dict[str, Callable[..., Any]] = {
     "new": handle_new,
     "add": handle_add,
     "adopt": handle_adopt,
+    "plan": handle_plan,
     "deploy": handle_deploy,
     "health": handle_health,
     "uninstall": handle_uninstall,

@@ -27,6 +27,7 @@ from .actions import (
     execute_adopt,
     execute_rollback,
     execute_deploy,
+    execute_plan,
     execute_repair,
     execute_health,
     execute_clone,
@@ -152,6 +153,7 @@ def run_argparse_cli(argv=None) -> None:
         json_mode=getattr(args, "json", False),
         use_rich=False,
         raw_errors=raw_errors,
+        verbose=is_verbose or is_trace,
     )
 
     global_keys = {"command", "no_git_root", "verbose", "json", "directory", "raw_errors", "trace"}

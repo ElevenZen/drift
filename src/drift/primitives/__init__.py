@@ -35,7 +35,7 @@ from .install_repo import (
     execute_install,
     InstallPlan,
     run_primitive_6_commit_install_repo,
-    InstallConfig,
+    InstallOptions,
     PackageInstallContext,
     install_one_package,
     execute_package_install,
@@ -47,7 +47,7 @@ from .install_repo import (
 )
 from .uninstall_repo import (
     run_primitive_7_uninstall_packages,
-    UninstallConfig,
+    UninstallOptions,
     UninstallPlan,
     PackageUninstallContext,
     plan_package_uninstall,
@@ -93,6 +93,11 @@ from .workspace_status import (
 from .deploy_repo import (
     run_primitive_deploy_pipeline,
     run_primitive_deploy_pipeline_with_error_handling,
+    DeployOptions,
+)
+from .plan_repo import (
+    prepare_deploy_preview,
+    run_primitive_plan,
 )
 from .adopt_repo import (
     run_primitive_adopt_drifts,
@@ -138,7 +143,7 @@ __all__ = [
     "InstallPlan",
     "run_primitive_5_install",
     "run_primitive_6_commit_install_repo",
-    "InstallConfig",
+    "InstallOptions",
     "PackageInstallContext",
     "install_one_package",
     "execute_package_install",
@@ -147,7 +152,7 @@ __all__ = [
     "check_package_has_mutations",
     "execute_package_actions",
     "run_primitive_7_uninstall_packages",
-    "UninstallConfig",
+    "UninstallOptions",
     "UninstallPlan",
     "PackageUninstallContext",
     "plan_package_uninstall",
@@ -173,6 +178,9 @@ __all__ = [
     "run_primitive_status",
     "run_primitive_deploy_pipeline",
     "run_primitive_deploy_pipeline_with_error_handling",
+    "DeployOptions",
+    "prepare_deploy_preview",
+    "run_primitive_plan",
     "run_primitive_adopt_drifts",
     "adopt_one_package_drifts",
     "check_existing_workspace_status",

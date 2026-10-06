@@ -357,6 +357,148 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         self.assertIn("Package: tmux", text)
         self.assertIn("1 packages unchanged: git", text)
 
+    def test_verbose_format_text_filtering_across_plans(self) -> None:
+        """Verifies that format_text(verbose=False) hides SKIP_IDENTICAL and INFO_MESSAGE, and verbose=True shows them."""
+        # 1. PackageRenderResult
+        render_res = PackageRenderResult(
+            package="render_test",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/workspace/src/render_test/unchanged.txt"),
+                    dst_path=Path("/workspace/render/render_test/unchanged.txt"),
+                    reason="hash match",
+                ),
+                FileAction(
+                    action_type=FileActionType.INFO_MESSAGE,
+                    reason="Render cache hit",
+                ),
+                FileAction(
+                    action_type=FileActionType.RENDER_ITEM,
+                    src_path=Path("/workspace/src/render_test/changed.txt"),
+                    dst_path=Path("/workspace/render/render_test/changed.txt"),
+                ),
+            ],
+        )
+        non_verbose_render = render_res.format_text(verbose=False)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose_render)
+        self.assertNotIn("[INFO]", non_verbose_render)
+        self.assertIn("RENDER", non_verbose_render)
+        self.assertIn("1 to render, 1 up-to-date", non_verbose_render)
+
+        verbose_render = render_res.format_text(verbose=True)
+        self.assertIn("SKIP_IDENTICAL", verbose_render)
+        self.assertIn("[INFO]", verbose_render)
+        self.assertIn("RENDER", verbose_render)
+
+        # 2. PackageStagePlan
+        stage_plan = PackageStagePlan(
+            package="stage_test",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/workspace/render/stage_test/same.txt"),
+                    dst_path=Path("/workspace/install/stage_test/same.txt"),
+                ),
+                FileAction(
+                    action_type=FileActionType.INFO_MESSAGE,
+                    reason="Staged metadata",
+                ),
+                FileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=Path("/workspace/render/stage_test/new.txt"),
+                    dst_path=Path("/workspace/install/stage_test/new.txt"),
+                ),
+            ],
+        )
+        non_verbose_stage = stage_plan.format_text(verbose=False)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose_stage)
+        self.assertNotIn("[INFO]", non_verbose_stage)
+        self.assertIn("CREATE_COPY", non_verbose_stage)
+        self.assertIn("1 to create, 1 up-to-date", non_verbose_stage)
+
+        verbose_stage = stage_plan.format_text(verbose=True)
+        self.assertIn("SKIP_IDENTICAL", verbose_stage)
+        self.assertIn("[INFO]", verbose_stage)
+        self.assertIn("CREATE_COPY", verbose_stage)
+
+        # 3. PackageInstallPlan
+        install_plan = PackageInstallPlan(
+            package="install_test",
+            target_directory="/home/user",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/workspace/install/install_test/dot-link"),
+                    dst_path=Path("/home/user/.link"),
+                ),
+                FileAction(
+                    action_type=FileActionType.INFO_MESSAGE,
+                    reason="Symlink verified",
+                ),
+                FileAction(
+                    action_type=FileActionType.CREATE_SYMLINK,
+                    src_path=Path("/workspace/install/install_test/dot-newlink"),
+                    dst_path=Path("/home/user/.newlink"),
+                ),
+            ],
+        )
+        non_verbose_install = install_plan.format_text(verbose=False)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose_install)
+        self.assertNotIn("[INFO]", non_verbose_install)
+        self.assertIn("CREATE_SYMLINK", non_verbose_install)
+        self.assertIn("1 to create, 1 up-to-date", non_verbose_install)
+
+        verbose_install = install_plan.format_text(verbose=True)
+        self.assertIn("SKIP_IDENTICAL", verbose_install)
+        self.assertIn("[INFO]", verbose_install)
+        self.assertIn("CREATE_SYMLINK", verbose_install)
+
+        # 4. PackageReverseSyncPlan
+        rev_plan = PackageReverseSyncPlan(
+            package="rev_test",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/home/user/.dotfile"),
+                    dst_path=Path("/workspace/install/rev_test/dot-dotfile"),
+                ),
+                FileAction(
+                    action_type=FileActionType.UPDATE_COPY,
+                    src_path=Path("/home/user/.changed"),
+                    dst_path=Path("/workspace/install/rev_test/dot-changed"),
+                ),
+            ],
+        )
+        non_verbose_rev = rev_plan.format_text(verbose=False)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose_rev)
+        self.assertIn("UPDATE_COPY", non_verbose_rev)
+        self.assertIn("1 to update, 1 up-to-date", non_verbose_rev)
+
+        verbose_rev = rev_plan.format_text(verbose=True)
+        self.assertIn("SKIP_IDENTICAL", verbose_rev)
+        self.assertIn("UPDATE_COPY", verbose_rev)
+
+        # 5. PackageDeployPreview
+        pkg_preview = PackageDeployPreview(
+            package_name="combo_test",
+            render_plan=render_res,
+            stage_plan=stage_plan,
+            install_plan=install_plan,
+            reverse_sync_plan=rev_plan,
+        )
+        non_verbose_deploy = pkg_preview.format_text(verbose=False)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose_deploy)
+        self.assertNotIn("[INFO]", non_verbose_deploy)
+        self.assertIn("RENDER", non_verbose_deploy)
+        self.assertIn("CREATE_COPY", non_verbose_deploy)
+        self.assertIn("CREATE_SYMLINK", non_verbose_deploy)
+        self.assertIn("UPDATE_COPY", non_verbose_deploy)
+
+        verbose_deploy = pkg_preview.format_text(verbose=True)
+        self.assertIn("SKIP_IDENTICAL", verbose_deploy)
+        self.assertIn("[INFO]", verbose_deploy)
+
 
 if __name__ == "__main__":
     unittest.main()

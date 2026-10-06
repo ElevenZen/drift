@@ -24,6 +24,7 @@ Layer 1: Workspace Specifications & Settings Models
 
 from __future__ import annotations
 
+import os
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -372,14 +373,25 @@ class WorkspaceConfig:
         valid_packages = subdirs - FORBIDDEN_PACKAGE_NAMES
         return sorted(list(valid_packages))
 
+    @staticmethod
+    def check_dir_has_package_config(pkg_dir: Path) -> bool:
+        """Checks if a package directory contains a readable literal drift_package.toml in .drift/."""
+        cfg_path = pkg_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        return cfg_path.is_file() and os.access(cfg_path, os.R_OK)
+
     @classmethod
     def get_package_names_with_config_file_from_dir(cls, custom_dir: Path) -> List[str]:
-        packages = [
-            pkg for pkg in cls.get_package_names_from_dir(custom_dir)
-            if (custom_dir / pkg / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).exists()
-            or (custom_dir / pkg / PACKAGE_CONFIG_FILE_NAME).exists()
-        ]
-        return sorted(packages)
+        all_pkgs = cls.get_package_names_from_dir(custom_dir)
+        valid_packages, missing_packages = partition(
+            lambda pkg: cls.check_dir_has_package_config(custom_dir / pkg),
+            all_pkgs,
+        )
+        for pkg in missing_packages:
+            logger.warning(
+                f"⚠️  Package '{pkg}' in '{custom_dir.name}/' is missing its package configuration file. "
+                "Skipping package."
+            )
+        return sorted(valid_packages)
 
     def get_drift_package_facts(self, pkg_name: str) -> Dict[str, str]:
         return {

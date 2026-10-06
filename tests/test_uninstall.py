@@ -9,7 +9,7 @@ from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfi
 from drift.core.state_registry import load_state_registry, save_state_registry, PackageState
 from drift.primitives.uninstall_repo import (
     run_primitive_7_uninstall_packages,
-    UninstallConfig,
+    UninstallOptions,
     UninstallPlan,
     PackageUninstallContext,
     plan_package_uninstall,
@@ -199,7 +199,7 @@ class TestUninstall(unittest.TestCase):
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
         
         # Verify it proceeded
         updated_registry = load_state_registry(state_file)
@@ -251,7 +251,7 @@ class TestUninstall(unittest.TestCase):
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
         
         # 5. Run uninstall with detach=True
-        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(detach=True))
+        run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(detach=True))
         
         # 6. Verify results
         # Target file is NO LONGER a symlink, but a physical copy of "pkg content"
@@ -328,7 +328,7 @@ fi
         subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
-        res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
+        res = run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
         self.assertEqual(res.status, "SUCCESS")
 
         # 1. Target file was removed
@@ -382,7 +382,7 @@ fi
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         with self.assertRaises(FileNotFoundError) as ctx:
-            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
 
         self.assertIn("pre_uninstall", str(ctx.exception))
         # System target was not touched
@@ -428,7 +428,7 @@ fi
         subprocess.run(["git", "commit", "-m", "Initial install"], cwd=str(self.install_dir), check=True, capture_output=True)
 
         with self.assertRaises(RuntimeError) as ctx:
-            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], config=UninstallConfig(force=True))
+            run_primitive_7_uninstall_packages(self.workspace_config, [pkg], options=UninstallOptions(force=True))
 
         self.assertIn("pre_uninstall", str(ctx.exception))
         # System target was not removed
@@ -489,7 +489,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             ["pkg_a"],
-            config=UninstallConfig(no_deps=True),
+            options=UninstallOptions(no_deps=True),
         )
         self.assertEqual(res.status, "SUCCESS")
         updated_reg = load_state_registry(state_file)
@@ -504,7 +504,7 @@ fi
         res_force = run_primitive_7_uninstall_packages(
             self.workspace_config,
             ["pkg_a"],
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
         self.assertEqual(res_force.status, "SUCCESS")
         updated_reg2 = load_state_registry(state_file)
@@ -540,7 +540,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             ["pkg_a", "pkg_c", "pkg_b"],
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
         self.assertEqual(res.status, "SUCCESS")
         uninstalled_order = [p.package for p in res.packages]
@@ -564,7 +564,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             [pkg],
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
         self.assertEqual(res.status, "SUCCESS")
         updated_reg = load_state_registry(state_file)
@@ -592,7 +592,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             pkgs,
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
         self.assertEqual(res.status, "SUCCESS")
 
@@ -622,7 +622,7 @@ fi
         plan = prepare_uninstall_packages(
             self.workspace_config,
             ["pkg_a", "pkg_b"],
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
         self.assertIsInstance(plan, UninstallPlan)
         # Reverse dependency order: pkg_b must be uninstalled before pkg_a
@@ -846,7 +846,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             [pkg],
-            config=UninstallConfig(dry_run=True),
+            options=UninstallOptions(dry_run=True),
         )
 
         self.assertEqual(res.status, "SUCCESS")
@@ -936,7 +936,7 @@ fi
         res = run_primitive_7_uninstall_packages(
             self.workspace_config,
             package_names=[pkg],
-            config=UninstallConfig(detach=True, force=True),
+            options=UninstallOptions(detach=True, force=True),
         )
         self.assertEqual(res.status, "SUCCESS")
         self.assertTrue((self.system_target_dir / "copied_file.txt").is_file())
@@ -986,7 +986,7 @@ fi
         prep_plan = prepare_uninstall_packages(
             self.workspace_config,
             package_names=[pkg_a, pkg_b],
-            config=UninstallConfig(force=True),
+            options=UninstallOptions(force=True),
         )
 
         plan_first = prep_plan.package_plans[prep_plan.ordered_packages[0]]

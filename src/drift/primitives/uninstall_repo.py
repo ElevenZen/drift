@@ -6,7 +6,7 @@ Architecture & Call Chain Overview
 
 Pipeline Architecture:
     1. Pre-flight Preparation & Assertion (Read-Only):
-        prepare_uninstall_packages(workspace_config, package_names, config) [Layer 4]
+        prepare_uninstall_packages(workspace_config, package_names, options) [Layer 4]
             - Discovery & Safeguard Filter (filter_uninstallable_packages) [Layer 1]
             - Metadata Gathering (load_package_config_for_uninstall) [Layer 1]
             - Pre-flight Readiness (assert_packages_uninstall_ready [Layer 4])
@@ -16,7 +16,7 @@ Pipeline Architecture:
             - Reverse Topological Order Resolution (resolve_package_uninstall_order)
             - Autonomous Context Construction (PackageUninstallContext.from_package_state)
             - Declarative Plan Compilation (plan_package_uninstall)
-            -> Returns UninstallPlan(pkg_config_map, packages_to_uninstall, state_registry, ordered_packages, config, contexts, package_plans)
+            -> Returns UninstallPlan(pkg_config_map, packages_to_uninstall, state_registry, ordered_packages, options, contexts, package_plans)
 
     2. Single-Package Execution & Coordination:
         execute_uninstall_packages(workspace_config, plan: UninstallPlan) [Layer 4]
@@ -32,7 +32,7 @@ Pipeline Architecture:
             -> Returns Aggregated UninstallResult
 
     3. Public Primitive Entry Point:
-        run_primitive_7_uninstall_packages(workspace_config, package_names=(), config=None) [Layer 5]
+        run_primitive_7_uninstall_packages(workspace_config, package_names=(), options=None) [Layer 5]
             = prepare_uninstall_packages >> execute_uninstall_packages
 
 -------------------------------------------------------------------------------
@@ -48,7 +48,7 @@ Layers (ordered bottom-up by dependency):
         uninstall_one_package
         execute_package_uninstall
     Layer 3: Batch Uninstall Pipelines & Preparation
-        UninstallConfig
+        UninstallOptions
         UninstallPlan
         PackageUninstallContext
         assert_packages_uninstall_ready
@@ -108,9 +108,11 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 # Uninstall Data Structures & Contexts
 # =====================================================================
+# Uninstallation Data Structures
+# =====================================================================
 
 @dataclass
-class UninstallConfig:
+class UninstallOptions:
     """Configuration options controlling package uninstallation behavior."""
     force: bool = False
     dry_run: bool = False
@@ -119,7 +121,7 @@ class UninstallConfig:
     flags: Optional[HookExecFlags] = None
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
-        """Derives HookExecFlags, assigning dry_run from UninstallConfig to HookExecFlags."""
+        """Derives HookExecFlags, assigning dry_run from UninstallOptions to HookExecFlags."""
         base = HookExecFlags.resolve(self.flags, settings=settings)
         return replace(base, dry_run=self.dry_run)
 
@@ -200,7 +202,7 @@ class UninstallPlan:
     packages_to_uninstall: Dict[str, PackageState]
     state_registry: StateRegistry
     ordered_packages: List[str]
-    config: UninstallConfig
+    options: UninstallOptions
     contexts: Dict[str, PackageUninstallContext] = field(default_factory=dict)
     package_plans: Dict[str, PackageUninstallPlan] = field(default_factory=dict)
 
@@ -471,7 +473,7 @@ def assert_packages_uninstall_ready(
     packages_to_uninstall: Mapping[str, PackageState],
     pkg_config_map: Mapping[str, PackageConfig],
     state_registry: StateRegistry,
-    config: UninstallConfig,
+    options: UninstallOptions,
 ) -> None:
     """Pre-flight checks for dependencies, sudo permissions, and uninstall hooks before uninstallation.
 
@@ -480,10 +482,10 @@ def assert_packages_uninstall_ready(
         SubprocessError: If sudo escalation is required but unavailable.
         HookMissingError: If any configured uninstall hook files are missing.
     """
-    hook_flags = config.get_hook_flags(settings=workspace_config.settings)
+    hook_flags = options.get_hook_flags(settings=workspace_config.settings)
 
     # 1. Dependency integrity check on remaining installed packages
-    if not (config.force or config.no_deps):
+    if not (options.force or options.no_deps):
         all_installed = [pkg for pkg, _ in state_registry.filter_by_states(["installed"])]
         _, remaining_pkgs = partition(lambda pkg: pkg in packages_to_uninstall, all_installed)
         remaining_metadata = {
@@ -500,7 +502,7 @@ def assert_packages_uninstall_ready(
         )
 
     # 2. Host and hook pre-checks (skipped in dry-run)
-    if not config.dry_run:
+    if not options.dry_run:
         needs_sudo = any(
             (state.sudo or (pkg_config_map[pkg].package.sudo if pkg in pkg_config_map else False))
             for pkg, state in packages_to_uninstall.items()
@@ -508,7 +510,7 @@ def assert_packages_uninstall_ready(
         if needs_sudo:
             assert_can_escalate()
 
-        if not config.detach and not hook_flags.no_hooks:
+        if not options.detach and not hook_flags.no_hooks:
             assert_packages_hooks_exist(
                 pkg_config_map,
                 workspace_config.install_path,
@@ -520,7 +522,7 @@ def assert_packages_uninstall_ready(
 def prepare_uninstall_packages(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    config: Optional[UninstallConfig] = None,
+    options: Optional[UninstallOptions] = None,
 ) -> UninstallPlan:
     """Discovers, validates, and prepares packages for uninstallation or detachment.
 
@@ -529,7 +531,7 @@ def prepare_uninstall_packages(
     PackageUninstallContext objects, and generates declarative PackageUninstallPlan structures.
     Does NOT modify the filesystem, remove deployed files, or mutate the state registry.
     """
-    cfg = config if config is not None else UninstallConfig()
+    opts = options if options is not None else UninstallOptions()
 
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"
@@ -537,7 +539,7 @@ def prepare_uninstall_packages(
 
     # 2. Filter target packages and validate safeguards
     packages_to_uninstall, rejected_pkgs = filter_uninstallable_packages(
-        workspace_config, state_registry, package_names, force=cfg.force
+        workspace_config, state_registry, package_names, force=opts.force
     )
 
     if rejected_pkgs:
@@ -552,7 +554,7 @@ def prepare_uninstall_packages(
             packages_to_uninstall={},
             state_registry=state_registry,
             ordered_packages=[],
-            config=cfg,
+            options=opts,
         )
 
     # 3. Gather package configuration for all target packages
@@ -567,7 +569,7 @@ def prepare_uninstall_packages(
         packages_to_uninstall=packages_to_uninstall,
         pkg_config_map=pkg_config_map,
         state_registry=state_registry,
-        config=cfg,
+        options=opts,
     )
 
     # 5. Resolve reverse topological order for uninstallation
@@ -581,7 +583,7 @@ def prepare_uninstall_packages(
             pkg=pkg,
             pkg_state=packages_to_uninstall[pkg],
             pkg_config=pkg_config_map.get(pkg),
-            detach=cfg.detach,
+            detach=opts.detach,
         )
         for pkg in ordered_packages
     }
@@ -612,7 +614,7 @@ def prepare_uninstall_packages(
         packages_to_uninstall=packages_to_uninstall,
         state_registry=state_registry,
         ordered_packages=ordered_packages,
-        config=cfg,
+        options=opts,
         contexts=contexts,
         package_plans=package_plans,
     )
@@ -626,14 +628,14 @@ def execute_uninstall_packages(
 
     In dry_run mode, compiles inspectable result models with zero host or registry mutations.
     """
-    cfg = plan.config
+    opts = plan.options
     package_results: List[PackageUninstallResult] = []
     successfully_uninstalled: List[str] = []
 
-    if cfg.dry_run:
+    if opts.dry_run:
         logger.info(f"🔍 [DRY-RUN] Simulating uninstallation for {len(plan.ordered_packages)} package(s).")
 
-    hook_flags = cfg.get_hook_flags(settings=workspace_config.settings)
+    hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
 
     for pkg in plan.ordered_packages:
         ctx = plan.contexts[pkg]
@@ -643,18 +645,18 @@ def execute_uninstall_packages(
             context=ctx,
             plan=pkg_plan,
             hook_flags=hook_flags,
-            dry_run=cfg.dry_run,
+            dry_run=opts.dry_run,
         )
         package_results.append(pkg_res)
 
-        if not cfg.dry_run and pkg_res.status == "SUCCESS":
+        if not opts.dry_run and pkg_res.status == "SUCCESS":
             successfully_uninstalled.append(pkg)
             plan.state_registry.remove_package(pkg)
 
-    if cfg.dry_run:
+    if opts.dry_run:
         return UninstallResult(
             status="SUCCESS",
-            detach_mode=cfg.detach,
+            detach_mode=opts.detach,
             packages=package_results,
             dry_run=True,
         )
@@ -663,7 +665,7 @@ def execute_uninstall_packages(
     if successfully_uninstalled:
         plan.state_registry.save()
         from .install_repo import run_primitive_6_commit_install_repo
-        action_name = "Detach" if cfg.detach else "Uninstall"
+        action_name = "Detach" if opts.detach else "Uninstall"
         pkg_word = "package" if len(successfully_uninstalled) == 1 else "packages"
         commit_msg = f"{action_name}: Removed {pkg_word} {', '.join(successfully_uninstalled)}"
         run_primitive_6_commit_install_repo(workspace_config, commit_msg, successfully_uninstalled)
@@ -673,7 +675,7 @@ def execute_uninstall_packages(
 
     return UninstallResult(
         status="SUCCESS",
-        detach_mode=cfg.detach,
+        detach_mode=opts.detach,
         packages=package_results,
         dry_run=False,
     )
@@ -686,21 +688,21 @@ def execute_uninstall_packages(
 def run_primitive_7_uninstall_packages(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
-    config: Optional[UninstallConfig] = None,
+    options: Optional[UninstallOptions] = None,
 ) -> UninstallResult:
     """Uninstalls or detaches one or more packages from the system (Primitive 7)."""
     plan = prepare_uninstall_packages(
         workspace_config=workspace_config,
         package_names=package_names,
-        config=config,
+        options=options,
     )
     if not plan.packages_to_uninstall:
         if package_names:
             logger.info("Nothing to uninstall.")
         return UninstallResult(
             status="SUCCESS",
-            detach_mode=plan.config.detach,
+            detach_mode=plan.options.detach,
             packages=[],
-            dry_run=plan.config.dry_run,
+            dry_run=plan.options.dry_run,
         )
     return execute_uninstall_packages(workspace_config, plan)

@@ -49,8 +49,8 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.result_models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install, InstallConfig
-from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
+from .install_repo import run_primitive_5_install, InstallOptions
+from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
 from .package_assertions import resolve_package_uninstall_order
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..utils.config_utils import partition
@@ -135,7 +135,7 @@ def rollback_reinstall_committed_package(
     install_res = run_primitive_5_install(
         workspace_config=workspace_config,
         target_pkgs=[pkg],
-        config=InstallConfig(
+        options=InstallOptions(
             resolve_symlinks=True,
             force=True,
             reinstall=True,
@@ -156,7 +156,7 @@ def rollback_uninstalled_first_time_package(
     uninst_res = run_primitive_7_uninstall_packages(
         workspace_config=workspace_config,
         package_names=[pkg],
-        config=UninstallConfig(force=True, flags=flags),
+        options=UninstallOptions(force=True, flags=flags),
     )
     if uninst_res.status != "SUCCESS":
         raise RuntimeError(uninst_res.error_message or f"Rollback uninstallation of first-time package '{pkg}' failed.")

@@ -337,12 +337,12 @@ target_directory = "{self.system_target_dir}"
         self.assertEqual(state_registry.get_package_state("pkg_a"), "installing")
 
         # 5. Subsequent deploy without force or rollback aborts with safety check
-        from drift.primitives.install_repo import run_primitive_5_install, InstallConfig
+        from drift.primitives.install_repo import run_primitive_5_install, InstallOptions
         with self.assertRaises(RuntimeError) as ctx2:
             run_primitive_5_install(
                 workspace_config=self.workspace_config,
                 target_pkgs=["pkg_a"],
-                config=InstallConfig(resolve_symlinks=True, force=False),
+                options=InstallOptions(resolve_symlinks=True, force=False),
             )
         self.assertIn("Safety Abort", str(ctx2.exception))
         self.assertIn("drift rollback pkg_a", str(ctx2.exception))
@@ -553,7 +553,8 @@ target_directory = "{self.system_target_dir}"
         # 3. Running check_and_prevent_system_drifts should NOT crash with ValueError; it should warn and return clean drifts
         set_test_mode(True, enable_logging=True)
         try:
-            with self.assertLogs("drift.primitives.deploy_repo", level="WARNING") as cm:
+            with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()), \
+                 self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
                 drifted_pkgs, drifted_files = check_and_prevent_system_drifts(
                     self.workspace_config, target_pkgs=["pkg_a"]
                 )

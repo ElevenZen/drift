@@ -45,7 +45,7 @@ from typing import List, Optional, Sequence, Iterator, Iterable
 
 from ..config.workspace_config import WorkspaceConfig
 from ..core.state_registry import load_state_registry
-from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
+from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
 from ..core.constants import PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME, CONFIG_DIR_NAME, FORBIDDEN_PACKAGE_NAMES
 from ..utils.git_utils import commit_repo_changes
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -185,7 +185,7 @@ def run_primitive_9_purge_workspace_garbage(
     uninstalled_orphans = run_primitive_7_uninstall_packages(
         workspace_config, 
         package_names=(), 
-        config=UninstallConfig(force=True, dry_run=dry_run, flags=flags),
+        options=UninstallOptions(force=True, dry_run=dry_run, flags=flags),
     )
     if uninstalled_orphans.status != "SUCCESS":
         raise RuntimeError(uninstalled_orphans.error_message or "Garbage collection orphan uninstallation failed.")

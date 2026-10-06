@@ -875,4 +875,14 @@ def plan_actions_from_folder_diff(
                 reason="Content modified",
             ))
 
+    # 4. Unmodified matches (identical content and permissions)
+    for rel in diff.matches:
+        actions.append(FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=source_dir / rel,
+            dst_path=target_dir / rel,
+            reason="Identical content and permissions",
+        ))
+
     return actions
+

@@ -6,11 +6,12 @@ import json
 from dataclasses import dataclass, field, is_dataclass, asdict
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING, Iterable
 from datetime import datetime
 from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
+from ..utils.config_utils import partition
 
 if TYPE_CHECKING:
     from ..config.render_engine_config import RenderEngineRegistry
@@ -92,14 +93,20 @@ class PackageReverseSyncPlan(SerializableModel):
     def has_changes(self) -> bool:
         return self.has_mutations
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         lines = [f"=== Reverse Sync Plan: {self.package} ==="]
         if self.status != "PENDING":
             lines.append(f"Status: {self.status}")
         if self.error:
             lines.append(f"Error: {self.error}")
-        for action in self.actions:
-            lines.append(format_action_line(action))
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
+            lines.append("  Reverse Sync Actions: (None)")
+        else:
+            lines.append("  Reverse Sync Actions:")
+            for action in display_actions:
+                lines.append(format_action_line(action))
+        lines.append(f"  Summary: {format_action_summary(self.actions)}")
         return "\n".join(lines)
 
 
@@ -112,8 +119,8 @@ class ReverseSyncPlan(SerializableModel):
     def has_changes(self) -> bool:
         return any(p.has_changes for p in self.plans)
 
-    def format_text(self) -> str:
-        return "\n".join(plan.format_text() for plan in self.plans)
+    def format_text(self, verbose: bool = False) -> str:
+        return "\n".join(plan.format_text(verbose=verbose) for plan in self.plans)
 
 
 @dataclass
@@ -159,14 +166,15 @@ class PackageRenderResult(SerializableModel):
         return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
 
 
-    def format_text(self, drift_root: Optional[Path] = None) -> str:
+    def format_text(self, drift_root: Optional[Path] = None, verbose: bool = False) -> str:
         """Formats the render plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
-        if not self.actions:
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
             lines.append("  Render Actions: (None)")
         else:
             lines.append("  Render Actions:")
-            lines.extend(format_action_line(action, drift_root=drift_root) for action in self.actions)
+            lines.extend(format_action_line(action, drift_root=drift_root) for action in display_actions)
         lines.append(f" Summary: {format_action_summary(self.actions)}")
         return "\n".join(lines)
 
@@ -180,7 +188,7 @@ class RenderResult(SerializableModel):
     error_message: Optional[str] = None
     dry_run: bool = False
 
-    def format_text(self, drift_root: Optional[Path] = None) -> str:
+    def format_text(self, drift_root: Optional[Path] = None, verbose: bool = False) -> str:
         """Formats the render result for human-readable terminal output."""
         if not self.packages:
             if self.dry_run:
@@ -192,7 +200,7 @@ class RenderResult(SerializableModel):
                 "=" * 60,
             ]
             for pkg_res in self.packages:
-                lines.append(pkg_res.format_text(drift_root))
+                lines.append(pkg_res.format_text(drift_root, verbose=verbose))
                 lines.append("")
             total_actions = sum(len(p.actions) for p in self.packages)
             lines.append("=" * 60)
@@ -254,14 +262,15 @@ class PackageStagePlan(SerializableModel):
         """Returns True if the package staging plan contains physical mutations."""
         return self.has_mutations
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the staging plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
-        if not self.actions:
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
             lines.append("  Stage Actions: (None)")
         else:
             lines.append("  Stage Actions:")
-            lines.extend(format_action_line(action) for action in self.actions)
+            lines.extend(format_action_line(action) for action in display_actions)
         lines.append(f" Summary: {format_action_summary(self.actions)}")
         return "\n".join(lines)
 
@@ -327,7 +336,7 @@ class StageResult(SerializableModel):
         """Returns (package, plan) tuples."""
         return [(p.package, p) for p in self.plans]
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the stage result for human-readable terminal output."""
         if not self.plans:
             if self.dry_run:
@@ -339,7 +348,7 @@ class StageResult(SerializableModel):
                 "=" * 60,
             ]
             for plan in self.plans:
-                lines.append(plan.format_text())
+                lines.append(plan.format_text(verbose=verbose))
                 lines.append("")
             total_actions = sum(len(p.actions) for p in self.plans)
             lines.append("=" * 60)
@@ -348,7 +357,7 @@ class StageResult(SerializableModel):
                 f"Total planned actions: {total_actions}."
             )
             return "\n".join(lines)
-        return "\n".join(plan.format_text() for plan in self.plans)
+        return "\n".join(plan.format_text(verbose=verbose) for plan in self.plans)
 
 
 @dataclass
@@ -398,18 +407,19 @@ class PackageInstallPlan(SerializableModel):
     def prune_backups(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == FileActionType.BACKUP_PRUNE]
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the deployment plan for human-readable terminal output."""
         method_str = self.install_method.value if isinstance(self.install_method, Enum) else str(self.install_method)
         lines = [f"📦 Package '{self.package}':"]
         lines.append(f"  Target: {self.target_directory}")
         lines.append(f"  Method: {method_str}")
 
-        if not self.actions:
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
             lines.append("  Planned Actions: (None)")
         else:
             lines.append("  Planned Actions:")
-            lines.extend(format_action_line(action) for action in self.actions)
+            lines.extend(format_action_line(action) for action in display_actions)
 
         if self.hooks_to_trigger:
             hooks_str = ", ".join(self.hooks_to_trigger)
@@ -457,18 +467,19 @@ class PackageUninstallPlan(SerializableModel):
     def has_changes(self) -> bool:
         return self.has_mutations
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the uninstallation plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
         lines.append(f"  Target: {self.target_directory}")
         mode_label = "detach (convert to host copies)" if self.detach_mode else "uninstall"
         lines.append(f"  Mode: {mode_label}")
 
-        if not self.actions:
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
             lines.append("  Planned Actions: (None - directory missing or no deployed files)")
         else:
             lines.append("  Planned Actions:")
-            lines.extend(format_action_line(action) for action in self.actions)
+            lines.extend(format_action_line(action) for action in display_actions)
 
         if self.hooks_to_trigger:
             hooks_str = ", ".join(self.hooks_to_trigger)
@@ -523,7 +534,7 @@ class InstallResult(SerializableModel):
     error_message: Optional[str] = None
     dry_run: bool = False
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the install or simulation results for human-readable output."""
         if not self.packages:
             return "No packages targeted."
@@ -533,7 +544,7 @@ class InstallResult(SerializableModel):
             lines.append("🔍 [DRY-RUN] Package Install Simulation Plan")
             lines.append("=" * 60)
             for pkg_res in self.packages:
-                lines.append(pkg_res.plan.format_text())
+                lines.append(pkg_res.plan.format_text(verbose=verbose))
                 lines.append("")
             total_actions = sum(len(p.plan.actions) for p in self.packages)
             lines.append("=" * 60)
@@ -615,7 +626,7 @@ class UninstallResult(SerializableModel):
     def uninstalled_packages(self) -> List[str]:
         return [p.package for p in self.packages if p.status == "SUCCESS"]
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the uninstallation/detachment results or simulation plan for terminal output."""
         if not self.packages:
             return "No packages targeted."
@@ -626,7 +637,7 @@ class UninstallResult(SerializableModel):
             lines.append(f"🔍 [DRY-RUN] Package {mode_header} Simulation Plan")
             lines.append("=" * 60)
             for pkg_res in self.packages:
-                lines.append(pkg_res.plan.format_text())
+                lines.append(pkg_res.plan.format_text(verbose=verbose))
                 lines.append("")
             total_actions = sum(len(p.plan.actions) for p in self.packages)
             lines.append("=" * 60)
@@ -781,12 +792,13 @@ class AddResourcePlan(SerializableModel):
     def __iter__(self):
         return iter(self.actions)
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats human-readable summary of planned resource imports."""
-        if not self.actions:
+        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        if not display_actions:
             return f"No resources to import into '{self.package}'."
         lines = [f"📦 Package '{self.package}':"]
-        lines.extend(format_action_line(action) for action in self.actions)
+        lines.extend(format_action_line(action) for action in display_actions)
         lines.append(f"  Summary: {format_action_summary(self.actions)}")
         return "\n".join(lines)
 
@@ -801,7 +813,7 @@ class AddResourceResult(SerializableModel):
     plan: AddResourcePlan = field(default_factory=AddResourcePlan)
     error_message: Optional[str] = None
 
-    def format_text(self) -> str:
+    def format_text(self, verbose: bool = False) -> str:
         """Formats the import result for human-readable terminal output."""
         if self.status != "SUCCESS":
             return f"❌ Failed to import resources into package '{self.package}': {self.error_message}"
@@ -813,7 +825,7 @@ class AddResourceResult(SerializableModel):
             lines = [
                 f"🔍 [DRY-RUN] Planned Resource Imports for package '{self.package}':",
                 "=" * 60,
-                self.plan.format_text(),
+                self.plan.format_text(verbose=verbose),
                 "=" * 60,
                 f"✨ [DRY-RUN] Import simulation completed. {len(self.plan.actions)} file(s) would be imported into '{self.package}'.",
             ]
@@ -1214,6 +1226,7 @@ class HookResult(SerializableModel):
 class PackageDeployPreview(SerializableModel):
     """Planned actions across all deployment stages for a single package."""
     package_name: str = ""
+    reverse_sync_plan: Optional[PackageReverseSyncPlan] = None
     render_plan: Optional[PackageRenderResult] = None
     stage_plan: Optional[PackageStagePlan] = None
     install_plan: Optional[PackageInstallPlan] = None
@@ -1227,6 +1240,13 @@ class PackageDeployPreview(SerializableModel):
         install_changed = self.install_plan is not None and self.install_plan.has_changes
         return render_changed or stage_changed or install_changed
 
+    @property
+    def has_drift(self) -> bool:
+        return self.drift_warning is not None or (self.reverse_sync_plan is not None and self.reverse_sync_plan.has_changes)
+
+    @property
+    def has_any_activity(self) -> bool:
+        return self.has_changes or self.has_drift or self.error is not None
 
     @property
     def error_message(self) -> Optional[str]:
@@ -1235,6 +1255,76 @@ class PackageDeployPreview(SerializableModel):
     @property
     def error_type(self) -> Optional[str]:
         return type(self.error).__name__ if self.error is not None else None
+
+    def format_text(self, verbose: bool = False, show_all: bool = False) -> str:
+        """Formats the package deploy preview for terminal output.
+
+        Args:
+            verbose: If True, includes NO_CHANGE actions (e.g. SKIP_IDENTICAL, INFO_MESSAGE).
+            show_all: If True, explicitly outputs detailed action breakdowns even when the package
+                      has no pending changes or drift.
+        """
+        status_parts = []
+        if self.error:
+            status_parts.append(f"ERROR: {self.error}")
+        elif self.has_changes:
+            status_parts.append("CHANGES")
+        else:
+            status_parts.append("UNCHANGED")
+        if self.has_drift:
+            status_parts.append("DRIFT")
+
+        status_str = f" [{', '.join(status_parts)}]"
+        lines = [f"📦 Package: {self.package_name}{status_str}"]
+
+        if self.error:
+            lines.append(f"  ❌ Error: {self.error}")
+
+        if self.drift_warning:
+            lines.append(f"  ⚠️  Drift: {self.drift_warning}")
+
+        if self.reverse_sync_plan and (verbose or self.reverse_sync_plan.has_changes):
+            display_rev_actions = self.reverse_sync_plan.actions if verbose else [
+                a for a in self.reverse_sync_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
+            ]
+            if display_rev_actions:
+                lines.append(f"  🔄 Reverse Sync Plan: ({len(display_rev_actions)} action(s))")
+                lines.extend(f"  {format_action_line(a)}" for a in display_rev_actions)
+                lines.append(f"     Summary: {format_action_summary(self.reverse_sync_plan.actions)}")
+
+        if self.render_plan:
+            display_render_actions = self.render_plan.actions if verbose else [
+                a for a in self.render_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
+            ]
+            if verbose or self.render_plan.has_changes:
+                lines.append(f"  🎨 Render Actions: ({len(display_render_actions)} action(s))")
+                if display_render_actions:
+                    lines.extend(f"  {format_action_line(a)}" for a in display_render_actions)
+                lines.append(f"     Summary: {format_action_summary(self.render_plan.actions)}")
+
+        if self.stage_plan:
+            display_stage_actions = self.stage_plan.actions if verbose else [
+                a for a in self.stage_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
+            ]
+            if verbose or self.stage_plan.has_changes:
+                lines.append(f"  📁 Stage Actions: ({len(display_stage_actions)} action(s))")
+                if display_stage_actions:
+                    lines.extend(f"  {format_action_line(a)}" for a in display_stage_actions)
+                lines.append(f"     Summary: {format_action_summary(self.stage_plan.actions)}")
+
+        if self.install_plan:
+            display_install_actions = self.install_plan.actions if verbose else [
+                a for a in self.install_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
+            ]
+            if verbose or self.install_plan.has_changes:
+                lines.append(f"  🚀 Install Actions: ({len(display_install_actions)} action(s))")
+                if display_install_actions:
+                    lines.extend(f"  {format_action_line(a)}" for a in display_install_actions)
+                if self.install_plan.hooks_to_trigger:
+                    lines.append(f"     Hooks: {', '.join(self.install_plan.hooks_to_trigger)}")
+                lines.append(f"     Summary: {format_action_summary(self.install_plan.actions)}")
+
+        return "\n".join(lines)
 
 
 @dataclass
@@ -1252,27 +1342,51 @@ class WorkspaceDeployPreview(SerializableModel):
         return any(p.has_changes for p in self.package_previews.values())
 
     @property
-    def packages_with_changes(self) -> List[str]:
-        ordered = [pkg for pkg in self.packages_install_order if pkg in self.package_previews and self.package_previews[pkg].has_changes]
-        remaining = [pkg for pkg, p in self.package_previews.items() if p.has_changes and pkg not in ordered]
+    def has_drift(self) -> bool:
+        return bool(self.drift_warnings) or any(p.has_drift for p in self.package_previews.values())
+
+    def _order_package_names(self, package_names: Iterable[str]) -> List[str]:
+        """Orders package names according to packages_install_order, placing unlisted packages at the end."""
+        order_set = set(self.packages_install_order)
+        in_order, remaining = partition(order_set.__contains__, package_names)
+        ordered_set = set(in_order)
+        ordered = list(filter(ordered_set.__contains__, self.packages_install_order))
         return ordered + remaining
+
+    @property
+    def packages_with_changes(self) -> List[str]:
+        changed = list(filter(lambda pkg: self.package_previews[pkg].has_changes, self.package_previews))
+        return self._order_package_names(changed)
 
     @property
     def packages_unchanged(self) -> List[str]:
-        ordered = [pkg for pkg in self.packages_install_order if pkg in self.package_previews and not self.package_previews[pkg].has_changes and not self.package_previews[pkg].error]
-        remaining = [pkg for pkg, p in self.package_previews.items() if not p.has_changes and not p.error and pkg not in ordered]
-        return ordered + remaining
+        unchanged = list(filter(lambda pkg: not self.package_previews[pkg].has_any_activity, self.package_previews))
+        return self._order_package_names(unchanged)
+
+    @property
+    def packages_with_drift(self) -> List[str]:
+        drifted = list(filter(lambda pkg: self.package_previews[pkg].has_drift, self.package_previews))
+        return self._order_package_names(drifted)
 
     @property
     def packages_with_errors(self) -> List[str]:
-        return [pkg for pkg, p in self.package_previews.items() if p.error is not None]
+        errored = list(filter(lambda pkg: self.package_previews[pkg].error is not None, self.package_previews))
+        return self._order_package_names(errored)
 
     @property
     def drifted_packages(self) -> List[str]:
         return list(self.drift_warnings.keys())
 
-    def format_text(self, show_all: bool = False, use_rich: bool = True) -> str:
-        """Formats the deployment preview for human-readable terminal output."""
+    def format_text(self, verbose: bool = False, show_all: bool = False, use_rich: bool = True) -> str:
+        """Formats the deployment preview for human-readable terminal output.
+
+        Args:
+            verbose: If True, includes NO_CHANGE actions (e.g. SKIP_IDENTICAL, INFO_MESSAGE).
+            show_all: If True, expands and displays granular action sections for all packages
+                      in the preview, including unchanged packages (which are normally collapsed
+                      into a single summary line).
+            use_rich: If True, applies Rich terminal styles when supported.
+        """
         lines = [f"=== Workspace Deployment Preview: {self.command} (Status: {self.status}) ==="]
         if self.global_errors:
             lines.append("Global Errors:")
@@ -1285,15 +1399,8 @@ class WorkspaceDeployPreview(SerializableModel):
         for pkg in self.packages_install_order:
             if pkg in self.package_previews:
                 p = self.package_previews[pkg]
-                if show_all or p.has_changes or p.error:
-                    status_str = f" [ERROR: {p.error}]" if p.error else (" [CHANGES]" if p.has_changes else " [UNCHANGED]")
-                    lines.append(f"📦 Package: {pkg}{status_str}")
-                    if p.render_plan and p.render_plan.actions:
-                        lines.append(f"  Render Actions: {len(p.render_plan.actions)}")
-                    if p.stage_plan and p.stage_plan.actions:
-                        lines.append(f"  Stage Actions: {len(p.stage_plan.actions)}")
-                    if p.install_plan and p.install_plan.actions:
-                        lines.append(f"  Install Actions: {len(p.install_plan.actions)}")
+                if show_all or p.has_changes or p.error or p.has_drift or verbose:
+                    lines.append(p.format_text(verbose=verbose))
         unchanged = self.packages_unchanged
         if unchanged and not show_all:
             lines.append(f"✨ {len(unchanged)} packages unchanged: {', '.join(unchanged)}")

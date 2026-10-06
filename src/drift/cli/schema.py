@@ -318,6 +318,57 @@ def build_completion_schema() -> CompletionSchema:
                     ),
                 ]
             ),
+            "plan": CommandSpec(
+                name="plan",
+                description="Simulate full deployment workflow across all pipeline phases and preview planned actions without modifying system state.",
+                positionals=[
+                    PositionalSpec(
+                        name="packages",
+                        description="Optional specific package(s) to plan deployment for",
+                        source_type=SourceType.DYNAMIC_PACKAGES,
+                        nargs="*",
+                        repeatable=True,
+                        required=False,
+                    )
+                ],
+                options=[
+                    OptionSpec(
+                        flags=["-f", "--force"],
+                        description="Simulate deployment with forced drift bypass",
+                        dest="force",
+                    ),
+                    OptionSpec(
+                        flags=["-r", "--reinstall"],
+                        description="Simulate full reinstallation of packages",
+                        dest="reinstall",
+                    ),
+                    OptionSpec(
+                        flags=["--no-hooks", "--no-hook"],
+                        description="Bypass package lifecycle hooks (default behavior in plan)",
+                        dest="no_hooks",
+                    ),
+                    OptionSpec(
+                        flags=["--with-hooks"],
+                        description="Execute pre-flight hooks in isolated scratch sandbox",
+                        dest="with_hooks",
+                    ),
+                    OptionSpec(
+                        flags=["--no-deps"],
+                        description="Bypass missing package dependency errors",
+                        dest="no_deps",
+                    ),
+                    OptionSpec(
+                        flags=["-c", "--clean", "--no-cache"],
+                        description="Bypass render cache and force clean re-rendering simulation",
+                        dest="no_cache",
+                    ),
+                    OptionSpec(
+                        flags=["-a", "--all", "--show-all"],
+                        description="Show action details for all packages, including unchanged ones",
+                        dest="show_all",
+                    ),
+                ],
+            ),
             "deploy": CommandSpec(
                 name="deploy",
                 description="Sandbox-compiles, stages, and deploys declarative configuration templates to target hosts.",
@@ -356,6 +407,11 @@ def build_completion_schema() -> CompletionSchema:
                         description="Bypass render cache and force clean re-rendering of all files",
                         dest="no_cache"
                     ),
+                    OptionSpec(
+                        flags=["-n", "--dry-run"],
+                        description="Simulate full deployment workflow and preview planned actions without modifying system state",
+                        dest="dry_run",
+                    ),
                 ]
             ),
             "health": CommandSpec(
@@ -387,10 +443,6 @@ def build_completion_schema() -> CompletionSchema:
                         type=str,
                         choices=PACKAGE_STAGES,
                         default="install"
-                    ),
-                    OptionSpec(
-                        flags=["-v", "--verbose"],
-                        description="Enable verbose output with probe stdout/stderr"
                     ),
                 ]
             ),
@@ -670,7 +722,7 @@ def build_completion_schema() -> CompletionSchema:
                         dest="no_deps"
                     ),
                     OptionSpec(
-                        flags=["--dry-run"],
+                        flags=["-n", "--dry-run"],
                         description="Simulate staging changes from render/ to install/ without modifying files or state registry",
                         dest="dry_run"
                     ),

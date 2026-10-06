@@ -727,20 +727,26 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                     _, kwargs = mock_action.call_args
                     self.assertTrue(kwargs.get("dry_run"), f"Argparse {cmd} with {flag} did not pass dry_run=True")
 
-    def test_cli_deploy_rejects_dry_run_flag(self) -> None:
-        """Verifies that --dry-run and -n flags are rejected on 'deploy' command."""
+    def test_cli_deploy_dry_run_flags_across_backends(self) -> None:
+        """Verifies that --dry-run and -n flags on deploy route to execute_plan."""
         from drift.cli import run_argparse_cli
 
         for flag in ["--dry-run", "-n"]:
-            with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
-                with self.assertRaises(SystemExit) as ctx:
-                    run_argparse_cli(["-C", self.drift_root, "deploy", flag, "pkg_a"])
-                self.assertEqual(ctx.exception.code, 2)
-
-            with patch("sys.stderr", StringIO()), patch("sys.stdout", StringIO()):
-                with self.assertRaises(SystemExit) as ctx:
+            with patch("drift.cli.cli_handlers.execute_plan") as mock_action:
+                with patch("sys.stdout", StringIO()):
                     main(["-C", self.drift_root, "deploy", flag, "pkg_a"])
-                self.assertEqual(ctx.exception.code, 2)
+                self.assertTrue(mock_action.called, f"Typer deploy with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertEqual(kwargs.get("command_name"), "deploy")
+                self.assertTrue(kwargs.get("options").dry_run)
+
+            with patch("drift.cli.cli_handlers.execute_plan") as mock_action:
+                with patch("sys.stdout", StringIO()):
+                    run_argparse_cli(["-C", self.drift_root, "deploy", flag, "pkg_a"])
+                self.assertTrue(mock_action.called, f"Argparse deploy with {flag} was not called")
+                _, kwargs = mock_action.call_args
+                self.assertEqual(kwargs.get("command_name"), "deploy")
+                self.assertTrue(kwargs.get("options").dry_run)
 
     def test_cli_no_cache_flags_across_backends(self) -> None:
         """Verifies that -c, --clean, and --no-cache flags on render and deploy pass no_cache=True."""
@@ -794,6 +800,137 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             with self.assertRaises(SystemExit) as ctx:
                 main(["-C", self.drift_root, "render", "--no-hooks", "--with-hooks", "pkg_a"])
             self.assertIn(ctx.exception.code, (1, 2))
+
+
+    def test_cli_dry_run_verbose_filtering_across_commands(self) -> None:
+        """Verifies that render/stage/apply --dry-run filter out SKIP_IDENTICAL when not verbose, and show them with -v across both backends."""
+        from drift.cli import run_argparse_cli
+
+        pkg_path = os.path.join(self.src_dir, "pkg_a")
+        target_dir = os.path.join(self.temp_dir.name, "system_home_verbose_test")
+        os.makedirs(target_dir, exist_ok=True)
+        with open(os.path.join(pkg_path, "drift_package.toml"), "w", encoding="utf-8") as f:
+            f.write(f"""
+            [package]
+            name = "pkg_a"
+            enable_render = true
+            target_directory = "{target_dir}"
+            """)
+
+        # Execute full real pipeline once so all layers are synchronized and committed clean
+        with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
+            main(["-C", self.drift_root, "init", "--force"])
+            render_dir = os.path.join(self.drift_root, "render")
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=render_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=render_dir, check=True, capture_output=True)
+            install_dir = os.path.join(self.drift_root, "install")
+            subprocess.run(["git", "config", "user.name", "Test User"], cwd=install_dir, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=install_dir, check=True, capture_output=True)
+
+            main(["-C", self.drift_root, "render", "pkg_a"])
+            main(["-C", self.drift_root, "render-commit", "-m", "Initial render", "pkg_a"])
+            main(["-C", self.drift_root, "stage", "pkg_a"])
+            main(["-C", self.drift_root, "install-commit", "-m", "Initial install", "pkg_a"])
+            main(["-C", self.drift_root, "apply", "pkg_a"])
+
+        # 1. Render --dry-run: files are identical
+        # Non-verbose (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "render", "--dry-run", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertNotIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 up-to-date", out)
+
+        # Verbose (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "render", "--dry-run", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("SKIP_IDENTICAL", out)
+
+        # Non-verbose (Argparse)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            run_argparse_cli(["-C", self.drift_root, "render", "--dry-run", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertNotIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 up-to-date", out)
+
+        # Verbose (Argparse)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            run_argparse_cli(["-C", self.drift_root, "render", "--dry-run", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("SKIP_IDENTICAL", out)
+
+        # 2. Stage --dry-run when all files are identical
+        # Non-verbose (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "stage", "--dry-run", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("No changes to stage. All files are up-to-date.", out)
+
+        # Now introduce a new file in render so stage plan has both a mutation and a skip
+        render_new = os.path.join(self.drift_root, "render", "pkg_a", "extra.txt")
+        with open(render_new, "w", encoding="utf-8") as f:
+            f.write("extra staged content")
+
+        # Non-verbose with mutation (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "stage", "--dry-run", "-f", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("CREATE_COPY", out)
+        self.assertNotIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 to create", out)
+        self.assertIn("up-to-date", out)
+
+        # Verbose with mutation (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "stage", "--dry-run", "-f", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("CREATE_COPY", out)
+        self.assertIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 to create", out)
+        self.assertIn("up-to-date", out)
+
+        # Verbose with mutation (Argparse)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            run_argparse_cli(["-C", self.drift_root, "stage", "-n", "-f", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("CREATE_COPY", out)
+        self.assertIn("SKIP_IDENTICAL", out)
+
+        # Clean up the extra render file
+        os.remove(render_new)
+
+        # 3. Apply --dry-run: files are identical
+        # Non-verbose (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "apply", "--dry-run", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertNotIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 up-to-date", out)
+
+        # Verbose (Typer)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            main(["-C", self.drift_root, "apply", "--dry-run", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("SKIP_IDENTICAL", out)
+        self.assertIn("1 up-to-date", out)
+
+        # Verbose (Argparse)
+        stdout = StringIO()
+        with patch("sys.stdout", stdout):
+            run_argparse_cli(["-C", self.drift_root, "apply", "--dry-run", "-v", "pkg_a"])
+        out = stdout.getvalue()
+        self.assertIn("SKIP_IDENTICAL", out)
 
 
 if __name__ == "__main__":

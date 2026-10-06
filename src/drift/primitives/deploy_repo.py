@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from dataclasses import dataclass
 import shlex
 import sys
 import logging
@@ -25,7 +24,7 @@ from .install_repo import (
     execute_install,
     InstallPlan,
     run_primitive_6_commit_install_repo,
-    InstallConfig,
+    InstallOptions,
 )
 from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -42,6 +41,33 @@ from ..core.result_models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class DeployOptions:
+    """Execution flags and behavioral options controlling deployment and dry-run planning pipelines.
+
+    Attributes:
+        force: If True, bypasses safeguard checks (e.g. host drift sentinel, midway failed states).
+        reinstall: If True, forces re-execution of delivery actions regardless of delta checks.
+        no_deps: If True, bypasses missing required package dependency assertions.
+        no_hooks: If True, bypasses and disables all package lifecycle hooks.
+        with_hooks: If True, executes pre-flight probes and hooks in isolated scratch sandboxes.
+        no_cache: If True, bypasses render caches and Merkle lockfiles.
+        dry_run: If True, runs planning and simulation pipelines without mutating host or state DB.
+        show_all: If True, instructs formatters to display granular action breakdowns for all packages,
+                  including unchanged packages (which are otherwise collapsed into a single summary line).
+        verbose: If True, includes NO_CHANGE actions (e.g. SKIP_IDENTICAL, INFO_MESSAGE) in output.
+    """
+    force: bool = False
+    reinstall: bool = False
+    no_deps: bool = False
+    no_hooks: bool = False
+    with_hooks: bool = False
+    no_cache: bool = False
+    dry_run: bool = False
+    show_all: bool = False
+    verbose: bool = False
 
 
 def check_and_prevent_system_drifts(
@@ -76,33 +102,10 @@ def check_and_prevent_system_drifts(
 
     logger.info("🔍 [STAGE 1] Triggering silent reverse synchronization audit...")
     
-    # We only reverse-sync packages that actually exist in install/ with a valid package configuration file,
-    # as first-time packages cannot have recorded drifts yet, and packages missing config files
-    # cannot be reverse-synced.
-    valid_install_pkgs = set(
-        workspace_config.get_package_names_with_config_file_from_dir(workspace_config.install_path)
+    sync_res = run_primitive_1_reverse_sync(
+        workspace_config, package_names=target_pkgs, missing_ok=True
     )
-    install_dirs_present = [
-        pkg for pkg in target_pkgs
-        if (workspace_config.install_path / pkg).is_dir()
-    ]
-    corrupted_install_pkgs = [
-        pkg for pkg in install_dirs_present
-        if pkg not in valid_install_pkgs
-    ]
-    for pkg in corrupted_install_pkgs:
-        logger.warning(
-            f"⚠️  Package '{pkg}' in install/ is missing its package configuration file. "
-            "Skipping reverse sync for this package."
-        )
-
-    syncable_pkgs = [
-        pkg for pkg in install_dirs_present
-        if pkg in valid_install_pkgs
-    ]
-    
-    if syncable_pkgs:
-        run_primitive_1_reverse_sync(workspace_config, package_names=syncable_pkgs)
+    syncable_pkgs = [p.package for p in sync_res.packages] if sync_res.packages else []
 
     drifted_packages = []
     drifted_files = []
@@ -279,7 +282,7 @@ def execute_sequential_compile_and_apply(
     # and skip the package unless reinstall=True.
     # Therefore, we pass reinstall=True to ensure that all packages filtered as changed by staging are
     # fully processed by Primitive 5 (ensuring hooks execute and state updates).
-    install_config = InstallConfig(
+    install_options = InstallOptions(
         resolve_symlinks=True,
         force=force,
         reinstall=True,
@@ -293,7 +296,7 @@ def execute_sequential_compile_and_apply(
         install_plan = prepare_install(
             workspace_config,
             target_pkgs=pkgs_to_install,
-            config=install_config,
+            options=install_options,
         )
     except Exception as e:
         print_emergency_recovery_card(failed_step, str(e), pkgs_to_install)

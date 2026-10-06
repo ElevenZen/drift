@@ -228,6 +228,7 @@ def execute_render(
     no_cache: bool = False,
     dry_run: bool = False,
     with_hooks: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to execute template rendering, shared by both CLI backends."""
     from ..render.render_package import run_primitive_2_render_packages, RenderOptions
@@ -245,7 +246,7 @@ def execute_render(
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text(drift_root=drift_root)
+        text = res.format_text(drift_root=drift_root, verbose=verbose)
         if text:
             print(text)
     if res.status != "SUCCESS":
@@ -259,6 +260,7 @@ def execute_stage(
     json_mode: bool = False,
     no_deps: bool = False,
     dry_run: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to execute staging from render to install, shared by both CLI backends."""
     from ..primitives.stage_repo import run_primitive_4_stage_render_to_install
@@ -279,7 +281,7 @@ def execute_stage(
         return
 
     if dry_run:
-        text = res.format_text()
+        text = res.format_text(verbose=verbose)
         if text:
             print(text)
         return
@@ -300,9 +302,10 @@ def execute_apply(
     no_hooks: bool = False,
     no_deps: bool = False,
     dry_run: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to execute state application (apply), shared by both CLI backends."""
-    from ..primitives.install_repo import run_primitive_5_install, InstallConfig
+    from ..primitives.install_repo import run_primitive_5_install, InstallOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
@@ -312,7 +315,7 @@ def execute_apply(
     res = run_primitive_5_install(
         workspace_config=workspace_config,
         target_pkgs=package_names,
-        config=InstallConfig(
+        options=InstallOptions(
             resolve_symlinks=True,
             force=force,
             reinstall=reinstall,
@@ -324,7 +327,7 @@ def execute_apply(
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text()
+        text = res.format_text(verbose=verbose)
         if text:
             print(text)
     if res.status != "SUCCESS":
@@ -399,16 +402,17 @@ def execute_uninstall(
     json_mode: bool = False,
     no_hooks: bool = False,
     no_deps: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to uninstall or detach packages, shared by both CLI backends."""
-    from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallConfig
+    from ..primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
     from ..hooks.lifecycle_hooks import HookExecFlags
 
     prepare_cli_environment(drift_root)
     assert_workspace_healthy(drift_root, command_name="uninstall")
     workspace_config = load_workspace_config_default(drift_root)
     flags = HookExecFlags(no_hooks=no_hooks, streaming=not json_mode)
-    config = UninstallConfig(
+    options = UninstallOptions(
         force=force,
         dry_run=dry_run,
         detach=detach,
@@ -418,12 +422,12 @@ def execute_uninstall(
     res = run_primitive_7_uninstall_packages(
         workspace_config,
         package_names=package_names,
-        config=config,
+        options=options,
     )
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text()
+        text = res.format_text(verbose=verbose)
         if text:
             print(text)
     if res.status != "SUCCESS":
@@ -538,7 +542,8 @@ def execute_add(
     import_paths: List[str],
     dry_run: bool = False,
     json_mode: bool = False,
-    no_hooks: bool = False
+    no_hooks: bool = False,
+    verbose: bool = False,
 ) -> None:
     """Core function to import resources into a package, shared by both CLI backends."""
     from ..primitives.add_resource import run_primitive_11_add_resources
@@ -555,7 +560,7 @@ def execute_add(
     if json_mode:
         print(res.to_json())
     elif dry_run:
-        text = res.format_text()
+        text = res.format_text(verbose=verbose)
         if text:
             print(text)
 
@@ -620,6 +625,45 @@ def execute_deploy(
     elif res.status != "SUCCESS":
         error_msg = res.failure.error_message if res.failure else "Deployment failed."
         raise RuntimeError(error_msg)
+
+
+def execute_plan(
+    drift_root: Path,
+    packages: Sequence[str] = (),
+    options: Optional[Any] = None,
+    json_mode: bool = False,
+    verbose: bool = False,
+    command_name: str = "plan",
+) -> None:
+    """Core function to execute deployment planning and preview workflow, shared by both CLI backends."""
+    from ..primitives.plan_repo import prepare_deploy_preview
+    from ..primitives.deploy_repo import DeployOptions
+
+    prepare_cli_environment(drift_root)
+    assert_workspace_healthy(drift_root, command_name=command_name)
+    workspace_config = load_workspace_config_default(drift_root)
+
+    opts = options if options is not None else DeployOptions(verbose=verbose)
+
+    preview = prepare_deploy_preview(
+        workspace_config=workspace_config,
+        target_pkgs=packages,
+        options=opts,
+        command_name=command_name,
+    )
+
+    if json_mode:
+        print(preview.to_json())
+    else:
+        text = preview.format_text(verbose=opts.verbose, show_all=opts.show_all)
+        if text:
+            print(text)
+
+    if preview.global_errors or preview.packages_with_errors:
+        sys.exit(ExitCode.GENERAL_ERROR)
+
+    if preview.status == "DRIFT_DETECTED":
+        sys.exit(ExitCode.DRIFT_DETECTED)
 
 
 def execute_repair(drift_root: Path, dry_run: bool = False, json_mode: bool = False) -> None:

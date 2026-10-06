@@ -1822,13 +1822,13 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
             (root / "render" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
             (root / "render" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
-            (root / "render" / "pkg_b").mkdir(parents=True)
-            (root / "render" / "pkg_b" / PACKAGE_CONFIG_FILE_NAME).touch()
+            (root / "render" / "pkg_b" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
+            (root / "render" / "pkg_b" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
             # pkg_c has no config file in render/
             (root / "render" / "pkg_c").mkdir(parents=True)
 
-            (root / "install" / "pkg_a").mkdir(parents=True)
-            (root / "install" / "pkg_a" / PACKAGE_CONFIG_FILE_NAME).touch()
+            (root / "install" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
+            (root / "install" / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
 
             config = WorkspaceConfig(
                 drift_root=root,
@@ -1870,8 +1870,8 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
 
             # 4. filter_custom_dir_packages_by_target
             custom_dir = root / "custom"
-            (custom_dir / "pkg_x").mkdir(parents=True)
-            (custom_dir / "pkg_x" / PACKAGE_CONFIG_FILE_NAME).touch()
+            (custom_dir / "pkg_x" / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True)
+            (custom_dir / "pkg_x" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).touch()
             self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=None), [])
             config.packages_enable_default = True
             self.assertEqual(config.filter_custom_dir_packages_by_target(custom_dir, target_packages=None), ["pkg_x"])
@@ -2939,6 +2939,39 @@ class TestPackageDependencies(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     with self.assertLogs("drift.config.workspace_config", level="WARNING"):
                         WorkspaceConfig.from_workspace_dir(Path(tmp_dir), quiet=True)
+            finally:
+                set_test_mode(True, enable_logging=False)
+
+    def test_get_package_names_with_config_file_from_dir_warns_on_missing_config(self) -> None:
+        """Verifies that get_package_names_with_config_file_from_dir logs a warning when a package dir lacks config."""
+        from io import StringIO
+        from drift.config.workspace_config import WorkspaceConfig
+        from drift.core.constants import set_test_mode, PACKAGE_CONFIG_FILE_NAME, DRIFT_INTERNAL_DIR_NAME
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            install_dir = Path(tmp_dir) / "install"
+            # Valid package a with .drift/ config
+            pkg_a = install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME
+            pkg_a.mkdir(parents=True, exist_ok=True)
+            (pkg_a / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname='pkg_a'\n", encoding="utf-8")
+
+            # Valid package b with .drift/ config
+            pkg_b = install_dir / "pkg_b" / DRIFT_INTERNAL_DIR_NAME
+            pkg_b.mkdir(parents=True, exist_ok=True)
+            (pkg_b / PACKAGE_CONFIG_FILE_NAME).write_text("[package]\nname='pkg_b'\n", encoding="utf-8")
+
+            # Corrupted package without config
+            pkg_c = install_dir / "pkg_c"
+            pkg_c.mkdir(parents=True, exist_ok=True)
+            (pkg_c / "random.txt").write_text("content", encoding="utf-8")
+
+            set_test_mode(True, enable_logging=True)
+            try:
+                with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()), \
+                     self.assertLogs("drift.config.workspace_config", level="WARNING") as cm:
+                    pkgs = WorkspaceConfig.get_package_names_with_config_file_from_dir(install_dir)
+                self.assertEqual(pkgs, ["pkg_a", "pkg_b"])
+                self.assertTrue(any("Package 'pkg_c' in 'install/' is missing its package configuration file" in msg for msg in cm.output))
             finally:
                 set_test_mode(True, enable_logging=False)
 

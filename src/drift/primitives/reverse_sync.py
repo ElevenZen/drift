@@ -27,9 +27,9 @@ Layer 2: Single-Package Planning & Execution Pipelines
     - reverse_sync_package(pkg, install_base, workspace_config) -> PackageReverseSyncResult
 
 Layer 3: Multi-Package Workspace Orchestration
-    - prepare_reverse_sync(workspace_config, package_names) -> ReverseSyncPlan
+    - prepare_reverse_sync(workspace_config, package_names, missing_ok) -> ReverseSyncPlan
     - execute_reverse_sync_plan(workspace_config, plan) -> ReverseSyncResult
-    - run_primitive_1_reverse_sync(workspace_config, package_names) -> ReverseSyncResult
+    - run_primitive_1_reverse_sync(workspace_config, package_names, missing_ok) -> ReverseSyncResult
 
 ===============================================================================
 """
@@ -418,6 +418,7 @@ def reverse_sync_package(
 def prepare_reverse_sync(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
+    missing_ok: bool = False,
 ) -> ReverseSyncPlan:
     """Discovers and compiles reverse-sync plans for all targeted packages without executing changes."""
     install_base = workspace_config.install_path
@@ -427,6 +428,7 @@ def prepare_reverse_sync(
 
     discovered_packages = workspace_config.filter_install_packages_by_target(
         target_packages=package_names or None,
+        missing_ok=missing_ok,
     )
 
     plans = [
@@ -455,6 +457,7 @@ def execute_reverse_sync_plan(
 def run_primitive_1_reverse_sync(
     workspace_config: WorkspaceConfig,
     package_names: Sequence[str] = (),
+    missing_ok: bool = False,
 ) -> ReverseSyncResult:
     """Unconditionally pulls configuration state from host system back to the install/ repository (Primitive 1)."""
     install_base = workspace_config.install_path
@@ -465,5 +468,5 @@ def run_primitive_1_reverse_sync(
             error_message=f"Install state database directory '{install_base}' does not exist.",
         )
 
-    plan = prepare_reverse_sync(workspace_config, package_names)
+    plan = prepare_reverse_sync(workspace_config, package_names, missing_ok=missing_ok)
     return execute_reverse_sync_plan(workspace_config, plan)

@@ -27,6 +27,7 @@ from .actions import (
     execute_adopt,
     execute_rollback,
     execute_deploy,
+    execute_plan,
     execute_repair,
     execute_health,
     execute_clone,
@@ -281,12 +282,15 @@ def _create_typer_command_wrapper(
         if kwargs.get("trace"):
             if cli_ctx:
                 cli_ctx.raw_errors = True
+                cli_ctx.verbose = True
             from . import setup_logging
             import logging
             setup_logging(level=logging.DEBUG)
 
         # If -v/--verbose was specified on the subcommand, enable debug logging
         if kwargs.get("verbose"):
+            if cli_ctx:
+                cli_ctx.verbose = True
             from . import setup_logging
             import logging
             setup_logging(level=logging.DEBUG)
@@ -325,6 +329,7 @@ def main_callback(
         json_mode=json,
         use_rich=True,
         raw_errors=raw_errors or trace,
+        verbose=verbose or trace,
     )
 
 
