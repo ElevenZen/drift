@@ -454,7 +454,11 @@ render_command = "python3 render_template.py %i %s"
 Instead of relying on slow, procedural loops that blindly re-render templates and copy files on every run, Drift models the entire rendering subsystem as an **Abstract Syntax Tree (AST) Directed Acyclic Graph (DAG)** governed by **mathematical change invariance**:
 
 *   **Cryptographic Merkle Invariance**: Every compilable entity computes a SHA-256 hash incorporating raw file bytes, POSIX file permissions mode (`0o755` vs `0o644`), destination paths, engine configuration, and deterministic scoped environment variables. If inputs, templates, environments, and engine rules haven't changed:
-    $$(\Delta I = \varnothing) \land (\Delta T = \varnothing) \land (\Delta V = \varnothing) \land (\Delta E = \varnothing) \implies (\Delta O = \varnothing)$$
+
+    ```text
+    (ΔI = ∅) ∧ (ΔT = ∅) ∧ (ΔV = ∅) ∧ (ΔE = ∅) ⟹ (ΔO = ∅)
+    ```
+
     where:
     *   $I$: Render engine input file (optional auxiliary asset or parent template output).
     *   $T$: Template source leaf file ($T : []$).
@@ -463,11 +467,14 @@ Instead of relying on slow, procedural loops that blindly re-render templates an
     *   $O$: Compiled destination artifact in the `render/` sandbox ($O : [I, T, V, E]$).
 
     Drift binds each node to its direct prerequisites through dual-component Merkle cryptographic hashing:
-    $$\text{own_hash}(F) = \text{SHA256}(\text{path} \parallel \text{mode} \parallel \text{bytes})$$
-    $$\text{children_hash}(N) = \operatorname{join}\big(\text{merkle_hash}(D) \mid D \in \text{depends_on}\big)$$
-    $$\text{merkle_hash}(N) = \text{SHA256}\big(\text{NodeType} \parallel \text{own_hash}(N) \parallel \text{children_hash}(N) \big)$$
 
-    If $\text{merkle_hash}(N)$ matches the stored lockfile proof, compilation is bypassed instantly ($\mathcal{O}(1)$ cache hit / `SKIP_IDENTICAL` / 0ms overhead), avoiding redundant filesystem I/O and costly subprocess template engines.
+    ```text
+    own_hash(F)      = SHA256(path || mode || bytes)
+    children_hash(N) = join(merkle_hash(D) for D in depends_on)
+    merkle_hash(N)   = SHA256(NodeType || own_hash(N) || children_hash(N))
+    ```
+
+    If `merkle_hash(N)` matches the stored lockfile proof, compilation is bypassed instantly ($\mathcal{O}(1)$ cache hit / `SKIP_IDENTICAL` / 0ms overhead), avoiding redundant filesystem I/O and costly subprocess template engines.
 *   **3-Phase AST Compilation Pipeline**:
     *   **Phase 1: Package Config & Environment AST**: Resolves inheritance, dynamic Python preprocessor hooks, and variable stitching into immutable, validated configuration objects.
     *   **Phase 2: Lifecycle Hooks AST**: Compiles `src/<pkg>/drift_hooks/` into `render/<pkg>/.drift/hooks/` and enforces executable `0o755` permissions across both source and sandbox files.
