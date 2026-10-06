@@ -24,7 +24,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True, enable_logging=False)
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.test_dir = Path(self.temp_dir.name)
+        self.test_dir = Path(self.temp_dir.name).resolve()
 
         self.drift_root = self.test_dir / "drift_workspace"
         self.drift_root.mkdir(parents=True, exist_ok=True)

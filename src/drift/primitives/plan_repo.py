@@ -128,7 +128,7 @@ def enter_plan_sandbox(
     for cache hits and stage diffing. Upon exit, the sandbox is completely removed.
     """
     with tempfile.TemporaryDirectory(prefix="drift_plan_sandbox_") as tmp_dir:
-        sandbox_root = Path(tmp_dir)
+        sandbox_root = Path(tmp_dir).resolve()
         sandbox_render = sandbox_root / "render"
         sandbox_render.mkdir(parents=True, exist_ok=True)
 
