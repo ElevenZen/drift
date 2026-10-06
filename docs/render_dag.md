@@ -40,7 +40,7 @@ Every entity managed during the rendering phase belongs to one of four formal de
   where:
   * $I$: Render engine input file (optional; may be an external asset $S$, or transitively another engine output $O'$).
   * $T$: Template source leaf file ($T : []$).
-  * $V$: Deterministic environment variable dictionary in the current scope.
+  * $V$: Deterministic environment variable dictionary in the current scope (`JsonNode(pkg_config.env_resolve.effective_dict)`).
   * $E$: Render engine definition (binary, execution flags, suffix rules).
 * **Directory Synchronization Target ($D$)**: A directory placeholder ensuring empty directory preservation:
   $$D : []$$
@@ -52,7 +52,34 @@ $$(\Delta I = \varnothing) \land (\Delta T = \varnothing) \land (\Delta V = \var
 
 When this condition holds, physical compilation can be safely bypassed. The system validates the existing artifact on disk against its cryptographic proof and marks it as up to date.
 
-### 2.3 Cryptographic Merkle Hashing
+### 2.3 Scoping of $V$: Effective Dictionary vs. Ambient Process Environment
+In Drift's Merkle DAG, $V$ is intentionally bound to `pkg_config.env_resolve.effective_dict` rather than Python's raw `os.environ`.
+
+#### The Cache Invariance Risk of Ambient `os.environ`
+The host operating system's process environment contains dozens of volatile, session-specific variables that mutate continuously across terminal tabs, subshells, SSH sessions, and desktop managers (e.g. `SHLVL`, `_`, `OLDPWD`, `PWD`, `SSH_AUTH_SOCK`, `TERM_SESSION_ID`, `XDG_SESSION_ID`, `WINDOWID`, `TMUX_PANE`, or ephemeral temp directory paths).
+
+If $V$ were to capture the raw process environment `os.environ`:
+$$\Delta V \neq \varnothing \quad \text{(virtually 100% of the time between different shells/sessions)}$$
+This would break change invariance on every command invocation, dropping the Merkle cache hit rate to 0%, forcing unnecessary template re-rendering across all packages, and producing continuous churn in `.drift_lock.json`.
+
+#### Deterministic Ingestion via Declarative Fallbacks (`[env.fallback]`)
+To preserve change invariance while still enabling dotfile templates and lifecycle hooks to react to changes in ambient host environment variables, Drift provides a declarative bridge via **Tier 6 (`[env.fallback]`)**:
+
+```toml
+[env.fallback]
+# Declare ambient host variables needed by templates
+HOST_EDITOR = "${EDITOR:-vim}"
+HOST_THEME  = "${THEME:-dark}"
+```
+
+During configuration ingestion, Drift evaluates `[env.fallback]` against the ambient process environment (`INITIAL_ENV` / Tier 1). If the host environment defines `EDITOR`, its value is resolved into `effective_dict` and tracked deterministically in $V$ (`env_node`).
+
+This pattern yields three critical architectural properties:
+1. **Targeted Tracking**: Only host variables explicitly declared in configuration are tracked in the Merkle tree.
+2. **Selective Invalidation**: When an ambient variable like `EDITOR` changes, $\Delta V \neq \varnothing$ correctly fires, invalidating and re-rendering only the templates that depend on it.
+3. **Session Noise Isolation**: Transient session noise (`SHLVL`, `_`, `OLDPWD`, etc.) is completely excluded from the Merkle DAG digest, guaranteeing stable cache hits across diverse shell environments.
+
+### 2.4 Cryptographic Merkle Hashing
 To track invariance deterministically across command runs without relying on unreliable filesystem timestamps, each node in the DAG is identified by a two-component cryptographic hash:
 
 #### 1. Low-Level Disk Hash (`own_hash`)
@@ -162,7 +189,7 @@ The expansion pipeline relies on `ExpansionContext` to manage traversal state:
 * `drift_root`: Absolute workspace anchor.
 * `package_name`: Target package name.
 * `enable_render`: Boolean flag from package config (if `False`, all files are treated as static files).
-* `env_node`: Deterministic `JsonNode` of the effective environment variables.
+* `env_node`: Deterministic `JsonNode` of the effective environment variables (`JsonNode(pkg_config.env_resolve.effective_dict)`, see §2.3).
 * `render_engines`: Active `RenderEngineRegistry`.
 * `cache`: Process-level `RenderCache`.
 * `path_translation`: Dictionary mapping source path prefixes to destination path prefixes.

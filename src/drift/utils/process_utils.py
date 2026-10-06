@@ -85,7 +85,7 @@ def assert_can_escalate() -> None:
         if os.geteuid() == 0:
             return
 
-        logger.debug("Prompting / verifying sudo credentials before staging and installation...")
+        logger.info("Verifying sudo credentials before staging and installation...")
         try:
             # check=False is intentional: we inspect returncode to fall back to 'sudo true' before raising.
             res = subprocess.run(["sudo", "-v"], check=False)

@@ -482,6 +482,16 @@ To isolate secret tokens, private API keys, and work-specific emails from public
    - **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
    - **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 
+   - **Bridging Ambient Host Variables into Declarative Merkle Tracking (`[env.fallback]`)**:
+     Drift's Merkle DAG render caching engine deliberately digests `pkg_config.env_resolve.effective_dict` rather than raw `os.environ` to avoid capturing volatile ambient shell session noise (`SHLVL`, `_`, `OLDPWD`, `SSH_AUTH_SOCK`, `TMUX_PANE`, etc.), which would otherwise break change invariance and reduce the Merkle cache hit rate to 0%.
+     To allow dotfile templates or lifecycle hooks to depend on host environment variables and trigger recompilation when they change, users should declare them in Tier 6 (`[env.fallback]`), e.g.:
+     ```toml
+     [env.fallback]
+     HOST_EDITOR = "${EDITOR:-vim}"
+     HOST_THEME  = "${THEME:-dark}"
+     ```
+     Because Tier 1 (`INITIAL_ENV`) takes precedence over Tier 6, Drift resolves the ambient host value into `effective_dict` and tracks it deterministically in the render DAG Merkle hash (`JsonNode(effective_dict)`), while cleanly shielding the cache from untracked ambient environment churn.
+
 2. **Topological DAG Resolution & Pure In-Memory Ingestion**:
    - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across all 4 `[env]` tables (`override`, `secrets`, `default`, `fallback`) without mutating `os.environ` during configuration parsing.
    - Variables in `[env]` can reference each other, system facts, secrets, and lower-tier variables.

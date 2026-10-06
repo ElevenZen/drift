@@ -180,6 +180,12 @@ def build_phase3_payload_dag(
 
     payload_root = PackagePayloadNode(pkg_name=pkg_name, payload_nodes=initial_nodes)
 
+    # NOTE: env_node deliberately hashes pkg_config.env_resolve.effective_dict rather than
+    # the entire ambient os.environ. Hashing os.environ would capture volatile session noise
+    # (SHLVL, _, OLDPWD, SSH_AUTH_SOCK, TMUX_PANE, etc.), destroying Merkle cache invariance
+    # and resulting in a 0% cache hit rate across terminal sessions. If templates require host
+    # environment variables, users should declare them in [env.fallback] (e.g. USER = "${USER}")
+    # so they are deterministically tracked in effective_dict.
     env_node = JsonNode(pkg_config.env_resolve.effective_dict)
     exp_ctx = ExpansionContext(
         package_name=pkg_name,

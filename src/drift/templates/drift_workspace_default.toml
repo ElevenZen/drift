@@ -34,6 +34,13 @@ DRIFT_SAMPLE_ENV_EDITOR = "vim"
 # GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxx"
 # OPENAI_API_KEY = "sk-proj-xxxxxxxxxxxxxxxxxxxx"
 
+# [env.fallback]
+# Soft baseline defaults and host environment variable tracking.
+# Declare ambient host environment variables here if templates or scripts depend on them:
+# DRIFT_HOST_EDITOR = "${EDITOR:-vim}"
+# Declaring host variables in [env.fallback] incorporates them into Drift's Merkle render cache tracking
+# without capturing volatile ambient session noise (SHLVL, OLDPWD, SSH_AUTH_SOCK, etc.).
+
 # ---------------------------------------------------------------------
 # Enabled Packages Registry
 # ---------------------------------------------------------------------

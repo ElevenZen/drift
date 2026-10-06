@@ -51,6 +51,14 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # Package-scoped secrets with clean-room isolation and log masking (Package > Workspace > secrets.env)
 # API_SECRET_TOKEN = "pkg_secret_xxxxxxxxxxxx"
 
+# [env.fallback]
+# Soft baseline defaults and host environment variable tracking.
+# Declare ambient host environment variables here if templates or scripts depend on them:
+# HOST_THEME = "${THEME:-dark}"
+# Declaring host variables in [env.fallback] incorporates them into Drift's Merkle render cache tracking
+# without capturing volatile ambient session noise (SHLVL, OLDPWD, SSH_AUTH_SOCK, etc.).
+
+
 # Lifecycle Hooks (Optional, set to script path or "disable" to turn off)
 # Note: All package-internal hook scripts and their dependencies MUST reside within 'drift_hooks/' (e.g. drift_hooks/setup.sh).
 # If a hook is authored as a template (e.g. drift_hooks/health.sh.envst), configure its rendered name (drift_hooks/health.sh).
