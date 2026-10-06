@@ -161,6 +161,8 @@ def render_hooks(
     pkg_config: "PackageConfig",
     engines_override: Optional["RenderEngineRegistry"] = None,
     dry_run: bool = False,
+    silent: bool = False,
+    render_dir_mask: Optional[Path] = None,
 ) -> DigestionResult:
     """Renders all lifecycle hooks in src/<pkg>/drift_hooks into render/<pkg>/.drift/hooks.
 
@@ -184,6 +186,8 @@ def render_hooks(
         bucket=RenderBucket.HOOKS,
         cache=workspace_config.render_cache,
         dry_run=dry_run,
+        silent=silent,
+        render_dir_mask=render_dir_mask,
     )
 
     with pkg_config.package_envs():

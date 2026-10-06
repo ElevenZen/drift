@@ -26,6 +26,7 @@ Layer 1: RenderLockfile Model & Atomic IO
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass, field
 from enum import Enum
@@ -37,6 +38,8 @@ if TYPE_CHECKING:
     from .render_dag import Node
 
 from ..core.constants import DRIFT_INTERNAL_DIR_NAME, RENDER_LOCK_FILE_NAME
+
+logger = logging.getLogger(__name__)
 
 
 class RenderBucket(str, Enum):
@@ -155,6 +158,7 @@ class RenderLockfile:
         bucket: RenderBucket,
         node: Node,
         drift_root: Path,
+        path_mask: Optional[Path] = None,
     ) -> Optional[NodeHashes]:
         """Checks if a node matches the recorded lockfile Merkle hash for the bucket.
 
@@ -162,17 +166,31 @@ class RenderLockfile:
         Returns None if missing on disk, unhashable, or not in the lockfile bucket.
         """
         from .render_cache import NodeHashes
-        from .render_hasher import hash_file_disk, hash_directory_disk, hash_text
+        from .render_hasher import hash_file_disk, hash_directory_disk, hash_text, format_hash_log
         from .render_dag import FileNode, DirectoryNode
 
         if isinstance(node, FileNode):
             disk_path = drift_root / node.dst_path
             if not disk_path.is_file():
+                logger.debug(
+                    f"[Lockfile] MISS for '{node.dst_path}': file not found on disk at '{disk_path}'."
+                )
                 return None
-            own_h = hash_file_disk(node.dst_path)
+            own_h = hash_file_disk(node.dst_path, path_mask=path_mask)
             if own_h is None:
+                logger.debug(
+                    f"[Lockfile] MISS for '{node.dst_path}': failed to compute own_hash (path_mask='{path_mask}')."
+                )
                 return None
-            if any(d.merkle_hash is None for d in node.depends_on):
+            unresolved = [
+                getattr(d, "dst_path", getattr(d, "src_path", getattr(d, "value", str(d))))
+                for d in node.depends_on
+                if d.merkle_hash is None
+            ]
+            if unresolved:
+                logger.debug(
+                    f"[Lockfile] MISS for '{node.dst_path}': dependency merkle_hash unresolved: {unresolved}."
+                )
                 return None
             dep_hashes = [d.merkle_hash for d in node.depends_on if d.merkle_hash is not None]
             dep_str = ":".join(dep_hashes)
@@ -181,20 +199,46 @@ class RenderLockfile:
                 if dep_str
                 else hash_text(f"{node.__class__.__name__}:{own_h}")
             )
-            if candidate_m in self.get_bucket_hashes(bucket):
+            bucket_hashes = self.get_bucket_hashes(bucket)
+            if candidate_m in bucket_hashes:
+                logger.debug(
+                    f"[Lockfile] HIT for '{node.dst_path}' in bucket '{bucket.value}': cand={format_hash_log(candidate_m)}."
+                )
                 return NodeHashes(own_hash=own_h, merkle_hash=candidate_m)
+            sample_hashes = [format_hash_log(h) for h in sorted(list(bucket_hashes))[:5]]
+            logger.debug(
+                f"[Lockfile] MISS for '{node.dst_path}' in bucket '{bucket.value}': "
+                f"cand={format_hash_log(candidate_m)} not in bucket (sample={sample_hashes}). "
+                f"(own_h={format_hash_log(own_h)}, dep_str={format_hash_log(dep_str)}, path_mask='{path_mask}')."
+            )
             return None
 
         elif isinstance(node, DirectoryNode):
             disk_path = drift_root / node.dst_path
             if not disk_path.is_dir():
+                logger.debug(
+                    f"[Lockfile] MISS for directory '{node.dst_path}': directory not found on disk at '{disk_path}'."
+                )
                 return None
-            own_h = hash_directory_disk(node.dst_path)
+            own_h = hash_directory_disk(node.dst_path, path_mask=path_mask)
             if own_h is None:
+                logger.debug(
+                    f"[Lockfile] MISS for directory '{node.dst_path}': failed to compute own_hash."
+                )
                 return None
             candidate_m = hash_text(f"DirectoryNode:{own_h}")
-            if candidate_m in self.get_bucket_hashes(bucket):
+            bucket_hashes = self.get_bucket_hashes(bucket)
+            if candidate_m in bucket_hashes:
+                logger.debug(
+                    f"[Lockfile] HIT for directory '{node.dst_path}' in bucket '{bucket.value}': cand={format_hash_log(candidate_m)}."
+                )
                 return NodeHashes(own_hash=own_h, merkle_hash=candidate_m)
+            sample_hashes = [format_hash_log(h) for h in sorted(list(bucket_hashes))[:5]]
+            logger.debug(
+                f"[Lockfile] MISS for directory '{node.dst_path}' in bucket '{bucket.value}': "
+                f"cand={format_hash_log(candidate_m)} not in bucket (sample={sample_hashes}). "
+                f"(own_h={format_hash_log(own_h)}, path_mask='{path_mask}')."
+            )
             return None
 
         return None

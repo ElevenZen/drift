@@ -260,6 +260,8 @@ class WorkspaceConfig:
     env_resolve: EnvResolve = field(default_factory=EnvResolve)
     settings: SettingsConfig = field(default_factory=SettingsConfig)
     render_cache: RenderCache = field(default_factory=RenderCache)
+    render_path_mask: Optional[Path] = None
+    install_path_mask: Optional[Path] = None
 
     def __init__(
         self,
@@ -271,6 +273,8 @@ class WorkspaceConfig:
         env_resolve: Optional[EnvResolve] = None,
         settings: Optional[SettingsConfig] = None,
         render_cache: Optional[RenderCache] = None,
+        render_path_mask: Optional[Union[Path, str]] = None,
+        install_path_mask: Optional[Union[Path, str]] = None,
     ) -> None:
         if not isinstance(drift_root, (str, Path)):
             raise ConfigError(f"drift_root must be a Path or str, got {type(drift_root).__name__}")
@@ -295,6 +299,8 @@ class WorkspaceConfig:
         self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
         self.settings = settings if settings is not None else SettingsConfig()
         self.render_cache = render_cache if render_cache is not None else RenderCache()
+        self.render_path_mask = Path(render_path_mask) if render_path_mask is not None else None
+        self.install_path_mask = Path(install_path_mask) if install_path_mask is not None else None
 
     def validate(self) -> None:
         """Validates workspace configuration values."""
@@ -393,13 +399,20 @@ class WorkspaceConfig:
             )
         return sorted(valid_packages)
 
-    def get_drift_package_facts(self, pkg_name: str) -> Dict[str, str]:
+    def get_drift_package_facts(
+        self,
+        pkg_name: str,
+        render_dir_override: Optional[Path] = None,
+        install_dir_override: Optional[Path] = None,
+    ) -> Dict[str, str]:
+        render_base = render_dir_override or self.render_path_mask or self.render_path
+        install_base = install_dir_override or self.install_path_mask or self.install_path
         return {
             'drift_package_name': pkg_name,
             'drift_package_source_dir': str(self.source_path / pkg_name),
             'drift_package_src_dir': str(self.source_path / pkg_name),
-            'drift_package_render_dir': str(self.render_path / pkg_name),
-            'drift_package_install_dir': str(self.install_path / pkg_name),
+            'drift_package_render_dir': str(render_base / pkg_name),
+            'drift_package_install_dir': str(install_base / pkg_name),
             'drift_package_install_method': str(self.workspace.default_install_method),
             'drift_package_target_dir': str(self.workspace.default_target_directory),
         }

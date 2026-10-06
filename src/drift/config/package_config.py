@@ -424,9 +424,21 @@ class PackageConfig:
         if not isinstance(self.render_engine_configs, RenderEngineRegistry):
             raise ConfigError(f"render_engine_configs must be a RenderEngineRegistry for package '{self.name}'.")
 
-    def get_drift_package_facts(self, workspace_config: Optional[WorkspaceConfig]) -> Dict[str, str]:
-        ws_pkg_facts = (workspace_config.get_drift_package_facts(self.name)
-                        if workspace_config is not None else {})
+    def get_drift_package_facts(
+        self,
+        workspace_config: Optional[WorkspaceConfig],
+        render_dir_override: Optional[Path] = None,
+        install_dir_override: Optional[Path] = None,
+    ) -> Dict[str, str]:
+        ws_pkg_facts = (
+            workspace_config.get_drift_package_facts(
+                self.name,
+                render_dir_override=render_dir_override,
+                install_dir_override=install_dir_override,
+            )
+            if workspace_config is not None
+            else {}
+        )
         pkg_facts = { k: str(v) for k, v in {
             'drift_package_name': self.name,
             'drift_package_install_method': self.package.install_method,
@@ -625,6 +637,7 @@ class PackageConfig:
         package_dir: Path,
         workspace_config: Optional["WorkspaceConfig"] = None,
         dry_run: bool = False,
+        silent: bool = False,
     ) -> "PackageConfig":
         """Loads and resolves package configuration from a package source directory."""
         from .package_loader import load_package_config_from_source_dir
@@ -632,6 +645,7 @@ class PackageConfig:
             package_dir=package_dir,
             workspace_config=workspace_config,
             dry_run=dry_run,
+            silent=silent,
         )
 
     @classmethod

@@ -52,6 +52,7 @@ class DeliveryInspectionContext:
     is_first_time: bool
     backup_pkg_dir: Optional[Path]
     backup_subfolder: BackupSubfolder
+    source_dir_mask: Optional[Path] = None
     reverse_mode: bool = False
     reinstall: bool = False
 
@@ -59,6 +60,11 @@ class DeliveryInspectionContext:
     def abs_drift_root(self) -> Path:
         """Returns pre-resolved absolute Path to drift workspace root."""
         return self.drift_root.resolve()
+
+    def mask_source_path(self, rel_path: Path) -> Path:
+        """Masks relative path with source_dir_mask (e.g. in install/), falling back to source_dir."""
+        base_dir = self.source_dir_mask or self.source_dir
+        return base_dir / self.translate_source_rel_path(rel_path)
 
     def resolve_backup_path(
         self,
@@ -176,9 +182,10 @@ def _inspect_directory_node(
         if source_dir is not None and source_dir.is_dir() and permissions_differ(source_dir, target_dir):
             src_mode = oct(source_dir.stat().st_mode & 0o777)
             dst_mode = oct(target_dir.stat().st_mode & 0o777)
+            effective_src = context.mask_source_path(rel_path) if context.source_dir_mask is not None else source_dir
             node_actions.append(FileAction(
                 action_type=FileActionType.UPDATE_PERMISSION,
-                src_path=source_dir,
+                src_path=effective_src,
                 dst_path=target_dir,
                 reason=f"Permissions differ ({dst_mode} -> {src_mode})",
             ))
@@ -291,29 +298,31 @@ def _inspect_symlink_leaf(
     rel_file: Path,
     system_target: Path,
     source_file: Path,
+    source_mask: Optional[Path] = None,
 ) -> List[FileAction]:
     """Inspects a host symlink at destination and plans overwrite, skip, or re-link actions."""
+    effective_src = source_mask if source_mask is not None else source_file
     if not system_target.exists():
         # Broken symlink
         return [
             _plan_backup_or_delete(context, system_target, rel_file, reason="Broken symlink collision"),
-            _plan_file_creation(context, source_file, system_target),
+            _plan_file_creation(context, effective_src, system_target),
         ]
 
 
-    # Check if existing symlink already points to source_file
-    if _check_symlink_points_to_source(system_target, source_file):
+    # Check if existing symlink already points to effective source
+    if _check_symlink_points_to_source(system_target, effective_src):
         if context.install_method == InstallMethod.SYMLINK:
             if context.reinstall:
                 return [FileAction(
                     action_type=FileActionType.CREATE_SYMLINK,
-                    src_path=source_file,
+                    src_path=effective_src,
                     dst_path=system_target,
                     reason="Reinstalling symlink",
                 )]
             return [FileAction(
                 action_type=FileActionType.SKIP_IDENTICAL,
-                src_path=source_file,
+                src_path=effective_src,
                 dst_path=system_target,
                 reason="Symlink already points to source",
             )]
@@ -322,7 +331,7 @@ def _inspect_symlink_leaf(
             _plan_backup_or_delete(context, system_target, rel_file, reason="Replacing symlink with copy"),
             FileAction(
                 action_type=FileActionType.CREATE_COPY,
-                src_path=source_file,
+                src_path=effective_src,
                 dst_path=system_target,
             ),
         ]
@@ -337,7 +346,7 @@ def _inspect_symlink_leaf(
     reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
     return [
         _plan_backup_or_delete(context, system_target, rel_file, reason=reason),
-        _plan_file_creation(context, source_file, system_target),
+        _plan_file_creation(context, effective_src, system_target),
     ]
 
 
@@ -346,12 +355,14 @@ def _inspect_physical_file_leaf(
     rel_file: Path,
     system_target: Path,
     source_file: Path,
+    source_mask: Optional[Path] = None,
 ) -> List[FileAction]:
     """Inspects a host regular physical file and plans overwrite, update, or skip actions."""
+    effective_src = source_mask or source_file
     if source_file.is_symlink():
         return [
             _plan_backup_or_delete(context, system_target, rel_file, reason="Type changed between symlink and file"),
-            _plan_file_creation(context, source_file, system_target),
+            _plan_file_creation(context, effective_src, system_target),
         ]
 
     if context.install_method == InstallMethod.SYMLINK:
@@ -359,7 +370,7 @@ def _inspect_physical_file_leaf(
             _plan_backup_or_delete(context, system_target, rel_file, reason="Physical file collides with symlink"),
             FileAction(
                 action_type=FileActionType.CREATE_SYMLINK,
-                src_path=source_file,
+                src_path=effective_src,
                 dst_path=system_target,
             ),
         ]
@@ -370,7 +381,7 @@ def _inspect_physical_file_leaf(
             _plan_backup_or_delete(context, system_target, rel_file, reason="Pre-existing file collision"),
             FileAction(
                 action_type=FileActionType.CREATE_COPY,
-                src_path=source_file,
+                src_path=effective_src,
                 dst_path=system_target,
             ),
         ]
@@ -383,7 +394,7 @@ def _inspect_physical_file_leaf(
     if differs:
         return [FileAction(
             action_type=FileActionType.UPDATE_COPY,
-            src_path=source_file,
+            src_path=effective_src,
             dst_path=system_target,
             reason="File content updated",
         )]
@@ -393,7 +404,7 @@ def _inspect_physical_file_leaf(
         dst_mode = oct(system_target.stat().st_mode & 0o777)
         return [FileAction(
             action_type=FileActionType.UPDATE_PERMISSION,
-            src_path=source_file,
+            src_path=effective_src,
             dst_path=system_target,
             reason=f"Permissions differ ({dst_mode} -> {src_mode})",
         )]
@@ -401,14 +412,14 @@ def _inspect_physical_file_leaf(
     if context.reinstall:
         return [FileAction(
             action_type=FileActionType.UPDATE_COPY,
-            src_path=source_file,
+            src_path=effective_src,
             dst_path=system_target,
             reason="Reinstalling copy",
         )]
 
     return [FileAction(
         action_type=FileActionType.SKIP_IDENTICAL,
-        src_path=source_file,
+        src_path=effective_src,
         dst_path=system_target,
         reason="File content matches",
     )]
@@ -424,11 +435,13 @@ def _inspect_resolved_leaf_file(
     backed_up_ancestor_targets: Set[Path],
 ) -> None:
     """Inspects resolved source against system target and plans delivery actions."""
+    effective_source = context.mask_source_path(rel_file) if context.source_dir_mask is not None else source_file
+
     # 1. Source and target are identical
     if source_file == system_target:
         actions.append(FileAction(
             action_type=FileActionType.SKIP_IDENTICAL,
-            src_path=source_file,
+            src_path=effective_source,
             dst_path=system_target,
             reason="Source and target are identical",
         ))
@@ -436,12 +449,12 @@ def _inspect_resolved_leaf_file(
 
     # 2. Ancestor directory backed up / recreated or target does not exist yet
     if _check_has_backed_up_ancestor(system_target, backed_up_ancestor_targets):
-        actions.append(_plan_file_creation(context, source_file, system_target))
+        actions.append(_plan_file_creation(context, effective_source, system_target))
         return
 
     target_exists_or_symlink = system_target.exists() or system_target.is_symlink()
     if not target_exists_or_symlink:
-        actions.append(_plan_file_creation(context, source_file, system_target))
+        actions.append(_plan_file_creation(context, effective_source, system_target))
         return
 
     # 3. Target is concrete directory blocking a leaf file
@@ -453,7 +466,7 @@ def _inspect_resolved_leaf_file(
             reason="Directory blocking file",
             is_tree=True,
         ))
-        actions.append(_plan_file_creation(context, source_file, system_target))
+        actions.append(_plan_file_creation(context, effective_source, system_target))
         return
 
     # 4. Target is a symlink
@@ -463,6 +476,7 @@ def _inspect_resolved_leaf_file(
             rel_file=rel_file,
             system_target=system_target,
             source_file=source_file,
+            source_mask=effective_source,
         ))
         return
 
@@ -472,6 +486,7 @@ def _inspect_resolved_leaf_file(
         rel_file=rel_file,
         system_target=system_target,
         source_file=source_file,
+        source_mask=effective_source,
     ))
 
 

@@ -156,6 +156,16 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
   - Phase 2 (Hooks): Compiles hook scripts within package environment scope, enforces `0o755` permissions, prunes obsolete hooks in `.drift/hooks/`, and triggers `probe` and `pre_source`.
   - Phase 3 (Payload): Expands dotfile payloads post-`pre_source`, handles templates and directory sentinels (`.drift_keep`), prunes obsolete payload files while strictly shielding the entire `.drift/` internal directory, and triggers `post_render`.
 
+### 20. Full-Cycle Dry-Run Engine & Deployment Planning (`drift plan` / `drift deploy --dry-run`)
+- **4-Phase Transactional Planning Engine**: Decomposed deployment simulation into discrete, side-effect-free phases per [`docs/plan_dry_run.md`](plan_dry_run.md):
+  - **Phase 0 (Host Drift Inspection)**: Read-only `prepare_reverse_sync` against active host files without mutating `install/` or `state.toml`, surfacing unmanaged host edits with actionable remediation guidance (`drift adopt` or `--force`).
+  - **Phase 1 (Sandbox Template Compilation)**: Ephemeral, isolated sandbox rendering in `tmp_sandbox/render/` with Merkle lockfile caching, prerequisite DAG failure propagation, and action path rebasing to canonical `render/`.
+  - **Phase 2 (Staging Diffing)**: Diffs sandbox rendered artifacts directly against real `install/` to preview changes (`PackageStagePlan`) without touching the filesystem.
+  - **Phase 3 (Host Install Simulation)**: Discovers candidate files from sandbox while masking source paths (`source_dir_mask`) to evaluate host symlinks against `install/`, preventing false conflict warnings and correctly identifying `SKIP_IDENTICAL` vs `UPDATE_COPY` / pruning.
+  - **Phase 4 (Aggregation & Presentation)**: Consolidates `WorkspaceDeployPreview` with summary metrics (`has_changes`, `has_drift`, `packages_unchanged`, etc.), human-readable terminal rendering with unchanged package collapsing, and machine-readable JSON output (`--json`).
+- **Single Source of Truth CLI & Handler Routing**: Unified flag propagation across both Typer and Argparse backends (`-a/--all`, `-r/--reinstall`, `-c/--clean`, `-f/--force`, `--no-deps`, `--with-hooks`, `--no-hooks`, `--json`). `drift deploy --dry-run` and `drift deploy -n` operate as transparent aliases to the planning engine.
+- **Strict Invariant Guarantees**: 100% zero-mutation guarantees for both `render/.git` and `install/.git` working trees throughout planning cycles.
+
 ---
 
 ## Part III: Strategic Tier Ranking
@@ -163,7 +173,7 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 The roadmap is prioritized into four execution tiers based on **architectural ROI**, **system safety guarantees**, and **adoption impact**:
 
 ### 🌟 Tier S: Game Changers & Core Value Proposition
-* **`drift plan`**: Full dry-run visualization of render, stage, and install actions before modifying host files.
+* **[`drift plan`](plan_dry_run.md)** [Completed]: Full dry-run visualization of render, stage, and install actions before modifying host files.
 * **`drift doctor`**: Single diagnostic command validating workspace structure, Git repositories, hook permissions, and dependencies.
 * **Asymmetric In-Repo Secret Encryption (Age / SSH-key)**: Zero-disk-leakage in-memory secret decryption into the compilation sandbox.
 * **Smarter Rollback with WAL (Write-Ahead Log)**: Guarantees 100% reversible rollbacks for physical host filesystem side effects.
@@ -301,7 +311,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
   - **Jinja2**: Adds `config/partials/` to the template loader search path for `{% include "header.j2" %}` and macro libraries `{% from "macros.j2" import service_unit %}`.
   - **Envsubst / Shell**: Exposes `$drift_partials_dir` so hook scripts and wrappers can easily `source "$drift_partials_dir/common.sh"`.
 
-- [ ] **`drift plan` command.** Preview the actual files to be rendered, staged, and installed before executing. A dry-run visualization for the full deploy pipeline. Foundation for package dependency planning and cross-package import auditing. (from old roadmap)
+- [x] **`drift plan` command.** Preview the actual files to be rendered, staged, and installed before executing. A dry-run visualization for the full deploy pipeline (design spec: [`docs/plan_dry_run.md`](plan_dry_run.md)). Foundation for package dependency planning and cross-package import auditing. (from old roadmap)
 
 - [ ] **Compilation package pattern.** Use package `[env.override]` / `[env.fallback]` to declare build flags (instead of scattering them across CLI `./configure` or `cmake -D...` invocations), render them into a `pre_source` hook that checks for existing build artifacts and compiles on-demand. Build artifacts output to a source subfolder, which the deploy pipeline installs to the target directory (e.g., `/opt` or `~/.local`). (from old roadmap)
 

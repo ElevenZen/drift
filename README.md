@@ -18,6 +18,7 @@ Unlike traditional dotfile managers that directly symlink mutable directories or
 
 * 🛡️ **Zero Risk / Dual-Git Sandbox**: Templates compile in an isolated `render/` Git sandbox. If a render fails, your host system remains 100% untouched.
 * ⚡ **Incremental Merkle DAG Compilation & Caching**: Replaces slow, redundant procedural re-rendering with an AST Directed Acyclic Graph (DAG) backed by cryptographic Merkle hashing and lockfiles (`.drift_lock.json`). Unchanged templates and static assets are skipped instantly (`SKIP_IDENTICAL` / 0ms overhead).
+* 🔍 **Full-Cycle Dry-Run & Planning Engine**: End-to-end deployment simulation across all phases (`drift plan` or `drift deploy -n`) in an ephemeral sandbox without mutating host files or Git state. Inspect planned actions, audit host drift, and detect batch collisions before touching your system.
 * 🧩 **Native In-TOML Variable Stitching**: Define derived and inter-connected variables (`$VAR`, `${VAR}`) directly within your TOML configuration files—no external template wrappers or boilerplate scripts needed to compute variables from one another.
 * 💻 **Config-as-a-Package (Servers to Laptops)**: Select and toggle packages per machine via `drift_workspace.local.toml`, define declarative host requirements (`[requirements]`), or dynamically compute package rosters and workspace environment variables on the fly using native Python workspace hooks (`config/drift_workspace.py`). One unified repo scales from minimal cloud servers to high-end workstations.
 * 🔄 **Embraces System Drift & Visual Diffing**: Never lose GUI tweaks or hot-edits. Audit runtime changes (`drift diff -s`), review multi-tab side-by-side visual diffs in your editor (`drift diff -y`), and adopt them into templates (`drift adopt`) instead of suffering blind overwrites.
@@ -526,6 +527,22 @@ dependencies = ["git", "starship", "fzf"]
 *   **Reverse Topological Uninstallation**: During package uninstallation (`drift uninstall`), packages are safely decoupled and removed in **reverse topological order**, ensuring dependent packages are dismantled before their underlying requirements.
 *   **Downstream Protection**: Drift verifies that uninstalling a package will not break other installed packages that still depend on it, halting with an actionable error unless `--force` or `--ignore-missing-dependencies` is explicitly provided.
 
+### 🔍 12. Full-Cycle Dry-Run & Transactional Planning Engine (`drift plan`)
+Drift eliminates blind deployments through an end-to-end, multi-stage dry-run engine (`drift plan` or `drift deploy -n / --dry-run`). Rather than merely verifying that symlinks can be created, Drift simulates the **complete compilation, staging, and deployment lifecycle** in an ephemeral sandbox without touching the host filesystem, intermediate databases, or Git repositories:
+
+*   **Four Simulation Phases**:
+    1.  **Phase 0: Host Drift Audit**: Non-destructively audits live host configurations against `install/` state via `prepare_reverse_sync`.
+    2.  **Phase 1: Ephemeral Sandbox Template Compilation**: Compiles templates in a disposable temporary directory, verifying Merkle DAG cache hits while keeping `render/` 100% clean.
+    3.  **Phase 2: Sandbox Staging Planning**: Compiles staging diff plans from sandbox render outputs to canonical `install/`.
+    4.  **Phase 3: Physical Delivery Planning**: Audits cross-package collisions, checks directory writability, and compiles concrete host delivery actions (`CREATE_SYMLINK`, `UPDATE_COPY`, `BACKUP_OVERWRITE`, etc.).
+*   **Symlink Path Masking**: Bridges the path divergence between ephemeral sandbox paths and canonical `install/` locations, ensuring existing host symlinks evaluate as `SKIP_IDENTICAL` rather than triggering false overwrite warnings.
+*   **Fault Isolation & Downstream Blocking**: Traps errors per-package across render, stage, and install phases. A single broken package never obscures healthy sibling packages, while downstream dependents are cleanly marked as blocked.
+*   **Pre-Flight Batch Conflict Audit & Failure Guidance**: Detects intra-batch collisions upfront (two packages targeting the same host destination) and displays prominent failure warnings if a real deployment would fail.
+*   **Safe Hook Execution (`--with-hooks`)**: In pure dry-run, lifecycle hooks are bypassed by default for zero-mutation safety. Pass `--with-hooks` (`drift plan --with-hooks`) to execute pre-flight requirement probes (`probe`) and dynamic source generators (`pre_source`) in isolated scratch directories for 100% accurate dynamic template planning.
+*   **Automated Tooling (`--json`)**: Serializes typed `WorkspaceDeployPreview` models containing global errors, per-package plans, and drift flags for CI/CD pipelines.
+
+For full mathematical proofs, path mask algebra, and call chain specifications, consult the [Dry-Run Architecture Specification](docs/plan_engine.md).
+
 ---
 
 ## 🔄 The Drift Data-Flow Loop
@@ -556,7 +573,8 @@ Rather than running isolated commands, Drift operates as a continuous, closed-lo
 1.  **Scaffold**: Run `drift new nvim -t ~/.config/nvim` to create a package directory.
     *   **Folder Structure Relieved**: By setting `target_directory = "~/.config/nvim"` inside `src/nvim/drift_package.toml`, you no longer need nested directories like `dot-config/nvim/` on disk. Files are put directly inside `src/nvim/`.
 2.  **Author**: Add template or files into `src/nvim/` (e.g., `src/nvim/init.envst.lua` containing `${ENV_VAR}`).
-3.  **Deploy**: Run `drift deploy` (which triggers the functions: Render $\rightarrow$ Commit Render $\rightarrow$ Stage $\rightarrow$ Install Deployment $\rightarrow$ Commit Install).
+3.  **Plan & Verify**: Run `drift plan` (or `drift deploy -n`) to preview the complete multi-stage execution plan (template compilation, staging diffs, host symlink/copy actions, drift audits, and collision checks) in an ephemeral sandbox without altering any system or Git state.
+4.  **Deploy**: Run `drift deploy` (which triggers the functions: Render $\rightarrow$ Commit Render $\rightarrow$ Stage $\rightarrow$ Install Deployment $\rightarrow$ Commit Install).
     *   All templates are compiled inside the sandbox, changes staged into the local state database, and configurations safely copied/linked onto your target active host target path (`~/.config/nvim/init.lua`).
 
 ### Scenario B: Adopting GUI/System Utility Changes (Reverse-Sync & Backport Flow)
@@ -610,6 +628,7 @@ Global options can be specified before or after subcommands (e.g. `drift -v depl
 | `drift add <pkg> <paths>` | Import host configs into package source |
 | `drift adopt [pkgs]` | Backport host drift into package templates |
 | `drift deploy [pkgs]` | Compile, stage, and deploy packages |
+| `drift plan [pkgs]` | Preview full-cycle deployment plan without modifying state |
 | `drift health [pkgs]` | Run package health check hooks |
 | `drift uninstall <pkgs>` | Remove deployed files and restore backups |
 | `drift rollback [pkgs]` | Revert failed transaction to stable state |

@@ -58,8 +58,8 @@ class TestProcessUtils(unittest.TestCase):
             with self.assertLogs("drift.utils.process_utils", level="DEBUG") as cm:
                 run_command([sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr)"], text=True)
             logs = "\n".join(cm.output)
-            self.assertIn("External:", logs)
-            self.assertIn("Command finished with exit code 0:", logs)
+            self.assertIn("[External] ", logs)
+            self.assertIn("[External] Command exit code 0:", logs)
             self.assertIn("stdout:\nout", logs)
             self.assertIn("stderr:\nerr", logs)
         finally:
@@ -101,7 +101,7 @@ class TestProcessUtils(unittest.TestCase):
                     text=True
                 )
             logs = "\n".join(cm.output)
-            self.assertIn("External:", logs)
+            self.assertIn("[External] ", logs)
             self.assertNotIn("stdout:\nlive output", logs)
         finally:
             set_test_mode(True, enable_logging=False)
@@ -144,8 +144,8 @@ class TestProcessUtils(unittest.TestCase):
             self.assertEqual(res.returncode, 0)
             self.assertEqual(res.stdout.strip(), "hello suppressed")
             logs = "\n".join(cm.output)
-            self.assertIn("External:", logs)
-            self.assertIn("Command finished with exit code 0:", logs)
+            self.assertIn("[External] ", logs)
+            self.assertIn("[External] Command exit code 0:", logs)
             self.assertNotIn("stdout:\nhello suppressed", logs)
             self.assertNotIn("stderr:\nerr suppressed", logs)
         finally:

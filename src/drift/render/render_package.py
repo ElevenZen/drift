@@ -88,6 +88,8 @@ class RenderOptions:
     """
     no_cache: bool = False
     dry_run: bool = False
+    silent: bool = False
+    render_dir_mask: Optional[Path] = None
     flags: Optional[HookExecFlags] = None
 
     def get_hook_flags(self, settings=None) -> HookExecFlags:
@@ -293,6 +295,8 @@ def render_package_files(
         cache=workspace_config.render_cache,
         force=opts.no_cache,
         dry_run=opts.dry_run,
+        silent=opts.silent,
+        render_dir_mask=opts.render_dir_mask,
     )
 
     digest_render_dag(payload_root, ctx)
@@ -315,7 +319,10 @@ def render_package_files(
     pkg_config.hooks.trigger_post_render(
         flags=resolved_hook_flags,
     )
-    logger.info(f"✨ Package '{package_name}' rendered successfully.")
+    if opts.silent:
+        logger.debug(f"✨ Package '{package_name}' rendered successfully.")
+    else:
+        logger.info(f"✨ Package '{package_name}' rendered successfully.")
 
     status = (
         "UP_TO_DATE"
@@ -348,6 +355,7 @@ def render_package(
         package_dir=package_dir,
         workspace_config=workspace_config,
         dry_run=opts.dry_run,
+        silent=opts.silent,
     )
 
     scoped_flags = replace(hook_flags, load_envs=False)
@@ -364,6 +372,8 @@ def render_package(
             pkg_config=pkg_config,
             engines_override=effective_engines,
             dry_run=scoped_opts.dry_run,
+            silent=scoped_opts.silent,
+            render_dir_mask=scoped_opts.render_dir_mask,
         )
 
         # Pre-flight Requirements Check (declarative host facts + dynamic probe hook)
@@ -371,7 +381,10 @@ def render_package(
             workspace_config, flags=scoped_flags
         )
         if not is_satisfied:
-            logger.info(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
+            if opts.silent:
+                logger.debug(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
+            else:
+                logger.info(f"ℹ️  [SKIP] Skipping package '{package_name}': {failure_reason}")
             return PackageRenderResult(
                 package=package_name,
                 status="SKIPPED",

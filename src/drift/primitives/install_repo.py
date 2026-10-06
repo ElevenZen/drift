@@ -201,6 +201,7 @@ class PackageInstallContext:
     sudo: bool
     is_first_time: bool
     drift_root: Path
+    source_dir_mask: Optional[Path] = None
     hooks: PackageHooks = field(default_factory=PackageHooks)
     reinstall: bool = False
 
@@ -221,6 +222,7 @@ class PackageInstallContext:
             is_first_time=self.is_first_time,
             backup_pkg_dir=self.backup_pkg_dir,
             backup_subfolder=BackupSubfolder.OVERWRITTEN,
+            source_dir_mask=self.source_dir_mask,
             reinstall=self.reinstall,
         )
 
@@ -247,6 +249,7 @@ class PackageInstallContext:
         pkg = metadata.name
         target_dir = metadata.get_target_directory(workspace_config)
         install_pkg_dir = workspace_config.install_path / pkg
+        source_dir_mask = workspace_config.install_path_mask / pkg if workspace_config.install_path_mask is not None else None
         backup_pkg_dir = workspace_config.backup_path / pkg
         pkg_state = state_registry.packages.get(pkg)
         is_first_time = (pkg_state is None or pkg_state.last_deployed is None)
@@ -262,6 +265,7 @@ class PackageInstallContext:
             sudo=metadata.package.sudo,
             is_first_time=is_first_time,
             drift_root=workspace_config.drift_root,
+            source_dir_mask=source_dir_mask,
             hooks=metadata.hooks,
             reinstall=reinstall,
         )
@@ -654,7 +658,7 @@ def prepare_install(
     """
     opts = options if options is not None else InstallOptions()
     install_base = workspace_config.install_path
-    state_file = install_base / "state.toml"
+    state_file = (workspace_config.install_path_mask or install_base) / "state.toml"
     hook_flags = opts.get_hook_flags(settings=workspace_config.settings)
 
     state_registry = load_state_registry(state_file)

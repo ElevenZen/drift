@@ -25,12 +25,31 @@ from drift.render.render_hasher import (
     hash_directory_disk,
     compute_node_own_hash,
     compute_merkle_node_hash,
+    format_hash_log,
 )
 from drift.render.render_lock import RenderLockfile
 
 
 class TestRenderHasher(unittest.TestCase):
     """Unit tests for low-level disk hashing and Merkle DAG hashing."""
+
+    def test_format_hash_log(self) -> None:
+        """Validates that format_hash_log cleanly truncates hash strings to 10 chars."""
+        full_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        self.assertEqual(format_hash_log(full_hash), "e3b0c44298")
+        self.assertEqual(len(format_hash_log(full_hash)), 10)
+        self.assertEqual(format_hash_log(full_hash, length=8), "e3b0c442")
+
+        # None and empty
+        self.assertEqual(format_hash_log(None), "none")
+        self.assertEqual(format_hash_log(""), "none")
+
+        # Colon-separated dependency hash string
+        dep_str = f"{full_hash}:{full_hash}"
+        self.assertEqual(format_hash_log(dep_str), "e3b0c44298:e3b0c44298")
+
+        # Collections
+        self.assertEqual(format_hash_log([full_hash, full_hash]), "[e3b0c44298, e3b0c44298]")
 
     def test_hash_bytes_and_text(self) -> None:
         """Validates basic SHA-256 computation over bytes and strings."""

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field, is_dataclass, asdict
+from dataclasses import dataclass, field, is_dataclass, asdict, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING, Iterable
@@ -41,6 +41,7 @@ from .serialization import serialize_for_json, SerializableModel
 from .file_action import (
     FileActionType,
     FileAction,
+    rebase_file_action,
     format_action_line,
     format_action_summary,
     DELETE_ACTION_TYPES,
@@ -145,6 +146,12 @@ class ReverseSyncResult(SerializableModel):
 # Primitive 2: Template Render
 # =============================================================================
 
+# NOTE [Action Path Representation Invariant]:
+# PackageRenderResult.actions uses absolute paths because template compilation involves complex,
+# non-trivial file mappings (template extensions, custom engines, partials, and .drift/ control plane).
+# Conversely, PackageStagePlan, PackageInstallPlan, and PackageUninstallPlan operate on relative paths
+# representing strict 1:1 structural mirroring between repository tiers and host targets.
+
 @dataclass
 class PackageRenderResult(SerializableModel):
     package: str
@@ -164,6 +171,13 @@ class PackageRenderResult(SerializableModel):
     def has_changes(self) -> bool:
         """Returns True if any file was rendered, copied, or pruned (excluding pure cache skips and info messages)."""
         return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
+    def rebased(self, old_base: Path, new_base: Path) -> PackageRenderResult:
+        """Returns a copy of PackageRenderResult with all action paths rebased from old_base to new_base."""
+        return replace(
+            self,
+            actions=[rebase_file_action(a, old_base, new_base) for a in self.actions],
+        )
 
 
     def format_text(self, drift_root: Optional[Path] = None, verbose: bool = False) -> str:
@@ -261,6 +275,13 @@ class PackageStagePlan(SerializableModel):
     def has_changes(self) -> bool:
         """Returns True if the package staging plan contains physical mutations."""
         return self.has_mutations
+
+    def rebased(self, old_base: Path, new_base: Path) -> "PackageStagePlan":
+        """Returns a copy of PackageStagePlan with action paths rebased from old_base to new_base."""
+        return replace(
+            self,
+            actions=[rebase_file_action(a, old_base, new_base) for a in self.actions],
+        )
 
     def format_text(self, verbose: bool = False) -> str:
         """Formats the staging plan for human-readable terminal output."""
@@ -406,6 +427,13 @@ class PackageInstallPlan(SerializableModel):
     @property
     def prune_backups(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == FileActionType.BACKUP_PRUNE]
+
+    def rebased(self, old_base: Path, new_base: Path) -> "PackageInstallPlan":
+        """Returns a copy of PackageInstallPlan with action paths rebased from old_base to new_base."""
+        return replace(
+            self,
+            actions=[rebase_file_action(a, old_base, new_base) for a in self.actions],
+        )
 
     def format_text(self, verbose: bool = False) -> str:
         """Formats the deployment plan for human-readable terminal output."""
@@ -1326,6 +1354,13 @@ class PackageDeployPreview(SerializableModel):
 
         return "\n".join(lines)
 
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data["has_changes"] = self.has_changes
+        data["has_drift"] = self.has_drift
+        data["error_message"] = self.error_message
+        return data
+
 
 @dataclass
 class WorkspaceDeployPreview(SerializableModel):
@@ -1377,6 +1412,17 @@ class WorkspaceDeployPreview(SerializableModel):
     def drifted_packages(self) -> List[str]:
         return list(self.drift_warnings.keys())
 
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data["has_changes"] = self.has_changes
+        data["has_drift"] = self.has_drift
+        data["global_errors"] = [str(e) for e in self.global_errors]
+        data["packages_with_changes"] = self.packages_with_changes
+        data["packages_unchanged"] = self.packages_unchanged
+        data["packages_with_drift"] = self.packages_with_drift
+        data["packages_with_errors"] = self.packages_with_errors
+        return data
+
     def format_text(self, verbose: bool = False, show_all: bool = False, use_rich: bool = True) -> str:
         """Formats the deployment preview for human-readable terminal output.
 
@@ -1388,22 +1434,34 @@ class WorkspaceDeployPreview(SerializableModel):
             use_rich: If True, applies Rich terminal styles when supported.
         """
         lines = [f"=== Workspace Deployment Preview: {self.command} (Status: {self.status}) ==="]
+        total_count = len(self.package_previews)
+        changed_count = len(self.packages_with_changes)
+        unchanged_count = len(self.packages_unchanged)
+        drift_count = len(self.packages_with_drift)
+        lines.append(
+            f"📊 Summary: {total_count} package(s) planned | {changed_count} with changes | "
+            f"{unchanged_count} unchanged | {drift_count} drifted"
+        )
+
         if self.global_errors:
-            lines.append("Global Errors:")
+            lines.append("🚨 Global Pre-Flight Errors (Real deploy pipeline will fail):")
             for err in self.global_errors:
                 lines.append(f"  ❌ {err}")
         if self.drift_warnings:
-            lines.append("Drift Warnings:")
+            lines.append("⚠️  Drift Warnings:")
             for pkg, warn in self.drift_warnings.items():
-                lines.append(f"  ⚠️  {pkg}: {warn}")
+                lines.append(f"  • {pkg}: {warn}")
+            lines.append("     💡 Host changes detected. Run 'drift adopt' to absorb changes into src/ or pass '--force' to overwrite.")
         for pkg in self.packages_install_order:
             if pkg in self.package_previews:
                 p = self.package_previews[pkg]
                 if show_all or p.has_changes or p.error or p.has_drift or verbose:
-                    lines.append(p.format_text(verbose=verbose))
+                    lines.append(p.format_text(verbose=verbose, show_all=show_all))
         unchanged = self.packages_unchanged
-        if unchanged and not show_all:
-            lines.append(f"✨ {len(unchanged)} packages unchanged: {', '.join(unchanged)}")
+        if unchanged and not show_all and not verbose:
+            lines.append(f"✨ {len(unchanged)} package(s) unchanged: {', '.join(unchanged)}")
+        if self.global_errors or self.packages_with_errors:
+            lines.append("💥 Real deployment pipeline will fail due to detected errors.")
         return "\n".join(lines)
 
 

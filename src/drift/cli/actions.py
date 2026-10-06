@@ -636,7 +636,7 @@ def execute_plan(
     command_name: str = "plan",
 ) -> None:
     """Core function to execute deployment planning and preview workflow, shared by both CLI backends."""
-    from ..primitives.plan_repo import prepare_deploy_preview
+    from ..primitives.plan_repo import preview_deploy
     from ..primitives.deploy_repo import DeployOptions
 
     prepare_cli_environment(drift_root)
@@ -645,7 +645,7 @@ def execute_plan(
 
     opts = options if options is not None else DeployOptions(verbose=verbose)
 
-    preview = prepare_deploy_preview(
+    preview = preview_deploy(
         workspace_config=workspace_config,
         target_pkgs=packages,
         options=opts,

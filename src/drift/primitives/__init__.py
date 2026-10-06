@@ -96,7 +96,7 @@ from .deploy_repo import (
     DeployOptions,
 )
 from .plan_repo import (
-    prepare_deploy_preview,
+    preview_deploy,
     run_primitive_plan,
 )
 from .adopt_repo import (
@@ -179,7 +179,7 @@ __all__ = [
     "run_primitive_deploy_pipeline",
     "run_primitive_deploy_pipeline_with_error_handling",
     "DeployOptions",
-    "prepare_deploy_preview",
+    "preview_deploy",
     "run_primitive_plan",
     "run_primitive_adopt_drifts",
     "adopt_one_package_drifts",

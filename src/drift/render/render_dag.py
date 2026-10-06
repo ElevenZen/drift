@@ -48,6 +48,15 @@ from ..core.file_action import FileAction, FileActionType, format_action_line
 from .render_cache import NodeHashes
 
 
+def _log_digested_action(action: FileAction, context: "DigestionContext") -> None:
+    """Logs action line using logger.debug when context.silent=True, or logger.info otherwise."""
+    line = format_action_line(action, drift_root=context.drift_root)
+    if context.silent:
+        logger.debug(line)
+    else:
+        logger.info(line)
+
+
 # =====================================================================
 # Layer 1: Node Definitions & Invariants
 # =====================================================================
@@ -178,18 +187,23 @@ class StaticFileNode(FileNode[Path]):
             dst_path=self.dst_path,
         )
         context.result.actions.append(action)
-        logger.info(format_action_line(action, drift_root=context.drift_root))
+        _log_digested_action(action, context)
 
         if not context.dry_run:
             self.dst_path.parent.mkdir(parents=True, exist_ok=True)
             if self.src_path.resolve() != self.dst_path.resolve():
                 shutil.copy2(self.src_path, self.dst_path)
 
-        own_h = hash_file_disk(self.dst_path) or ""
+        own_h = context.hash_file(self.dst_path) or ""
+        self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
+        from .render_hasher import format_hash_log
+        logger.debug(
+            f"[Digest] StaticFileNode '{self.dst_path}': own_hash={format_hash_log(own_h)}, merkle_hash={format_hash_log(m_h)}."
+        )
         if context.cache is not None:
             context.cache.set(self.dst_path, self.hashes, src_path=self.src_path)
 
@@ -204,7 +218,7 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
     def digest(self, context: "DigestionContext") -> None:
         from ..core.constants import DRIFT_KEEP_FILE_NAME
         from .render_digester import check_and_apply_cache
-        from .render_hasher import hash_directory_disk, compute_merkle_node_hash
+        from .render_hasher import hash_directory_disk, compute_merkle_node_hash, format_hash_log
 
         keep_file = self.dst_path / DRIFT_KEEP_FILE_NAME
         if check_and_apply_cache(self, self.dst_path, context):
@@ -222,14 +236,18 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
             dst_path=self.dst_path,
         )
         context.result.actions.append(action)
-        logger.info(format_action_line(action, drift_root=context.drift_root))
+        _log_digested_action(action, context)
 
-        own_h = hash_directory_disk(self.dst_path) or ""
+        own_h = context.hash_directory(self.dst_path) or ""
+        self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.result.rendered_paths.append(keep_file)
         context.active_hashes.add(m_h)
+        logger.debug(
+            f"[Digest] DirectoryNode '{self.dst_path}': own_hash={format_hash_log(own_h)}, merkle_hash={format_hash_log(m_h)}."
+        )
         if context.cache is not None:
             context.cache.set(self.dst_path, self.hashes, src_path=self.src_path or self.dst_path)
 
@@ -316,7 +334,7 @@ class EngineOutputFileNode(FileNode[Path]):
             reason=self.engine_config.name,
         )
         context.result.actions.append(action)
-        logger.info(format_action_line(action, drift_root=context.drift_root))
+        _log_digested_action(action, context)
 
         if not context.dry_run:
             render_template_to_file(
@@ -327,11 +345,16 @@ class EngineOutputFileNode(FileNode[Path]):
                 input_file_path=in_file,
             )
 
-        own_h = hash_file_disk(self.dst_path) or ""
+        own_h = context.hash_file(self.dst_path) or ""
+        self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
+        from .render_hasher import format_hash_log
+        logger.debug(
+            f"[Digest] EngineOutputFileNode '{self.dst_path}': own_hash={format_hash_log(own_h)}, merkle_hash={format_hash_log(m_h)} (engine={self.engine_config.name if self.engine_config else 'none'})."
+        )
         if context.cache is not None:
             context.cache.set(self.dst_path, self.hashes, src_path=tmpl)
 
@@ -368,7 +391,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
         from .render_digester import prune_obsolete_config_files
-        from .render_hasher import hash_file_disk, compute_merkle_node_hash
+        from .render_hasher import hash_file_disk, compute_merkle_node_hash, format_hash_log
         from .render_lock import RenderBucket
         
         # 1. Parse and merge TOMLs from resolved dependencies
@@ -408,28 +431,27 @@ class PackageConfigNode(FileNode[Optional[Path]]):
             dst_path=target_path,
         )
         context.result.actions.append(action)
-        logger.info(format_action_line(action, drift_root=context.drift_root))
+        _log_digested_action(action, context)
 
         if not context.dry_run:
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
 
         # 5. Merkle hash calculation
-        own_h = hash_file_disk(self.dst_path) or ""
+        own_h = context.hash_file(self.dst_path) or ""
+        self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
+        logger.debug(
+            f"[Digest] PackageConfigNode '{self.dst_path}': own_hash={format_hash_log(own_h)}, merkle_hash={format_hash_log(m_h)}."
+        )
         if context.cache is not None:
             context.cache.set(self.dst_path, self.hashes, src_path=self.src_path)
 
         # 6. Prune obsolete configs
-        pruned = prune_obsolete_config_files(
-            drift_root=context.drift_root,
-            package_render_dir=context.package_render_dir,
-            active_paths=context.result.active_paths,
-            dry_run=context.dry_run,
-        )
+        pruned = prune_obsolete_config_files(context)
         context.result.pruned_paths.extend(pruned)
         for p in pruned:
             context.result.actions.append(
@@ -459,7 +481,6 @@ class PackageHooksNode(Node):
         super().__init__(value=pkg_name, depends_on=hook_nodes)
 
     def digest(self, context: "DigestionContext") -> None:
-        from ..core.constants import DRIFT_INTERNAL_DIR_NAME, DRIFT_INTERNAL_HOOKS_DIR_NAME
         from .render_digester import prune_obsolete_hooks
         from .render_lock import RenderBucket
 
@@ -467,13 +488,7 @@ class PackageHooksNode(Node):
         if self.merkle_hash:
             context.active_hashes.add(self.merkle_hash)
 
-        hooks_dir = context.package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-        pruned = prune_obsolete_hooks(
-            drift_root=context.drift_root,
-            hooks_dir=hooks_dir,
-            active_paths=context.result.active_paths,
-            dry_run=context.dry_run,
-        )
+        pruned = prune_obsolete_hooks(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
             FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)
@@ -498,12 +513,7 @@ class PackagePayloadNode(Node):
         if self.merkle_hash:
             context.active_hashes.add(self.merkle_hash)
 
-        pruned = prune_obsolete_payload_files(
-            drift_root=context.drift_root,
-            package_render_dir=context.package_render_dir,
-            active_paths=context.result.active_paths,
-            dry_run=context.dry_run,
-        )
+        pruned = prune_obsolete_payload_files(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
             FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)

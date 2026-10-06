@@ -739,7 +739,7 @@ class TestFileUtils(unittest.TestCase):
                 run_command([sys.executable, "-c", "import sys; sys.stdout.write('hello out\\n'); sys.stderr.write('hello err\\n')"])
 
             logs = "\n".join(cm.output)
-            self.assertIn("External:", logs)
+            self.assertIn("[External] ", logs)
             self.assertIn("stdout:\nhello out", logs)
             self.assertIn("stderr:\nhello err", logs)
         finally:

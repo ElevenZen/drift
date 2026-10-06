@@ -355,7 +355,7 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         self.assertIn("Host drift detected", text)
         self.assertIn("Package: zsh", text)
         self.assertIn("Package: tmux", text)
-        self.assertIn("1 packages unchanged: git", text)
+        self.assertIn("1 package(s) unchanged: git", text)
 
     def test_verbose_format_text_filtering_across_plans(self) -> None:
         """Verifies that format_text(verbose=False) hides SKIP_IDENTICAL and INFO_MESSAGE, and verbose=True shows them."""

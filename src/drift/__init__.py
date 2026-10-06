@@ -365,7 +365,7 @@ from .primitives import (
     run_primitive_deploy_pipeline,
     run_primitive_deploy_pipeline_with_error_handling,
     DeployOptions,
-    prepare_deploy_preview,
+    preview_deploy,
     run_primitive_plan,
     run_primitive_adopt_drifts,
     adopt_one_package_drifts,

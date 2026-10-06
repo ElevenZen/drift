@@ -91,14 +91,34 @@ class TestScopedPruning(unittest.TestCase):
             # Active set only includes main_cfg; local_cfg and intermediate_local_cfg are obsolete
             active_paths = [main_cfg]
 
+            ctx_dry = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_a",
+                package_render_dir=Path("render/pkg_a"),
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.CONFIG,
+                cache=RenderCache(),
+                dry_run=True,
+                result=DigestionResult(rendered_paths=active_paths),
+            )
             # 1. Dry run
-            dry_pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=True)
+            dry_pruned = prune_obsolete_config_files(ctx_dry)
             self.assertEqual(sorted(dry_pruned), sorted([local_cfg, intermediate_local_cfg]))
             self.assertTrue(local_cfg.is_file())
             self.assertTrue(intermediate_local_cfg.is_file())
 
             # 2. Live execution
-            pruned = prune_obsolete_config_files(drift_root, pkg_render, active_paths, dry_run=False)
+            ctx_live = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_a",
+                package_render_dir=Path("render/pkg_a"),
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.CONFIG,
+                cache=RenderCache(),
+                dry_run=False,
+                result=DigestionResult(rendered_paths=active_paths),
+            )
+            pruned = prune_obsolete_config_files(ctx_live)
             self.assertEqual(sorted(pruned), sorted([local_cfg, intermediate_local_cfg]))
             self.assertFalse(local_cfg.exists())
             self.assertFalse(intermediate_local_cfg.exists())
@@ -123,13 +143,33 @@ class TestScopedPruning(unittest.TestCase):
             # Active paths only contain active_hook
             active_paths = [active_hook]
 
+            ctx_dry = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_b",
+                package_render_dir=Path("render/pkg_b"),
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.HOOKS,
+                cache=RenderCache(),
+                dry_run=True,
+                result=DigestionResult(rendered_paths=active_paths),
+            )
             # Dry run: files intact
-            dry_pruned = prune_obsolete_hooks(drift_root, hooks_dir, active_paths, dry_run=True)
+            dry_pruned = prune_obsolete_hooks(ctx_dry)
             self.assertIn(obsolete_hook, dry_pruned)
             self.assertTrue(obsolete_hook.is_file())
 
             # Live run: obsolete hook and empty directories pruned
-            pruned = prune_obsolete_hooks(drift_root, hooks_dir, active_paths, dry_run=False)
+            ctx_live = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_b",
+                package_render_dir=Path("render/pkg_b"),
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.HOOKS,
+                cache=RenderCache(),
+                dry_run=False,
+                result=DigestionResult(rendered_paths=active_paths),
+            )
+            pruned = prune_obsolete_hooks(ctx_live)
             self.assertIn(obsolete_hook, pruned)
             self.assertIn(empty_folder, pruned)
             self.assertFalse(obsolete_hook.exists())
@@ -165,8 +205,18 @@ class TestScopedPruning(unittest.TestCase):
 
             active_paths = [active_file]
 
+            ctx_live = DigestionContext(
+                drift_root=drift_root,
+                package_name="pkg_c",
+                package_render_dir=Path("render/pkg_c"),
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.PAYLOAD,
+                cache=RenderCache(),
+                dry_run=False,
+                result=DigestionResult(rendered_paths=active_paths),
+            )
             # Prune payload files
-            pruned = prune_obsolete_payload_files(drift_root, pkg_render, active_paths, dry_run=False)
+            pruned = prune_obsolete_payload_files(ctx_live)
             self.assertIn(obsolete_file, pruned)
             self.assertIn(empty_payload_dir, pruned)
 

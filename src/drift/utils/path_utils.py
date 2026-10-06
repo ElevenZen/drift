@@ -178,7 +178,11 @@ def rebase_path(path: Optional[Path], old_base: Path, new_base: Path) -> Optiona
         rel = path.relative_to(old_base)
         return new_base / rel
     except ValueError:
-        return path
+        try:
+            rel = path.resolve().relative_to(old_base.resolve())
+            return new_base / rel
+        except (ValueError, RuntimeError):
+            return path
 
 
 

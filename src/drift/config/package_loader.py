@@ -263,10 +263,11 @@ def load_package_config_from_source_dir(
     package_dir: Path,
     workspace_config: Optional["WorkspaceConfig"] = None,
     dry_run: bool = False,
+    silent: bool = False,
 ) -> PackageConfig:
     """Loads, transforms, and validates the package configuration from its source directory."""
     if workspace_config is not None:
-        return _load_package_config_with_workspace(package_dir, workspace_config, dry_run=dry_run)
+        return _load_package_config_with_workspace(package_dir, workspace_config, dry_run=dry_run, silent=silent)
     return _load_package_config_static_fallback(package_dir)
 
 
@@ -274,6 +275,7 @@ def _load_package_config_with_workspace(
     package_dir: Path,
     workspace_config: "WorkspaceConfig",
     dry_run: bool = False,
+    silent: bool = False,
 ) -> PackageConfig:
     """Full Phase 1 Merkle DAG compilation pipeline for package configuration."""
     if dry_run:
@@ -283,11 +285,13 @@ def _load_package_config_with_workspace(
                 package_dir=package_dir,
                 workspace_config=workspace_config,
                 pkg_render_dir=temp_pkg_render_dir,
+                silent=silent,
             )
     return _execute_load_package_config_dag(
         package_dir=package_dir,
         workspace_config=workspace_config,
         pkg_render_dir=workspace_config.render_path / package_dir.name,
+        silent=silent,
     )
 
 
@@ -295,6 +299,7 @@ def _execute_load_package_config_dag(
     package_dir: Path,
     workspace_config: "WorkspaceConfig",
     pkg_render_dir: Path,
+    silent: bool = False,
 ) -> PackageConfig:
     """Executes the Phase 1 Merkle DAG compilation pipeline into specified pkg_render_dir."""
     pkg_name = package_dir.name
@@ -364,6 +369,11 @@ def _execute_load_package_config_dag(
     expand_node_dependencies(cfg_node, exp_ctx)
 
     lockfile = RenderLockfile.load_from_dir(pkg_render_dir)
+    render_dir_mask = (
+        workspace_config.render_path_mask / pkg_name
+        if workspace_config.render_path_mask is not None
+        else None
+    )
     ctx = DigestionContext(
         drift_root=workspace_config.drift_root,
         package_name=pkg_name,
@@ -371,6 +381,8 @@ def _execute_load_package_config_dag(
         lockfile=lockfile,
         bucket=RenderBucket.CONFIG,
         cache=workspace_config.render_cache,
+        silent=silent,
+        render_dir_mask=render_dir_mask,
     )
 
     with env_resolve_scope(env_res):

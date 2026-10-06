@@ -15,7 +15,8 @@ drift [--global-flags] <command> [arguments...] [--command-flags]
 | **`add`** | `drift add <pkg> <paths...> [-n] [--no-hooks] [--json]` | Import system files into a package with dot-prefix translation. |
 | **`status`** | `drift status [packages...] [--json]` | Audit template evolution, active system drift, and pending deltas. |
 | **`diff`** | `drift diff [packages...] [-t\|-s] [--stat] [-y] [--json]` | Visualize diffs across template, sandbox, and active system layers. |
-| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`deploy`** | `drift deploy [packages...] [-f] [-r\|--reinstall] [-c] [-n] [--no-deps] [--no-hooks] [--json]` | Sentinel-guarded sandbox compilation, staging, and deployment. |
+| **`plan`** | `drift plan [packages...] [-a] [-f] [-r] [-c] [--with-hooks] [--no-deps] [--json]` | Full-cycle deployment planning across all pipeline phases without modifying system state. |
 | **`rollback`** | `drift rollback [packages...] [-f] [--no-hooks] [--json]` | Rollback failed deployments and restore systems to last clean state. |
 | **`adopt`** | `drift adopt [packages...] [-i] [--accept-conflicts] [-f] [-n] [--json]` | Incorporate active runtime system drifts back into source templates. |
 | **`uninstall`** | `drift uninstall <packages...> [-f] [--detach] [-n] [--no-deps] [--no-hooks] [--json]` | Uninstall packages or detach management while preserving physical files. |
@@ -125,7 +126,7 @@ Provides deep comparisons between configuration layers:
 
 ---
 
-### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [--no-deps] [--no-hooks] [--json]`
+### F. Safe Deployment: `drift deploy [packages...] [--force] [-r|--reinstall] [-c] [-n|--dry-run] [--no-deps] [--no-hooks] [--json]`
 Deploys configurations using an atomic two-stage compilation and application engine.
 
 *   **Command Options**:
@@ -133,6 +134,7 @@ Deploys configurations using an atomic two-stage compilation and application eng
     - `--force / -f`: Bypasses the Stage 1 Sentinel Drift audit (overriding uncommitted host system changes), ignores midway failed states (`staging`/`installing` in `install/state.toml`), bypasses uncommitted modifications safeguards in `install/`, and automatically ignores missing required package dependencies. *(Note: Does **not** bypass `enable_install = false`).*
     - `-r / --reinstall`: Force full reinstallation of all packages, bypassing stage change skipping. By default, Drift analyzes staging changes (`installed_files`, hook scripts, and `drift_package.toml`) and skips deploying packages whose stage outputs are unchanged. Passing `-r` or `--reinstall` forces all lifecycle hooks and physical file applications to execute regardless of stage changes.
     - `-c / --clean / --no-cache`: Bypasses the render cache and lockfile, forcing clean re-rendering of all templates and static assets during the compilation phase.
+    - `-n / --dry-run`: Transparent alias to `drift plan`. Simulates the entire deployment lifecycle without modifying filesystem or Git state.
     - `--no-deps`: Bypasses missing required package dependency checks during topological ordering and staging.
     - `--no-hooks / --no-hook`: Completely bypasses executing all lifecycle hooks across rendering, deployment, and post-deploy garbage collection.
     - `--json`: Outputs a `DeployResult` in structured JSON format.
@@ -157,7 +159,54 @@ When deploying globally without specific package names, Drift automatically exec
 
 ---
 
-### G. Recovery: `drift rollback [packages...] [--force] [--no-hooks] [--json]`
+### G. Full-Cycle Deployment Planning: `drift plan [packages...] [options] [--json]`
+Simulates the entire multi-stage deployment pipeline end-to-end in an ephemeral sandbox without mutating the host filesystem, intermediate databases, or Git repositories.
+
+*   **Command Signature**: `drift plan [packages...] [-a / --all] [-f / --force] [-r / --reinstall] [-c / --clean] [--with-hooks] [--no-hooks] [--no-deps] [--json]`
+*   **Transparent Deploy Alias**: Running `drift deploy -n` or `drift deploy --dry-run` transparently routes to `drift plan`.
+*   **Architectural Specification**: For mathematical modeling, path masking algebra, and fault isolation proofs, consult [`docs/plan_engine.md`](plan_engine.md).
+
+#### Four-Phase Simulation Pipeline
+1.  **Phase 0: Non-Destructive Host Drift Audit**:
+    Inspects differences between `install/` state and live host files via `prepare_reverse_sync` without mutating `install/` or `state.toml`. If host drift is detected, sets preview status to `DRIFT_DETECTED` and warns the user (unless bypassed by `--force`).
+2.  **Phase 1: Ephemeral Sandbox Template Compilation**:
+    Executes in a disposable scratch directory (`tmp_sandbox/render/`). Validates Merkle hashes against existing lockfiles for fast cache hits, compiles changed templates, and rebases planned action paths back to canonical `render/` paths while keeping the real `render/.git` repository 100% clean.
+3.  **Phase 2: Sandbox Staging Planning**:
+    Diffs `sandbox_render/<pkg>` directly against canonical `install/<pkg>`, generating declarative `PackageStagePlan` actions (`CREATE_COPY`, `UPDATE_COPY`, `DELETE_FILE`, `UPDATE_PERMISSION`, `ENSURE_DIR`) without modifying `install/`.
+4.  **Phase 3: Physical Delivery Planning**:
+    Discovers candidate files, checks destination directory writability, and runs batch pre-flight guards against intra-batch and cross-package destination collisions. Uses **Symlink Path Masking** (`source_dir_mask`) to evaluate existing host symlinks accurately against canonical `install/` destinations, preventing false conflict reports.
+
+#### Command Options & Flags
+*   `packages...`: Optional package name(s) to plan. If omitted, plans all active packages across the workspace.
+*   `-a / --all / --show-all`: Displays complete action details for all packages, including unchanged ones (which are collapsed into a single summary line by default).
+*   `-f / --force`: Simulates deployment with forced drift bypass. Prevents host drift from halting the preview with exit code `3`.
+*   `-r / --reinstall`: Simulates full reinstallation of all packages, bypassing staging delta skipping and previewing all file deliveries.
+*   `-c / --clean / --no-cache`: Bypasses render cache and lockfile, forcing clean re-rendering simulation.
+*   `--with-hooks`: Authorizes execution of pre-flight lifecycle hooks (`probe` and `pre_source`) in isolated scratch sandboxes to resolve dynamic requirements and generated templates for high-accuracy planning.
+*   `--no-hooks / --no-hook`: Bypasses all lifecycle hooks (default behavior during planning for zero-mutation safety).
+*   `--no-deps`: Bypasses missing package dependency errors during topological ordering.
+*   `--json`: Outputs typed `WorkspaceDeployPreview` in structured JSON format.
+
+#### Fault Isolation & Prominent Failure Guidance
+*   **Per-Package Fault Isolation**: Compilation, staging, and installation errors are isolated to the specific failing package, allowing healthy sibling packages to be fully planned and inspected.
+*   **Downstream Dependency Blocking**: If package `A` fails template compilation, downstream package `B` (which depends on `A`) is cleanly marked blocked.
+*   **Failure Guidance Banner**: If any phase detects an unrecoverable conflict, broken permission, or compilation error, a prominent failure banner is displayed:
+    ```text
+    🚨 Global Pre-Flight Errors (Real deploy pipeline will fail):
+      ❌ Cross-package destination conflicts detected (1 collision(s)):
+        • '/home/user/.config/app.conf': Intra-batch collision between packages ['pkg_a', 'pkg_b']
+
+    💥 Real deployment pipeline will fail due to detected errors.
+    ```
+
+#### Exit Codes
+*   `0`: Success (all planned packages are valid and ready to deploy).
+*   `1`: General/Domain Error (syntax error, cyclic dependency, template compilation failure, permission error, cross-package collision).
+*   `3`: System drift detected on target packages without `--force`.
+
+---
+
+### H. Recovery: `drift rollback [packages...] [--force] [--no-hooks] [--json]`
 Reverts failed midway deployments and restores system files to the last committed clean state.
 *   **Command Options**:
     - `packages...`: Optional package name(s) to rollback. If omitted, discovers all packages in the local state database.
@@ -172,7 +221,7 @@ Reverts failed midway deployments and restores system files to the last committe
 
 ---
 
-### H. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [options] [--json]`
+### I. Synchronization & Bidirectional Drift Adoption: `drift adopt [packages...] [options] [--json]`
 Incorporate runtime system and GUI changes back into your declarative source templates under `src/`.
 
 *   **Command Options**:
@@ -216,7 +265,7 @@ Incorporate runtime system and GUI changes back into your declarative source tem
 
 ---
 
-#### I. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [-n] [--no-deps] [--no-hooks] [--json]`
+### J. Uninstallation & Detachment: `drift uninstall <packages...> [--force] [--detach] [-n] [--no-deps] [--no-hooks] [--json]`
 *   **Command Options**:
     - `<packages...>`: Package name(s) to uninstall.
     - `--force / -f`: Bypasses the active package safeguard (allowing uninstallation of packages that are still active/enabled in `config/drift_workspace.toml`) and bypasses remaining package broken dependency guards.
@@ -230,19 +279,19 @@ Incorporate runtime system and GUI changes back into your declarative source tem
 
 ---
 
-### J. Garbage Collection: `drift gc [-n] [--no-hooks] [--json]`
+### K. Garbage Collection: `drift gc [-n] [--no-hooks] [--json]`
 Identifies and purges orphaned and untracked database entities across the workspace.
 *   **Orphan Packages**: Uninstalls packages present in `install/` state database but disabled in `drift_workspace.toml`.
 *   **Zombie Folders**: Identifies and purges package subdirectories in `render/` and `install/` that lack valid configuration files.
 
 ---
 
-### K. Health Audit & Workspace Repair: `drift repair [-n] [--json]`
+### L. Health Audit & Workspace Repair: `drift repair [-n] [--json]`
 Audits and self-heals damaged, missing, or partially-initialized workspace components (directories, Git sub-repositories, `.gitignore` entries, configuration templates, and state registries).
 
 ---
 
-### L. Workspace Cloning & Bootstrapping: `drift clone <repository> [destination] [--branch] [--depth] [--json]`
+### M. Workspace Cloning & Bootstrapping: `drift clone <repository> [destination] [--branch] [--depth] [--json]`
 Clones a remote or local Git repository and immediately reconstructs and heals the workspace for deployment.
 *   **Command Signature**: `drift clone <repository> [destination] [--branch / -b <branch>] [--depth <depth>] [--no-repair] [--json]`
 *   **Real-Time Output Streaming**: Progress from `git clone` is streamed in real time to the terminal. When `--json` is active, streaming output is cleanly suppressed to guarantee pure, machine-readable JSON output.
@@ -252,14 +301,14 @@ Clones a remote or local Git repository and immediately reconstructs and heals t
 
 ---
 
-### M. Package Runtime Health Probing: `drift health [packages...] [--from install|source] [--timeout] [--json]`
+### N. Package Runtime Health Probing: `drift health [packages...] [--from install|source] [--timeout] [--json]`
 Executes runtime health check probes on packages to verify if deployed services, daemons, terminal environments, and host tools are operating properly.
 *   **Command Signature**: `drift health [packages...] [--from <install|source>] [--timeout <seconds>] [--json]`
 *   **Execution Invariants**: Reads from `install/<pkg>/` (`--from install`, default) or `src/<pkg>/` (`--from source`), executing with probe script directory (`hook_path.parent`) as active CWD in user space and injecting all package environment variables. The target directory is accessible via `$drift_package_target_dir`.
 
 ---
 
-### N. Shell Tab-Completion Generation: `drift complete [<shell>] [--install] [--json]`
+### O. Shell Tab-Completion Generation: `drift complete [<shell>] [--install] [--json]`
 Generates zero-latency native shell tab-completion scripts compiled directly from the authoritative CLI schema, or installs them directly into user completion directories.
 *   **Command Signature**: `drift complete [shell] [--install / -i] [--json]`
 *   **Supported Shells**: `bash`, `zsh`, `fish`, `nu` (or `nushell`). (If omitted, auto-detects from `$SHELL`).
@@ -287,14 +336,14 @@ Generates zero-latency native shell tab-completion scripts compiled directly fro
 
 ---
 
-### O. Mini User Manual: `drift help [topic]`
+### P. Mini User Manual: `drift help [topic]`
 Provides built-in documentation with automatic terminal pager fallback.
 *   **Syntax**: `drift help [topic]`
 *   **Available Topics**: `overall`, `package`, `src`, `render`, `install`, `fcd`, `ignore`, `drift_package.toml`, `drift_workspace.toml`, `workspace`, `health`, `clone`, `faq`.
 
 ---
 
-### P. Low-Level Control Commands
+### Q. Low-Level Control Commands
 For advanced continuous integration, scripting, and pipeline automation:
 1.  **`drift render [packages...] [-c] [-n] [--with-hooks|--no-hooks] [--json]`**:
     Incremental Merkle DAG compilation of declarative source templates into the isolated `render/` sandbox (`Primitive 2`).

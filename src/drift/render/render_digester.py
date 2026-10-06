@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional, Set, Sequence, Dict
+from typing import List, Optional, Set, Sequence, Dict, Union
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ from ..core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_RENDER_DIR_NAME,
     DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
+    DRIFT_INTERNAL_HOOKS_DIR_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DirMode,
@@ -110,6 +111,8 @@ class DigestionContext:
     cache: RenderCache
     force: bool = False
     dry_run: bool = False
+    silent: bool = False
+    render_dir_mask: Optional[Path] = None
 
     # Result container mutated during traversal (all paths relative to drift_root)
     result: DigestionResult = field(default_factory=DigestionResult)
@@ -119,6 +122,33 @@ class DigestionContext:
     def __post_init__(self) -> None:
         if not self.result.updated_lockfile.get_all_hashes():
             self.result.updated_lockfile = self.lockfile
+
+    def mask_path(self, path: Path) -> Path:
+        """Translates a sandbox rendered path to its masked workspace path if render_dir_mask is configured."""
+        if self.render_dir_mask is None:
+            return path
+        from ..utils.path_utils import rebase_path
+        return rebase_path(path, self.package_render_dir, self.render_dir_mask)
+
+    def hash_file(self, file_path: Path) -> Optional[str]:
+        """Computes file hash on disk, substituting masked path if in sandbox."""
+        from .render_hasher import hash_file_disk
+        masked = self.mask_path(file_path)
+        return hash_file_disk(file_path, path_mask=masked if masked != file_path else None)
+
+    def hash_directory(self, dir_path: Path) -> Optional[str]:
+        """Computes directory hash on disk, substituting masked path if in sandbox."""
+        from .render_hasher import hash_directory_disk
+        masked = self.mask_path(dir_path)
+        return hash_directory_disk(dir_path, path_mask=masked if masked != dir_path else None)
+
+    def log_action(self, action: FileAction) -> None:
+        """Logs action line using logger.debug when silent=True, or logger.info otherwise."""
+        line = format_action_line(action, drift_root=self.drift_root)
+        if self.silent:
+            logger.debug(line)
+        else:
+            logger.info(line)
 
     def save_lockfile(self) -> None:
         """Saves updated lockfile to package render directory unless dry_run is set."""
@@ -137,9 +167,18 @@ def check_and_apply_cache(
     Returns True if cache hit (skipped), False if execution/generation is needed.
     """
     if context.force:
+        logger.debug(f"[Cache] Force bypass (context.force=True) for '{target_path}'.")
         return False
 
-    cached = context.lockfile.check_lockfile_matches(context.bucket, node, context.drift_root)
+    masked = context.mask_path(target_path)
+    mask_path = masked if masked != target_path else None
+    # logger.debug(f"[Cache] Evaluating cache for '{target_path}' (bucket={context.bucket.value}, mask={mask_path})...")
+    cached = context.lockfile.check_lockfile_matches(
+        context.bucket,
+        node,
+        context.drift_root,
+        path_mask=mask_path,
+    )
     if cached is not None:
         node.hashes = cached
         context.result.skipped_paths.append(target_path)
@@ -157,13 +196,17 @@ def check_and_apply_cache(
             reason=engine_name,
         )
         context.result.actions.append(action)
+        from .render_hasher import format_hash_log
         logger.debug(
             format_action_line(
                 action,
                 drift_root=context.drift_root,
             )
         )
+        logger.debug(f"[Cache] Cache HIT for '{target_path}': merkle_hash={format_hash_log(cached.merkle_hash)}.")
         return True
+
+    logger.debug(f"[Cache] Cache MISS for '{target_path}' (bucket={context.bucket.value}).")
     return False
 
 
@@ -171,13 +214,10 @@ def check_and_apply_cache(
 # Layer 2: Scoped Pruning Subsystems
 # =====================================================================
 
-def prune_obsolete_config_files(
-    drift_root: Path,
-    package_render_dir: Path,
-    active_paths: Sequence[Path],
-    dry_run: bool = False,
-) -> List[Path]:
+def prune_obsolete_config_files(context: DigestionContext) -> List[Path]:
     """Prunes unrendered config files (drift_package.toml, drift_package.local.toml) from .drift/ and .drift/render/."""
+    drift_root = context.drift_root
+    package_render_dir = context.package_render_dir
     render_internal = drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
     candidates = [
         drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
@@ -187,32 +227,29 @@ def prune_obsolete_config_files(
         render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
         render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
     ]
-    active_set = set(active_paths)
+    active_set = set(context.result.active_paths)
     pruned: List[Path] = []
 
     for cand in candidates:
         if cand.is_file() and cand not in active_set:
-            if not dry_run:
+            if not context.dry_run:
                 cand.unlink()
             action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=cand)
-            logger.info(format_action_line(action, drift_root=drift_root))
+            context.log_action(action)
             pruned.append(cand)
 
     return sorted(pruned)
 
 
-def prune_obsolete_hooks(
-    drift_root: Path,
-    hooks_dir: Path,
-    active_paths: Sequence[Path],
-    dry_run: bool = False,
-) -> List[Path]:
-    """Removes obsolete hook scripts and empty directory placeholders from hooks_dir."""
+def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
+    """Removes obsolete hook scripts and empty directory placeholders from .drift/hooks/."""
+    drift_root = context.drift_root
+    hooks_dir = context.package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
     disk_hooks = drift_root / hooks_dir
     if not disk_hooks.is_dir():
         return []
 
-    active_set = set(active_paths)
+    active_set = set(context.result.active_paths)
     candidates = list_folder_paths(disk_hooks, base_rel=drift_root / hooks_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
@@ -220,36 +257,33 @@ def prune_obsolete_hooks(
         if cand not in active_set:
             disk_cand = drift_root / cand
             if disk_cand.is_file():
-                if not dry_run:
+                if not context.dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, disk_hooks)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
-                logger.info(format_action_line(action, drift_root=drift_root))
+                context.log_action(action)
                 pruned.append(cand)
             elif disk_cand.is_dir():
-                if not dry_run:
+                if not context.dry_run:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, disk_hooks)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
-                logger.info(format_action_line(action, drift_root=drift_root))
+                context.log_action(action)
                 pruned.append(cand)
 
     return sorted(pruned)
 
 
-def prune_obsolete_payload_files(
-    drift_root: Path,
-    package_render_dir: Path,
-    active_paths: Sequence[Path],
-    dry_run: bool = False,
-) -> List[Path]:
+def prune_obsolete_payload_files(context: DigestionContext) -> List[Path]:
     """Removes obsolete payload files and empty directories, strictly shielding .drift/."""
+    drift_root = context.drift_root
+    package_render_dir = context.package_render_dir
     disk_pkg = drift_root / package_render_dir
     if not disk_pkg.is_dir():
         return []
 
-    active_set = set(active_paths)
+    active_set = set(context.result.active_paths)
     candidates = list_folder_paths(disk_pkg, base_rel=drift_root / package_render_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
@@ -262,19 +296,19 @@ def prune_obsolete_payload_files(
         if cand not in active_set:
             disk_cand = drift_root / cand
             if disk_cand.is_file():
-                if not dry_run:
+                if not context.dry_run:
                     disk_cand.unlink()
                     prune_empty_parents(disk_cand.parent, disk_pkg)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
-                logger.info(format_action_line(action, drift_root=drift_root))
+                context.log_action(action)
                 pruned.append(cand)
             elif disk_cand.is_dir():
-                if not dry_run:
+                if not context.dry_run:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
                         prune_empty_parents(disk_cand.parent, disk_pkg)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
-                logger.info(format_action_line(action, drift_root=drift_root))
+                context.log_action(action)
                 pruned.append(cand)
 
     return sorted(pruned)

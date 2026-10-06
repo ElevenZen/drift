@@ -47,6 +47,7 @@ This document provides a concise, high-density architecture reference, primitive
 | **P14** | `drift repair` | [`src/drift/primitives/workspace_repair.py`](../src/drift/primitives/workspace_repair.py) | `run_primitive_14_repair_workspace` | `RepairResult` |
 | **P15** | `drift diff` | [`src/drift/primitives/workspace_diff.py`](../src/drift/primitives/workspace_diff.py) | `run_primitive_15_workspace_diff` | `DiffResult` |
 | **P16** | `drift status` | [`src/drift/primitives/workspace_status.py`](../src/drift/primitives/workspace_status.py) | `run_primitive_16_workspace_status` | `StatusResult` |
+| **P17** | `drift plan` | [`src/drift/primitives/plan_repo.py`](../src/drift/primitives/plan_repo.py) | `preview_deploy` | `WorkspaceDeployPreview` |
 
 ---
 
@@ -160,6 +161,11 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)`](../src/drift/primitives/package_assertions.py): Read-only pre-flight assertion guard verifying that removing target packages does not break dependencies of remaining installed packages.
 *   [`resolve_target_package_order(target_metadata, state_registry, workspace_config, no_deps=False) -> List[str]`](../src/drift/primitives/package_assertions.py): Assembles full package universe and resolves topologically sorted action order for staging and installation.
 
+### [`primitives/plan_repo.py`](../src/drift/primitives/plan_repo.py) (Full-Cycle Dry-Run Engine; consult [`docs/plan_engine.md`](plan_engine.md))
+*   [`preview_deploy(workspace_config, target_pkgs=(), options=None) -> WorkspaceDeployPreview`](../src/drift/primitives/plan_repo.py): End-to-end multi-phase simulation of host drift audit, sandbox template rendering, staging diffs, batch conflict validation, and physical delivery planning.
+*   [`enter_plan_sandbox(workspace_config)`](../src/drift/primitives/plan_repo.py): Context manager creating disposable sandbox directory and configuring masked `WorkspaceConfig`.
+*   [`execute_sandbox_render_phase(...)`](../src/drift/primitives/plan_repo.py), [`execute_sandbox_stage_phase(...)`](../src/drift/primitives/plan_repo.py), [`execute_sandbox_install_phase(...)`](../src/drift/primitives/plan_repo.py): Discrete stage executors trapping errors per package with downstream dependency blocking.
+
 ### [`primitives/uninstall_repo.py`](../src/drift/primitives/uninstall_repo.py) & [`primitives/rollback_repo.py`](../src/drift/primitives/rollback_repo.py)
 *   [`UninstallConfig(force=False, dry_run=False, detach=False, no_deps=False, flags=None)`](../src/drift/primitives/uninstall_repo.py): Configuration options controlling package uninstallation behavior.
 *   [`PackageUninstallContext(pkg_name, target_dir, install_method, deployed_files, sudo, install_pkg_dir, backup_pkg_dir, drift_root, hooks=None, detach=False, is_missing_install_dir=False)`](../src/drift/primitives/uninstall_repo.py): Minimal uninstallation domain context with derived `.file_action_context` (using `DELETED_FILES` backup subfolder) and scoped `.package_envs()`.
@@ -242,6 +248,10 @@ This document provides a concise, high-density architecture reference, primitive
     *   **Principle of Change Invariance**: If inputs, templates, environment variables, and engine definitions are identical ($\Delta [I, T, V, E] = \emptyset$), re-rendering is skipped via cryptographic Merkle proofs ($\text{SHA256}(\text{NodeType} \parallel \text{own_hash} \parallel \text{":"} \parallel \text{deps_str})$).
     *   **3-Bucket Lockfile Isolation**: `.drift/render_lock.json` maintains strict isolation between `config_hashes`, `hook_hashes`, and `payload_hashes` without cross-phase clobbering.
     *   **Scoped Shielding**: Phase 3 payload pruning strictly shields the `.drift/` internal control plane. For complete mathematical proofs and design specifications, consult [`docs/render_dag.md`](render_dag.md).
+13. **Full-Cycle Dry-Run Engine & Path Mask Invariant**:
+    *   `drift plan` and `drift deploy --dry-run` simulate the entire multi-stage deployment pipeline in an ephemeral sandbox directory (`tmp_sandbox/render/`) without mutating `render/`, `install/`, host files, or Git state ($\Delta \mathcal{W} = \varnothing$).
+    *   **Symlink Path Masking**: Evaluates host symlink identity against canonical `install/` destination paths (`source_dir_mask`), preventing false conflict warnings on existing symlinks.
+    *   **Fault Isolation**: Decouples render, stage, and install planning per package with dependency checking turned off during per-package loops. Intra-batch collisions are checked upfront and surfaced via a prominent pipeline failure banner. For complete specifications, consult [`docs/plan_engine.md`](plan_engine.md).
 
 ---
 

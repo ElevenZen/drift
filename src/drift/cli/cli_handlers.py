@@ -244,18 +244,20 @@ def handle_plan(
     """Simulates deployment planning and previews actions without modifying system state."""
     cli_ctx = _extract_cli_context(ctx)
     pkgs = packages or ()
-    options = DeployOptions(
-        force=force,
-        reinstall=reinstall,
-        no_deps=no_deps,
-        no_hooks=no_hooks,
-        with_hooks=with_hooks,
-        no_cache=no_cache,
-        dry_run=True,
-        show_all=show_all,
-        verbose=cli_ctx.verbose,
-    )
     with cli_error_boundary(json_mode=cli_ctx.json_mode, use_rich=cli_ctx.use_rich, raw_errors=cli_ctx.raw_errors):
+        if no_hooks and with_hooks:
+            raise ValueError("Cannot specify both --no-hooks and --with-hooks.")
+        options = DeployOptions(
+            force=force,
+            reinstall=reinstall,
+            no_deps=no_deps,
+            no_hooks=no_hooks,
+            with_hooks=with_hooks,
+            no_cache=no_cache,
+            dry_run=True,
+            show_all=show_all,
+            verbose=cli_ctx.verbose,
+        )
         drift_root = cli_ctx.get_drift_root()
         execute_plan(
             drift_root=drift_root,

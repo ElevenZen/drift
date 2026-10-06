@@ -142,7 +142,7 @@ def run_command(
                         cmd = f"sudo {cmd}"
 
     cmd_str = cmd if isinstance(cmd, str) else shlex.join(cmd)
-    logger.debug(f"External: {cmd_str}")
+    logger.debug(f"[External]  {cmd_str}")
 
     if streaming:
         params: Any = {"check": True}
@@ -158,7 +158,7 @@ def run_command(
     params.update(kwargs)
     try:
         res = subprocess.run(cmd, **params)
-        logger.debug(f"Command finished with exit code {res.returncode}: {cmd_str}")
+        logger.debug(f"[External] Command exit code {res.returncode}: {cmd_str}")
         if not suppress_output:
             stdout_msg = format_output(res.stdout)
             if stdout_msg:
