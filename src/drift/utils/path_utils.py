@@ -13,6 +13,7 @@ for tilde expansion). They operate on path representations only.
     decode_dot_prefix(relative_path) — Converts '.config' → 'dot-config' in path segments.
     relative_path_between(from_dir, to_path) — Computes relative path between two absolute paths.
     compute_relative_symlink_target(source_path, link_parent_dir) — Robust symlink target with cross-drive fallback.
+    rebase_path(path, old_base, new_base) — Pure path rebasing from old_base to new_base prefix.
 
 ===============================================================================
 """
@@ -21,7 +22,7 @@ import os
 import sys
 import re
 from pathlib import Path
-from typing import Union
+from typing import Union, Optional
 
 
 COMMON_WINDOWS_PATH_ENVS = {
@@ -164,6 +165,21 @@ def to_relative_path(path: Path, base_dir: Path) -> Path:
 def to_relative_posix(path: Path, base_dir: Path) -> str:
     """Returns a relative POSIX path string if path is relative to base_dir, else the path as POSIX."""
     return to_relative_path(path, base_dir).as_posix()
+
+
+def rebase_path(path: Optional[Path], old_base: Path, new_base: Path) -> Optional[Path]:
+    """Rebases a path from an old directory prefix to a new directory prefix.
+
+    If path is None or does not share old_base as prefix, returns path unmodified.
+    """
+    if path is None:
+        return None
+    try:
+        rel = path.relative_to(old_base)
+        return new_base / rel
+    except ValueError:
+        return path
+
 
 
 

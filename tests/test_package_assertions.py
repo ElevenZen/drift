@@ -16,6 +16,7 @@ from drift.core.state_registry import StateRegistry
 from drift.core.exceptions import (
     DriftError,
     ConfigError,
+    CyclicDependencyError,
     DriftDetectedError,
     HookMissingError,
     MidwayTransactionError,
@@ -536,9 +537,11 @@ class TestPackageAssertions(unittest.TestCase):
             "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_b")]),
             "pkg_b": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
         }
-        with self.assertRaises(ConfigError) as ctx:
+        with self.assertRaises(CyclicDependencyError) as ctx:
             resolve_package_install_order(deps_map)
         self.assertIn("Cyclic package dependency detected", str(ctx.exception))
+        self.assertIsInstance(ctx.exception, ConfigError)
+        self.assertIsInstance(ctx.exception, ValueError)
 
     def test_resolve_package_uninstall_order(self) -> None:
         # If pkg_c depends on pkg_b, and pkg_b depends on pkg_a:
@@ -565,8 +568,10 @@ class TestPackageAssertions(unittest.TestCase):
         cyclic_deps = {
             "pkg_a": PackageDependencies(items=[PackageDependency(name="pkg_a")]),
         }
-        with self.assertRaises(ConfigError):
+        with self.assertRaises(CyclicDependencyError) as ctx:
             assert_no_cyclic_package_dependencies(cyclic_deps)
+        self.assertIsInstance(ctx.exception, ConfigError)
+        self.assertIsInstance(ctx.exception, ValueError)
 
     def test_assert_no_broken_dependencies_on_uninstall(self) -> None:
         meta_b = PackageConfig(

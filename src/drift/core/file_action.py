@@ -24,13 +24,15 @@ Layer 1: Domain Action Types & Context Models
         Declarative specification of an action with src_path, dst_path, and reason.
     - FileActionExecutionContext:
         Runtime flags for host execution (sudo, resolve_symlinks).
+    - rebase_file_action(action, old_base, new_base) -> FileAction:
+        Returns a copy of FileAction with src_path and dst_path rebased.
 ===============================================================================
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import FrozenSet, Optional, Sequence
@@ -47,7 +49,7 @@ from ..utils.file_ops import (
     remove_tree,
     write_file,
 )
-from ..utils.path_utils import compute_relative_symlink_target, to_relative_posix
+from ..utils.path_utils import compute_relative_symlink_target, to_relative_posix, rebase_path
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +110,13 @@ CREATE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
     FileActionType.CREATE_KEEP_FILE,
 })
 
+NO_CHANGE_ACTION_TYPES: FrozenSet[FileActionType] = frozenset({
+    FileActionType.SKIP_IDENTICAL,
+    FileActionType.INFO_MESSAGE,
+})
+NON_MUTATING_ACTION_TYPES: FrozenSet[FileActionType] = NO_CHANGE_ACTION_TYPES
+
+
 
 @dataclass
 class FileAction(SerializableModel):
@@ -121,12 +130,26 @@ class FileAction(SerializableModel):
         if self.action_type == FileActionType.SKIP_IDENTICAL and self.src_path is None:
             raise ValueError(f"FileActionType.SKIP_IDENTICAL must have src_path set, got dst_path='{self.dst_path}'")
 
+    def rebased(self, old_base: Path, new_base: Path) -> FileAction:
+        """Returns a copy of this FileAction with src_path and dst_path rebased from old_base to new_base."""
+        return rebase_file_action(self, old_base, new_base)
+
+
+def rebase_file_action(action: FileAction, old_base: Path, new_base: Path) -> FileAction:
+    """Returns a new FileAction instance with both src_path and dst_path rebased from old_base to new_base."""
+    return replace(
+        action,
+        src_path=rebase_path(action.src_path, old_base, new_base),
+        dst_path=rebase_path(action.dst_path, old_base, new_base),
+    )
+
 
 @dataclass(frozen=True)
 class FileActionExecutionContext:
     """Encapsulates host filesystem permissions and symlink resolution flags for executing file actions."""
     sudo: bool = False
     resolve_symlinks: bool = True
+
 
 
 # =============================================================================

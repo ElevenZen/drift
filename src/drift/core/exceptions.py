@@ -49,6 +49,22 @@ class ConfigError(DriftError, ValueError, TypeError):
         super().__init__(message, packages=packages, **kwargs)
 
 
+class CyclicDependencyError(ConfigError, ValueError):
+    """Raised when circular dependencies are detected in packages, render engines, or DAG nodes."""
+    exit_code: int = ExitCode.CONFIG_ERROR
+
+    def __init__(
+        self,
+        message: str = "",
+        packages: Optional[Sequence[str]] = None,
+        cycle: Optional[Sequence[str]] = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(message, packages=packages, **kwargs)
+        self.cycle: List[str] = list(cycle) if cycle is not None else []
+
+
+
 class DriftDetectedError(DriftError, RuntimeError):
     """Raised in stage_repo / deploy operations when unadopted live host drift or uncommitted install modifications block staging."""
     exit_code: int = ExitCode.DRIFT_DETECTED

@@ -46,7 +46,7 @@ Pre-flight Assertion Guards:
 
     - assert_no_cyclic_package_dependencies(pkg_dependencies_map)
         * Validates that package dependencies form a valid DAG with no cyclic dependencies.
-        * Prunes absent dependencies prior to cycle detection.
+        * Prunes absent dependencies prior to cycle detection and raises CyclicDependencyError.
 
     - assert_no_broken_dependencies_on_uninstall(packages_to_uninstall, remaining_metadata)
         * Validates that removing packages will not leave remaining installed packages with unsatisfied dependencies.
@@ -54,7 +54,7 @@ Pre-flight Assertion Guards:
 
     - resolve_package_install_order(pkg_dependencies_map)
         * Resolves topological install order from package dependency declarations.
-        * Prunes absent dependencies from DAG edges and detects cycles using Kahn's algorithm.
+        * Prunes absent dependencies from DAG edges and detects cycles using Kahn's algorithm (CyclicDependencyError).
 
     - resolve_package_uninstall_order(pkg_dependencies_map)
         * Resolves reverse topological uninstallation order (dependents before prerequisites).
@@ -108,6 +108,7 @@ from ..core.state_registry import StateRegistry
 from ..core.exceptions import (
     ConfigError,
     CrossPackageCollisionError,
+    CyclicDependencyError,
     DriftDetectedError,
     HookMissingError,
     InstallCollisionError,
@@ -497,7 +498,7 @@ def assert_no_cyclic_package_dependencies(
     Does NOT fail on missing dependencies (absent dependencies are pruned prior to cycle check).
 
     Raises:
-        ConfigError: If a cyclic package dependency is detected.
+        CyclicDependencyError: If a cyclic package dependency is detected.
     """
     available = set(pkg_dependencies_map.keys())
     graph: Dict[str, Set[str]] = {
@@ -506,7 +507,7 @@ def assert_no_cyclic_package_dependencies(
     }
     topological_sort(
         graph,
-        error_cls=ConfigError,
+        error_cls=CyclicDependencyError,
         cycle_msg_prefix="Cyclic package dependency detected",
     )
 
@@ -557,7 +558,7 @@ def resolve_package_install_order(
         List of package names in valid topological order (prerequisites before dependents).
 
     Raises:
-        ConfigError: If a cyclic package dependency is detected.
+        CyclicDependencyError: If a cyclic package dependency is detected.
     """
     available = set(pkg_dependencies_map.keys())
 
@@ -574,7 +575,7 @@ def resolve_package_install_order(
     # Kahn's algorithm via generic topological_sort
     return topological_sort(
         graph,
-        error_cls=ConfigError,
+        error_cls=CyclicDependencyError,
         cycle_msg_prefix="Cyclic package dependency detected",
     )
 

@@ -45,7 +45,7 @@ from ..core.constants import (
     DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
     DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
 )
-from ..core.exceptions import RenderCollisionError, ConfigError
+from ..core.exceptions import RenderCollisionError, ConfigError, CyclicDependencyError
 from ..utils.path_utils import is_relative_to, encode_dot_prefix, to_relative_posix
 from .render_cache import RenderCache
 from .render_dag import (
@@ -256,7 +256,7 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
         if engine.input_file is not None:
             if engine.name in ctx.visiting_engines:
                 cycle_str = " -> ".join(ctx.visiting_engines + [engine.name])
-                raise ValueError(
+                raise CyclicDependencyError(
                     f"Cyclic dependency detected: render engine inputs form a cycle: {cycle_str}."
                 )
             ctx.visiting_engines.append(engine.name)
@@ -298,7 +298,7 @@ def expand_unknown_path(path: Path, ctx: ExpansionContext) -> Node:
     if key in ctx.node_refs:
         return ctx.node_refs[key]
     if key in ctx.visiting_paths:
-        raise ValueError(
+        raise CyclicDependencyError(
             f"Cyclic dependency detected: path '{path.as_posix()}' forms a cycle during expansion."
         )
     ctx.visiting_paths.add(key)

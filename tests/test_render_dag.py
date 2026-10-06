@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 from unittest.mock import MagicMock
 
-from drift.core.exceptions import RenderCollisionError
+from drift.core.exceptions import RenderCollisionError, CyclicDependencyError
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_dag import (
     Node,
@@ -543,9 +543,10 @@ class TestRenderDAG(unittest.TestCase):
         node_b.depends_on.append(node_c)
         node_c.depends_on.append(node_a)  # Cycle!
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(CyclicDependencyError) as cm:
             topological_sort_nodes(node_a)
         self.assertIn("Cyclic dependency detected in render graph", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
 
     def test_expand_tree_detects_direct_circular_engine_inputs(self) -> None:
         """Validates that direct 2-engine cycles (A -> B -> A) raise ValueError during tree expansion."""
@@ -583,9 +584,10 @@ class TestRenderDAG(unittest.TestCase):
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(CyclicDependencyError) as cm:
             expand_unknown_path(Path("/workspace/src/test_pkg/main.suf_a"), ctx)
         self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_b -> engine_a", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
 
     def test_expand_tree_detects_self_referencing_engine_inputs(self) -> None:
         """Validates that self-referencing engine inputs (A -> A) raise ValueError during tree expansion."""
@@ -608,9 +610,10 @@ class TestRenderDAG(unittest.TestCase):
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(CyclicDependencyError) as cm:
             expand_unknown_path(Path("/workspace/src/test_pkg/main.suf_a"), ctx)
         self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_a", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
 
     def test_expand_tree_detects_transitive_circular_engine_inputs(self) -> None:
         """Validates that multi-level engine cycles (A -> B -> C -> A) raise ValueError during tree expansion."""
@@ -648,12 +651,13 @@ class TestRenderDAG(unittest.TestCase):
             path_translation={Path("/workspace/src/test_pkg"): Path("/workspace/render/test_pkg")},
         )
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(CyclicDependencyError) as cm:
             expand_unknown_path(Path("/workspace/src/test_pkg/start.suf_a"), ctx)
         self.assertIn("Cyclic dependency detected: render engine inputs form a cycle: engine_a -> engine_b -> engine_c -> engine_a", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
 
     def test_expand_unknown_path_detects_cyclic_path_expansion(self) -> None:
-        """Validates that a path recursively referencing itself during expansion raises ValueError."""
+        """Validates that a path recursively referencing itself during expansion raises CyclicDependencyError."""
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
@@ -666,9 +670,10 @@ class TestRenderDAG(unittest.TestCase):
         test_path = Path("/workspace/loop.txt")
         ctx.visiting_paths.add(to_node_key(test_path))
 
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(CyclicDependencyError) as cm:
             expand_unknown_path(test_path, ctx)
         self.assertIn("Cyclic dependency detected: path '/workspace/loop.txt' forms a cycle during expansion", str(cm.exception))
+        self.assertIsInstance(cm.exception, ValueError)
 
 
 if __name__ == "__main__":

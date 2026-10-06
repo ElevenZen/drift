@@ -222,12 +222,7 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
             dst_path=self.dst_path,
         )
         context.result.actions.append(action)
-        action_line = format_action_line(action, drift_root=context.drift_root)
-
-        if dir_existed:
-            logger.debug(action_line)
-        else:
-            logger.info(action_line)
+        logger.info(format_action_line(action, drift_root=context.drift_root))
 
         own_h = hash_directory_disk(self.dst_path) or ""
         m_h = compute_merkle_node_hash(self) or ""

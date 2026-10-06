@@ -26,7 +26,10 @@ def serialize_for_json(obj: Any) -> Any:
         return {str(k): serialize_for_json(v) for k, v in obj.items()}
     if is_dataclass(obj) and not isinstance(obj, type):
         return {f.name: serialize_for_json(getattr(obj, f.name)) for f in fields(obj)}
+    if isinstance(obj, Exception):
+        return str(obj) or type(obj).__name__
     return str(obj)
+
 
 
 @dataclass

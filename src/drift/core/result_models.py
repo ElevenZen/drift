@@ -43,6 +43,8 @@ from .file_action import (
     format_action_line,
     format_action_summary,
     DELETE_ACTION_TYPES,
+    NO_CHANGE_ACTION_TYPES,
+    NON_MUTATING_ACTION_TYPES,
 )
 
 
@@ -82,6 +84,14 @@ class PackageReverseSyncPlan(SerializableModel):
     def skipped(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == FileActionType.SKIP_IDENTICAL]
 
+    @property
+    def has_mutations(self) -> bool:
+        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
+    @property
+    def has_changes(self) -> bool:
+        return self.has_mutations
+
     def format_text(self) -> str:
         lines = [f"=== Reverse Sync Plan: {self.package} ==="]
         if self.status != "PENDING":
@@ -100,7 +110,7 @@ class ReverseSyncPlan(SerializableModel):
 
     @property
     def has_changes(self) -> bool:
-        return any(bool(p.created or p.updated or p.permissions_updated or p.deleted) for p in self.plans)
+        return any(p.has_changes for p in self.plans)
 
     def format_text(self) -> str:
         return "\n".join(plan.format_text() for plan in self.plans)
@@ -142,6 +152,12 @@ class PackageRenderResult(SerializableModel):
     def is_success(self) -> bool:
         """Returns True if the package rendered successfully or was already up-to-date."""
         return self.status in ("SUCCESS", "UP_TO_DATE")
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if any file was rendered, copied, or pruned (excluding pure cache skips and info messages)."""
+        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
 
     def format_text(self, drift_root: Optional[Path] = None) -> str:
         """Formats the render plan for human-readable terminal output."""
@@ -226,8 +242,17 @@ class PackageStagePlan(SerializableModel):
         return self.package
 
     @property
+    def skipped(self) -> List[FileAction]:
+        return [a for a in self.actions if a.action_type == FileActionType.SKIP_IDENTICAL]
+
+    @property
+    def has_mutations(self) -> bool:
+        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
+    @property
     def has_changes(self) -> bool:
-        return bool(self.actions)
+        """Returns True if the package staging plan contains physical mutations."""
+        return self.has_mutations
 
     def format_text(self) -> str:
         """Formats the staging plan for human-readable terminal output."""
@@ -338,10 +363,12 @@ class PackageInstallPlan(SerializableModel):
 
     @property
     def has_mutations(self) -> bool:
-        return any(
-            a.action_type not in (FileActionType.SKIP_IDENTICAL, FileActionType.INFO_MESSAGE)
-            for a in self.actions
-        )
+        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
+    @property
+    def has_changes(self) -> bool:
+        """Returns True if the package has mutations on the host and cannot be skipped."""
+        return not self.can_skip and self.has_mutations
 
     @property
     def created(self) -> List[FileAction]:
@@ -421,6 +448,14 @@ class PackageUninstallPlan(SerializableModel):
     @property
     def ensured_dirs(self) -> List[FileAction]:
         return [a for a in self.actions if a.action_type == FileActionType.ENSURE_DIR]
+
+    @property
+    def has_mutations(self) -> bool:
+        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+
+    @property
+    def has_changes(self) -> bool:
+        return self.has_mutations
 
     def format_text(self) -> str:
         """Formats the uninstallation plan for human-readable terminal output."""
@@ -1169,6 +1204,104 @@ class HookResult(SerializableModel):
         elif self.status == "SKIPPED":
             return f"⏭️ Skipped hook '{self.hook_name}' for package '{self.package}'."
         return f"❌ Failed to execute hook '{self.hook_name}' for package '{self.package}': {self.error_message}"
+
+
+# =============================================================================
+# Full-Cycle Deployment Preview: drift plan / drift deploy --dry-run
+# =============================================================================
+
+@dataclass
+class PackageDeployPreview(SerializableModel):
+    """Planned actions across all deployment stages for a single package."""
+    package_name: str = ""
+    render_plan: Optional[PackageRenderResult] = None
+    stage_plan: Optional[PackageStagePlan] = None
+    install_plan: Optional[PackageInstallPlan] = None
+    drift_warning: Optional[str] = None
+    error: Optional[Exception] = None
+
+    @property
+    def has_changes(self) -> bool:
+        render_changed = self.render_plan is not None and self.render_plan.has_changes
+        stage_changed = self.stage_plan is not None and self.stage_plan.has_changes
+        install_changed = self.install_plan is not None and self.install_plan.has_changes
+        return render_changed or stage_changed or install_changed
+
+
+    @property
+    def error_message(self) -> Optional[str]:
+        return str(self.error) if self.error is not None else None
+
+    @property
+    def error_type(self) -> Optional[str]:
+        return type(self.error).__name__ if self.error is not None else None
+
+
+@dataclass
+class WorkspaceDeployPreview(SerializableModel):
+    """Full-cycle deployment preview and execution plan across the workspace."""
+    command: str = "plan"
+    status: str = "SUCCESS"  # "SUCCESS", "DRIFT_DETECTED", "FAILED"
+    packages_install_order: List[str] = field(default_factory=list)
+    package_previews: Dict[str, PackageDeployPreview] = field(default_factory=dict)
+    global_errors: List[Exception] = field(default_factory=list)
+    drift_warnings: Dict[str, str] = field(default_factory=dict)
+
+    @property
+    def has_changes(self) -> bool:
+        return any(p.has_changes for p in self.package_previews.values())
+
+    @property
+    def packages_with_changes(self) -> List[str]:
+        ordered = [pkg for pkg in self.packages_install_order if pkg in self.package_previews and self.package_previews[pkg].has_changes]
+        remaining = [pkg for pkg, p in self.package_previews.items() if p.has_changes and pkg not in ordered]
+        return ordered + remaining
+
+    @property
+    def packages_unchanged(self) -> List[str]:
+        ordered = [pkg for pkg in self.packages_install_order if pkg in self.package_previews and not self.package_previews[pkg].has_changes and not self.package_previews[pkg].error]
+        remaining = [pkg for pkg, p in self.package_previews.items() if not p.has_changes and not p.error and pkg not in ordered]
+        return ordered + remaining
+
+    @property
+    def packages_with_errors(self) -> List[str]:
+        return [pkg for pkg, p in self.package_previews.items() if p.error is not None]
+
+    @property
+    def drifted_packages(self) -> List[str]:
+        return list(self.drift_warnings.keys())
+
+    def format_text(self, show_all: bool = False, use_rich: bool = True) -> str:
+        """Formats the deployment preview for human-readable terminal output."""
+        lines = [f"=== Workspace Deployment Preview: {self.command} (Status: {self.status}) ==="]
+        if self.global_errors:
+            lines.append("Global Errors:")
+            for err in self.global_errors:
+                lines.append(f"  ❌ {err}")
+        if self.drift_warnings:
+            lines.append("Drift Warnings:")
+            for pkg, warn in self.drift_warnings.items():
+                lines.append(f"  ⚠️  {pkg}: {warn}")
+        for pkg in self.packages_install_order:
+            if pkg in self.package_previews:
+                p = self.package_previews[pkg]
+                if show_all or p.has_changes or p.error:
+                    status_str = f" [ERROR: {p.error}]" if p.error else (" [CHANGES]" if p.has_changes else " [UNCHANGED]")
+                    lines.append(f"📦 Package: {pkg}{status_str}")
+                    if p.render_plan and p.render_plan.actions:
+                        lines.append(f"  Render Actions: {len(p.render_plan.actions)}")
+                    if p.stage_plan and p.stage_plan.actions:
+                        lines.append(f"  Stage Actions: {len(p.stage_plan.actions)}")
+                    if p.install_plan and p.install_plan.actions:
+                        lines.append(f"  Install Actions: {len(p.install_plan.actions)}")
+        unchanged = self.packages_unchanged
+        if unchanged and not show_all:
+            lines.append(f"✨ {len(unchanged)} packages unchanged: {', '.join(unchanged)}")
+        return "\n".join(lines)
+
+
+DeployPreview = WorkspaceDeployPreview
+
 
 
 

@@ -44,6 +44,7 @@ from ..core.constants import (
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DirMode,
 )
+from ..core.exceptions import CyclicDependencyError
 from ..core.file_action import FileAction, FileActionType, format_action_line
 from ..core.folder_diff import list_folder_paths
 from ..utils.file_ops import prune_empty_parents
@@ -289,7 +290,7 @@ def topological_sort_nodes(root_node: Node) -> List[Node]:
     Returns nodes in order from leaves (prerequisites) to root (dependent container).
 
     Raises:
-        ValueError: If a cyclic dependency is detected.
+        CyclicDependencyError: If a cyclic dependency is detected.
     """
     visited: Dict[int, int] = {}  # id(node) -> state: 1=visiting, 2=visited
     result: List[Node] = []
@@ -297,7 +298,7 @@ def topological_sort_nodes(root_node: Node) -> List[Node]:
     def dfs(n: Node) -> None:
         nid = id(n)
         if visited.get(nid, 0) == 1:
-            raise ValueError(f"Cyclic dependency detected in render graph involving node: '{n.value}'")
+            raise CyclicDependencyError(f"Cyclic dependency detected in render graph involving node: '{n.value}'")
         if visited.get(nid, 0) == 2:
             return
 
