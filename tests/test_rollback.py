@@ -395,6 +395,86 @@ class TestRollback(unittest.TestCase):
         ]
         self.assertEqual(call_order, expected_calls)
 
+    def test_rollback_sequential_commits_prevent_ping_pong_staged_state(self) -> None:
+        """Verifies that rollback commits each restoration so subsequent rollbacks do not revert to HEAD."""
+        # 1. Setup pkg_b and pkg_c in install/
+        for pkg in ("pkg_b", "pkg_c"):
+            pkg_install = self.install_dir / pkg
+            (pkg_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+            with open(pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
+                f.write(f'[package]\nname = "{pkg}"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir}"\n')
+            with open(pkg_install / f"{pkg}.txt", "w", encoding="utf-8") as f:
+                f.write(f"{pkg} clean")
+
+        # Initial commit of pkg_a, pkg_b, pkg_c in install repo
+        state_file = self.install_dir / "state.toml"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_b", "installed")
+        registry.set_package_state("pkg_c", "installed")
+        save_state_registry(registry)
+        subprocess.run(["git", "add", "."], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "commit all pkgs"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # 2. Stage pkg_a and pkg_b -> both become "staged"
+        registry = load_state_registry(state_file)
+        registry.set_package_state("pkg_a", "staged")
+        registry.set_package_state("pkg_b", "staged")
+        save_state_registry(registry)
+
+        # 3. Simulate deploying pkg_c successfully, which committed pkg_c and state.toml (with pkg_a and pkg_b "staged")
+        subprocess.run(["git", "add", "pkg_c", "state.toml"], cwd=str(self.install_dir), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "Deploy pkg_c"], cwd=str(self.install_dir), check=True, capture_output=True)
+
+        # Verify HEAD now has pkg_a and pkg_b as "staged"
+        head_state = subprocess.run(
+            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertIn('[packages.pkg_a]\nstate = "staged"', head_state)
+        self.assertIn('[packages.pkg_b]\nstate = "staged"', head_state)
+
+        ws_cfg = WorkspaceConfig(
+            drift_root=self.drift_root,
+            workspace=WorkspaceSectionConfig(default_target_directory=self.system_target_dir),
+            packages_enable={"pkg_a": True, "pkg_b": True, "pkg_c": True},
+            packages_enable_default=False,
+        )
+
+        # 4. Rollback pkg_a only
+        res_a = run_primitive_8_rollback_recovery(ws_cfg, ["pkg_a"], force=False)
+        self.assertEqual(res_a.status, "SUCCESS")
+
+        # Verify pkg_a is now committed to HEAD as "installed", and pkg_b remains "staged" in HEAD
+        head_after_a = subprocess.run(
+            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertIn('[packages.pkg_a]\nstate = "installed"', head_after_a)
+        self.assertIn('[packages.pkg_b]\nstate = "staged"', head_after_a)
+
+        # 5. Now rollback pkg_b only
+        res_b = run_primitive_8_rollback_recovery(ws_cfg, ["pkg_b"], force=False)
+        self.assertEqual(res_b.status, "SUCCESS")
+
+        # Verify BOTH pkg_a and pkg_b are now "installed" in HEAD (pkg_a did NOT get reverted!)
+        head_after_b = subprocess.run(
+            ["git", "-C", str(self.install_dir), "show", "HEAD:state.toml"],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        self.assertIn('[packages.pkg_a]\nstate = "installed"', head_after_b)
+        self.assertIn('[packages.pkg_b]\nstate = "installed"', head_after_b)
+
+        # Disk state is also in sync
+        current_reg = load_state_registry(state_file)
+        self.assertEqual(current_reg.get_package_state("pkg_a"), "installed")
+        self.assertEqual(current_reg.get_package_state("pkg_b"), "installed")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -20,11 +20,12 @@ Layer 3: Primitive Entry Point
             If first-time package: rollback_uninstalled_first_time_package [Layer 2]
                 run_primitive_7_uninstall_packages (force=True)
                 git clean -fd -- <pkg>
-        5. Restore State Database:
+        5. Restore State Database & Commit History:
             git checkout HEAD -- state.toml
             state_registry.set_package_state("installed") for reinstalled packages
             state_registry.remove_package for uninstalled packages
             state_registry.save
+            run_primitive_6_commit_install_repo (commits restored state and cleaned files)
 
 -------------------------------------------------------------------------------
 Layers (ordered bottom-up by dependency):
@@ -49,7 +50,7 @@ from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..core.result_models import RollbackResult
 from ..core.state_registry import load_state_registry, StateRegistry
-from .install_repo import run_primitive_5_install, InstallOptions
+from .install_repo import run_primitive_5_install, InstallOptions, run_primitive_6_commit_install_repo
 from .uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
 from .package_assertions import resolve_package_uninstall_order
 from ..hooks.lifecycle_hooks import HookExecFlags
@@ -274,6 +275,12 @@ def run_primitive_8_rollback_recovery(
     for pkg in packages_to_uninstall:
         reloaded_registry.remove_package(pkg)
     reloaded_registry.save()
+
+    # 7. Commit state database and file restorations in install repo
+    if packages_to_rollback:
+        pkg_word = "packages" if len(packages_to_rollback) > 1 else "package"
+        commit_msg = f"Rollback: Restored clean state for {pkg_word} {', '.join(packages_to_rollback)}"
+        run_primitive_6_commit_install_repo(workspace_config, commit_msg, packages_to_rollback)
 
     if packages_to_uninstall:
         logger.info(f"🗑️ Cleanly uninstalled failed first-time package(s): {packages_to_uninstall}")
