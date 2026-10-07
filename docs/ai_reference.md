@@ -71,7 +71,7 @@ This document provides a concise, high-density architecture reference, primitive
 *   [`execute_single_action(context, action) -> None`](../src/drift/core/file_action.py): Executes an individual planned file action using pre-resolved `src_path` and `dst_path`.
 *   [`format_action_line(action) -> str`](../src/drift/core/file_action.py) & [`format_action_summary(counts) -> str`](../src/drift/core/file_action.py): Formatting helpers generating uniform action logs and summaries.
 
-### [`core/folder_delivery.py`](../src/drift/core/folder_delivery.py), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
+### [`core/folder_delivery.py`](../src/drift/core/folder_delivery.py) (Folder Delivery Planning Engine; consult [`docs/delivery_engine.md`](delivery_engine.md)), [`core/result_models.py`](../src/drift/core/result_models.py) & [`core/serialization.py`](../src/drift/core/serialization.py)
 *   [`DeliveryInspectionContext`](../src/drift/core/folder_delivery.py): Planning and inspection context encapsulating invariant paths (`target_dir`, `source_dir`, `drift_root`), install mode (`install_method`), first-time flags, and backup routing (`backup_pkg_dir`, `backup_subfolder`).
 *   [`PackageInstallPlan`](../src/drift/core/result_models.py) & [`PackageUninstallPlan`](../src/drift/core/result_models.py): Strongly-typed dataclass containers for planned package actions, supporting `.format_text(dry_run=False)` summaries.
 *   [`plan_folder_delivery(context, deployable_files, deployed_files=()) -> List[FileAction]`](../src/drift/core/folder_delivery.py): Pure, read-only per-path planner inspecting host filesystem state and compiling typed file delivery actions.
