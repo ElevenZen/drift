@@ -18,6 +18,7 @@ from drift.core.constants import (
     set_test_mode,
 )
 from drift.utils.toml_utils import parse_toml
+from drift.utils.host_facts import get_cached_system_facts
 from drift.utils.config_utils import (
     partition,
     get_first_from,
@@ -2105,7 +2106,7 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
         with patch.dict(
             os.environ,
             {
-                "drift_os": "linux",
+                "drift_os": "ambient_preempted_os",
                 "CLI_VAR": "from_cli",
                 "CLI_DEFAULT_TARGET": "from_cli",
                 "OVERRIDDEN_BY_PACKAGE": "from_workspace_outer",
@@ -2140,8 +2141,10 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
                 self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "symlink")
 
-                # Tier 2: System facts are preserved
-                self.assertEqual(os.environ.get("drift_os"), "linux")
+                # Tier 2: System facts take precedence over Tier 3 ambient context across all platforms
+                cached_sys_facts = get_cached_system_facts()
+                self.assertEqual(os.environ.get("drift_os"), cached_sys_facts["drift_os"])
+                self.assertEqual(os.environ.get("drift_arch"), cached_sys_facts["drift_arch"])
 
                 # Tier 3: CLI / ambient variable wins over Tier 5 default
                 self.assertEqual(os.environ.get("CLI_DEFAULT_TARGET"), "from_cli")
@@ -2153,12 +2156,40 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 self.assertEqual(os.environ.get("FALLBACK_TEST"), "from_workspace")
                 self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
 
-            # After context exit: package variables are cleanly restored
+            # After context exit: package variables and ambient context are cleanly restored
             self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
             self.assertEqual(os.environ.get("CLI_DEFAULT_TARGET"), "from_cli")
             self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace_outer")
+            self.assertEqual(os.environ.get("drift_os"), "ambient_preempted_os")
             self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
             self.assertNotIn("drift_package_name", os.environ)
+
+    def test_tier2_system_facts_cross_platform_isolation_and_restoration(self) -> None:
+        """Verifies all Tier 2 system facts override ambient pollution and restore cleanly across platforms."""
+        cached_facts = dict(get_cached_system_facts())
+        workspace_config = WorkspaceConfig(
+            drift_root=Path(self.temp_dir.name).resolve(),
+        )
+
+        # Pollute ambient environment with fake values for all system fact keys
+        polluted_ambient = {k: f"polluted_ambient_{k}" for k in cached_facts}
+        with patch.dict(os.environ, polluted_ambient, clear=False):
+            pkg = PackageConfig(
+                PackageSectionConfig(name="facts_pkg"),
+            ).compute_effective_envs(workspace_config)
+
+            with pkg.package_envs():
+                # Inside package execution scope: genuine system facts must overwrite ambient pollution
+                for key, expected_fact in cached_facts.items():
+                    self.assertEqual(
+                        os.environ.get(key),
+                        expected_fact,
+                        f"Expected system fact {key} to be '{expected_fact}', got '{os.environ.get(key)}'"
+                    )
+
+            # Outside package execution scope: ambient environment is cleanly restored with zero leaks
+            for key in cached_facts:
+                self.assertEqual(os.environ.get(key), f"polluted_ambient_{key}")
 
 
 class TestSettingsConfig(unittest.TestCase):

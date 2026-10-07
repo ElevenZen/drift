@@ -15,6 +15,7 @@ from drift.config.workspace_config import WorkspaceConfig
 from drift.render.render_package import render_package
 from drift.core.exceptions import ConfigError
 from drift.utils.toml_utils import parse_toml
+from drift.utils.host_facts import get_cached_system_facts
 from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
@@ -277,28 +278,182 @@ class TestPackageProbeAndRenderPipeline(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_render_package_skipped_due_to_declarative_requirement(self) -> None:
+        """Verifies package is skipped when host OS does not match required OS list."""
         pkg_dir = self.drift_root / "src" / "sway_pkg"
         pkg_dir.mkdir(parents=True)
 
-        (pkg_dir / "drift_package.toml").write_text("""
+        host_os = get_cached_system_facts()["drift_os"]
+        non_matching_os = "windows" if host_os != "windows" else "darwin"
+
+        (pkg_dir / "drift_package.toml").write_text(f"""
         [package]
         install_method = "symlink"
 
         [package.requirements]
-        os = ["darwin"]
+        os = ["{non_matching_os}"]
         """, encoding="utf-8")
 
         (pkg_dir / "config.txt").write_text("Sway Config", encoding="utf-8")
 
-        with patch.dict(os.environ, {"drift_os": "linux"}):
-            res = render_package(self.workspace_config, pkg_dir)
-            self.assertEqual(res.status, "SKIPPED")
-            self.assertIsNotNone(res.skip_reason)
-            assert res.skip_reason is not None
-            self.assertIn("Host OS 'linux' not in required list", res.skip_reason)
-            # Ensure render directory was not populated with config.txt
-            render_dest = self.drift_root / "render" / "sway_pkg" / "config.txt"
-            self.assertFalse(render_dest.exists())
+        res = render_package(self.workspace_config, pkg_dir)
+        self.assertEqual(res.status, "SKIPPED")
+        self.assertIsNotNone(res.skip_reason)
+        assert res.skip_reason is not None
+        self.assertIn(f"Host OS '{host_os}' not in required list", res.skip_reason)
+        self.assertIn(non_matching_os, res.skip_reason)
+        # Ensure render directory was not populated with config.txt
+        render_dest = self.drift_root / "render" / "sway_pkg" / "config.txt"
+        self.assertFalse(render_dest.exists())
+
+    def test_render_package_succeeds_when_declarative_os_requirement_matches(self) -> None:
+        """Verifies package renders successfully when host OS matches requirement."""
+        pkg_dir = self.drift_root / "src" / "matching_os_pkg"
+        pkg_dir.mkdir(parents=True)
+
+        host_os = get_cached_system_facts()["drift_os"]
+
+        (pkg_dir / "drift_package.toml").write_text(f"""
+        [package]
+        install_method = "symlink"
+
+        [package.requirements]
+        os = ["{host_os}"]
+        """, encoding="utf-8")
+
+        (pkg_dir / "config.txt").write_text("Active OS Config", encoding="utf-8")
+
+        res = render_package(self.workspace_config, pkg_dir)
+        self.assertEqual(res.status, "SUCCESS")
+        self.assertIsNone(res.skip_reason)
+        render_dest = self.drift_root / "render" / "matching_os_pkg" / "config.txt"
+        self.assertTrue(render_dest.exists())
+        self.assertEqual(render_dest.read_text(encoding="utf-8"), "Active OS Config")
+
+    def test_render_package_multi_os_requirement_evaluation(self) -> None:
+        """Verifies package evaluation against multi-OS requirement lists."""
+        host_os = get_cached_system_facts()["drift_os"]
+
+        # 1. Matching multi-OS list containing host OS
+        pkg_pass = self.drift_root / "src" / "multi_pass_pkg"
+        pkg_pass.mkdir(parents=True)
+        (pkg_pass / "drift_package.toml").write_text(f"""
+        [package]
+        install_method = "symlink"
+
+        [package.requirements]
+        os = ["unsupported_os_1", "{host_os}", "unsupported_os_2"]
+        """, encoding="utf-8")
+        (pkg_pass / "data.txt").write_text("multi-pass", encoding="utf-8")
+
+        res_pass = render_package(self.workspace_config, pkg_pass)
+        self.assertEqual(res_pass.status, "SUCCESS")
+        self.assertIsNone(res_pass.skip_reason)
+        self.assertTrue((self.drift_root / "render" / "multi_pass_pkg" / "data.txt").exists())
+
+        # 2. Failing multi-OS list omitting host OS
+        pkg_fail = self.drift_root / "src" / "multi_fail_pkg"
+        pkg_fail.mkdir(parents=True)
+        (pkg_fail / "drift_package.toml").write_text("""
+        [package]
+        install_method = "symlink"
+
+        [package.requirements]
+        os = ["unsupported_os_1", "unsupported_os_2"]
+        """, encoding="utf-8")
+        (pkg_fail / "data.txt").write_text("multi-fail", encoding="utf-8")
+
+        res_fail = render_package(self.workspace_config, pkg_fail)
+        self.assertEqual(res_fail.status, "SKIPPED")
+        self.assertIsNotNone(res_fail.skip_reason)
+        assert res_fail.skip_reason is not None
+        self.assertIn(f"Host OS '{host_os}' not in required list", res_fail.skip_reason)
+        self.assertFalse((self.drift_root / "render" / "multi_fail_pkg" / "data.txt").exists())
+
+    def test_render_package_declarative_requirements_immune_to_ambient_environ_pollution(self) -> None:
+        """Verifies requirement evaluation uses genuine system facts, isolated from ambient os.environ pollution."""
+        host_os = get_cached_system_facts()["drift_os"]
+        ambient_spoofed_os = "spoofed_ambient_os"
+
+        with patch.dict(os.environ, {"drift_os": ambient_spoofed_os}, clear=False):
+            # A. Ambient spoofing cannot satisfy requirements
+            pkg_spoofed = self.drift_root / "src" / "spoofed_pkg"
+            pkg_spoofed.mkdir(parents=True)
+            (pkg_spoofed / "drift_package.toml").write_text(f"""
+            [package]
+            install_method = "symlink"
+
+            [package.requirements]
+            os = ["{ambient_spoofed_os}"]
+            """, encoding="utf-8")
+            (pkg_spoofed / "app.conf").write_text("content", encoding="utf-8")
+
+            res_spoofed = render_package(self.workspace_config, pkg_spoofed)
+            self.assertEqual(res_spoofed.status, "SKIPPED")
+            self.assertIsNotNone(res_spoofed.skip_reason)
+            assert res_spoofed.skip_reason is not None
+            self.assertIn(f"Host OS '{host_os}' not in required list", res_spoofed.skip_reason)
+
+            # B. Ambient pollution cannot break genuine matching requirements
+            pkg_genuine = self.drift_root / "src" / "genuine_pkg"
+            pkg_genuine.mkdir(parents=True)
+            (pkg_genuine / "drift_package.toml").write_text(f"""
+            [package]
+            install_method = "symlink"
+
+            [package.requirements]
+            os = ["{host_os}"]
+            """, encoding="utf-8")
+            (pkg_genuine / "app.conf").write_text("content", encoding="utf-8")
+
+            res_genuine = render_package(self.workspace_config, pkg_genuine)
+            self.assertEqual(res_genuine.status, "SUCCESS")
+            self.assertIsNone(res_genuine.skip_reason)
+
+            # C. Zero environment leaks: caller's ambient environ remains intact
+            self.assertEqual(os.environ.get("drift_os"), ambient_spoofed_os)
+
+    def test_render_package_declarative_arch_and_combined_requirements(self) -> None:
+        """Verifies architecture requirements and combination OS + Arch matching."""
+        host_os = get_cached_system_facts()["drift_os"]
+        host_arch = get_cached_system_facts()["drift_arch"]
+
+        # 1. Matching OS but mismatching arch -> SKIPPED
+        pkg_bad_arch = self.drift_root / "src" / "bad_arch_pkg"
+        pkg_bad_arch.mkdir(parents=True)
+        (pkg_bad_arch / "drift_package.toml").write_text(f"""
+        [package]
+        install_method = "symlink"
+
+        [package.requirements]
+        os = ["{host_os}"]
+        arch = ["unsupported_arch_99"]
+        """, encoding="utf-8")
+        (pkg_bad_arch / "file.txt").write_text("bad-arch", encoding="utf-8")
+
+        res_bad_arch = render_package(self.workspace_config, pkg_bad_arch)
+        self.assertEqual(res_bad_arch.status, "SKIPPED")
+        self.assertIsNotNone(res_bad_arch.skip_reason)
+        assert res_bad_arch.skip_reason is not None
+        self.assertIn(f"Host architecture '{host_arch}' not in required list", res_bad_arch.skip_reason)
+        self.assertFalse((self.drift_root / "render" / "bad_arch_pkg" / "file.txt").exists())
+
+        # 2. Both OS and arch match -> SUCCESS
+        pkg_good_both = self.drift_root / "src" / "good_both_pkg"
+        pkg_good_both.mkdir(parents=True)
+        (pkg_good_both / "drift_package.toml").write_text(f"""
+        [package]
+        install_method = "symlink"
+
+        [package.requirements]
+        os = ["{host_os}"]
+        arch = ["{host_arch}"]
+        """, encoding="utf-8")
+        (pkg_good_both / "file.txt").write_text("good-both", encoding="utf-8")
+
+        res_good_both = render_package(self.workspace_config, pkg_good_both)
+        self.assertEqual(res_good_both.status, "SUCCESS")
+        self.assertIsNone(res_good_both.skip_reason)
+        self.assertTrue((self.drift_root / "render" / "good_both_pkg" / "file.txt").exists())
 
     def test_render_package_probe_hook_success(self) -> None:
         pkg_dir = self.drift_root / "src" / "probe_pkg"
