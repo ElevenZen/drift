@@ -34,6 +34,7 @@
 
 ## 3. Testing & Validation
 * Always back new features and refactors with corresponding unit/integration tests in `tests/`.
+* **Patch & Bugfix Test Comprehensiveness**: Tests written after a test fix, bug patch, or regression repair must be significantly more comprehensive and multi-angled than normal feature tests. Rather than merely asserting that the localized breaking case now passes, patch tests must exhaustively probe the full decision space—including boundary edge cases, fallback defaults, strict type/key filtering, isolation and side-effect guarantees (e.g., verifying zero state leaks or ambient environment mutations), and the complete surrounding precedence or lifecycle ladder to permanently lock down the fix and prevent subtle second-order regressions.
 * **Granular Stage Testing**: Complement end-to-end integration tests with targeted unit tests for extracted sub-stages, predicates, and transformation helpers to isolate regressions quickly without heavy filesystem or subprocess scaffolding.
 * **Targeted Test Execution**: When modifying or fixing a specific test file or localized logic, run only that single test file (e.g., `python3 -m unittest tests/test_config.py`) to maintain fast development feedback loops.
 * **Whole Suite Execution Rules**:

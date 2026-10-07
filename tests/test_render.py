@@ -19,8 +19,6 @@ from drift.core.constants import (
     DRIFT_HOOKS_DIR_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     DRIFT_INTERNAL_HOOKS_DIR_NAME,
-    INITIAL_ENV,
-    set_initial_env,
     set_test_mode,
 )
 from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
@@ -28,7 +26,7 @@ from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRe
 from drift.render.render_core import render_template, render_template_to_file, RenderError
 from drift.utils.toml_utils import parse_toml
 from drift.utils.env_utils import env_scope
-from drift.utils.host_facts import get_system_facts, inject_system_facts
+from drift.utils.host_facts import get_cached_system_facts
 
 
 class TestRenderEngine(unittest.TestCase):
@@ -86,7 +84,7 @@ class TestRenderEngine(unittest.TestCase):
         )
 
         # Call render_template within effective env scope
-        with env_scope(workspace_config.env_resolve.effective_dict):
+        with env_scope(workspace_config.env_resolve.impact.restricted_env()):
             output = render_template(
                 engine_config=engine_config,
                 drift_root=self.drift_root,
@@ -355,16 +353,13 @@ class TestRenderPackage(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
-        inject_system_facts()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_render_package_success_static_config(self) -> None:
         from drift.render.render_package import render_package
@@ -1674,7 +1669,7 @@ echo "CREATED_BY_${drift_package_name}" > generated_file.txt
         self.assertEqual(pkg_config.name, "my_templated_pkg")
         self.assertEqual(str(pkg_config.package.target_directory), "/custom/my_templated_pkg")
         self.assertIn("RESOLVED_OS", pkg_config.env_resolve.effective.override)
-        self.assertEqual(pkg_config.env_resolve.effective.override["RESOLVED_OS"], get_system_facts(self.drift_root)["drift_os"])
+        self.assertEqual(pkg_config.env_resolve.effective.override["RESOLVED_OS"], get_cached_system_facts()["drift_os"])
         self.assertEqual(pkg_config.env_resolve.effective.override["PKG_SRC_DIR"], str(self.drift_root / "src" / "my_templated_pkg"))
         self.assertEqual(pkg_config.env_resolve.effective.override["PKG_RENDER_DIR"], str(self.drift_root / "render" / "my_templated_pkg"))
         self.assertEqual(pkg_config.env_resolve.effective.override["PKG_INSTALL_DIR"], str(self.drift_root / "install" / "my_templated_pkg"))

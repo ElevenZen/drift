@@ -16,14 +16,12 @@ from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
     SECRETS_ENV_FILE_NAME,
-    INITIAL_ENV,
     InstallMethod,
     set_test_mode,
-    update_initial_env,
-    set_initial_env,
 )
 from drift.utils.env_utils import (
     EnvConfig,
+    EnvImpact,
     EnvResolve,
     resolve_env_configs,
     load_env_settings,
@@ -32,7 +30,6 @@ from drift.utils.env_utils import (
     parse_env_file,
     parse_env_text,
     env_scope,
-    env_resolve_scope,
 )
 from drift.config.workspace_config import (
     WorkspaceConfig,
@@ -47,12 +44,10 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_load_env_settings_empty(self) -> None:
         """Verifies that loading empty envs returns empty dict and modifies nothing."""
@@ -220,7 +215,6 @@ class TestLoadEnvSettingsUnit(unittest.TestCase):
                 with env_scope(
                     {"DRIFT_API_SECRET": "top_secret_token_123", "DRIFT_EXISTING_SECRET": "updated_secret_456"},
                     overwrite=True,
-                    env_keep=INITIAL_ENV,
                     mask_values=True,
                 ):
                     self.assertEqual(os.environ["DRIFT_API_SECRET"], "top_secret_token_123")
@@ -264,7 +258,6 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name).resolve()
 
@@ -288,7 +281,6 @@ class TestStrictVariablePrecedence(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
         self.temp_dir.cleanup()
 
     def _setup_package_with_template(self, pkg_name: str, template_body: str) -> Path:
@@ -309,7 +301,6 @@ class TestStrictVariablePrecedence(unittest.TestCase):
         """
         var_name = "DRIFT_PRECEDENCE_VAR_1"
         os.environ[var_name] = "host_wins"
-        set_initial_env({var_name, *self.original_environ.keys()})
 
         # Write drift_workspace.toml with [env.default]
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
@@ -362,7 +353,6 @@ pkg_test = true
         """Secret vault (secrets.env) has higher precedence than drift_workspace.toml [env.default]."""
         var_name = "DRIFT_PRECEDENCE_VAR_2"
         os.environ.pop(var_name, None)
-        set_initial_env([k for k in os.environ.keys() if k != var_name])
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -413,7 +403,6 @@ pkg_test = true
         """Workspace config [env.default] provides defaults when neither host env nor secrets exist."""
         var_name = "DRIFT_PRECEDENCE_VAR_3"
         os.environ.pop(var_name, None)
-        set_initial_env([k for k in os.environ.keys() if k != var_name])
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -456,7 +445,6 @@ pkg_test = true
         """Secrets only present in secrets.env are temporarily loaded during render and popped afterward."""
         var_name = "DRIFT_TRANSIENT_SECRET"
         os.environ.pop(var_name, None)
-        set_initial_env([k for k in os.environ.keys() if k != var_name])
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -500,7 +488,6 @@ pkg_test = true
         """Host env overrides secrets even when the variable is not in drift_workspace.toml."""
         var_name = "DRIFT_HOST_SECRET_VAR"
         os.environ[var_name] = "host_api_key"
-        set_initial_env({var_name, *self.original_environ.keys()})
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -540,7 +527,6 @@ pkg_test = true
         """drift_workspace.local.toml overrides drift_workspace.toml [env.default] settings."""
         var_name = "DRIFT_MERGED_VAR"
         os.environ.pop(var_name, None)
-        set_initial_env([k for k in os.environ.keys() if k != var_name])
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -572,7 +558,7 @@ DEFAULT = true
 
         ws_cfg = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws_cfg.env_resolve.effective.default[var_name], "local_override_value")
-        self.assertEqual(ws_cfg.env_resolve.effective_dict[var_name], "local_override_value")
+        self.assertEqual(ws_cfg.env_resolve.impact.restricted_env()[var_name], "local_override_value")
 
     def test_mixed_variable_sources_comprehensive(self) -> None:
         """Simultaneously tests all combinations of sources:
@@ -590,8 +576,6 @@ DEFAULT = true
         os.environ.pop("VAR_B", None)
         os.environ.pop("VAR_C", None)
         os.environ.pop("VAR_F", None)
-
-        set_initial_env({"VAR_A", "VAR_D", "VAR_E", *self.original_environ.keys()})
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -671,7 +655,6 @@ VAR_F="secret_f"
 
         os.environ.pop(var_secret, None)
         os.environ.pop(var_toml, None)
-        set_initial_env([k for k in os.environ.keys() if k not in (var_secret, var_toml)])
 
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
@@ -767,7 +750,6 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.mkdtemp()
         self.drift_root = Path(self.temp_dir).resolve()
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -776,7 +758,6 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
         shutil.rmtree(self.temp_dir, ignore_errors=True)
 
     def test_update_env_dict(self) -> None:
@@ -1028,7 +1009,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         ws = WorkspaceConfig.from_workspace_dir(self.drift_root)
         self.assertEqual(ws.env_resolve.effective.default["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.env_resolve.effective.default["ALL_PROXY"], "socks5h://127.0.0.1:9050")
-        self.assertEqual(ws.env_resolve.effective_dict["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
+        self.assertEqual(ws.env_resolve.impact.restricted_env()["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.workspace.source_directory, Path("src_custom"))
         self.assertEqual(str(ws.workspace.default_target_directory), "/custom/base/dest/user_home")
 
@@ -1146,9 +1127,8 @@ ALL_PROXY = "${SOCKS_PROXY}"
         from drift.config.package_loader import resolve_and_interpolate_package_config
         from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
 
-        # Test CLI environment precedence (Tier 1 INITIAL_ENV)
+        # Test CLI environment presence in ambient os.environ (Tier 3)
         os.environ["CLI_OVERRIDE_VAR"] = "cli_val"
-        set_initial_env(["CLI_OVERRIDE_VAR"])
 
         ws = WorkspaceConfig(
             drift_root=self.drift_root,
@@ -1333,7 +1313,6 @@ ALL_PROXY = "${SOCKS_PROXY}"
 
         # 2. When EXTERNAL_VAR is already set in outer environment, outer value takes precedence over [env.fallback]
         with patch.dict(os.environ, {"EXTERNAL_VAR": "/custom/external/path"}):
-            set_initial_env(["EXTERNAL_VAR"])
             with pkg_cfg.package_envs():
                 self.assertEqual(os.environ.get("EXTERNAL_VAR"), "/custom/external/path")
                 self.assertEqual(os.environ.get("FALLBACK_SRC_DIR"), expected_src)
@@ -1438,7 +1417,6 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.drift_root = Path(self.temp_dir.name)
         self.config_dir = self.drift_root / CONFIG_DIR_NAME
@@ -1451,12 +1429,10 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_resolve_and_interpolate_workspace_config_pure_in_memory(self) -> None:
         """Verifies resolve_and_interpolate_workspace_config resolves secrets topologically without modifying os.environ."""
         from drift.config.workspace_loader import resolve_and_interpolate_workspace_config
-        from drift.core.constants import DRIFT_SYSTEM_FACT_KEYS
 
         with patch.dict(os.environ, {"HOST_CLI_VAR": "cli_val", "drift_os": "linux"}, clear=False):
             initial_environ_snapshot = dict(os.environ)
@@ -1499,13 +1475,30 @@ class TestEnvSecretsHierarchy(unittest.TestCase):
             self.assertEqual(current_secrets["FILE_BASE_SEC"], "raw_secret_extended")
             self.assertEqual(current_secrets["SECRET_TOKEN"], "raw_secret_extended_token")
 
-            # 3. Verify Tier 4 and Tier 1 protections: DRIFT_SYSTEM_FACT_KEYS and INITIAL_ENV are protected in base
+            # 3. Verify Tier 2 facts and Tier 3 ambient context: drift_os and HOST_CLI_VAR are preserved in base
             self.assertEqual(os.environ["drift_os"], "linux")
             self.assertEqual(os.environ["HOST_CLI_VAR"], "cli_val")
 
             # 4. Verify regular [env.default] was resolved against secrets
             self.assertEqual(env_res.effective.default["DERIVED_VAR"], "derived_raw_secret_extended_token")
             self.assertEqual(interpolated_dict["workspace"]["target_directory"], "/tmp/derived_raw_secret_extended_token")
+
+    def test_interpolate_workspace_config_uses_ambient_env_without_fallback(self) -> None:
+        """Verifies ambient environment variables not declared in [env] can be interpolated in workspace paths."""
+        from drift.config.workspace_loader import resolve_and_interpolate_workspace_config
+
+        with patch.dict(os.environ, {"UNDECLARED_AMBIENT_VAR": "ambient_path_val"}):
+            data = {
+                "workspace": {
+                    "name": "ambient_ws",
+                    "target_directory": "/opt/${UNDECLARED_AMBIENT_VAR}/app",
+                }
+            }
+            interpolated_dict, env_res = resolve_and_interpolate_workspace_config(data)
+            self.assertEqual(
+                interpolated_dict["workspace"]["target_directory"],
+                "/opt/ambient_path_val/app",
+            )
 
     def test_workspace_secrets_precedence_and_python_hook(self) -> None:
         """Verifies workspace secret precedence: hook > local.toml > toml > secrets.env."""
@@ -1722,12 +1715,10 @@ class TestEnvDagResolutionOrder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_secret_referencing_default_raises_config_error(self) -> None:
         """Secrets (Tier 4) resolves first and must NOT be able to reference [env.default] (Tier 5)."""
@@ -1817,73 +1808,241 @@ class TestEnvPrecedenceLadder(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
 
     def tearDown(self) -> None:
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_complete_6_tier_precedence_cascade_on_single_key(self) -> None:
-        """Tests that resolution strictly follows Tier 1 (CLI) > Tier 2 (Override) > Tier 3 (Facts) > Tier 4 (Secrets) > Tier 5 (Default) > Tier 6 (Fallback)."""
-        # 1. All 6 tiers defined -> Tier 2 (Override) wins in pure effective_dict; Tier 1 (CLI) wins when activated in env_resolve_scope
-        os.environ["LADDER_KEY"] = "tier1_cli"
-        set_initial_env(["LADDER_KEY"])
+        """Tests that resolution strictly follows Tier 1 (Override) > Tier 2 (Facts) > Tier 3 (CLI/Ambient) > Tier 4 (Secrets) > Tier 5 (Default) > Tier 6 (Fallback)."""
+        # 1. All 6 tiers defined -> Tier 1 (Override) wins over all tiers including ambient os.environ
+        os.environ["LADDER_KEY"] = "tier3_cli"
         config_all = EnvConfig(
-            override={"LADDER_KEY": "tier2_override"},
+            override={"LADDER_KEY": "tier1_override"},
             secrets={"LADDER_KEY": "tier4_secrets"},
             default={"LADDER_KEY": "tier5_default"},
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_all = resolve_env_configs(config_all, extra_facts={"LADDER_KEY": "tier3_facts"})
-        self.assertEqual(res_all.effective_dict["LADDER_KEY"], "tier2_override")
-        with env_resolve_scope(res_all):
-            self.assertEqual(os.environ["LADDER_KEY"], "tier1_cli")
+        res_all = resolve_env_configs(config_all, package_facts={"LADDER_KEY": "tier2_facts"})
+        self.assertEqual(res_all.impact.restricted_env()["LADDER_KEY"], "tier1_override")
+        with res_all.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier1_override")
 
-        # 2. Tier 1 absent -> Tier 2 (Override) wins over Facts, Secrets, Default, Fallback
-        os.environ.pop("LADDER_KEY", None)
-        set_initial_env([])
-        config_no_cli = EnvConfig(
-            override={"LADDER_KEY": "tier2_override"},
+        # 2. Tier 1 absent -> Tier 2 (Facts) wins over CLI, Secrets, Default, Fallback
+        config_no_t1 = EnvConfig(
             secrets={"LADDER_KEY": "tier4_secrets"},
             default={"LADDER_KEY": "tier5_default"},
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_t2 = resolve_env_configs(config_no_cli, extra_facts={"LADDER_KEY": "tier3_facts"})
-        self.assertEqual(res_t2.effective_dict["LADDER_KEY"], "tier2_override")
+        res_t2 = resolve_env_configs(config_no_t1, package_facts={"LADDER_KEY": "tier2_facts"})
+        self.assertEqual(res_t2.impact.restricted_env()["LADDER_KEY"], "tier2_facts")
+        with res_t2.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier2_facts")
 
-        # 3. Tier 1 & 2 absent -> Tier 3 (Facts) wins over Secrets, Default, Fallback
-        config_no_t2 = EnvConfig(
+        # 3. Tier 1 & Tier 2 absent -> Tier 3 (CLI/Ambient) wins over Secrets, Default, Fallback
+        config_no_t1_t2 = EnvConfig(
             secrets={"LADDER_KEY": "tier4_secrets"},
             default={"LADDER_KEY": "tier5_default"},
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_t3 = resolve_env_configs(config_no_t2, extra_facts={"LADDER_KEY": "tier3_facts"})
-        self.assertEqual(res_t3.effective_dict["LADDER_KEY"], "tier3_facts")
+        res_t3 = resolve_env_configs(config_no_t1_t2, package_facts={})
+        self.assertEqual(res_t3.impact.restricted_env()["LADDER_KEY"], "tier3_cli")
+        with res_t3.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier3_cli")
 
         # 4. Tier 1, 2, 3 absent -> Tier 4 (Secrets) wins over Default, Fallback
+        os.environ.pop("LADDER_KEY", None)
         config_no_t3 = EnvConfig(
             secrets={"LADDER_KEY": "tier4_secrets"},
             default={"LADDER_KEY": "tier5_default"},
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_t4 = resolve_env_configs(config_no_t3, extra_facts={})
-        self.assertEqual(res_t4.effective_dict["LADDER_KEY"], "tier4_secrets")
+        res_t4 = resolve_env_configs(config_no_t3, package_facts={})
+        self.assertEqual(res_t4.impact.restricted_env()["LADDER_KEY"], "tier4_secrets")
+        with res_t4.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier4_secrets")
 
         # 5. Tier 1, 2, 3, 4 absent -> Tier 5 (Default) wins over Fallback
         config_no_t4 = EnvConfig(
             default={"LADDER_KEY": "tier5_default"},
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_t5 = resolve_env_configs(config_no_t4, extra_facts={})
-        self.assertEqual(res_t5.effective_dict["LADDER_KEY"], "tier5_default")
+        res_t5 = resolve_env_configs(config_no_t4, package_facts={})
+        self.assertEqual(res_t5.impact.restricted_env()["LADDER_KEY"], "tier5_default")
+        with res_t5.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier5_default")
 
         # 6. Only Tier 6 (Fallback) defined -> Fallback provides the value
         config_only_t6 = EnvConfig(
             fallback={"LADDER_KEY": "tier6_fallback"},
         )
-        res_t6 = resolve_env_configs(config_only_t6, extra_facts={})
-        self.assertEqual(res_t6.effective_dict["LADDER_KEY"], "tier6_fallback")
+        res_t6 = resolve_env_configs(config_only_t6, package_facts={})
+        self.assertEqual(res_t6.impact.restricted_env()["LADDER_KEY"], "tier6_fallback")
+        with res_t6.impact.scope():
+            self.assertEqual(os.environ["LADDER_KEY"], "tier6_fallback")
+
+    def test_resolve_env_configs_uses_system_facts_without_mutating_os_environ(self) -> None:
+        """Verifies resolve_env_configs incorporates system facts purely in-memory without polluting os.environ."""
+        from drift.utils.host_facts import get_cached_system_facts
+        cached_facts = get_cached_system_facts()
+        self.assertIn("drift_os", cached_facts)
+
+        # Clear drift_* from os.environ to ensure no ambient pollution
+        for k in cached_facts:
+            os.environ.pop(k, None)
+
+        initial_env = dict(os.environ)
+
+        config = EnvConfig(
+            default={"MY_OS": "${drift_os}_custom"},
+            override={"REF_ARCH": "${drift_arch}_target"},
+        )
+        package_facts = {"drift_package_name": "test_pkg", "drift_os": "virtual_os"}
+
+        res = resolve_env_configs(config, package_facts=package_facts)
+
+        # 1. Package facts override system facts (Tier 2 intra-tier precedence)
+        self.assertEqual(res.effective.default["MY_OS"], "virtual_os_custom")
+        self.assertEqual(res.effective.override["REF_ARCH"], f"{cached_facts['drift_arch']}_target")
+
+        # 2. Both system facts and package facts are included in the impact overrides
+        self.assertEqual(res.impact.overrides["drift_package_name"], "test_pkg")
+        self.assertEqual(res.impact.overrides["drift_os"], "virtual_os")
+        self.assertEqual(res.impact.overrides["drift_arch"], cached_facts["drift_arch"])
+
+        # 3. os.environ was NOT mutated
+        self.assertEqual(dict(os.environ), initial_env)
+
+
+class TestSystemFactsHierarchy(unittest.TestCase):
+    """Exhaustive tests verifying the exact precedence hierarchy of System Facts across all tiers.
+
+    Hierarchy Specification:
+    1. Tier 1 (Override): Package [env.override] > Workspace [env.override] > Tier 2 Facts
+    2. Tier 2 (Facts): Package Facts (Authoritative) > System Facts (Auto-detected)
+    3. Tier 2 Facts > Tier 3 (Ambient os.environ / CLI flags)
+    4. Tier 2 Facts > Tier 4 (Secrets: Package > Workspace > secrets.env)
+    5. Tier 2 Facts > Tier 5 (Default: Package > Workspace)
+    6. Tier 2 Facts > Tier 6 (Fallback: Package > Workspace)
+    """
+
+    def setUp(self) -> None:
+        set_test_mode(True)
+        self.original_environ = dict(os.environ)
+        from drift.utils.host_facts import get_cached_system_facts
+        self.cached_facts = dict(get_cached_system_facts())
+        self.system_os = self.cached_facts["drift_os"]
+        self.system_arch = self.cached_facts["drift_arch"]
+
+        # Ensure clean os.environ without pre-existing drift_*
+        for k in self.cached_facts:
+            os.environ.pop(k, None)
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_environ)
+
+    def test_tier1_override_beats_system_facts(self) -> None:
+        """Tier 1 [env.override] takes precedence over auto-probed system facts."""
+        config = EnvConfig(override={"drift_os": "forced_override_os"})
+        res = resolve_env_configs(config)
+        self.assertEqual(res.impact.overrides["drift_os"], "forced_override_os")
+        self.assertEqual(res.impact.restricted_env()["drift_os"], "forced_override_os")
+        with res.impact.scope():
+            self.assertEqual(os.environ["drift_os"], "forced_override_os")
+
+    def test_tier2_package_facts_beats_system_facts(self) -> None:
+        """Tier 2 Package facts take precedence over System facts within Tier 2."""
+        config = EnvConfig()
+        package_facts = {"drift_os": "package_specific_os"}
+        res = resolve_env_configs(config, package_facts=package_facts)
+        # drift_os is overridden by package fact
+        self.assertEqual(res.impact.overrides["drift_os"], "package_specific_os")
+        # other system facts remain intact
+        self.assertEqual(res.impact.overrides["drift_arch"], self.system_arch)
+
+    def test_system_facts_beats_tier3_ambient_environ(self) -> None:
+        """Tier 2 System facts overwrite polluted ambient os.environ."""
+        os.environ["drift_os"] = "ambient_polluted_os"
+        os.environ["drift_arch"] = "ambient_polluted_arch"
+
+        config = EnvConfig()
+        res = resolve_env_configs(config)
+        # Auto-probed system facts must overwrite the ambient polluted values
+        self.assertEqual(res.impact.overrides["drift_os"], self.system_os)
+        self.assertEqual(res.impact.overrides["drift_arch"], self.system_arch)
+        with res.impact.scope():
+            self.assertEqual(os.environ["drift_os"], self.system_os)
+            self.assertEqual(os.environ["drift_arch"], self.system_arch)
+
+    def test_system_facts_beats_tier4_secrets(self) -> None:
+        """Tier 2 System facts cannot be shadowed by Tier 4 secrets."""
+        config = EnvConfig(secrets={"drift_os": "secret_os", "drift_arch": "secret_arch"})
+        lower = EnvConfig(secrets={"drift_distro": "lower_secret_distro"})
+        res = resolve_env_configs(config, lower_layer=lower)
+        # System facts win over secrets in both current and lower layers
+        self.assertEqual(res.impact.overrides["drift_os"], self.system_os)
+        self.assertEqual(res.impact.overrides["drift_arch"], self.system_arch)
+        self.assertEqual(res.impact.overrides["drift_distro"], self.cached_facts["drift_distro"])
+
+    def test_system_facts_beats_tier5_default(self) -> None:
+        """Tier 2 System facts take precedence over Tier 5 default."""
+        config = EnvConfig(default={"drift_os": "default_os"})
+        lower = EnvConfig(default={"drift_arch": "lower_default_arch"})
+        res = resolve_env_configs(config, lower_layer=lower)
+        self.assertEqual(res.impact.overrides["drift_os"], self.system_os)
+        self.assertEqual(res.impact.overrides["drift_arch"], self.system_arch)
+
+    def test_system_facts_beats_tier6_fallback(self) -> None:
+        """Tier 2 System facts take precedence over Tier 6 fallback."""
+        config = EnvConfig(fallback={"drift_os": "fallback_os"})
+        lower = EnvConfig(fallback={"drift_arch": "lower_fallback_arch"})
+        res = resolve_env_configs(config, lower_layer=lower)
+        self.assertEqual(res.impact.overrides["drift_os"], self.system_os)
+        self.assertEqual(res.impact.overrides["drift_arch"], self.system_arch)
+
+    def test_full_system_facts_hierarchy_ladder_on_single_fact(self) -> None:
+        """Verifies full cascade when drift_os is defined simultaneously across all 6 tiers."""
+        # 1. All defined: Tier 1 Override wins
+        os.environ["drift_os"] = "tier3_ambient_os"
+        config_all = EnvConfig(
+            override={"drift_os": "tier1_override_os"},
+            secrets={"drift_os": "tier4_secret_os"},
+            default={"drift_os": "tier5_default_os"},
+            fallback={"drift_os": "tier6_fallback_os"},
+        )
+        res_t1 = resolve_env_configs(config_all, package_facts={"drift_os": "tier2_package_os"})
+        self.assertEqual(res_t1.impact.overrides["drift_os"], "tier1_override_os")
+
+        # 2. Tier 1 absent: Tier 2 Package Fact wins over System Fact, Ambient, Secrets, Default, Fallback
+        config_no_t1 = EnvConfig(
+            secrets={"drift_os": "tier4_secret_os"},
+            default={"drift_os": "tier5_default_os"},
+            fallback={"drift_os": "tier6_fallback_os"},
+        )
+        res_t2_pkg = resolve_env_configs(config_no_t1, package_facts={"drift_os": "tier2_package_os"})
+        self.assertEqual(res_t2_pkg.impact.overrides["drift_os"], "tier2_package_os")
+
+        # 3. Package Fact absent: Tier 2 System Fact wins over Ambient, Secrets, Default, Fallback
+        res_t2_sys = resolve_env_configs(config_no_t1, package_facts={})
+        self.assertEqual(res_t2_sys.impact.overrides["drift_os"], self.system_os)
+
+    def test_system_facts_reference_expansion_across_all_tiers(self) -> None:
+        """Verifies that all tiers (Fallback, Default, Secrets, Override) can reference system facts."""
+        config = EnvConfig(
+            fallback={"FB_REF": "fallback_${drift_os}"},
+            secrets={"SEC_REF": "secret_${drift_arch}"},
+            default={"DEF_REF": "default_${drift_distro}"},
+            override={"OVR_REF": "override_${drift_hostname}_${drift_user}"},
+        )
+        res = resolve_env_configs(config)
+        self.assertEqual(res.effective.fallback["FB_REF"], f"fallback_{self.system_os}")
+        self.assertEqual(res.effective.secrets["SEC_REF"], f"secret_{self.system_arch}")
+        self.assertEqual(res.effective.default["DEF_REF"], f"default_{self.cached_facts['drift_distro']}")
+        self.assertEqual(
+            res.effective.override["OVR_REF"],
+            f"override_{self.cached_facts['drift_hostname']}_{self.cached_facts['drift_user']}"
+        )
 
 
 class TestEnvParsingAndAliasing(unittest.TestCase):
@@ -1957,7 +2116,6 @@ class TestSecretsMaskingInLogs(unittest.TestCase):
         res = EnvResolve(
             current=EnvConfig(secrets={"LOCAL_KEY": "loc_val"}),
             effective=EnvConfig(secrets={"GLOBAL_KEY": "glob_val", "LOCAL_KEY": "loc_val"}),
-            effective_dict={"GLOBAL_KEY": "glob_val", "LOCAL_KEY": "loc_val", "NORMAL_KEY": "norm_val"},
         )
         self.assertEqual(res.secret_keys, {"GLOBAL_KEY", "LOCAL_KEY"})
 
@@ -2017,34 +2175,41 @@ class TestSecretsMaskingInLogs(unittest.TestCase):
             os.environ.pop("EXISTING_NORMAL", None)
             set_test_mode(True, enable_logging=False)
 
-    def test_env_resolve_scope_granular_masking(self) -> None:
-        """env_resolve_scope automatically extracts secret_keys and masks only secrets in debug logs."""
+    def test_env_impact_scope_granular_masking(self) -> None:
+        """EnvImpact.scope automatically extracts secret_keys and masks only secrets in debug logs."""
         set_test_mode(True, enable_logging=True)
         try:
             os.environ["PRE_EXISTING_SECRET"] = "pre_secret_123"
+            os.environ["AMBIENT_OVERRIDE_SECRET"] = "ambient_val_456"
             env_res = EnvResolve(
                 effective=EnvConfig(
-                    override={"OVERRIDE_VAR": "my_override"},
-                    secrets={"MY_TOKEN": "secret_token_999", "PRE_EXISTING_SECRET": "new_secret_888"},
+                    override={
+                        "OVERRIDE_VAR": "my_override",
+                        "PRE_EXISTING_SECRET": "new_secret_888",
+                    },
+                    secrets={
+                        "MY_TOKEN": "secret_token_999",
+                        "PRE_EXISTING_SECRET": "new_secret_888",
+                        "AMBIENT_OVERRIDE_SECRET": "secret_fallback_val",
+                    },
                     default={"APP_HOST": "localhost"},
                 ),
-                effective_dict={
-                    "OVERRIDE_VAR": "my_override",
-                    "MY_TOKEN": "secret_token_999",
-                    "PRE_EXISTING_SECRET": "new_secret_888",
-                    "APP_HOST": "localhost",
-                },
             )
 
-            with self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
-                with env_resolve_scope(env_res):
+            with patch("sys.stderr", StringIO()), self.assertLogs("drift.utils.env_utils", level="DEBUG") as cm:
+                with env_res.impact.scope():
                     self.assertEqual(os.environ["MY_TOKEN"], "secret_token_999")
+                    self.assertEqual(os.environ["PRE_EXISTING_SECRET"], "new_secret_888")
+                    # Ambient env (Tier 3) preserves ambient value against default secrets (Tier 4)
+                    self.assertEqual(os.environ["AMBIENT_OVERRIDE_SECRET"], "ambient_val_456")
                     self.assertEqual(os.environ["APP_HOST"], "localhost")
 
             log_output = "\n".join(cm.output)
             # Secrets masked
             self.assertIn("Environment variable loaded: MY_TOKEN=****", log_output)
             self.assertIn("Environment variable loaded: PRE_EXISTING_SECRET=****", log_output)
+            # Ambient env skipped for default secret
+            self.assertIn("Environment variable skipped (already set and overwrite=False): AMBIENT_OVERRIDE_SECRET", log_output)
             # Non-secrets in clear text
             self.assertIn("Environment variable loaded: OVERRIDE_VAR=my_override", log_output)
             self.assertIn("Environment variable loaded: APP_HOST=localhost", log_output)
@@ -2056,8 +2221,10 @@ class TestSecretsMaskingInLogs(unittest.TestCase):
             self.assertNotIn("secret_token_999", log_output)
             self.assertNotIn("new_secret_888", log_output)
             self.assertNotIn("pre_secret_123", log_output)
+            self.assertNotIn("secret_fallback_val", log_output)
         finally:
             os.environ.pop("PRE_EXISTING_SECRET", None)
+            os.environ.pop("AMBIENT_OVERRIDE_SECRET", None)
             set_test_mode(True, enable_logging=False)
 
     def test_package_envs_selective_secret_masking(self) -> None:
@@ -2172,6 +2339,167 @@ class TestPackageConfigEnvResolveEdgeCases(unittest.TestCase):
         )
         with self.assertRaises(ConfigError):
             standalone_pkg.compute_effective_envs(None)
+
+
+class TestEnvImpactUnit(unittest.TestCase):
+    """Unit tests for EnvImpact data model: full_env, restricted_env, and scope."""
+
+    def test_env_impact_full_env_precedence(self) -> None:
+        """full_env implements overrides > base_env > defaults."""
+        impact = EnvImpact(
+            overrides={"O": "override_val", "SHARED": "override_shared"},
+            defaults={"D": "default_val", "SHARED": "default_shared", "CLI_WIN": "default_cli"},
+        )
+        base = {
+            "CLI_WIN": "ambient_cli_val",
+            "SHARED": "ambient_shared_val",
+            "HOST_ONLY": "host_val",
+        }
+        res = impact.full_env(base)
+        # 1. Overrides win over base and defaults
+        self.assertEqual(res["O"], "override_val")
+        self.assertEqual(res["SHARED"], "override_shared")
+        # 2. Base wins over defaults
+        self.assertEqual(res["CLI_WIN"], "ambient_cli_val")
+        # 3. Defaults fill in missing base keys
+        self.assertEqual(res["D"], "default_val")
+        # 4. Host variables preserved
+        self.assertEqual(res["HOST_ONLY"], "host_val")
+
+    def test_env_impact_restricted_env_zero_noise(self) -> None:
+        """restricted_env projects only declared keys and strictly filters out ambient noise."""
+        impact = EnvImpact(
+            overrides={"OVERRIDE_KEY": "over_val"},
+            defaults={"DEFAULT_KEY": "def_val", "CLI_OVERRIDDEN_KEY": "def_base"},
+        )
+        base = {
+            "CLI_OVERRIDDEN_KEY": "custom_cli_val",
+            "SHLVL": "2",
+            "SSH_AUTH_SOCK": "/tmp/ssh.sock",
+            "OLDPWD": "/var/tmp",
+            "WINDOWID": "12345",
+        }
+        restricted = impact.restricted_env(base)
+        # Declared keys present
+        self.assertEqual(restricted["OVERRIDE_KEY"], "over_val")
+        self.assertEqual(restricted["DEFAULT_KEY"], "def_val")
+        self.assertEqual(restricted["CLI_OVERRIDDEN_KEY"], "custom_cli_val")
+        # Zero session noise leakage
+        self.assertNotIn("SHLVL", restricted)
+        self.assertNotIn("SSH_AUTH_SOCK", restricted)
+        self.assertNotIn("OLDPWD", restricted)
+        self.assertNotIn("WINDOWID", restricted)
+        self.assertEqual(set(restricted.keys()), impact.declared_keys)
+
+    def test_env_impact_scope_two_phase_and_restoration(self) -> None:
+        """scope performs two-phase activation (defaults conditional, overrides forced) and restores state."""
+        impact = EnvImpact(
+            overrides={"OVER_KEY": "new_over", "STOMP_KEY": "over_wins"},
+            defaults={"DEF_KEY": "new_def", "PRE_KEY": "def_loses"},
+        )
+        target = {
+            "PRE_KEY": "orig_pre",
+            "STOMP_KEY": "orig_stomp",
+            "UNCHANGED": "orig_unchanged",
+        }
+
+        with impact.scope(target):
+            # Overrides overwrite unconditionally
+            self.assertEqual(target["OVER_KEY"], "new_over")
+            self.assertEqual(target["STOMP_KEY"], "over_wins")
+            # Defaults do NOT overwrite existing keys
+            self.assertEqual(target["PRE_KEY"], "orig_pre")
+            # Defaults populate unset keys
+            self.assertEqual(target["DEF_KEY"], "new_def")
+            # Unrelated keys preserved
+            self.assertEqual(target["UNCHANGED"], "orig_unchanged")
+
+        # After exiting scope, state is completely restored
+        self.assertEqual(target["PRE_KEY"], "orig_pre")
+        self.assertEqual(target["STOMP_KEY"], "orig_stomp")
+        self.assertEqual(target["UNCHANGED"], "orig_unchanged")
+        self.assertNotIn("OVER_KEY", target)
+        self.assertNotIn("DEF_KEY", target)
+
+
+class TestEnvResolveUnit(unittest.TestCase):
+    """Unit tests for EnvResolve data model: initialization, build_impact, and secret_keys."""
+
+    def test_env_resolve_default_initialization(self) -> None:
+        """Default initialization builds empty EnvConfigs and an empty EnvImpact."""
+        res = EnvResolve()
+        self.assertEqual(res.current, EnvConfig())
+        self.assertEqual(res.effective, EnvConfig())
+        self.assertEqual(res.impact.overrides, {})
+        self.assertEqual(res.impact.defaults, {})
+        self.assertEqual(res.secret_keys, set())
+
+    def test_env_resolve_build_impact_from_effective(self) -> None:
+        """build_impact compiles effective tables into an EnvImpact following 6-tier precedence."""
+        res = EnvResolve(
+            effective=EnvConfig(
+                override={"O": "override_val", "SHARED": "override_shared"},
+                secrets={"SEC": "secret_val"},
+                default={"D": "default_val", "SHARED": "default_shared"},
+                fallback={"FB": "fallback_val"},
+            )
+        )
+        impact = res.build_impact()
+        # Overrides win over defaults
+        self.assertEqual(impact.overrides["O"], "override_val")
+        self.assertEqual(impact.overrides["SHARED"], "override_shared")
+        # Defaults merge fallback + default + secrets (disjoint from overrides)
+        self.assertEqual(impact.defaults["FB"], "fallback_val")
+        self.assertEqual(impact.defaults["D"], "default_val")
+        self.assertEqual(impact.defaults["SEC"], "secret_val")
+        self.assertNotIn("SHARED", impact.defaults)
+        # Secrets are captured in secret_keys
+        self.assertIn("SEC", impact.secret_keys)
+        self.assertEqual(res.secret_keys, {"SEC"})
+
+    def test_env_resolve_build_impact_with_all_facts(self) -> None:
+        """build_impact merges all_facts into overrides with Tier 1 beating Tier 2 facts."""
+        res = EnvResolve(
+            effective=EnvConfig(
+                override={"drift_os": "custom_os", "OTHER": "val"},
+                default={"FB_KEY": "def"},
+            )
+        )
+        facts = {
+            "drift_os": "system_probed_os",
+            "drift_arch": "x86_64",
+            "drift_package_name": "my_pkg",
+        }
+        impact = res.build_impact(all_facts=facts)
+        # Tier 1 override beats Tier 2 fact
+        self.assertEqual(impact.overrides["drift_os"], "custom_os")
+        # Non-colliding facts are included in overrides
+        self.assertEqual(impact.overrides["drift_arch"], "x86_64")
+        self.assertEqual(impact.overrides["drift_package_name"], "my_pkg")
+        self.assertEqual(impact.overrides["OTHER"], "val")
+        self.assertEqual(impact.defaults["FB_KEY"], "def")
+
+    def test_env_resolve_init_with_all_facts_automatically_populates_impact(self) -> None:
+        """Passing all_facts to EnvResolve.__init__ automatically compiles impact."""
+        facts = {"drift_os": "auto_os", "drift_user": "tester"}
+        res = EnvResolve(
+            current=EnvConfig(override={"LOCAL": "curr_val"}),
+            effective=EnvConfig(override={"LOCAL": "curr_val", "drift_os": "forced_os"}),
+            all_facts=facts,
+        )
+        self.assertEqual(res.impact.overrides["LOCAL"], "curr_val")
+        self.assertEqual(res.impact.overrides["drift_os"], "forced_os")
+        self.assertEqual(res.impact.overrides["drift_user"], "tester")
+
+    def test_env_resolve_explicit_impact_override(self) -> None:
+        """Passing explicit impact overrides automatic build_impact."""
+        custom_impact = EnvImpact(overrides={"EXPLICIT": "yes"})
+        res = EnvResolve(
+            effective=EnvConfig(override={"SHOULD_BE_IGNORED": "no"}),
+            impact=custom_impact,
+        )
+        self.assertEqual(res.impact, custom_impact)
+        self.assertEqual(res.impact.overrides, {"EXPLICIT": "yes"})
 
 
 if __name__ == "__main__":

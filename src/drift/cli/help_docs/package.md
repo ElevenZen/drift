@@ -66,7 +66,7 @@ Packages can declare platform prerequisites evaluated **strictly before template
 
 ### 4. 🧩 Unified 6-Tier Environment & In-TOML Variable Stitching (`[env]`)
 Packages participate in Drift's symmetrical, 6-tier precedence hierarchy:
-*   **4 Symmetrical Sub-Tables**: `[env.override]` (Tier 2, forced overrides), `[env.secrets]` (Tier 4, private credentials), `[env.default]` (Tier 5, standard defaults), `[env.fallback]` (Tier 6, soft baseline).
+*   **4 Symmetrical Sub-Tables**: `[env.override]` (Tier 1, forced overrides), `[env.secrets]` (Tier 4, private credentials), `[env.default]` (Tier 5, standard defaults), `[env.fallback]` (Tier 6, soft baseline).
 *   **In-TOML Variable Stitching**: Define derived variables (`URL = "http://${HOST}:${PORT}"`) directly within TOML. Drift resolves references using Kahn's topological sort algorithm with cycle detection.
 *   **Automatic Fact Injection**: Access auto-probed facts (`${drift_os}`, `${drift_arch}`, `${drift_package_name}`, `${drift_package_target_dir}`, `${drift_package_source_dir}`).
 *   **Cross-Section References**: Any configuration field (such as `target_directory`) can reference resolved environment variables.

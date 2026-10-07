@@ -4,10 +4,9 @@
 Architecture & Call Chain Overview
 ===============================================================================
 
-Layer 3: Public Fact Ingestion Entry Point
-    get_system_facts(os_release_path_override)
-        SystemFacts.probe(os_release_path_override) [Layer 2]
-        SystemFacts.to_envs(ip_separator=";") [Layer 2]
+Layer 3: Public Fact Ingestion & In-Memory Encapsulation
+    init_system_facts(os_release_path_override) -> SYSTEM_FACTS
+    get_cached_system_facts() -> SYSTEM_FACTS
 
 Layer 2: Structured Data Model & System Facts Aggregator
     SystemFacts (dataclass)
@@ -312,18 +311,22 @@ class SystemFacts:
         }
 
 
-def get_system_facts(
+SYSTEM_FACTS: Dict[str, str] = {}
+
+
+def init_system_facts(
     os_release_path_override: Optional[Path] = None,
 ) -> Dict[str, str]:
-    """Returns the dictionary of auto-populated lowercase drift host facts."""
-    return SystemFacts.probe(os_release_path_override=os_release_path_override).to_envs()
+    """Initializes and caches the global system facts dictionary without touching os.environ."""
+    global SYSTEM_FACTS
+    SYSTEM_FACTS = SystemFacts.probe(os_release_path_override=os_release_path_override).to_envs()
+    return SYSTEM_FACTS
 
 
-def inject_system_facts() -> None:
-    """Injects auto-populated host facts into os.environ if not already set in INITIAL_ENV."""
-    from ..core.constants import INITIAL_ENV
-    facts = get_system_facts()
-    for k, v in facts.items():
-        if k not in INITIAL_ENV:
-            logger.debug(f"Host fact injected into os.environ: {k}={v}")
-            os.environ[k] = v
+def get_cached_system_facts() -> Dict[str, str]:
+    """Returns the cached system facts dictionary, lazily initializing if not yet populated."""
+    global SYSTEM_FACTS
+    if not SYSTEM_FACTS:
+        init_system_facts()
+    return SYSTEM_FACTS
+

@@ -95,7 +95,7 @@ class TestRenderPhase1AndPhase2(unittest.TestCase):
         # Check in-memory PackageConfig
         self.assertEqual(pkg_config.name, "my_pkg")
         self.assertEqual(pkg_config.package.target_directory, Path("custom_local"))
-        self.assertEqual(pkg_config.env_resolve.effective_dict.get("greeting"), "hello_phase1_success")
+        self.assertEqual(pkg_config.env_resolve.impact.restricted_env().get("greeting"), "hello_phase1_success")
 
         # Check intermediate rendered candidate file
         intermediate = (
@@ -133,7 +133,7 @@ def configure_package(context):
 """, encoding="utf-8")
 
         pkg_config = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
-        self.assertEqual(pkg_config.env_resolve.effective_dict.get("hook_ran"), "true")
+        self.assertEqual(pkg_config.env_resolve.impact.restricted_env().get("hook_ran"), "true")
 
         # Source files must include drift_package.toml and drift_package.py
         registered_names = [p.name for p in pkg_config.source_files]
@@ -193,7 +193,7 @@ def configure_package(context):
 
         pkg_config = load_package_config_from_source_dir(pkg_dir, workspace_config=None)
         self.assertEqual(pkg_config.name, "fallback_pkg")
-        self.assertEqual(pkg_config.env_resolve.effective_dict.get("foo"), "bar")
+        self.assertEqual(pkg_config.env_resolve.impact.restricted_env().get("foo"), "bar")
         # render/ must not contain fallback_pkg
         self.assertFalse((self.render_dir / "fallback_pkg").exists())
 

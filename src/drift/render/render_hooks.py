@@ -89,7 +89,7 @@ def build_phase2_hooks_dag(
 
     hooks_root = PackageHooksNode(pkg_name=pkg_name, hook_nodes=initial_nodes)
 
-    env_node = JsonNode(pkg_config.env_resolve.effective_dict)
+    env_node = JsonNode(pkg_config.env_resolve.impact.restricted_env())
     exp_ctx = ExpansionContext(
         package_name=pkg_name,
         enable_render=True,

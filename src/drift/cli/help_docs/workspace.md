@@ -59,7 +59,7 @@ For programmatic fleet management and conditional orchestration:
 ### 3. 🔒 Environment Secret Vault (`config/secrets.env`) & 6-Tier Precedence
 Keep sensitive tokens, passwords, and private emails strictly out of git:
 *   **Dotenv Secret Vault**: `config/secrets.env` stores uncommitted key-value pairs (e.g. `GITHUB_TOKEN="ghp_xxx"`).
-*   **6-Tier Hierarchy**: Resolves CLI overrides (Tier 1) > Overrides (Tier 2) > System/Package Facts (Tier 3) > Secrets (Tier 4) > Defaults (Tier 5) > Fallbacks (Tier 6).
+*   **6-Tier Hierarchy**: Resolves Overrides (Tier 1) > System/Package Facts (Tier 2) > CLI & Ambient Context (Tier 3) > Secrets (Tier 4) > Defaults (Tier 5) > Fallbacks (Tier 6).
 *   **Transient Clean-Room Isolation (`package_envs`)**: Secrets are loaded in memory, masked in debug logs (`KEY=****`), and completely cleaned up after execution without leaking into parent shells.
 
 ### 4. 🧩 Native Variable Stitching & Topological Resolution (`[env]`)

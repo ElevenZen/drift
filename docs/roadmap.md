@@ -66,14 +66,14 @@ Enforced a strict semantic prefix convention codified in [`AGENTS.md`](AGENTS.md
 ### 6. Symmetrical 6-Tier Environment Architecture & `EnvConfig`
 - **Symmetrical 4-Table Environment Model**: Both workspace and package configurations share 4 identical sub-tables under `[env]`: `[env.override]`, `[env.secrets]`, `[env.default]`, `[env.fallback]`.
 - **Authoritative 6-Tier Precedence**: Fully unified macro hierarchy where **Package > Workspace** is strictly enforced within each macro tier:
-  1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-  2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
-  3. **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+  1. **Tier 1 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+  2. **Tier 2 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+  3. **Tier 3 (CLI & Ambient)**: Ambient Process Environment (`os.environ`) & CLI Variables
   4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
   5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
   6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
-- **Strongly Typed `EnvConfig` & `EnvResolve`**: `EnvConfig` encapsulates the 4 canonical environment tables (`override`, `secrets`, `default`, `fallback`) with pure serializer `to_env_dict()`. `EnvResolve` holds `current: EnvConfig`, `effective: EnvConfig`, and `effective_dict: Dict[str, str]` with pure DAG resolver `resolve_env_configs()`.
-- **Decoupled Load vs. Runtime Execution**: Ingestion points (`from_dict`, `from_render_dir`, `from_install_dir`) accept `workspace_config` to compute effective environment tables and facts; runtime execution (`package_envs`) is completely decoupled and operates self-contained on `self.env_resolve.effective_dict` via `env_scope`.
+- **Strongly Typed `EnvConfig`, `EnvImpact` & `EnvResolve`**: `EnvConfig` encapsulates the 4 canonical environment tables (`override`, `secrets`, `default`, `fallback`) with pure serializer `to_env_dict()`. `EnvImpact` models two-phase environment scoping (`full_env`, `scope`, `restricted_env`). `EnvResolve` holds `current: EnvConfig`, `effective: EnvConfig`, and `impact: EnvImpact` with pure DAG resolver `resolve_env_configs()`.
+- **Decoupled Load vs. Runtime Execution**: Ingestion points (`from_dict`, `from_render_dir`, `from_install_dir`) accept `workspace_config` to compute effective environment tables and facts; runtime execution (`package_envs`) is completely decoupled and operates self-contained via `self.env_resolve.impact.scope()`.
 - **Pure In-Memory Loading**: `load_workspace_config` does not mutate `os.environ` or execute side-effects during config construction; CLI initialization centralized in `prepare_cli_environment`.
 - **Zero Backward Compatibility Burden**: Removed obsolete property wrappers (`packages`, `render_engine_config`, `drift_root_path`, `env_default`, `secrets`) and table parser shims across config classes.
 
@@ -243,7 +243,9 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
   The current README tries to do all three and ends up being 675 lines that feel like a spec sheet.
 
-- [ ] **Sample workspace repository.** Add a `samples/` directory with real-world examples: frp config (networks among machines), package manager configs (mise / nix home-manager / linuxbrew), common shell setups. (from old roadmap)
+- [ ] **Sample workspace repository.** Add a `samples/` directory with real-world examples: frp config (networks among machines), package manager configs (mise / nix home-manager / linuxbrew), common shell setups. (from old roadmap)  
+
+- [ ] **`drift env <package>`** works like `dotenv` utility .
 
 - [ ] **`drift deploy` can call `drift health` at the end.** Post-deployment health verification as an opt-in step. (from old roadmap)  
 
@@ -266,7 +268,7 @@ The roadmap is prioritized into four execution tiers based on **architectural RO
 
 - [ ] **Rendered output validation.** Render engines can optionally call external validators on rendered output to verify format correctness (`json`, `yaml`, `toml`, etc.) before staging. (from old roadmap)
 
-- [ ] **Reorder render before reverse-sync in deploy pipeline.** If rendered output is identical to the reverse-synced result, the drift can be resolved with a simple Git commit in the install repo, avoiding unnecessary file operations. (from old roadmap)
+- [ ] **Reorder render before reverse-sync in deploy pipeline.** If rendered output is identical to the reverse-synced result, the drift can be resolved with a simple Git commit in the install repo, avoiding unnecessary aborts and user commands. Maybe we should run install plan just after stage plan with patched workspace pointing into render/ repo, just like what we do in 'drift plan', we need to check if it can produce a reliable plan given that 'drift stage' mirrors the render/ repo into install/ repo exactly. This reordering can minimize the risk of midfall rollback that can give use a smooth experience without manual interference.
 
 - [ ] **Unified Layered Import System (`[[imports]]`).** Replace ad-hoc cross-package imports and external asset fetching with a unified layered overlay file system. A package declares an ordered list of `[[imports]]` from internal packages or external sources. The effective package source is stacked in declaration order with the package's local `src/<pkg>/` directory acting as the top-most override layer:
   ```toml

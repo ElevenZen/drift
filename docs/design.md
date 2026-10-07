@@ -475,22 +475,22 @@ To isolate secret tokens, private API keys, and work-specific emails from public
 
 1. **Strict 6-Tier Variable Precedence**:
    During configuration ingestion, template parsing, and hook execution, variables are resolved in a strict order of precedence (Package > Workspace within each macro tier, highest precedence overrides lower layers):
-   - **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-   - **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
-   - **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
+   - **Tier 1 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+   - **Tier 2 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*` protected facts: `drift_os`, `drift_arch`, `drift_distro`, `drift_hostname`, `drift_user`, `drift_ip_addresses`)
+   - **Tier 3 (CLI & Ambient)**: Ambient Process Environment (`os.environ`) & CLI Overrides
    - **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
    - **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
    - **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
 
    - **Bridging Ambient Host Variables into Declarative Merkle Tracking (`[env.fallback]`)**:
-     Drift's Merkle DAG render caching engine deliberately digests `pkg_config.env_resolve.effective_dict` rather than raw `os.environ` to avoid capturing volatile ambient shell session noise (`SHLVL`, `_`, `OLDPWD`, `SSH_AUTH_SOCK`, `TMUX_PANE`, etc.), which would otherwise break change invariance and reduce the Merkle cache hit rate to 0%.
+     Drift's Merkle DAG render caching engine deliberately digests `pkg_config.env_resolve.impact.restricted_env()` rather than raw `os.environ` to avoid capturing volatile ambient shell session noise (`SHLVL`, `_`, `OLDPWD`, `SSH_AUTH_SOCK`, `TMUX_PANE`, etc.), which would otherwise break change invariance and reduce the Merkle cache hit rate to 0%.
      To allow dotfile templates or lifecycle hooks to depend on host environment variables and trigger recompilation when they change, users should declare them in Tier 6 (`[env.fallback]`), e.g.:
      ```toml
      [env.fallback]
      HOST_EDITOR = "${EDITOR:-vim}"
      HOST_THEME  = "${THEME:-dark}"
      ```
-     Because Tier 1 (`INITIAL_ENV`) takes precedence over Tier 6, Drift resolves the ambient host value into `effective_dict` and tracks it deterministically in the render DAG Merkle hash (`JsonNode(effective_dict)`), while cleanly shielding the cache from untracked ambient environment churn.
+     Because Tier 3 (`os.environ`) takes precedence over Tier 6, Drift resolves the ambient host value into `restricted_env` and tracks it deterministically in the render DAG Merkle hash (`JsonNode(restricted_env)`), while cleanly shielding the cache from untracked ambient environment churn.
 
 2. **Topological DAG Resolution & Pure In-Memory Ingestion**:
    - `resolve_and_interpolate_workspace_config` and `resolve_and_interpolate_package_config` perform pure in-memory DAG topological sorting across all 4 `[env]` tables (`override`, `secrets`, `default`, `fallback`) without mutating `os.environ` during configuration parsing.
@@ -505,9 +505,9 @@ To isolate secret tokens, private API keys, and work-specific emails from public
 
 4. **Transient Clean-Room Isolation (`package_envs`) & Log Masking**:
    To prevent credentials and environment mutations from leaking across operations:
-   - When executing package lifecycle shell hooks (`drift_hooks/`) or rendering templates (`with pkg_config.package_envs():`), Drift temporarily loads `pkg_config.env_resolve.effective_dict` into `os.environ` adhering to Tier 1 protection (`INITIAL_ENV`) via the `env_resolve_scope` context manager.
+   - When executing package lifecycle shell hooks (`drift_hooks/`) or rendering templates (`with pkg_config.package_envs():`), Drift temporarily loads environment variables into `os.environ` using a two-phase scoping mechanism via `pkg_config.env_resolve.impact.scope()`.
    - Secret values defined in `[env.secrets]` and `secrets.env` are automatically masked in debug logs as `KEY=****`, while non-secret variables remain legible in clear text.
-   - Upon exiting the scoped block, `env_resolve_scope` automatically unloads the variables and restores the original environment snapshot, guaranteeing zero state contamination.
+   - Upon exiting the scoped block, `impact.scope()` automatically unloads the variables and restores the original environment snapshot, guaranteeing zero state contamination.
    - **Zero `os.environ` Footprint for Python Preprocessors**: By contrast, dynamic Python preprocessor hooks (`configure_workspace` and `configure_package`) operate with **zero footprint on `os.environ`**—they receive resolved facts, secrets, and environment snapshots purely in-memory through `context.env`.
 
 #### Dynamic Workspace Python Hook: `config/drift_workspace.py`
@@ -905,9 +905,9 @@ At runtime, the drift engine dynamically scopes the pre-resolved package environ
 > [!IMPORTANT]
 > **Environment Variable Precedence & Overrides**:
 > Variables within package operations follow the strict 6-tier precedence hierarchy (Package > Workspace within each macro tier):
-> 1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-> 2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
-> 3. **Tier 3 (Facts)**: Package facts (`drift_package_*`) > Host facts (`drift_*`)
+> 1. **Tier 1 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+> 2. **Tier 2 (Facts)**: Package facts (`drift_package_*`) > Host facts (`drift_*`)
+> 3. **Tier 3 (CLI & Ambient)**: Ambient Process Environment (`os.environ`) & CLI Variables
 > 4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
 > 5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
 > 6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
@@ -919,7 +919,7 @@ These variables are active during:
 2.  **Template Compilations** (accessible as `${drift_package_name}`, `${drift_package_target_dir}`, `${drift_package_source_dir}`, etc. in `.envst` / `envsubst` templates).
 3.  **Physical Deployment Operations**.
 
-Upon completion of the scoped block, `env_resolve_scope` automatically unloads the variables and restores the original environment snapshot, guaranteeing clean-room environment isolation between packages.
+Upon completion of the scoped block, `impact.scope()` automatically unloads the variables and restores the original environment snapshot, guaranteeing clean-room environment isolation between packages.
 
 ### D. Inter-Package Dependencies & Topological DAG Lifecycle Orchestration
 

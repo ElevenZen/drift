@@ -51,12 +51,12 @@ Drift executes template compilation through an orchestrated two-phase pipeline:
 Template engines receive a rich, cohesive variable context stitched together across multiple layers. The help page `drift help package_config` provides detailed configuration.  
 
 * **Unified 6-Tier Environment Precedence**:
-  1. Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-  2. Local Host Overrides (`config/drift_workspace.local.toml`)
-  3. Package Environment Overrides (`[env.override]` in `drift_package.toml`)
-  4. Workspace Environment Overrides (`[env.override]` in `drift_workspace.toml`)
-  5. Package Environment Defaults (`[env]` in `drift_package.toml`)
-  6. Workspace Environment Defaults (`[env]` in `drift_workspace.toml`)
+  1. Package & Workspace Overrides (`[env.override]`)
+  2. Authoritative Package Facts (`drift_package_*`) & System Facts (`drift_*`)
+  3. Ambient Process Environment & CLI Variables (`os.environ`)
+  4. Secret Vaults (`[env.secrets]`, `config/secrets.env`)
+  5. Package & Workspace Defaults (`[env.default]` / `[env]`)
+  6. Package & Workspace Fallbacks (`[env.fallback]`)
 * **Secret Vault Isolation (`config/secrets.env`)**:
   * Loads sensitive credentials into environment scope using transient clean-room isolation.
   * Automatically masks secret values in debug logs (`KEY=****`).

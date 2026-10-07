@@ -108,15 +108,6 @@ WINDOWS_OS_ALIASES = WINDOWS_PLATFORM_ALIASES
 DEFAULT_WORKSPACE_HOOK_FILE_NAME = "drift_workspace.py"
 WORKSPACE_HOOK_FUNCTION_NAME = "configure_workspace"
 
-DRIFT_SYSTEM_FACT_KEYS: FrozenSet[str] = frozenset({
-    "drift_os",
-    "drift_arch",
-    "drift_distro",
-    "drift_hostname",
-    "drift_user",
-    "drift_ip_addresses",
-})
-
 DRIFT_PACKAGE_FACT_KEYS: FrozenSet[str] = frozenset({
     "drift_package_name",
     "drift_package_source_dir",
@@ -356,8 +347,6 @@ DEFAULT_HOOK_TIMEOUT: int = 120
 DEFAULT_HOOK_TIMEOUT_SECONDS: int = DEFAULT_HOOK_TIMEOUT
 
 IN_TEST_MODE: bool = os.environ.get("DRIFT_TEST_MODE", "0") == "1"
-
-INITIAL_ENV: Set[str] = set(os.environ.keys())
 
 DEFAULT_HOOK_COMMON_ENVS: Dict[str, str] = {
     "DRIFT_HOOK": "1",
@@ -638,21 +627,6 @@ def configure_utf8_streams() -> None:
 
 # Initialize UTF-8 stream encoding immediately upon module import
 configure_utf8_streams()
-
-
-def update_initial_env() -> None:
-    """Updates INITIAL_ENV with current keys in os.environ and configures standard streams."""
-    configure_utf8_streams()
-    global INITIAL_ENV
-    INITIAL_ENV.clear()
-    INITIAL_ENV.update(os.environ.keys())
-
-
-def set_initial_env(keys: Iterable[str]) -> None:
-    """Sets INITIAL_ENV explicitly (useful for testing)."""
-    global INITIAL_ENV
-    INITIAL_ENV.clear()
-    INITIAL_ENV.update(keys)
 
 
 def set_test_mode(enabled: bool, enable_logging: bool = False) -> None:

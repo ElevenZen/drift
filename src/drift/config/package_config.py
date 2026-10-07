@@ -10,7 +10,7 @@ Layer 2: Top-Level Package Model Container
         - from_dict(): Factory constructor from parsed TOML table
         - from_source_dir(), from_render_dir(), ...: Stage-aware factory methods
         - evaluate_requirements(): Declarative & probe validation evaluator
-        - package_envs(): Environment activation context manager (powered by env_scope)
+        - package_envs(): Environment activation context manager (powered by EnvImpact.scope())
         - get_drift_package_facts(): Injected package context variables
 
 Layer 1: Package Metadata & Section Specifications
@@ -511,8 +511,7 @@ class PackageConfig:
     @contextmanager
     def package_envs(self) -> Iterator[None]:
         """Context manager to activate package-specific environment variables and secrets in os.environ."""
-        from ..utils.env_utils import env_resolve_scope
-        with env_resolve_scope(self.env_resolve):
+        with self.env_resolve.impact.scope():
             yield
 
     @classmethod
@@ -627,7 +626,7 @@ class PackageConfig:
         self.env_resolve = resolve_env_configs(
             current_layer=self.env_resolve.current,
             lower_layer=(workspace_config and workspace_config.env_resolve.effective),
-            extra_facts=self.get_drift_package_facts(workspace_config),
+            package_facts=self.get_drift_package_facts(workspace_config),
         )
         return self
 

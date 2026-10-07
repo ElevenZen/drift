@@ -81,23 +81,21 @@ class PackageRequirements:
         Returns:
             Tuple of (is_satisfied: bool, failure_reason: Optional[str]).
         """
-        from ..utils.host_facts import get_host_os, get_host_arch, get_host_distro
-
         # 1. Check OS
         if self.os:
-            current_os = os.environ.get("drift_os") or get_host_os()
+            current_os = os.environ.get("drift_os", "")
             if current_os not in self.os:
                 return False, f"Host OS '{current_os}' not in required list: {self.os}"
 
         # 2. Check Architecture
         if self.arch:
-            current_arch = os.environ.get("drift_arch") or get_host_arch()
+            current_arch = os.environ.get("drift_arch", "")
             if current_arch not in self.arch:
                 return False, f"Host architecture '{current_arch}' not in required list: {self.arch}"
 
         # 3. Check Linux Distro
         if self.distro:
-            current_distro = os.environ.get("drift_distro") or get_host_distro()
+            current_distro = os.environ.get("drift_distro", "")
             if current_distro not in self.distro:
                 return False, f"Linux distribution '{current_distro}' not in required list: {self.distro}"
 
@@ -113,13 +111,8 @@ class PackageRequirements:
 
         # 6. Check Host LAN IP addresses
         if self.ip:
-            raw_ips = os.environ.get("drift_ip_addresses")
-            if raw_ips is not None:
-                host_ips = [ip.strip() for ip in raw_ips.split(";") if ip.strip()]
-            else:
-                from ..utils.host_facts import get_host_ip_addresses
-                host_ips = get_host_ip_addresses()
-
+            raw_ips = os.environ.get("drift_ip_addresses", "")
+            host_ips = [ip.strip() for ip in raw_ips.split(";") if ip.strip()]
             if not match_ip_addresses(self.ip, host_ips):
                 return False, f"Host IP addresses {host_ips} do not match any required IP pattern: {self.ip}"
 

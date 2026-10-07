@@ -333,12 +333,12 @@ Drift provides a strongly typed **6-tier environment variable precedence hierarc
 
 | Tier | Name | Source | Description |
 | :---: | :--- | :--- | :--- |
-| **1** | **CLI Context** | Ambient process / `INITIAL_ENV` | Command-line environment variables |
-| **2** | **Override** | `[env.override]` | Explicit high-priority overrides |
-| **3** | **Facts** | Package & system facts (`drift_*`) | Auto-probed host attributes and paths |
-| **4** | **Secrets** | `[env.secrets]`, `secrets.env` | Private credentials and tokens |
-| **5** | **Default** | `[env.default]` | Standard package/workspace values |
-| **6** | **Fallback** | `[env.fallback]` | Soft floor defaults |
+| **1** | **Override** | `[env.override]` | Explicit high-priority overrides (overwrites all lower tiers including ambient shell/CLI) |
+| **2** | **Facts** | Package & system facts (`drift_*`) | Auto-probed host attributes and paths (authoritative internal metadata) |
+| **3** | **CLI Context** | Ambient process (`os.environ`) & CLI | Command-line environment variables (takes precedence over secrets/defaults/fallbacks) |
+| **4** | **Secrets** | `[env.secrets]`, `secrets.env` | Private credentials and tokens (masked in logs) |
+| **5** | **Default** | `[env.default]` | Standard package/workspace baseline values |
+| **6** | **Fallback** | `[env.fallback]` | Soft floor defaults (evaluated only when unset across all upper tiers) |
 
 #### 🔄 Resolution Cascade (`secret >> fallback >> default >> override`)
 Environment tables are resolved using Kahn's topological DAG algorithm with strict unidirectional evaluation flow:
@@ -377,7 +377,7 @@ name = "my_daemon"
 target_directory = "${DAEMON_HOME}/${drift_package_name}"
 
 [env.override]
-# Tier 2: Forced package-level override
+# Tier 1: Forced package-level override
 DAEMON_DEBUG = "1"
 DAEMON_SERVICE_URL = "${DAEMON_HOST}:${DAEMON_PORT}"
 

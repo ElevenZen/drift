@@ -63,10 +63,10 @@ from .config_utils import (
 )
 from .env_utils import (
     EnvConfig,
+    EnvImpact,
     EnvResolve,
     merge_kvpairs,
     parse_env_dict,
-    build_effective_env_dict,
     resolve_env_configs,
     parse_env_text,
     parse_env_file,
@@ -76,7 +76,6 @@ from .env_utils import (
     load_env_settings,
     unload_env_settings,
     env_scope,
-    env_resolve_scope,
     python_envsubst,
     topological_sort,
     topological_sort_env,
@@ -114,7 +113,6 @@ from .editor_utils import (
 )
 from .host_facts import (
     SystemFacts,
-    get_system_facts,
     get_host_ip_addresses,
     get_host_os,
     get_host_arch,
@@ -122,7 +120,9 @@ from .host_facts import (
     get_host_hostname,
     get_host_user,
     parse_os_release,
-    inject_system_facts,
+    SYSTEM_FACTS,
+    init_system_facts,
+    get_cached_system_facts,
 )
 from .python_hook_utils import (
     load_python_module,
@@ -179,10 +179,10 @@ __all__ = [
     "validate_known_keys",
     "parse_bool_value",
     "EnvConfig",
+    "EnvImpact",
     "EnvResolve",
     "merge_kvpairs",
     "parse_env_dict",
-    "build_effective_env_dict",
     "resolve_env_configs",
     "parse_env_text",
     "parse_env_file",
@@ -192,7 +192,6 @@ __all__ = [
     "load_env_settings",
     "unload_env_settings",
     "env_scope",
-    "env_resolve_scope",
     "python_envsubst",
     "topological_sort",
     "topological_sort_env",
@@ -224,7 +223,6 @@ __all__ = [
     "launch_vscode_diff",
     "launch_emacs_diff",
     "SystemFacts",
-    "get_system_facts",
     "get_host_ip_addresses",
     "get_host_os",
     "get_host_arch",
@@ -232,7 +230,9 @@ __all__ = [
     "get_host_hostname",
     "get_host_user",
     "parse_os_release",
-    "inject_system_facts",
+    "SYSTEM_FACTS",
+    "init_system_facts",
+    "get_cached_system_facts",
     "load_python_module",
     "execute_python_hook",
 ]

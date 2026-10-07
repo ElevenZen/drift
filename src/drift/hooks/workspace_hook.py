@@ -30,7 +30,9 @@ class WorkspaceHookContext:
     @property
     def facts(self) -> Dict[str, str]:
         """Convenience accessor for auto-detected drift_* system facts."""
-        return {k: v for k, v in self.env.items() if k.startswith("drift_")}
+        from ..utils.host_facts import get_cached_system_facts
+        cached_keys = get_cached_system_facts().keys()
+        return {k: v for k, v in self.env.items() if k in cached_keys}
 
     @property
     def os(self) -> str:
@@ -91,15 +93,17 @@ def apply_workspace_hook(
 
     # hook_path is a valid file; execute the hook with context
     from ..config.workspace_config import WorkspaceConfig
-    from ..utils.env_utils import update_env_dict
-    from ..core.constants import INITIAL_ENV
 
+    from ..utils.host_facts import get_cached_system_facts
+
+    system_facts = get_cached_system_facts()
     secrets_file = parse_secrets_env(drift_root)
     raw_secrets = get_nested_from(config_dict, "env.secrets", default={})
     ws_secrets = {str(k): str(v) for k, v in raw_secrets.items()}
-    real_env = dict(os.environ)
-    update_env_dict(real_env, secrets_file, overwrite=True, env_keep=INITIAL_ENV)
-    update_env_dict(real_env, ws_secrets, overwrite=True, env_keep=INITIAL_ENV)
+    raw_overrides = get_nested_from(config_dict, "env.override", default={})
+    ws_overrides = {str(k): str(v) for k, v in raw_overrides.items()}
+    # 6-Tier Precedence: Tier 1 overrides > Tier 2 facts > Tier 3 ambient os.environ > Tier 4 secrets
+    real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}
 
     context = WorkspaceHookContext(
         config=config_dict,

@@ -88,11 +88,11 @@ fully_controlled_dirs = [
 #
 # Symmetrical Sub-Tables & 6-Tier Precedence Model:
 # Both workspace and package configs share 4 symmetrical sub-tables under [env]:
-# 1. [env.override]: Tier 2 - Highest-priority package variables (overrides facts/workspace env; CLI at Tier 1 wins).
+# 1. [env.override]: Tier 1 - Highest-priority package variables (overrides facts/workspace env and ambient shell/CLI).
 # 2. [env.secrets]:  Tier 4 - Package-scoped secret credentials (overrides workspace secrets and secrets.env).
 # 3. [env.default]:  Tier 5 - Standard package baseline defaults (recommended default location).
 # 4. [env.fallback]: Tier 6 - Low-priority fallbacks applied only when unset across all upper tiers.
-# (Package > Workspace within each macro tier; System/Package facts reside in Tier 3; CLI at Tier 1).
+# (Package > Workspace within each macro tier; System/Package facts reside in Tier 2; CLI & Ambient at Tier 3).
 #
 # Variable Stitching & Referencing Rules:
 # 1. Topological Stitching in [env.*]: Variables can reference each other, system/package facts,
@@ -281,9 +281,9 @@ When executing lifecycle hooks (such as `pre_source`, `post_render`, `pre_instal
  
 ### ⚡ Six-Tier Variable Preemption Order:
 When rendering package templates and running hook scripts, variables resolve in the following strict order (Package > Workspace within each macro tier, highest priority wins):
-1. **Tier 1 (CLI)**: Ambient Process Environment & CLI Variables (`INITIAL_ENV` / `os.environ`)
-2. **Tier 2 (Override)**: Package `[env.override]` > Workspace `[env.override]`
-3. **Tier 3 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+1. **Tier 1 (Override)**: Package `[env.override]` > Workspace `[env.override]`
+2. **Tier 2 (Facts)**: Package Facts (`drift_package_*`) > System Facts (`drift_*`)
+3. **Tier 3 (CLI & Ambient Context)**: Ambient Process Environment (`os.environ`) & CLI Variables
 4. **Tier 4 (Secrets)**: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`
 5. **Tier 5 (Default)**: Package `[env.default]` > Workspace `[env.default]`
 6. **Tier 6 (Fallback)**: Package `[env.fallback]` > Workspace `[env.fallback]`
@@ -302,7 +302,7 @@ For programmatic, procedural package configuration that exceeds static TOML or v
 * **Custom Path**: Explicitly configure `[package] hook_file = "my_hook.py"` (resolved relative to `src/<pkg>/`).
 
 ### Execution Model & Pipeline Order
-1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via `render_load_package_config_dict`, merging them sequentially.
+1. **Multi-File Discovery & Merging**: Discovers candidate configuration files (`drift_package.toml`, `drift_package.local.toml`, or custom layers) and `.envst.toml` templates via the Phase 1 Merkle DAG package compilation pipeline, merging them sequentially.
 2. **Dynamic Python Package Hook (Preprocessor)**: Executes `configure_package(context)` BEFORE variable stitching with **zero footprint on `os.environ`**. The hook receives the raw merged dictionary and has full in-memory access to resolved host facts (`context.facts`), package facts (`context.package_facts`), system facts (`context.os`, `context.arch`, `context.distro`, etc.), and active environment snapshot (`context.env`). The hook can inject `[env]`, customize `target_directory`, or set `enable_install = False`.
 3. **Variable Stitching & Topological Resolution (Compiler)**: Resolves all `[env]` tables (including any injected by the hook) according to Drift's 6-tier precedence model and Kahn's topological sort algorithm.
 4. **Cross-Section Interpolation**: Interpolates `${VAR}` expressions across non-env sections (`target_directory`, `requirements`, etc.).

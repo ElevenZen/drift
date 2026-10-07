@@ -40,7 +40,7 @@ Every entity managed during the rendering phase belongs to one of four formal de
   where:
   * $I$: Render engine input file (optional; may be an external asset $S$, or transitively another engine output $O'$).
   * $T$: Template source leaf file ($T : []$).
-  * $V$: Deterministic environment variable dictionary in the current scope (`JsonNode(pkg_config.env_resolve.effective_dict)`).
+  * $V$: Deterministic environment variable dictionary in the current scope (`JsonNode(pkg_config.env_resolve.impact.restricted_env())`).
   * $E$: Render engine definition (binary, execution flags, suffix rules).
 * **Directory Synchronization Target ($D$)**: A directory placeholder ensuring empty directory preservation:
   $$D : []$$
@@ -53,7 +53,7 @@ $$(\Delta I = \varnothing) \land (\Delta T = \varnothing) \land (\Delta V = \var
 When this condition holds, physical compilation can be safely bypassed. The system validates the existing artifact on disk against its cryptographic proof and marks it as up to date.
 
 ### 2.3 Scoping of $V$: Effective Dictionary vs. Ambient Process Environment
-In Drift's Merkle DAG, $V$ is intentionally bound to `pkg_config.env_resolve.effective_dict` rather than Python's raw `os.environ`.
+In Drift's Merkle DAG, $V$ is intentionally bound to `pkg_config.env_resolve.impact.restricted_env()` rather than Python's raw `os.environ`.
 
 #### The Cache Invariance Risk of Ambient `os.environ`
 The host operating system's process environment contains dozens of volatile, session-specific variables that mutate continuously across terminal tabs, subshells, SSH sessions, and desktop managers (e.g. `SHLVL`, `_`, `OLDPWD`, `PWD`, `SSH_AUTH_SOCK`, `TERM_SESSION_ID`, `XDG_SESSION_ID`, `WINDOWID`, `TMUX_PANE`, or ephemeral temp directory paths).
@@ -72,7 +72,7 @@ HOST_EDITOR = "${EDITOR:-vim}"
 HOST_THEME  = "${THEME:-dark}"
 ```
 
-During configuration ingestion, Drift evaluates `[env.fallback]` against the ambient process environment (`INITIAL_ENV` / Tier 1). If the host environment defines `EDITOR`, its value is resolved into `effective_dict` and tracked deterministically in $V$ (`env_node`).
+During configuration ingestion, Drift evaluates `[env.fallback]` against the ambient process environment (`os.environ` / Tier 3). If the host environment defines `EDITOR`, its value is resolved into `restricted_env` and tracked deterministically in $V$ (`env_node`).
 
 This pattern yields three critical architectural properties:
 1. **Targeted Tracking**: Only host variables explicitly declared in configuration are tracked in the Merkle tree.
@@ -193,7 +193,7 @@ The expansion pipeline relies on `ExpansionContext` to manage traversal state:
 * `drift_root`: Absolute workspace anchor.
 * `package_name`: Target package name.
 * `enable_render`: Boolean flag from package config (if `False`, all files are treated as static files).
-* `env_node`: Deterministic `JsonNode` of the effective environment variables (`JsonNode(pkg_config.env_resolve.effective_dict)`, see §2.3).
+* `env_node`: Deterministic `JsonNode` of the effective environment variables (`JsonNode(pkg_config.env_resolve.impact.restricted_env())`, see §2.3).
 * `render_engines`: Active `RenderEngineRegistry`.
 * `cache`: Process-level `RenderCache`.
 * `path_translation`: Dictionary mapping source path prefixes to destination path prefixes.

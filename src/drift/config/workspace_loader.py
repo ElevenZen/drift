@@ -153,9 +153,9 @@ def resolve_and_interpolate_workspace_config(
     """Resolves environment variables, secrets, and interpolates references across a workspace config dictionary.
 
     Follows the 6-Tier Precedence Model:
-    - Tier 1 (CLI): Ambient Process Environment & CLI Variables (INITIAL_ENV / os.environ)
-    - Tier 2 (Override): Workspace [env.override]
-    - Tier 3 (Facts): Protected drift_* system facts
+    - Tier 1 (Override): Workspace [env.override]
+    - Tier 2 (Facts): Protected drift_* system facts
+    - Tier 3 (CLI & Ambient): Ambient Process Environment (os.environ) & CLI Overrides
     - Tier 4 (Secrets): Workspace [env.secrets] > config/secrets.env
     - Tier 5 (Default): Workspace [env.default]
     - Tier 6 (Fallback): Workspace [env.fallback]
@@ -176,7 +176,7 @@ def resolve_and_interpolate_workspace_config(
 
     interpolated_data = interpolate_config_dict(
         data,
-        env=resolved_env.effective_dict,
+        env=resolved_env.impact.full_env(),
         exclude_keys={"env"},
         error_cls=ConfigError
     )

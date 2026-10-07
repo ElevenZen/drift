@@ -2,9 +2,9 @@
 
 from ..utils.env_utils import (
     EnvConfig,
+    EnvImpact,
     EnvResolve,
     parse_env_dict,
-    build_effective_env_dict,
     resolve_env_configs,
 )
 from .workspace_config import (
@@ -50,9 +50,9 @@ from .render_engine_config import (
 
 __all__ = [
     "EnvConfig",
+    "EnvImpact",
     "EnvResolve",
     "parse_env_dict",
-    "build_effective_env_dict",
     "resolve_env_configs",
     "WorkspaceConfig",
     "WorkspaceSectionConfig",

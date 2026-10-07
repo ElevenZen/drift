@@ -12,17 +12,17 @@ from drift.utils.host_facts import (
     get_host_distro,
     get_host_hostname,
     get_host_user,
-    get_system_facts,
-    inject_system_facts,
+    init_system_facts,
+    get_cached_system_facts,
+    SYSTEM_FACTS,
 )
-from drift.core.constants import INITIAL_ENV, set_initial_env, set_test_mode
+from drift.core.constants import set_test_mode
 
 
 class TestHostFacts(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.root = Path(self.temp_dir.name).resolve()
 
@@ -30,7 +30,6 @@ class TestHostFacts(unittest.TestCase):
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_get_host_os(self) -> None:
         with patch("sys.platform", "linux"):
@@ -105,8 +104,8 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         with patch("getpass.getuser", return_value="alice"):
             self.assertEqual(get_host_user(), "alice")
 
-    def test_get_system_facts(self) -> None:
-        facts = get_system_facts()
+    def test_get_cached_system_facts(self) -> None:
+        facts = get_cached_system_facts()
         self.assertIn("drift_os", facts)
         self.assertIn("drift_arch", facts)
         self.assertIn("drift_distro", facts)
@@ -115,12 +114,13 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
         self.assertIn("drift_ip_addresses", facts)
         self.assertTrue(all(isinstance(v, str) for v in facts.values()))
 
-        # Test with custom os-release override
+        # Test with custom os-release override via init_system_facts
         custom_rel = self.root / "custom-release"
         custom_rel.write_text('ID=fedora\n', encoding="utf-8")
         with patch("sys.platform", "linux"):
-            facts_custom = get_system_facts(os_release_path_override=custom_rel)
+            facts_custom = init_system_facts(os_release_path_override=custom_rel)
             self.assertEqual(facts_custom["drift_distro"], "fedora")
+            self.assertEqual(get_cached_system_facts()["drift_distro"], "fedora")
 
     def test_get_host_ip_addresses_enumerates_interfaces(self) -> None:
         from drift.utils.host_facts import get_host_ip_addresses
@@ -135,22 +135,36 @@ PRETTY_NAME="Ubuntu 22.04.1 LTS"
             for part in parts:
                 self.assertTrue(0 <= int(part) <= 255)
 
-    def test_inject_system_facts_logs_debug(self) -> None:
-        """Verifies inject_system_facts logs debug output when injecting host facts into os.environ."""
-        set_test_mode(True, enable_logging=True)
-        try:
-            # Clear any existing drift_* in os.environ and INITIAL_ENV
-            for k in ["drift_os", "drift_arch", "drift_distro", "drift_hostname", "drift_user", "drift_ip_addresses"]:
-                os.environ.pop(k, None)
-            set_initial_env([])
+    def test_init_system_facts_populates_global_without_mutating_os_environ(self) -> None:
+        """Verifies init_system_facts caches facts in SYSTEM_FACTS without altering os.environ."""
+        import drift.utils.host_facts as hf
+        # Clear any existing drift_* in os.environ
+        drift_keys = ["drift_os", "drift_arch", "drift_distro", "drift_hostname", "drift_user", "drift_ip_addresses"]
+        for k in drift_keys:
+            os.environ.pop(k, None)
 
-            with self.assertLogs("drift.utils.host_facts", level="DEBUG") as cm:
-                inject_system_facts()
-                log_output = "\n".join(cm.output)
-                self.assertIn("Host fact injected into os.environ: drift_os=", log_output)
-                self.assertIn("Host fact injected into os.environ: drift_arch=", log_output)
-        finally:
-            set_test_mode(True, enable_logging=False)
+        hf.SYSTEM_FACTS.clear()
+        facts = init_system_facts()
+        self.assertIs(facts, hf.SYSTEM_FACTS)
+        self.assertIn("drift_os", facts)
+        self.assertIn("drift_arch", facts)
+        self.assertIn("drift_distro", facts)
+        self.assertIn("drift_hostname", facts)
+        self.assertIn("drift_user", facts)
+        self.assertIn("drift_ip_addresses", facts)
+
+        # Invariant: os.environ must NOT be mutated!
+        for k in drift_keys:
+            self.assertNotIn(k, os.environ)
+
+    def test_get_cached_system_facts_lazy_initialization(self) -> None:
+        """Verifies get_cached_system_facts lazily initializes SYSTEM_FACTS if empty."""
+        import drift.utils.host_facts as hf
+        hf.SYSTEM_FACTS.clear()
+        cached = get_cached_system_facts()
+        self.assertIs(cached, hf.SYSTEM_FACTS)
+        self.assertIn("drift_os", cached)
+        self.assertTrue(len(cached) >= 6)
 
 
 if __name__ == "__main__":

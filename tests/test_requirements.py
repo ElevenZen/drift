@@ -446,7 +446,7 @@ fi
         (pkg_dir / "lan_app.conf").write_text("lan app settings", encoding="utf-8")
 
         # 1. Failing IP check
-        with patch.dict(os.environ, {"drift_ip_addresses": "10.0.0.5;172.16.0.1"}):
+        with patch.dict("drift.utils.host_facts.SYSTEM_FACTS", {"drift_ip_addresses": "10.0.0.5;172.16.0.1"}):
             res = render_package(self.workspace_config, pkg_dir)
             self.assertEqual(res.status, "SKIPPED")
             self.assertIsNotNone(res.skip_reason)
@@ -455,7 +455,7 @@ fi
             self.assertFalse((self.drift_root / "render" / "lan_pkg" / "lan_app.conf").exists())
 
         # 2. Passing IP check
-        with patch.dict(os.environ, {"drift_ip_addresses": "192.168.1.42;10.0.0.5"}):
+        with patch.dict("drift.utils.host_facts.SYSTEM_FACTS", {"drift_ip_addresses": "192.168.1.42;10.0.0.5"}):
             res = render_package(self.workspace_config, pkg_dir)
             self.assertEqual(res.status, "SUCCESS")
             self.assertTrue((self.drift_root / "render" / "lan_pkg" / "lan_app.conf").exists())

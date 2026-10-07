@@ -11,13 +11,10 @@ if TYPE_CHECKING:
 
 from ..core.constants import (
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
-    DRIFT_SYSTEM_FACT_KEYS,
     DRIFT_PACKAGE_FACT_KEYS,
-    INITIAL_ENV,
     PACKAGE_HOOK_FUNCTION_NAME,
 )
 from ..core.exceptions import ConfigError
-from ..utils.env_utils import update_env_dict
 from ..utils.python_hook_utils import load_python_module, execute_python_hook
 from ..utils.config_utils import get_nested_from
 
@@ -37,7 +34,9 @@ class PackageHookContext:
     @property
     def facts(self) -> Dict[str, str]:
         """Convenience accessor for auto-detected drift_* system facts."""
-        return {k: v for k, v in self.env.items() if k in DRIFT_SYSTEM_FACT_KEYS}
+        from ..utils.host_facts import get_cached_system_facts
+        cached_keys = get_cached_system_facts().keys()
+        return {k: v for k, v in self.env.items() if k in cached_keys}
 
     @property
     def package_facts(self) -> Dict[str, str]:
@@ -135,15 +134,20 @@ def apply_package_hook(
 
     from ..utils.env_utils import resolve_env_configs, EnvConfig
     env_res = resolve_env_configs(
+        current_layer=(
             workspace_config.env_resolve.effective
-                if workspace_config is not None else EnvConfig(),
-            None,
+            if workspace_config is not None
+            else EnvConfig()
+        ),
+        lower_layer=None,
+        package_facts=(
             workspace_config.get_drift_package_facts(pkg_name)
-                if workspace_config is not None else { 'drift_package_name': pkg_name },
+            if workspace_config is not None
+            else {"drift_package_name": pkg_name}
+        ),
     )
 
-    real_env = dict(os.environ)
-    update_env_dict(real_env, env_res.effective_dict, overwrite=True, env_keep=INITIAL_ENV)
+    real_env = env_res.impact.full_env(os.environ)
     context = PackageHookContext(
         config=config_dict,
         package_name=pkg_name,

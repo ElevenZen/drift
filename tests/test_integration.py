@@ -7,12 +7,11 @@ from unittest.mock import patch
 from pathlib import Path
 from drift.config.workspace_config import WorkspaceConfig
 from drift.core.state_registry import load_state_registry
-from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME, INITIAL_ENV, set_initial_env
+from drift.core.constants import PACKAGE_CONFIG_FILE_NAME, CONFIG_DIR_NAME, WORKSPACE_CONFIG_FILE_NAME
 
 class TestIntegration(unittest.TestCase):
     def setUp(self):
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base_path = Path(self.temp_dir.name).resolve()
         
@@ -46,7 +45,6 @@ class TestIntegration(unittest.TestCase):
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_lifecycle_symlink_basic(self):
         """Scenario: Basic symlink deployment, drift detection, and uninstallation."""

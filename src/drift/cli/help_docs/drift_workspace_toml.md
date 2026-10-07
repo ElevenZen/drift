@@ -51,11 +51,11 @@ default_install_method = "symlink"
 #
 # Symmetrical Sub-Tables & 6-Tier Precedence Model:
 # Both workspace and package configs share 4 symmetrical sub-tables under [env]:
-# 1. [env.override]: Tier 2 - Highest-priority configuration variables (CLI at Tier 1 wins).
+# 1. [env.override]: Tier 1 - Highest-priority configuration variables (overrides ambient shell/CLI).
 # 2. [env.secrets]:  Tier 4 - Declarative secret credentials and sensitive tokens.
 # 3. [env.default]:  Tier 5 - Standard baseline defaults (recommended default location).
-# 4. [env.fallback]: Tier 6 - Low-priority fallbacks applied only when unset across all other tiers.
-# (Package > Workspace within each macro tier; System/Package facts reside in Tier 3; CLI at Tier 1).
+# 4. [env.fallback]: Tier 6 - Low-priority fallbacks applied only when unset across all upper tiers.
+# (Package > Workspace within each macro tier; System/Package facts reside in Tier 2; CLI & Ambient at Tier 3).
 #
 # Variable Stitching & Referencing Rules:
 # 1. Topological Stitching in [env.*]: Variables can reference each other (e.g. DRIFT_SAMPLE_SOCKS_PROXY = "...${SOCKS_PROXY_HOST}:${SOCKS_PROXY_PORT}").
@@ -262,9 +262,9 @@ During variable stitching, template rendering, and lifecycle hook execution, var
 
 | Tier | Level | Scope & Description |
 | :---: | :--- | :--- |
-| **Tier 1** | **CLI & Ambient** | Process environment variables and CLI overrides (`INITIAL_ENV` / `os.environ`). |
-| **Tier 2** | **Override** | Forced override variables: Package `[env.override]` > Workspace `[env.override]`. |
-| **Tier 3** | **Facts** | Authoritative system/package facts: Package facts (`drift_package_*`) > System facts (`drift_*`). |
+| **Tier 1** | **Override** | Forced override variables: Package `[env.override]` > Workspace `[env.override]`. |
+| **Tier 2** | **Facts** | Authoritative system/package facts: Package facts (`drift_package_*`) > System facts (`drift_*`). |
+| **Tier 3** | **CLI & Ambient** | Process environment variables and CLI overrides (`os.environ`). |
 | **Tier 4** | **Secrets** | Declarative credentials: Package `[env.secrets]` > Workspace `[env.secrets]` > `config/secrets.env`. |
 | **Tier 5** | **Default** | Standard baseline defaults: Package `[env.default]` > Workspace `[env.default]`. |
 | **Tier 6** | **Fallback** | Soft fallback defaults: Package `[env.fallback]` > Workspace `[env.fallback]`. |

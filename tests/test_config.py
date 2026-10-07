@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import cast, Any
 from drift.core.constants import (
     CONFIG_DIR_NAME,
-    INITIAL_ENV,
     WORKSPACE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_FILE_NAME_LIST,
@@ -17,8 +16,6 @@ from drift.core.constants import (
     InstallMethod,
     DEFAULT_INSTALL_METHOD,
     set_test_mode,
-    set_initial_env,
-    update_initial_env,
 )
 from drift.utils.toml_utils import parse_toml
 from drift.utils.config_utils import (
@@ -60,8 +57,6 @@ from drift.config.package_loader import (
     load_package_config_from_source_dir,
     load_package_config_from_render_dir,
     load_package_config_for_install,
-    get_package_config_file_info,
-    PackageConfigFileInfo,
 )
 from tests.test_utils import add_envst
 
@@ -1293,58 +1288,6 @@ class TestConfigLoaders(unittest.TestCase):
         with self.assertRaises(ConfigError):
             PackageConfig.from_source_dir(pkg_dir)
 
-    def test_get_package_config_file_info(self) -> None:
-        from drift.config.render_engine_config import RenderEngineConfig
-        pkg_dir = self.drift_root / "test_find_info"
-        pkg_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create WorkspaceConfig
-        workspace_config = WorkspaceConfig(drift_root=self.drift_root)
-        engine = RenderEngineConfig(name="envsubst", input_file=Path("env.sh"), suffix="envst", render_command="cmd")
-        workspace_config.render_engine_configs = RenderEngineRegistry({"envsubst": engine})
-
-        config_files = [
-            pkg_dir / PACKAGE_CONFIG_FILE_NAME,
-            pkg_dir / "drift_package.local.toml",
-        ]
-
-        # 1. No files exist - should return []
-        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
-        self.assertEqual(res, [])
-
-        # 2. drift_package.envst.toml exists
-        template_drift_path = pkg_dir / package_config_template_name
-        template_drift_path.write_text("", encoding="utf-8")
-        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].type, "template")
-        self.assertEqual(res[0].path, template_drift_path)
-        self.assertEqual(res[0].engine, engine)
-
-        # 3. drift_package.toml exists (takes precedence over drift_package.envst.toml)
-        drift_package_toml_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
-        drift_package_toml_path.write_text("", encoding="utf-8")
-        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
-        self.assertEqual(len(res), 1)
-        self.assertEqual(res[0].type, "static")
-        self.assertEqual(res[0].path, drift_package_toml_path)
-        self.assertIsNone(res[0].engine)
-
-        # 4. drift_package.local.toml also exists
-        local_path = pkg_dir / "drift_package.local.toml"
-        local_path.write_text("", encoding="utf-8")
-        res = get_package_config_file_info(config_files, workspace_config.render_engine_configs)
-        self.assertEqual(len(res), 2)
-        self.assertEqual(res[0].path, drift_package_toml_path)
-        self.assertEqual(res[1].path, local_path)
-
-        # 5. Lazy generator expression
-        config_gen = (f for f in config_files)
-        res_gen = get_package_config_file_info(config_gen, workspace_config.render_engine_configs)
-        self.assertEqual(len(res_gen), 2)
-        self.assertEqual(res_gen[0].path, drift_package_toml_path)
-        self.assertEqual(res_gen[1].path, local_path)
-
     def test_package_toml_template_rendering(self) -> None:
         # 1. Create config/drift_workspace.toml
         config_dir = self.drift_root / "config"
@@ -1532,14 +1475,12 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
     def setUp(self) -> None:
         set_test_mode(True)
         self.original_environ = dict(os.environ)
-        self.original_initial_env = set(INITIAL_ENV)
         self.temp_dir = tempfile.TemporaryDirectory()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
         os.environ.clear()
         os.environ.update(self.original_environ)
-        set_initial_env(self.original_initial_env)
 
     def test_render_engine_config_validation(self) -> None:
         from drift.config.render_engine_config import RenderEngineConfig
@@ -2166,19 +2107,20 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             {
                 "drift_os": "linux",
                 "CLI_VAR": "from_cli",
+                "CLI_DEFAULT_TARGET": "from_cli",
                 "OVERRIDDEN_BY_PACKAGE": "from_workspace_outer",
             },
             clear=False,
         ):
-            # Mark CLI_VAR as coming from CLI invocation
-            set_initial_env(["CLI_VAR"])
-
             pkg = PackageConfig(
                 PackageSectionConfig(name="demo_pkg"),
                 env_resolve=EnvResolve(current=EnvConfig(
                     override={
                         "OVERRIDDEN_BY_PACKAGE": "package_override_value",
-                        "CLI_VAR": "attempted_pkg_override",
+                        "CLI_VAR": "pkg_override_wins",
+                    },
+                    default={
+                        "CLI_DEFAULT_TARGET": "default_should_not_overwrite",
                     },
                     fallback={
                         "FALLBACK_TEST": "fallback_should_not_overwrite",
@@ -2188,18 +2130,21 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
             ).compute_effective_envs(workspace_config)
 
             with pkg.package_envs():
-                # Tier 1: CLI variable wins over package [env.override]
-                self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
+                # Tier 1: Package [env.override] wins over Tier 3 CLI / ambient variable
+                self.assertEqual(os.environ.get("CLI_VAR"), "pkg_override_wins")
 
-                # Tier 2: Package [env.override] wins over workspace
+                # Tier 1: Package [env.override] wins over workspace
                 self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "package_override_value")
 
-                # Tier 3: Package facts are loaded
+                # Tier 2: Package facts are loaded
                 self.assertEqual(os.environ.get("drift_package_name"), "demo_pkg")
                 self.assertEqual(os.environ.get("drift_package_install_method"), "copy" if sys.platform == "win32" else "symlink")
 
-                # Tier 3: System facts are preserved
+                # Tier 2: System facts are preserved
                 self.assertEqual(os.environ.get("drift_os"), "linux")
+
+                # Tier 3: CLI / ambient variable wins over Tier 5 default
+                self.assertEqual(os.environ.get("CLI_DEFAULT_TARGET"), "from_cli")
 
                 # Tier 5: Workspace env remains if not overridden
                 self.assertEqual(os.environ.get("GLOBAL_VAR"), "from_workspace")
@@ -2209,12 +2154,11 @@ class TestRenderEngineAndWorkspaceTemplate(unittest.TestCase):
                 self.assertEqual(os.environ.get("NEW_FALLBACK_VAR"), "fallback_activated")
 
             # After context exit: package variables are cleanly restored
+            self.assertEqual(os.environ.get("CLI_VAR"), "from_cli")
+            self.assertEqual(os.environ.get("CLI_DEFAULT_TARGET"), "from_cli")
             self.assertEqual(os.environ.get("OVERRIDDEN_BY_PACKAGE"), "from_workspace_outer")
             self.assertNotIn("NEW_FALLBACK_VAR", os.environ)
             self.assertNotIn("drift_package_name", os.environ)
-
-        # Restore INITIAL_ENV
-        set_initial_env(self.original_initial_env)
 
 
 class TestSettingsConfig(unittest.TestCase):
@@ -2728,7 +2672,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
         cfg1 = load_package_config_from_render_dir(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg1.env_resolve.effective.override["PKG_OVR"], "pkg_val")
         self.assertEqual(cfg1.env_resolve.effective.default["WS_VAR"], "ws_val")
-        self.assertEqual(cfg1.env_resolve.effective_dict["drift_package_name"], "my_pkg")
+        self.assertEqual(cfg1.env_resolve.impact.restricted_env()["drift_package_name"], "my_pkg")
 
         cfg2 = PackageConfig.from_render_dir(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg2.env_resolve.effective.override["PKG_OVR"], "pkg_val")
@@ -2753,7 +2697,7 @@ class TestLegacyPackageConfigFallback(unittest.TestCase):
         cfg1 = load_package_config_for_install(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg1.env_resolve.effective.fallback["PKG_FB"], "pkg_fallback")
         self.assertEqual(cfg1.env_resolve.effective.default["WS_VAR"], "ws_val")
-        self.assertEqual(cfg1.env_resolve.effective_dict["drift_package_name"], "my_pkg")
+        self.assertEqual(cfg1.env_resolve.impact.restricted_env()["drift_package_name"], "my_pkg")
 
         cfg2 = PackageConfig.from_install_dir(self.pkg_dir, workspace_config=ws)
         self.assertEqual(cfg2.env_resolve.effective.fallback["PKG_FB"], "pkg_fallback")

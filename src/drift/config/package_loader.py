@@ -10,26 +10,19 @@ Layer 2: High-Level Stage Discovery & Pipeline Loaders
     - load_package_config_for_install(): Install state loader for install/<pkg>/
     - load_package_config_rendered(): Direct rendered TOML parser
 
-Layer 1: Low-Level TOML & Template Rendering Helpers
-    - PackageConfigFileInfo (Dataclass): Matched static file or template info
-    - get_package_config_file_info(): Suffix & engine matcher for config candidates
-    - render_or_load_toml(): Parses static TOML or renders template into temporary TOML
-    - render_load_package_config_dict(): Multi-layer loader and deep merger
+Layer 1: Low-Level TOML & Variable Interpolation Helpers
     - resolve_and_interpolate_package_config(): Stitched env resolution & variable interpolation
 ===============================================================================
 """
 
 import logging
 import tempfile
-from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
     Dict,
-    Iterable,
     List,
     Optional,
-    Sequence,
     Tuple,
     TYPE_CHECKING,
 )
@@ -41,148 +34,21 @@ from ..core.constants import (
     DRIFT_INTERNAL_RENDER_DIR_NAME,
     DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
 )
-from ..core.exceptions import ConfigError, mark_logged
-from ..utils.path_utils import is_relative_to
+from ..core.exceptions import ConfigError
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
-    env_resolve_scope,
     interpolate_config_dict,
     parse_env_dict,
     resolve_env_configs,
 )
-from ..utils.toml_utils import dump_toml, merge_toml, parse_toml
-from .render_engine_config import RenderEngineConfig, RenderEngineRegistry
+from ..utils.toml_utils import merge_toml, parse_toml
 from .package_config import PackageConfig
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class PackageConfigFileInfo:
-    """Represents file info for a found package config file (or template)."""
-    type: str  # 'static' or 'template'
-    path: Path  # path to the file/template
-    engine: Optional[RenderEngineConfig] = None  # RenderEngineConfig instance (if 'template', otherwise None)
-
-
-def get_package_config_file_info(
-    config_files: Iterable[Path],
-    render_engines: RenderEngineRegistry,
-) -> List[PackageConfigFileInfo]:
-    """Finds the package config file (or template) for an arbitrary list of rendered candidate paths.
-
-    Inspects each candidate path against the render engine registry, determining whether a static
-    file exists or if a matching template counterpart (e.g. .envst.toml) is present.
-
-    Args:
-        config_files: Ordered list of candidate package configuration file paths.
-        render_engines: Registry of available template render engines.
-
-    Returns:
-        List of PackageConfigFileInfo objects for all matched configuration files/templates.
-    """
-    result = []
-    for file in config_files:
-        file_match = render_engines.find_source_file_for_rendered_names(file.parent, [file.name])
-        if not file_match:
-            continue
-        result.append(PackageConfigFileInfo(
-            type="static" if file_match.engine is None else "template",
-            path=file_match.path,
-            engine=file_match.engine,
-        ))
-    return result
-
-
-def render_or_load_toml(
-    info: PackageConfigFileInfo,
-    workspace_config: "WorkspaceConfig",
-    package_name: str
-) -> dict:
-    """Renders the package config file info to a temporary file (if it is a template)
-    and returns its parsed TOML dictionary.
-    """
-    if info.type == "static":
-        content = info.path.read_text(encoding="utf-8")
-        return parse_toml(content)
-
-    # It's a template, we need to render it!
-    engine = info.engine
-    if engine is None:
-        raise ValueError(f"Template configuration file found, but render engine is not specified: {info.path}")
-
-    env_res = resolve_env_configs(
-        workspace_config.env_resolve.effective,
-        None,
-        workspace_config.get_drift_package_facts(package_name)
-    )
-
-    with tempfile.TemporaryDirectory(prefix=f"{package_name}_pkg_") as tmpdir:
-        temp_path_obj = Path(tmpdir) / "drift_package.toml"
-        with env_resolve_scope(env_res):
-            from ..render.render_core import render_template_to_file
-            render_template_to_file(
-                engine_config=engine,
-                drift_root=workspace_config.drift_root if workspace_config is not None else info.path.parent,
-                template_file_path=info.path,
-                output_file_path=temp_path_obj
-            )
-            content = temp_path_obj.read_text(encoding="utf-8")
-            return parse_toml(content)
-
-
-def render_load_package_config_dict(
-    pkg_name: str,
-    config_files: Sequence[Path],
-    workspace_config: Optional["WorkspaceConfig"] = None
-) -> Tuple[dict, List[Path]]:
-    """Sequentially loads, renders (if templated), and deep-merges an arbitrary sequence of package config files.
-
-    Supports arbitrary multi-layer package configs without a hardcoded base/local limit.
-    If workspace_config is None, falls back to direct static file parsing without template rendering.
-
-    Args:
-        pkg_name: Name of the package.
-        config_files: Ordered sequence of configuration candidate paths.
-        workspace_config: Optional WorkspaceConfig providing render engine registry.
-
-    Returns:
-        Tuple of (merged_config_dict, list_of_source_paths).
-
-    Raises:
-        FileNotFoundError: If none of the specified configuration files or templates exist.
-    """
-    combined_dict = {}
-    source_list = []
-    if workspace_config is None:
-        # mainly used in tests, to load a config without rendering or writing out into the render/ directory.
-        logger.warning("WorkspaceConfig is not provided. Falling back to static loading without rendering.")
-        for file in config_files:
-            if not file.is_file():
-                continue
-            source_list.append(file)
-            f_dict = parse_toml(file.read_text(encoding="utf-8"))
-            combined_dict = merge_toml(combined_dict, f_dict)
-    else:
-        # With workspace_config provided, we can render templates if needed.
-        info_list = get_package_config_file_info(
-            config_files, workspace_config.render_engine_configs
-        )
-        for info in info_list:
-            source_list.append(info.path)
-            f_dict = render_or_load_toml(info, workspace_config, pkg_name)
-            combined_dict = merge_toml(combined_dict, f_dict)
-
-    if not combined_dict or not source_list:
-        raise FileNotFoundError(
-            f"Package configuration file not found in [{', '.join(str(x) for x in config_files)}] "
-            "or their templates."
-        )
-    return combined_dict, source_list
 
 
 def resolve_and_interpolate_package_config(
@@ -208,12 +74,12 @@ def resolve_and_interpolate_package_config(
     resolved_env = resolve_env_configs(
         env_config,
         lower_layer=workspace_config.env_resolve.effective if workspace_config is not None else None,
-        extra_facts=pkg_facts,
+        package_facts=pkg_facts,
     )
 
     interpolated_data = interpolate_config_dict(
         data,
-        env=resolved_env.effective_dict,
+        env=resolved_env.impact.full_env(),
         exclude_keys={"env"},
         error_cls=ConfigError
     )
@@ -322,7 +188,6 @@ def _execute_load_package_config_dag(
     from ..render.render_expansion import ExpansionContext, expand_node_dependencies
     from ..render.render_digester import DigestionContext, digest_render_dag
     from ..render.render_lock import RenderLockfile, RenderBucket
-    from ..utils.env_utils import env_resolve_scope
 
     src_prefix = workspace_config.source_path / pkg_name
     dst_prefix = (
@@ -340,9 +205,9 @@ def _execute_load_package_config_dag(
     env_res = resolve_env_configs(
         workspace_config.env_resolve.effective,
         None,
-        extra_facts=pkg_facts,
+        package_facts=pkg_facts,
     )
-    env_node = JsonNode(env_res.effective_dict)
+    env_node = JsonNode(env_res.impact.restricted_env())
     exp_ctx = ExpansionContext(
         package_name=pkg_name,
         enable_render=True,
@@ -379,7 +244,7 @@ def _execute_load_package_config_dag(
         silent=silent,
     )
 
-    with env_resolve_scope(env_res):
+    with env_res.impact.scope():
         digest_render_dag(cfg_node, ctx)
 
     assert cfg_node.package_config is not None, "PackageConfigNode failed to instantiate PackageConfig"
