@@ -129,6 +129,10 @@ backup_directory = "backup"
 # Automatically inject non-interactive environment variables during lifecycle hooks (default: true)
 # hook_inject_non_interactive_envs = true
 
+# Automatically ensure lifecycle hook scripts in src/ have executable permissions (default: true)
+# Set to false if you want src/ to remain strictly unmodified by render.
+# ensure_hooks_executable_in_src = true
+
 # Optional Git identity for render/ and install/ auto-commits.
 # Useful on machines without a global Git user or to use a separate identity.
 # Applied to render/.git/config and install/.git/config during 'drift repair'.

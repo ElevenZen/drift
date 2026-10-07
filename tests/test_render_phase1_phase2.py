@@ -326,7 +326,7 @@ def configure_package(context):
         pkg_config = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
         render_hooks(self.workspace_config, pkg_config)
 
-        # Configured hook must have 0o755
+        # Configured hook gets 0o755 in src/ by default (ensure_hooks_executable_in_src = True)
         self.assertTrue(bool(cfg_hook.stat().st_mode & 0o111))
         dest_cfg = self.render_dir / "perm_pkg" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "configured_hook.sh"
         self.assertTrue(bool(dest_cfg.stat().st_mode & 0o111))
@@ -334,6 +334,38 @@ def configure_package(context):
         # Unconfigured helper should remain non-executable (0o644)
         dest_uncfg = self.render_dir / "perm_pkg" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "helper_library.sh"
         self.assertFalse(bool(dest_uncfg.stat().st_mode & 0o111))
+
+    def test_ensure_configured_hook_permissions_opt_out(self) -> None:
+        """Verifies ensure_hooks_executable_in_src=False preserves 0644 on src/ hooks while rendering 0755."""
+        if sys.platform == "win32":
+            self.skipTest("POSIX file permissions not applicable on Windows")
+
+        self.workspace_config.settings.ensure_hooks_executable_in_src = False
+
+        pkg_dir = self.src_dir / "perm_opt_out"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        hooks_src = pkg_dir / DRIFT_HOOKS_DIR_NAME
+        hooks_src.mkdir(parents=True, exist_ok=True)
+
+        (pkg_dir / PACKAGE_CONFIG_FILE_NAME).write_text("""
+        [package]
+        name = "perm_opt_out"
+        [hooks]
+        post_install = "drift_hooks/my_hook.sh"
+        """, encoding="utf-8")
+
+        cfg_hook = hooks_src / "my_hook.sh"
+        cfg_hook.write_text("#!/bin/bash\n", encoding="utf-8")
+        cfg_hook.chmod(0o644)
+
+        pkg_config = load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        render_hooks(self.workspace_config, pkg_config)
+
+        # Source hook in src/ must remain untouched (0o644)
+        self.assertFalse(bool(cfg_hook.stat().st_mode & 0o111))
+        # Destination hook in render/ must still receive 0o755
+        dest_cfg = self.render_dir / "perm_opt_out" / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / "my_hook.sh"
+        self.assertTrue(bool(dest_cfg.stat().st_mode & 0o111))
 
     def test_resolve_hook_exec_path_integration(self) -> None:
         """Verifies integration with resolve_hook_exec_path()."""
@@ -365,6 +397,41 @@ def configure_package(context):
         self.assertEqual(resolved_path.resolve(), expected_path.resolve())
         self.assertTrue(resolved_path.is_file())
 
+    def test_package_config_skip_identical_when_unchanged(self) -> None:
+        """Verifies Phase 1 skips writing drift_package.toml when content matches, preserving mtime."""
+        pkg_dir = self.src_dir / "skip_pkg"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        config_path = pkg_dir / PACKAGE_CONFIG_FILE_NAME
+        config_path.write_text("""
+        [package]
+        name = "skip_pkg"
+        target_directory = "initial_target"
+        """, encoding="utf-8")
+
+        # 1. First run: writes configuration
+        load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        rendered_cfg = self.render_dir / "skip_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        self.assertTrue(rendered_cfg.is_file())
+        initial_mtime = rendered_cfg.stat().st_mtime_ns
+
+        # 2. Second run without changes: content matches, write skipped, mtime invariant
+        load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        second_mtime = rendered_cfg.stat().st_mtime_ns
+        self.assertEqual(initial_mtime, second_mtime)
+
+        # 3. Third run with source modification: content differs, updates file and mtime
+        config_path.write_text("""
+        [package]
+        name = "skip_pkg"
+        target_directory = "updated_target"
+        """, encoding="utf-8")
+        load_package_config_from_source_dir(pkg_dir, self.workspace_config)
+        third_mtime = rendered_cfg.stat().st_mtime_ns
+        self.assertNotEqual(initial_mtime, third_mtime)
+        self.assertIn("updated_target", rendered_cfg.read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()
+

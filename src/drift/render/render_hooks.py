@@ -112,39 +112,44 @@ def ensure_configured_hook_permissions(
 ) -> None:
     """Ensures configured lifecycle hook files have executable permissions (0o755) on POSIX.
 
-    Operates strictly as a post-process on the hook files referenced in pkg_config.hooks,
-    updating both the source file in src/ (whether static or template) and the rendered file in render/.drift/hooks/.
+    Always ensures 0o755 permissions on rendered hook scripts in render/.drift/hooks/.
+    If workspace_config.settings.ensure_hooks_executable_in_src is True (the default),
+    also updates source hook files in src/ for user convenience.
     When dry_run is True, permissions modification is skipped.
     """
     if dry_run or sys.platform == "win32":
         return
 
-    src_pkg_dir = workspace_config.source_path / pkg_config.name
+    # 1. Update source hook files in src/ if enabled in workspace settings
+    if workspace_config.settings.ensure_hooks_executable_in_src:
+        src_pkg_dir = workspace_config.source_path / pkg_config.name
+        engines = (
+            engines_override
+            if engines_override is not None
+            else pkg_config.package_render_engines(workspace_config)
+        )
+        for rel_hook_str in pkg_config.hooks.configured_relative_paths:
+            rel_hook = Path(rel_hook_str)
+            candidate_dirs = [src_pkg_dir / rel_hook.parent]
+            for src_dir in candidate_dirs:
+                if not src_dir.is_dir():
+                    continue
+                match = engines.find_source_file_for_rendered_names(src_dir, [rel_hook.name])
+                if not match:
+                    continue
+                try:
+                    src_mode = match.path.stat().st_mode
+                    if not (src_mode & 0o111):
+                        match.path.chmod(src_mode | 0o755)
+                except Exception as e:
+                    logger.debug(f"Could not chmod source hook file '{match.path}': {e}")
+
+    # 2. Always ensure 0o755 permissions on rendered destination hooks in render/.drift/hooks/
     render_pkg_dir = workspace_config.render_path / pkg_config.name
     hook_dest_dir = render_pkg_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
 
-    engines = (
-        engines_override
-        if engines_override is not None
-        else pkg_config.package_render_engines(workspace_config)
-    )
-
     for rel_hook_str in pkg_config.hooks.configured_relative_paths:
         rel_hook = Path(rel_hook_str)
-        candidate_dirs = [ src_pkg_dir / rel_hook.parent, ]
-        for src_dir in candidate_dirs:
-            if not src_dir.is_dir():
-                continue
-            match = engines.find_source_file_for_rendered_names(src_dir, [rel_hook.name])
-            if not match:
-                continue
-            try:
-                src_mode = match.path.stat().st_mode
-                if not (src_mode & 0o111):
-                    match.path.chmod(src_mode | 0o755)
-            except Exception as e:
-                logger.debug(f"Could not chmod source hook file '{match.path}': {e}")
-
         # Check rendered file in render/.drift/hooks/
         dest_path = hook_dest_dir / to_relative_path(rel_hook, Path(DRIFT_HOOKS_DIR_NAME))
         if dest_path.is_file():

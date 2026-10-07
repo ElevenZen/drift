@@ -335,10 +335,34 @@ class TestPackageHook(unittest.TestCase):
             self.workspace_config, self.src_pkg_dir, options=RenderOptions(flags=HookExecFlags(streaming=False))
         )
 
-        # Verify src copy became 0755
+        # Verify src copy became 0755 (default ensure_hooks_executable_in_src = True)
         self.assertTrue(bool(post_render_file.stat().st_mode & 0o111))
 
         # Verify render copy is 0755
+        render_hook_file = self.workspace_config.render_path / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_render.sh"
+        self.assertTrue(render_hook_file.exists())
+        self.assertTrue(bool(render_hook_file.stat().st_mode & 0o111))
+
+    def test_render_package_ensures_hooks_executable_opt_out(self) -> None:
+        """Verifies ensure_hooks_executable_in_src=False preserves 0644 on src/ hooks while rendering 0755."""
+        from drift.render.render_package import render_package, RenderOptions
+        if sys.platform == "win32":
+            return
+
+        self.workspace_config.settings.ensure_hooks_executable_in_src = False
+
+        post_render_file = self.drift_hooks_dir / "post_render.sh"
+        post_render_file.write_text("#!/bin/bash\necho post_render\n", encoding="utf-8")
+        post_render_file.chmod(0o644)
+
+        render_package(
+            self.workspace_config, self.src_pkg_dir, options=RenderOptions(flags=HookExecFlags(streaming=False))
+        )
+
+        # Verify src copy remained 0644
+        self.assertFalse(bool(post_render_file.stat().st_mode & 0o111))
+
+        # Verify render copy is still 0755
         render_hook_file = self.workspace_config.render_path / "pkg_hook" / DRIFT_INTERNAL_DIR_NAME / "hooks" / "post_render.sh"
         self.assertTrue(render_hook_file.exists())
         self.assertTrue(bool(render_hook_file.stat().st_mode & 0o111))
@@ -411,7 +435,7 @@ class TestPackageHook(unittest.TestCase):
         self.assertTrue(rendered_hook.exists())
         self.assertTrue(bool(rendered_hook.stat().st_mode & 0o111))
 
-        # Source template file also got chmod 0755
+        # Source template file also got chmod 0755 (default ensure_hooks_executable_in_src = True)
         self.assertTrue(bool(tmpl_hook.stat().st_mode & 0o111))
 
         # Output rendered tool file in render/ preserved chmod 0755 from source template

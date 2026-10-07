@@ -82,14 +82,23 @@ class SettingsConfig:
         "hook_inject_non_interactive_envs",
         "hook_inject_non_interactive_env",
         "inject_hook_non_interactive_envs",
+        "inject_hook_non_interactive_env",
+    )
+    ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS: ClassVar[Tuple[str, ...]] = (
+        "ensure_hooks_executable_in_src",
+        "ensure_hook_executable_in_src",
+        "ensure_hooks_executable_in_source",
+        "ensure_hook_executable_in_source",
     )
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
+        *ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS,
         "git_user_name",
         "git_user_email",
     )
 
     hook_inject_non_interactive_envs: bool = True
+    ensure_hooks_executable_in_src: bool = True
     git_user_name: Optional[str] = None
     git_user_email: Optional[str] = None
 
@@ -97,6 +106,8 @@ class SettingsConfig:
         """Validates settings types."""
         if not isinstance(self.hook_inject_non_interactive_envs, bool):
             raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
+        if not isinstance(self.ensure_hooks_executable_in_src, bool):
+            raise ConfigError(f"ensure_hooks_executable_in_src under [settings] must be a boolean, got {type(self.ensure_hooks_executable_in_src).__name__}.")
         if self.git_user_name is not None and not isinstance(self.git_user_name, str):
             raise ConfigError(f"git_user_name under [settings] must be a string, got {type(self.git_user_name).__name__}.")
         if self.git_user_email is not None and not isinstance(self.git_user_email, str):
@@ -124,6 +135,11 @@ class SettingsConfig:
             cls.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
             default=True,
         )
+        raw_ensure_hooks = get_first_from(
+            data,
+            cls.ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS,
+            default=True,
+        )
         git_user_name = data.get("git_user_name")
         git_user_email = data.get("git_user_email")
 
@@ -133,6 +149,12 @@ class SettingsConfig:
                 default=True,
                 strict=True,
                 context="[settings] hook_inject_non_interactive_envs",
+            ),
+            ensure_hooks_executable_in_src=parse_bool_value(
+                raw_ensure_hooks,
+                default=True,
+                strict=True,
+                context="[settings] ensure_hooks_executable_in_src",
             ),
             git_user_name=git_user_name,
             git_user_email=git_user_email,

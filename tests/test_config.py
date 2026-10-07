@@ -2224,28 +2224,38 @@ class TestSettingsConfig(unittest.TestCase):
         from drift.config.workspace_config import SettingsConfig
         settings = SettingsConfig()
         self.assertTrue(settings.hook_inject_non_interactive_envs)
+        self.assertTrue(settings.ensure_hooks_executable_in_src)
 
     def test_settings_config_from_dict(self) -> None:
         from drift.config.workspace_config import SettingsConfig
-        s1 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": False})
+        s1 = SettingsConfig.from_dict({
+            "hook_inject_non_interactive_envs": False,
+            "ensure_hooks_executable_in_src": False,
+        })
         self.assertFalse(s1.hook_inject_non_interactive_envs)
+        self.assertFalse(s1.ensure_hooks_executable_in_src)
 
     def test_settings_config_from_dict_aliases(self) -> None:
         from drift.config.workspace_config import SettingsConfig
-        s2 = SettingsConfig.from_dict({"hook_inject_non_interactive_env": False})
-        self.assertFalse(s2.hook_inject_non_interactive_envs)
+        # Test all 4 aliases of ensure_hook[s]_executable_in_source/src
+        for key in (
+            "ensure_hooks_executable_in_src",
+            "ensure_hook_executable_in_src",
+            "ensure_hooks_executable_in_source",
+            "ensure_hook_executable_in_source",
+        ):
+            s = SettingsConfig.from_dict({key: False})
+            self.assertFalse(s.ensure_hooks_executable_in_src, f"Failed for key: {key}")
 
-        s3 = SettingsConfig.from_dict({"inject_hook_non_interactive_envs": False})
-        self.assertFalse(s3.hook_inject_non_interactive_envs)
+            s_str = SettingsConfig.from_dict({key: "false"})
+            self.assertFalse(s_str.ensure_hooks_executable_in_src, f"Failed for string bool key: {key}")
 
-        s4 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "false"})
-        self.assertFalse(s4.hook_inject_non_interactive_envs)
+            s_true = SettingsConfig.from_dict({key: "true"})
+            self.assertTrue(s_true.ensure_hooks_executable_in_src, f"Failed for string bool key: {key}")
 
-        s5 = SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "true"})
-        self.assertTrue(s5.hook_inject_non_interactive_envs)
-
-        s6 = SettingsConfig.from_dict({})
-        self.assertTrue(s6.hook_inject_non_interactive_envs)
+        s_empty = SettingsConfig.from_dict({})
+        self.assertTrue(s_empty.hook_inject_non_interactive_envs)
+        self.assertTrue(s_empty.ensure_hooks_executable_in_src)
 
     def test_settings_config_validation(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2255,6 +2265,12 @@ class TestSettingsConfig(unittest.TestCase):
             SettingsConfig.from_dict({"unknown_setting": True})
         self.assertIn("Unknown option under [settings]: 'unknown_setting'", str(ctx.exception))
 
+        # Former/obsolete keys should be rejected as unknown
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"ensure_source_hooks_executable": True})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"chmod_source_hooks": True})
+
         with self.assertRaises(ConfigError) as ctx:
             SettingsConfig.from_dict({"unknown_1": 1, "unknown_2": 2})
         self.assertIn("Unknown option under [settings]:", str(ctx.exception))
@@ -2263,6 +2279,8 @@ class TestSettingsConfig(unittest.TestCase):
 
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "not_a_bool"})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"ensure_hooks_executable_in_src": "not_a_bool"})
 
     def test_workspace_config_with_settings(self) -> None:
         toml_content = """
