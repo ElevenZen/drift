@@ -313,7 +313,7 @@ class WorkspaceConfig:
         if render_cache is not None and not isinstance(render_cache, RenderCache):
             raise ConfigError(f"render_cache must be a RenderCache instance, got {type(render_cache).__name__}")
 
-        self.drift_root = Path(drift_root)
+        self.drift_root = Path(drift_root).resolve()
         self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
         self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
@@ -648,7 +648,7 @@ class WorkspaceConfig:
         """Loads, transforms, and validates the workspace configuration from a drift workspace directory."""
         from .workspace_loader import load_workspace_config
         return load_workspace_config(
-            drift_root=drift_root,
+            drift_root=Path(drift_root).resolve(),
             check_legacy=check_legacy,
             config_files_override=config_files_override,
             quiet=quiet,
