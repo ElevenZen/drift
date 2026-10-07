@@ -47,8 +47,8 @@ enable_render = true
 # Enable or disable installation/deployment for this package
 enable_install = true
 
-# Directories where Drift has total control. Drift will automatically
-# synchronize and prune deleted files inside these subdirectories (FCDs).
+# Fully-Controlled Directories (FCDs). Drift will audit and reverse-sync
+# host-created files and deletions in these subdirectories for interactive adoption (`drift adopt`).
 fully_controlled_dirs = [
     "themes",
     "plugins"

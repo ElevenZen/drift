@@ -8,7 +8,7 @@ install_method = "{install_method}"  # Options: "symlink" (symlink) or "copy" (p
 # Advanced Flags
 # hook_file = "drift_package.py"  # Dynamic Python hook (configure_package(context))
 # sudo = false
-# fully_controlled_dirs = []      # Sync deletions inside these directories
+# fully_controlled_dirs = []      # Audit & reverse-sync host-created files for adoption (FCD)
 # enable_render = true
 # enable_install = true
 
