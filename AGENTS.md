@@ -12,6 +12,10 @@
   * Use **`ensure_`** for functions that **create or modify** state to guarantee a postcondition (e.g., `ensure_dir` creates a directory if missing, `ensure_rendered_file_hook_permissions` chmods hook files).
   * Use **`assert_`** for **read-only validation** guards that **raise an exception** on failure without modifying state (e.g., `assert_writable` checks permissions, `assert_can_escalate` verifies sudo availability, `assert_hooks_exist` validates hook files, `assert_no_cyclic_dependencies` validates dependency graphs).
   * Use **`check_`** for **read-only inspection** functions that **return a result value** (e.g., `bool`, `CheckResult`, or status object) without raising exceptions or modifying state (e.g., `check_existing_workspace_status` returns a report, `check_patch_conflicts` returns a `bool`). Never use `check_` for guards that throw.
+* **Configuration Naming & Alias Discipline**:
+  * **Canonical Key Naming Structure**: Configuration keys must follow the structure **`<what you want to do>_<limitation / where / when>`** to establish a clean, unambiguous mental model (e.g., `ensure_hooks_executable_in_src`, `hook_inject_non_interactive_envs`).
+  * **Strict Purpose of Aliases**: Aliases exist **strictly to absorb common user mistakes, singular/plural variance, and standard abbreviations** (e.g., `hook` vs `hooks`, `src` vs `source`).
+  * **No Proliferation of Semantic Variations**: Never invent sprawling alternate phrases or disparate synonyms (e.g., avoid mixing arbitrary names like `chmod_source_hooks`). Too many aliases create obstacles in reading and understanding configuration, diluting canonical documentation.
 
 ## 2. Architecture & Documentation Standards
 * **Layered Call Chain Overviews**: Preserve and maintain the `Architecture & Call Chain Overview` docstrings at the top of primitive modules (ordered by dependency layers).

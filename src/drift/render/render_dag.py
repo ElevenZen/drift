@@ -81,7 +81,7 @@ class Node:
         """Default digestion for leaf/dependency nodes."""
         from .render_hasher import compute_merkle_node_hash
 
-        compute_merkle_node_hash(self)
+        compute_merkle_node_hash(self, package_render_dir=context.absolute_package_render_dir)
 
 
 @dataclass(init=False)
@@ -196,7 +196,7 @@ class StaticFileNode(FileNode[Path]):
 
         own_h = context.hash_file(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
-        m_h = compute_merkle_node_hash(self) or ""
+        m_h = compute_merkle_node_hash(self, package_render_dir=context.absolute_package_render_dir) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
@@ -240,7 +240,7 @@ class DirectoryNode(PathNode[Path, Optional[Path]]):
 
         own_h = context.hash_directory(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
-        m_h = compute_merkle_node_hash(self) or ""
+        m_h = compute_merkle_node_hash(self, package_render_dir=context.absolute_package_render_dir) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.result.rendered_paths.append(keep_file)
@@ -347,7 +347,7 @@ class EngineOutputFileNode(FileNode[Path]):
 
         own_h = context.hash_file(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
-        m_h = compute_merkle_node_hash(self) or ""
+        m_h = compute_merkle_node_hash(self, package_render_dir=context.absolute_package_render_dir) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
@@ -451,7 +451,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         # 5. Merkle hash calculation
         own_h = context.hash_file(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
-        m_h = compute_merkle_node_hash(self) or ""
+        m_h = compute_merkle_node_hash(self, package_render_dir=context.absolute_package_render_dir) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
         if already_matched:
             context.result.skipped_paths.append(self.dst_path)

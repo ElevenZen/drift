@@ -98,6 +98,49 @@ class TestRenderHasher(unittest.TestCase):
             h_755 = hash_file_disk(file_path)
             self.assertNotEqual(h_644, h_755)
 
+    def test_hybrid_scope_hashing(self) -> None:
+        """Verifies package-relative hashing for render dir and absolute hashing for external paths."""
+        from drift.render.render_hasher import resolve_hash_path_key
+
+        with tempfile.TemporaryDirectory() as tmp1, tempfile.TemporaryDirectory() as tmp2:
+            p1 = Path(tmp1).resolve()
+            p2 = Path(tmp2).resolve()
+
+            render1 = p1 / "render/pkg_a"
+            render2 = p2 / "render/pkg_a"
+            render1.mkdir(parents=True)
+            render2.mkdir(parents=True)
+
+            f1 = render1 / "file.txt"
+            f2 = render2 / "file.txt"
+            f1.write_text("common payload")
+            f2.write_text("common payload")
+
+            # 1. Inside package_render_dir -> relative path key
+            self.assertEqual(resolve_hash_path_key(f1, render1), "file.txt")
+            self.assertEqual(resolve_hash_path_key(f2, render2), "file.txt")
+
+            # Resulting file hash is identical across sandboxes / different render directories!
+            h1 = hash_file_disk(f1, package_render_dir=render1)
+            h2 = hash_file_disk(f2, package_render_dir=render2)
+            self.assertEqual(h1, h2)
+
+            # 2. Outside package_render_dir -> absolute path key
+            src1 = p1 / "src/pkg_a/file.txt"
+            src2 = p2 / "src/pkg_a/file.txt"
+            src1.parent.mkdir(parents=True)
+            src2.parent.mkdir(parents=True)
+            src1.write_text("source payload")
+            src2.write_text("source payload")
+
+            self.assertEqual(resolve_hash_path_key(src1, render1), src1.as_posix())
+            self.assertEqual(resolve_hash_path_key(src2, render2), src2.as_posix())
+
+            # External source files have different absolute hashes -> enforces re-render on migration!
+            h_src1 = hash_file_disk(src1, package_render_dir=render1)
+            h_src2 = hash_file_disk(src2, package_render_dir=render2)
+            self.assertNotEqual(h_src1, h_src2)
+
     def test_hash_directory_disk(self) -> None:
         """Validates directory presence and hashing."""
         with tempfile.TemporaryDirectory() as tmp_dir:

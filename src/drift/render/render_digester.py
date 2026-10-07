@@ -112,7 +112,6 @@ class DigestionContext:
     force: bool = False
     dry_run: bool = False
     silent: bool = False
-    render_dir_mask: Optional[Path] = None
 
     # Result container mutated during traversal (all paths relative to drift_root)
     result: DigestionResult = field(default_factory=DigestionResult)
@@ -123,24 +122,20 @@ class DigestionContext:
         if not self.result.updated_lockfile.get_all_hashes():
             self.result.updated_lockfile = self.lockfile
 
-    def mask_path(self, path: Path) -> Path:
-        """Translates a sandbox rendered path to its masked workspace path if render_dir_mask is configured."""
-        if self.render_dir_mask is None:
-            return path
-        from ..utils.path_utils import rebase_path
-        return rebase_path(path, self.package_render_dir, self.render_dir_mask)
+    @property
+    def absolute_package_render_dir(self) -> Path:
+        """Returns canonical absolute path to the package render directory."""
+        return (self.drift_root / self.package_render_dir).resolve()
 
     def hash_file(self, file_path: Path) -> Optional[str]:
-        """Computes file hash on disk, substituting masked path if in sandbox."""
+        """Computes file hash on disk, using package-relative path if within package render directory."""
         from .render_hasher import hash_file_disk
-        masked = self.mask_path(file_path)
-        return hash_file_disk(file_path, path_mask=masked if masked != file_path else None)
+        return hash_file_disk(file_path, package_render_dir=self.absolute_package_render_dir)
 
     def hash_directory(self, dir_path: Path) -> Optional[str]:
-        """Computes directory hash on disk, substituting masked path if in sandbox."""
+        """Computes directory hash on disk, using package-relative path if within package render directory."""
         from .render_hasher import hash_directory_disk
-        masked = self.mask_path(dir_path)
-        return hash_directory_disk(dir_path, path_mask=masked if masked != dir_path else None)
+        return hash_directory_disk(dir_path, package_render_dir=self.absolute_package_render_dir)
 
     def log_action(self, action: FileAction) -> None:
         """Logs action line using logger.debug when silent=True, or logger.info otherwise."""
@@ -153,7 +148,7 @@ class DigestionContext:
     def save_lockfile(self) -> None:
         """Saves updated lockfile to package render directory unless dry_run is set."""
         if not self.dry_run:
-            self.lockfile.save_to_dir(self.drift_root / self.package_render_dir)
+            self.lockfile.save_to_dir(self.absolute_package_render_dir)
 
 
 
@@ -170,14 +165,11 @@ def check_and_apply_cache(
         logger.debug(f"[Cache] Force bypass (context.force=True) for '{target_path}'.")
         return False
 
-    masked = context.mask_path(target_path)
-    mask_path = masked if masked != target_path else None
-    # logger.debug(f"[Cache] Evaluating cache for '{target_path}' (bucket={context.bucket.value}, mask={mask_path})...")
     cached = context.lockfile.check_lockfile_matches(
         context.bucket,
         node,
         context.drift_root,
-        path_mask=mask_path,
+        package_render_dir=context.absolute_package_render_dir,
     )
     if cached is not None:
         node.hashes = cached

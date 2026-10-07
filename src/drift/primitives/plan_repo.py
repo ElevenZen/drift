@@ -208,7 +208,6 @@ def execute_sandbox_render_phase(
             no_cache=options.no_cache,
             dry_run=False,
             silent=True,
-            render_dir_mask=real_workspace_config.render_path / pkg,
             flags=HookExecFlags(
                 no_hooks=effective_no_hooks,
                 no_cache=options.no_cache,

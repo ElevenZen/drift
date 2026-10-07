@@ -83,10 +83,14 @@ This pattern yields three critical architectural properties:
 To track invariance deterministically across command runs without relying on unreliable filesystem timestamps, each node in the DAG is identified by a two-component cryptographic hash:
 
 #### 1. Low-Level Disk Hash (`own_hash`)
-* **Regular File**: SHA-256 computed over the canonical relative path, POSIX file permissions mode (`st_mode & 0o777`), and raw file content bytes:
-  $$\text{own_hash}(F) = \text{SHA256}(\text{path} \parallel \text{NUL} \parallel \text{mode} \parallel \text{NUL} \parallel \text{bytes})$$
-* **Directory**: SHA-256 computed over directory identity and POSIX mode:
-  $$\text{own_hash}(D) = \text{SHA256}(\text{"DIR"} \parallel \text{NUL} \parallel \text{path} \parallel \text{NUL} \parallel \text{mode})$$
+* **Regular File**: SHA-256 computed over the hybrid path key, POSIX file permissions mode (`st_mode & 0o777`), and raw file content bytes:
+  $$\text{own_hash}(F) = \text{SHA256}(\text{path_key} \parallel \text{NUL} \parallel \text{mode} \parallel \text{NUL} \parallel \text{bytes})$$
+  Where the path key follows a hybrid scope rule:
+  $$\text{path_key}(P) = \begin{cases} P\text{.relative_to}(pkg\_render\_dir) & \text{if } P \in pkg\_render\_dir \\ P\text{.resolve()} & \text{otherwise (e.g. source files in } src/\text{, configs in } config/\text{)} \end{cases}$$
+  * **Package-relative for rendered artifacts**: Artifacts in `render/<pkg>/` have identical relative paths in both canonical renders and ephemeral sandbox plans (`drift plan`), eliminating the need for sandbox path spoofing or masks.
+  * **Absolute for external dependencies**: Leaf source files and templates in `src/` embed their absolute host paths. Migrating the workspace directory or cloning onto a different machine changes the absolute path, deliberately invalidating cached Merkle hashes and enforcing a clean re-render to evaluate host-specific facts.
+* **Directory**: SHA-256 computed over directory identity, hybrid path key, and POSIX mode:
+  $$\text{own_hash}(D) = \text{SHA256}(\text{"DIR"} \parallel \text{NUL} \parallel \text{path_key} \parallel \text{NUL} \parallel \text{mode})$$
 * **Virtual Nodes (Text / JSON)**: SHA-256 computed over normalized UTF-8 string content.
 * **Root Container Nodes**: SHA-256 computed over node class name and package name (`"PackagePayloadNode:pkg_name"`).
 

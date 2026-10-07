@@ -284,8 +284,8 @@ class TestDigestionModelsAndCache(unittest.TestCase):
             self.assertEqual(ctx.result.skipped_count, 0)
 
             # Compute actual hash and populate lockfile
-            from drift.render.render_hasher import hash_file_disk, hash_text
-            own_h = hash_file_disk(p)
+            from drift.render.render_hasher import hash_text
+            own_h = ctx.hash_file(p)
             self.assertIsNotNone(own_h)
             expected_m = hash_text(f"StaticFileNode:{own_h}:{indep.merkle_hash}")
             lock.update_payload_hashes([expected_m])
@@ -848,7 +848,7 @@ class TestRenderActionLogging(unittest.TestCase):
                     self.assertTrue(any(a.action_type == FileActionType.CREATE_COPY for a in ctx.result.actions))
 
                     # Update lockfile with expected merkle hash for cache hit
-                    own_h = hash_file_disk(dst_file)
+                    own_h = ctx.hash_file(dst_file)
                     expected_m = hash_text(f"StaticFileNode:{own_h}:{indep.merkle_hash}")
                     ctx.lockfile.update_payload_hashes([expected_m])
 

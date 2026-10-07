@@ -369,11 +369,6 @@ def _execute_load_package_config_dag(
     expand_node_dependencies(cfg_node, exp_ctx)
 
     lockfile = RenderLockfile.load_from_dir(pkg_render_dir)
-    render_dir_mask = (
-        workspace_config.render_path_mask / pkg_name
-        if workspace_config.render_path_mask is not None
-        else None
-    )
     ctx = DigestionContext(
         drift_root=workspace_config.drift_root,
         package_name=pkg_name,
@@ -382,7 +377,6 @@ def _execute_load_package_config_dag(
         bucket=RenderBucket.CONFIG,
         cache=workspace_config.render_cache,
         silent=silent,
-        render_dir_mask=render_dir_mask,
     )
 
     with env_resolve_scope(env_res):

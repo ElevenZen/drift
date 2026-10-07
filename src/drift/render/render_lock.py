@@ -158,7 +158,7 @@ class RenderLockfile:
         bucket: RenderBucket,
         node: Node,
         drift_root: Path,
-        path_mask: Optional[Path] = None,
+        package_render_dir: Optional[Path] = None,
     ) -> Optional[NodeHashes]:
         """Checks if a node matches the recorded lockfile Merkle hash for the bucket.
 
@@ -176,10 +176,10 @@ class RenderLockfile:
                     f"[Lockfile] MISS for '{node.dst_path}': file not found on disk at '{disk_path}'."
                 )
                 return None
-            own_h = hash_file_disk(node.dst_path, path_mask=path_mask)
+            own_h = hash_file_disk(node.dst_path, package_render_dir=package_render_dir)
             if own_h is None:
                 logger.debug(
-                    f"[Lockfile] MISS for '{node.dst_path}': failed to compute own_hash (path_mask='{path_mask}')."
+                    f"[Lockfile] MISS for '{node.dst_path}': failed to compute own_hash (package_render_dir='{package_render_dir}')."
                 )
                 return None
             unresolved = [
@@ -209,7 +209,7 @@ class RenderLockfile:
             logger.debug(
                 f"[Lockfile] MISS for '{node.dst_path}' in bucket '{bucket.value}': "
                 f"cand={format_hash_log(candidate_m)} not in bucket (sample={sample_hashes}). "
-                f"(own_h={format_hash_log(own_h)}, dep_str={format_hash_log(dep_str)}, path_mask='{path_mask}')."
+                f"(own_h={format_hash_log(own_h)}, dep_str={format_hash_log(dep_str)}, package_render_dir='{package_render_dir}')."
             )
             return None
 
@@ -220,7 +220,7 @@ class RenderLockfile:
                     f"[Lockfile] MISS for directory '{node.dst_path}': directory not found on disk at '{disk_path}'."
                 )
                 return None
-            own_h = hash_directory_disk(node.dst_path, path_mask=path_mask)
+            own_h = hash_directory_disk(node.dst_path, package_render_dir=package_render_dir)
             if own_h is None:
                 logger.debug(
                     f"[Lockfile] MISS for directory '{node.dst_path}': failed to compute own_hash."
@@ -237,7 +237,7 @@ class RenderLockfile:
             logger.debug(
                 f"[Lockfile] MISS for directory '{node.dst_path}' in bucket '{bucket.value}': "
                 f"cand={format_hash_log(candidate_m)} not in bucket (sample={sample_hashes}). "
-                f"(own_h={format_hash_log(own_h)}, path_mask='{path_mask}')."
+                f"(own_h={format_hash_log(own_h)}, package_render_dir='{package_render_dir}')."
             )
             return None
 

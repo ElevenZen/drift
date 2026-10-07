@@ -25,6 +25,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+from ..utils.path_utils import to_relative_posix
 from .render_dag import (
     Node,
     FileNode,
@@ -54,6 +55,13 @@ def format_hash_log(hash_val: Any, length: int = 10) -> str:
 # Layer 1: Low-Level Disk & Byte Hashes
 # =====================================================================
 
+def resolve_hash_path_key(path: Path, package_render_dir: Optional[Path] = None) -> str:
+    """Returns package-relative POSIX path if within package_render_dir, or absolute POSIX path otherwise."""
+    if package_render_dir is not None:
+        return to_relative_posix(path.resolve(), package_render_dir.resolve())
+    return path.resolve().as_posix()
+
+
 def hash_bytes(data: bytes) -> str:
     """Computes a deterministic SHA-256 hex digest over raw bytes."""
     return hashlib.sha256(data).hexdigest()
@@ -64,20 +72,20 @@ def hash_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def hash_file_disk(file_path: Path, path_mask: Optional[Path] = None) -> Optional[str]:
+def hash_file_disk(file_path: Path, package_render_dir: Optional[Path] = None) -> Optional[str]:
     """Computes SHA-256 hash of a file on disk combining path, mode, and content.
 
-    If path_mask is provided, uses path_mask for the path segment of the hash
-    while reading file mode and content from physical file_path on disk.
+    If package_render_dir is provided and file_path is within it, uses the package-relative
+    POSIX path for the path segment of the hash; otherwise uses the absolute POSIX path.
     Returns None if the file does not exist or is not a regular file.
     """
     if not file_path.is_file():
         return None
     mode_oct = oct(file_path.stat().st_mode & 0o777)
     content = file_path.read_bytes()
-    path_to_hash = path_mask if path_mask is not None else file_path
+    path_key = resolve_hash_path_key(file_path, package_render_dir)
     hasher = hashlib.sha256()
-    hasher.update(path_to_hash.as_posix().encode("utf-8"))
+    hasher.update(path_key.encode("utf-8"))
     hasher.update(b"\0")
     hasher.update(mode_oct.encode("utf-8"))
     hasher.update(b"\0")
@@ -85,20 +93,20 @@ def hash_file_disk(file_path: Path, path_mask: Optional[Path] = None) -> Optiona
     return hasher.hexdigest()
 
 
-def hash_directory_disk(dir_path: Path, path_mask: Optional[Path] = None) -> Optional[str]:
+def hash_directory_disk(dir_path: Path, package_render_dir: Optional[Path] = None) -> Optional[str]:
     """Computes SHA-256 hash of a directory on disk combining path and mode.
 
-    If path_mask is provided, uses path_mask for the path segment of the hash
-    while reading directory mode from physical dir_path on disk.
+    If package_render_dir is provided and dir_path is within it, uses the package-relative
+    POSIX path for the path segment of the hash; otherwise uses the absolute POSIX path.
     Returns None if the path does not exist or is not a directory.
     """
     if not dir_path.is_dir():
         return None
     mode_oct = oct(dir_path.stat().st_mode & 0o777)
-    path_to_hash = path_mask if path_mask is not None else dir_path
+    path_key = resolve_hash_path_key(dir_path, package_render_dir)
     hasher = hashlib.sha256()
     hasher.update(b"DIR\0")
-    hasher.update(path_to_hash.as_posix().encode("utf-8"))
+    hasher.update(path_key.encode("utf-8"))
     hasher.update(b"\0")
     hasher.update(mode_oct.encode("utf-8"))
     return hasher.hexdigest()
@@ -108,13 +116,13 @@ def hash_directory_disk(dir_path: Path, path_mask: Optional[Path] = None) -> Opt
 # Layer 2: Node Hashing & Merkle Invariants
 # =====================================================================
 
-def compute_node_own_hash(node: Node, path_mask: Optional[Path] = None) -> Optional[str]:
+def compute_node_own_hash(node: Node, package_render_dir: Optional[Path] = None) -> Optional[str]:
     """Computes the own_hash for a given Node from disk or raw content.
 
     - TextNode / JsonNode / CachedNode: returns existing own_hash.
-    - IndependentFileNode: hashes source asset from disk.
+    - IndependentFileNode: hashes source asset from disk (absolute path).
     - FileNode (StaticFileNode, EngineOutputFileNode, PackageConfigNode):
-      hashes rendered target artifact from disk (returns None if not yet rendered).
+      hashes rendered target artifact from disk (package-relative if inside package_render_dir).
     - DirectoryNode: hashes directory presence and permissions on disk.
     - PackageHooksNode / PackagePayloadNode: hashes type name and package name.
     """
@@ -122,16 +130,16 @@ def compute_node_own_hash(node: Node, path_mask: Optional[Path] = None) -> Optio
         return node.own_hash
 
     if isinstance(node, DirectoryNode):
-        return hash_directory_disk(node.dst_path, path_mask=path_mask)
+        return hash_directory_disk(node.dst_path, package_render_dir=package_render_dir)
     elif isinstance(node, FileNode):
-        return hash_file_disk(node.dst_path, path_mask=path_mask)
+        return hash_file_disk(node.dst_path, package_render_dir=package_render_dir)
     elif isinstance(node, (PackageHooksNode, PackagePayloadNode)):
         return hash_text(f"{node.__class__.__name__}:{node.value}")
     else:
         return hash_text(node.value)
 
 
-def compute_merkle_node_hash(node: Node, path_mask: Optional[Path] = None) -> Optional[str]:
+def compute_merkle_node_hash(node: Node, package_render_dir: Optional[Path] = None) -> Optional[str]:
     """Computes and populates NodeHashes for a given Node using its dependencies.
 
     Returns None if the node's own_hash cannot be resolved (e.g. unrendered on disk)
@@ -140,7 +148,7 @@ def compute_merkle_node_hash(node: Node, path_mask: Optional[Path] = None) -> Op
     if node.merkle_hash is not None:
         return node.merkle_hash
 
-    own_h = node.own_hash if node.own_hash is not None else compute_node_own_hash(node, path_mask=path_mask)
+    own_h = node.own_hash if node.own_hash is not None else compute_node_own_hash(node, package_render_dir=package_render_dir)
     if own_h is None:
         logger.debug(
             f"[Merkle Hash] Failed to resolve own_hash for {node.__class__.__name__} "
