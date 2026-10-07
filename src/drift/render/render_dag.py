@@ -425,24 +425,38 @@ class PackageConfigNode(FileNode[Optional[Path]]):
 
         # 4. Write final stitched TOML to render/<pkg>/.drift/drift_package.toml
         target_path = self.dst_path
+        new_content = dump_toml(stitched_dict)
+        already_matched = False
+        if target_path.is_file():
+            try:
+                already_matched = (target_path.read_text(encoding="utf-8") == new_content)
+            except Exception:
+                already_matched = False
+
+        action_type = (
+            FileActionType.SKIP_IDENTICAL if already_matched else FileActionType.WRITE_CONFIG
+        )
         action = FileAction(
-            action_type=FileActionType.WRITE_CONFIG,
+            action_type=action_type,
             src_path=self.src_path,
             dst_path=target_path,
         )
         context.result.actions.append(action)
         _log_digested_action(action, context)
 
-        if not context.dry_run:
+        if not context.dry_run and not already_matched:
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            target_path.write_text(dump_toml(stitched_dict), encoding="utf-8")
+            target_path.write_text(new_content, encoding="utf-8")
 
         # 5. Merkle hash calculation
         own_h = context.hash_file(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)
         m_h = compute_merkle_node_hash(self) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=m_h)
-        context.result.rendered_paths.append(self.dst_path)
+        if already_matched:
+            context.result.skipped_paths.append(self.dst_path)
+        else:
+            context.result.rendered_paths.append(self.dst_path)
         context.active_hashes.add(m_h)
         logger.debug(
             f"[Digest] PackageConfigNode '{self.dst_path}': own_hash={format_hash_log(own_h)}, merkle_hash={format_hash_log(m_h)}."
