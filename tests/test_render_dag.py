@@ -1,11 +1,17 @@
-"""Targeted unit tests for render DAG models, tree expansion, and topological sorting."""
-
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any, List, Optional
 from unittest.mock import MagicMock
 
-from drift.core.exceptions import RenderCollisionError, CyclicDependencyError
+from drift.core.constants import (
+    PACKAGE_CONFIG_FILE_NAME,
+    PACKAGE_CONFIG_LOCAL_FILE_NAME,
+    DRIFT_INTERNAL_DIR_NAME,
+    DEFAULT_PACKAGE_HOOK_FILE_NAME,
+)
+from drift.core.exceptions import ConfigError, RenderCollisionError, CyclicDependencyError
+from drift.core.file_action import FileAction, FileActionType, format_action_line
 from drift.render.render_cache import NodeHashes, RenderCache
 from drift.render.render_dag import (
     Node,
@@ -23,6 +29,11 @@ from drift.render.render_dag import (
     PackageHooksNode,
     PackagePayloadNode,
 )
+from drift.render.render_digester import (
+    DigestionContext,
+    digest_render_dag,
+    topological_sort_nodes,
+)
 from drift.render.render_expansion import (
     ExpansionContext,
     to_node_key,
@@ -30,7 +41,7 @@ from drift.render.render_expansion import (
     translate_path,
     make_root_dependency_node,
 )
-from drift.render.render_digester import topological_sort_nodes
+from drift.render.render_lock import RenderLockfile, RenderBucket
 
 
 class TestRenderDAG(unittest.TestCase):
@@ -676,5 +687,321 @@ class TestRenderDAG(unittest.TestCase):
         self.assertIsInstance(cm.exception, ValueError)
 
 
+class TestPackageConfigNodeResolutionAndEmptyGuard(unittest.TestCase):
+    """Exhaustive tests for PackageConfigNode primary src_path resolution, two-pass digestion, and empty config guards."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp_dir.name)
+        self.src_dir = self.root / "src"
+        self.render_dir = self.root / "render"
+        self.cache = RenderCache()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_src_path_resolution_with_static_package_config(self) -> None:
+        """Verifies PackageConfigNode picks up static drift_package.toml directly when present."""
+        pkg_dir = self.src_dir / "static_pkg"
+        pkg_dir.mkdir(parents=True)
+        static_cfg = pkg_dir / PACKAGE_CONFIG_FILE_NAME
+        static_cfg.write_text("[package]\nname = 'static_pkg'\n", encoding="utf-8")
+
+        dst_path = self.render_dir / "static_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+        self.assertEqual(node.src_path, static_cfg)
+
+    def test_src_path_resolution_with_templated_dependency(self) -> None:
+        """Verifies PackageConfigNode falls back to the first source dependency's src_path when static config is absent."""
+        pkg_dir = self.src_dir / "tmpl_pkg"
+        pkg_dir.mkdir(parents=True)
+        tmpl_file = pkg_dir / "drift_package.envst.toml"
+        tmpl_file.write_text("[package]\nname = 'tmpl_pkg'\n", encoding="utf-8")
+
+        dst_path = self.render_dir / "tmpl_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        dep_node = IndependentFileNode(tmpl_file)
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+        self.assertEqual(node.src_path, tmpl_file)
+
+    def test_src_path_resolution_fallback_when_sources_empty(self) -> None:
+        """Verifies PackageConfigNode gracefully handles absence of both static file and sources without crashing."""
+        pkg_dir = self.src_dir / "empty_pkg"
+        pkg_dir.mkdir(parents=True)
+        dst_path = self.render_dir / "empty_pkg" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+        self.assertIsNone(node.src_path)
+
+    def test_repeated_digestion_templated_config_skip_identical_action(self) -> None:
+        """Verifies two-pass digestion of a templated package config plans SKIP_IDENTICAL without ValueError."""
+        pkg_name = "tmpl_pkg"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True)
+        tmpl_file = pkg_dir / "drift_package.envst.toml"
+        tmpl_file.write_text("[package]\nname = 'tmpl_pkg'\n", encoding="utf-8")
+
+        pkg_render_dir = self.render_dir / pkg_name
+        pkg_render_dir.mkdir(parents=True)
+        dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        # Create intermediate rendered config produced by Phase 0/1 expansion
+        intermediate_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / "render" / "package"
+        intermediate_dir.mkdir(parents=True)
+        intermediate_cfg = intermediate_dir / PACKAGE_CONFIG_FILE_NAME
+        intermediate_cfg.write_text("[package]\nname = 'tmpl_pkg'\n", encoding="utf-8")
+
+        dep_node = StaticFileNode(dst_path=intermediate_cfg, src_path=tmpl_file)
+
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+        self.assertEqual(node.src_path, tmpl_file)
+
+        ctx1 = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+
+        # Pass 1: initial digestion -> WRITE_CONFIG
+        digest_render_dag(node, ctx1)
+        self.assertTrue(dst_path.is_file())
+        config_action1 = next(a for a in ctx1.result.actions if a.dst_path == dst_path)
+        self.assertEqual(config_action1.action_type, FileActionType.WRITE_CONFIG)
+
+        # Pass 2: repeat digestion -> SKIP_IDENTICAL without triggering ValueError on src_path
+        ctx2 = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+        digest_render_dag(node, ctx2)
+        config_action2 = next(a for a in ctx2.result.actions if a.dst_path == dst_path)
+        self.assertEqual(config_action2.action_type, FileActionType.SKIP_IDENTICAL)
+        self.assertEqual(config_action2.src_path, tmpl_file)
+        self.assertEqual(config_action2.dst_path, dst_path)
+
+        # Verify formatting includes arrow from template to dst
+        line = format_action_line(config_action2, drift_root=self.root)
+        self.assertIn("⏭️ [SKIP_IDENTICAL]", line)
+        self.assertIn(f"src/{pkg_name}/drift_package.envst.toml -> render/{pkg_name}/.drift/drift_package.toml", line)
+
+        # Verify cache recorded source stat fingerprint for template
+        cached_entry = self.cache.get(dst_path, src_path=tmpl_file)
+        self.assertIsNotNone(cached_entry)
+
+    def test_digestion_fallback_to_target_path_when_src_path_none(self) -> None:
+        """Verifies that if src_path is None on an existing identical target, digestion falls back safely."""
+        pkg_name = "synthetic_pkg"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True)
+        pkg_render_dir = self.render_dir / pkg_name
+        pkg_render_dir.mkdir(parents=True)
+        dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        # Intermediate file has valid content
+        intermediate_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / "render"
+        intermediate_dir.mkdir(parents=True)
+        intermediate_cfg = intermediate_dir / PACKAGE_CONFIG_FILE_NAME
+        intermediate_cfg.write_text("[package]\nname = 'synthetic_pkg'\n", encoding="utf-8")
+
+        # Create a PathNode with src_path=None
+        class SyntheticPathNode(PathNode[Path, Optional[Path]]):
+            def __init__(self, dst: Path):
+                super().__init__(dst_path=dst, src_path=None)
+
+        dep_node = SyntheticPathNode(intermediate_cfg)
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+        self.assertIsNone(node.src_path)
+
+        # Pre-seed destination with exact compiled output so already_matched is True
+        from drift.utils.toml_utils import dump_toml
+        from drift.config.package_loader import resolve_and_interpolate_package_config
+        from drift.utils.toml_utils import parse_toml
+        stitched, _ = resolve_and_interpolate_package_config(
+            parse_toml(intermediate_cfg.read_text(encoding="utf-8")),
+            package_name=pkg_name,
+        )
+        dst_path.parent.mkdir(parents=True, exist_ok=True)
+        dst_path.write_text(dump_toml(stitched), encoding="utf-8")
+
+        ctx = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+        # Should NOT raise ValueError: FileActionType.SKIP_IDENTICAL must have src_path set
+        digest_render_dag(node, ctx)
+        action = next(a for a in ctx.result.actions if a.dst_path == dst_path)
+        self.assertEqual(action.action_type, FileActionType.SKIP_IDENTICAL)
+        self.assertEqual(action.src_path, dst_path)
+        # Format line with src == dst formats as single path without redundant arrow
+        line = format_action_line(action, drift_root=self.root)
+        self.assertIn("⏭️ [SKIP_IDENTICAL]", line)
+        self.assertNotIn("->", line)
+
+    def test_empty_config_raises_config_error(self) -> None:
+        """Verifies that an empty package configuration without hooks raises ConfigError."""
+        pkg_name = "empty_cfg_pkg"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True)
+        pkg_render_dir = self.render_dir / pkg_name
+        pkg_render_dir.mkdir(parents=True)
+        dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        # Empty intermediate config file (0 bytes)
+        intermediate_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / "render"
+        intermediate_dir.mkdir(parents=True)
+        intermediate_cfg = intermediate_dir / PACKAGE_CONFIG_FILE_NAME
+        intermediate_cfg.write_text("# only comments\n\n", encoding="utf-8")
+
+        dep_node = StaticFileNode(dst_path=intermediate_cfg, src_path=intermediate_cfg)
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+
+        ctx = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+
+        with self.assertRaises(ConfigError) as cm:
+            digest_render_dag(node, ctx)
+        self.assertIn(f"Package configuration for '{pkg_name}' is empty", str(cm.exception))
+
+    def test_empty_config_populated_by_dynamic_package_hook_succeeds(self) -> None:
+        """Verifies that an initially empty config populated by a dynamic package hook passes validation."""
+        pkg_name = "hook_cfg_pkg"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True)
+        pkg_render_dir = self.render_dir / pkg_name
+        pkg_render_dir.mkdir(parents=True)
+        dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        # Empty intermediate config file
+        intermediate_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / "render"
+        intermediate_dir.mkdir(parents=True)
+        intermediate_cfg = intermediate_dir / PACKAGE_CONFIG_FILE_NAME
+        intermediate_cfg.write_text("", encoding="utf-8")
+
+        # Dynamic Python package hook that injects [package] table
+        hook_file = pkg_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME
+        hook_file.write_text(
+            "def configure_package(context):\n"
+            "    return {'package': {'name': 'hook_cfg_pkg'}}\n",
+            encoding="utf-8",
+        )
+
+        dep_node = StaticFileNode(dst_path=intermediate_cfg, src_path=intermediate_cfg)
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+
+        ctx = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+
+        # Digestion must succeed because hook provided the configuration
+        digest_render_dag(node, ctx)
+        self.assertTrue(dst_path.is_file())
+        self.assertIn("hook_cfg_pkg", dst_path.read_text(encoding="utf-8"))
+
+    def test_empty_config_hook_returns_empty_raises_config_error(self) -> None:
+        """Verifies that if a dynamic package hook runs but still returns an empty dict, ConfigError is raised."""
+        pkg_name = "empty_hook_pkg"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True)
+        pkg_render_dir = self.render_dir / pkg_name
+        pkg_render_dir.mkdir(parents=True)
+        dst_path = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+
+        intermediate_dir = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / "render"
+        intermediate_dir.mkdir(parents=True)
+        intermediate_cfg = intermediate_dir / PACKAGE_CONFIG_FILE_NAME
+        intermediate_cfg.write_text("", encoding="utf-8")
+
+        hook_file = pkg_dir / DEFAULT_PACKAGE_HOOK_FILE_NAME
+        hook_file.write_text(
+            "def configure_package(context):\n"
+            "    return {}\n",
+            encoding="utf-8",
+        )
+
+        dep_node = StaticFileNode(dst_path=intermediate_cfg, src_path=intermediate_cfg)
+        node = PackageConfigNode(
+            dst_path=dst_path,
+            sources=[dep_node],
+            env_node=JsonNode({}),
+            package_dir=pkg_dir,
+        )
+
+        ctx = DigestionContext(
+            drift_root=self.root,
+            package_name=pkg_name,
+            package_render_dir=pkg_render_dir,
+            lockfile=RenderLockfile(),
+            bucket=RenderBucket.CONFIG,
+            cache=self.cache,
+            silent=True,
+        )
+
+        with self.assertRaises(ConfigError) as cm:
+            digest_render_dag(node, ctx)
+        self.assertIn(f"Package configuration for '{pkg_name}' is empty", str(cm.exception))
+
+
 if __name__ == "__main__":
     unittest.main()
+

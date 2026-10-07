@@ -377,8 +377,14 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         workspace_config: Optional["WorkspaceConfig"] = None,
     ):
         source_file = package_dir / PACKAGE_CONFIG_FILE_NAME
-        src_path = source_file if source_file.exists() else None
-        super().__init__(dst_path=dst_path, src_path=src_path, depends_on=[*sources, env_node])
+        # Determine primary source for hashing:
+        # if static config file exists, use it;
+        # otherwise, use first available source node with a src_path.
+        primary_src = source_file if source_file.exists() else next(
+            (getattr(s, "src_path", None) for s in sources if getattr(s, "src_path", None) is not None),
+            None,
+        )
+        super().__init__(dst_path=dst_path, src_path=primary_src, depends_on=[*sources, env_node])
         self.package_dir = package_dir
         self.workspace_config = workspace_config
         self.package_config = None
@@ -387,6 +393,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
     def digest(self, context: "DigestionContext") -> None:
         from ..config.package_config import PackageConfig
         from ..config.package_loader import resolve_and_interpolate_package_config
+        from ..core.exceptions import ConfigError
         from ..hooks.package_hook import apply_package_hook
         from ..utils.toml_utils import parse_toml, merge_toml, dump_toml
         from .render_cache import NodeHashes
@@ -416,6 +423,12 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         if hook_path:
             source_files.append(hook_path)
 
+        if not combined_dict:
+            raise ConfigError(
+                f"Package configuration for '{self.package_dir.name}' is empty. "
+                f"At least one configuration file or package hook in '{self.package_dir}' must provide valid configuration."
+            )
+
         # 3. Variable stitching & interpolation
         stitched_dict, env_res = resolve_and_interpolate_package_config(
             combined_dict,
@@ -438,7 +451,7 @@ class PackageConfigNode(FileNode[Optional[Path]]):
         )
         action = FileAction(
             action_type=action_type,
-            src_path=self.src_path,
+            src_path=self.src_path or target_path,
             dst_path=target_path,
         )
         context.result.actions.append(action)

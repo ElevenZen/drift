@@ -187,7 +187,9 @@ def format_action_line(action: FileAction, drift_root: Optional[Path] = None) ->
     elif action.action_type == FileActionType.WRITE_CONFIG:
         return f"    ⚙️ [WRITE_CONFIG]    {dst_str}{reason_str}"
     elif action.action_type == FileActionType.SKIP_IDENTICAL:
-        return f"    ⏭️ [SKIP_IDENTICAL]  {src_str} -> {dst_str}{reason_str}"
+        if src_str and src_str != dst_str:
+            return f"    ⏭️ [SKIP_IDENTICAL]  {src_str} -> {dst_str}{reason_str}"
+        return f"    ⏭️ [SKIP_IDENTICAL]  {dst_str}{reason_str}"
     elif action.action_type == FileActionType.BACKUP_OVERWRITE:
         return f"    🛡️ [BACKUP_OVERWRITE]  {src_str}{reason_str}"
     elif action.action_type == FileActionType.BACKUP_PRUNE:
