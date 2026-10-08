@@ -36,7 +36,7 @@ from typing import Dict, Generator, List, Mapping, Optional, Sequence, Set, Tupl
 from ..config.workspace_config import WorkspaceConfig
 from ..config.package_config import PackageConfig
 from ..core.constants import STATE_REGISTRY_FILE_NAME
-from ..core.file_action import NO_CHANGE_ACTION_TYPES
+from ..core.file_action import NO_CHANGE_ACTION_TYPES, filter_display_actions
 from ..core.state_registry import load_state_registry, StateRegistry
 from ..core.result_models import (
     PackageDeployPreview,
@@ -389,10 +389,7 @@ def assemble_package_deploy_preview(
 
     drift_warning: Optional[str] = None
     if reverse_sync_plan is not None and reverse_sync_plan.has_changes:
-        mutating_actions = [
-            a for a in reverse_sync_plan.actions
-            if a.action_type not in NO_CHANGE_ACTION_TYPES
-        ]
+        mutating_actions = filter_display_actions(reverse_sync_plan.actions, verbose=False)
         mutations_count = len(mutating_actions)
         drift_warning = (
             f"Host drift detected in '{pkg}' ({mutations_count} files modified on host). "

@@ -140,6 +140,7 @@ from ..core.file_action import (
     FileActionType,
     FileAction,
     NO_CHANGE_ACTION_TYPES,
+    is_mutating_action,
     execute_delivery_actions,
 )
 from ..core.folder_delivery import (
@@ -330,7 +331,7 @@ def plan_package_install(
     actions.extend(folder_actions)
 
     has_mutations = any(
-        a.action_type not in NO_CHANGE_ACTION_TYPES
+        is_mutating_action(a)
         for a in actions
     )
     can_skip = not context.reinstall and not context.is_first_time and target_migrated_from is None and not has_mutations

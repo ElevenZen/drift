@@ -9,6 +9,8 @@ from drift.core.file_action import (
     NO_CHANGE_ACTION_TYPES,
     NON_MUTATING_ACTION_TYPES,
     rebase_file_action,
+    is_mutating_action,
+    filter_display_actions,
 )
 from drift.core.result_models import (
     PackageRenderResult,
@@ -16,6 +18,7 @@ from drift.core.result_models import (
     PackageInstallPlan,
     PackageReverseSyncPlan,
     PackageUninstallPlan,
+    AddResourcePlan,
     PackageDeployPreview,
     WorkspaceDeployPreview,
     DeployPreview,
@@ -500,5 +503,127 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         self.assertIn("[INFO]", verbose_deploy)
 
 
+class TestFilterDisplayActions(unittest.TestCase):
+    """Exhaustive tests for filter_display_actions and is_mutating_action predicates."""
+
+    def test_filter_display_actions_none_and_empty(self) -> None:
+        """Verifies filter_display_actions gracefully returns an empty list for None or empty sequences."""
+        self.assertEqual(filter_display_actions(None, verbose=False), [])
+        self.assertEqual(filter_display_actions(None, verbose=True), [])
+        self.assertEqual(filter_display_actions([], verbose=False), [])
+        self.assertEqual(filter_display_actions([], verbose=True), [])
+
+    def test_filter_display_actions_filtering(self) -> None:
+        """Verifies NO_CHANGE actions are filtered out when verbose=False, and preserved when verbose=True."""
+        mutating_action = FileAction(
+            action_type=FileActionType.CREATE_COPY,
+            src_path=Path("/src/file.txt"),
+            dst_path=Path("/dst/file.txt"),
+        )
+        skip_action = FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=Path("/src/file.txt"),
+            dst_path=Path("/dst/file.txt"),
+        )
+        info_action = FileAction(
+            action_type=FileActionType.INFO_MESSAGE,
+            reason="Informational note",
+        )
+        actions = [mutating_action, skip_action, info_action]
+
+        # Non-verbose: only mutating actions kept
+        non_verbose = filter_display_actions(actions, verbose=False)
+        self.assertEqual(non_verbose, [mutating_action])
+
+        # Verbose: all actions kept
+        verbose = filter_display_actions(actions, verbose=True)
+        self.assertEqual(verbose, actions)
+
+    def test_is_mutating_action_predicate(self) -> None:
+        """Verifies is_mutating_action identifies mutating actions vs NO_CHANGE actions."""
+        for no_change_type in NO_CHANGE_ACTION_TYPES:
+            action = FileAction(
+                action_type=no_change_type,
+                src_path=Path("/src/file.txt"),
+                dst_path=Path("/dst/file.txt"),
+                reason="test",
+            )
+            self.assertFalse(is_mutating_action(action))
+
+        mutating_types = [
+            FileActionType.CREATE_COPY,
+            FileActionType.UPDATE_COPY,
+            FileActionType.CREATE_SYMLINK,
+            FileActionType.RENDER_ITEM,
+            FileActionType.WRITE_CONFIG,
+            FileActionType.ENSURE_DIR,
+            FileActionType.DELETE_ITEM,
+        ]
+        for mut_type in mutating_types:
+            action = FileAction(
+                action_type=mut_type,
+                src_path=Path("/src/file.txt"),
+                dst_path=Path("/dst/file.txt"),
+            )
+            self.assertTrue(is_mutating_action(action))
+
+    def test_package_uninstall_plan_verbose_filtering(self) -> None:
+        """Verifies PackageUninstallPlan.format_text obeys verbosity filtering."""
+        plan = PackageUninstallPlan(
+            package="uninstall_test",
+            target_directory="/opt/app",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.DELETE_ITEM,
+                    dst_path=Path("/opt/app/binary"),
+                ),
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/opt/app/keep"),
+                    dst_path=Path("/opt/app/keep"),
+                ),
+                FileAction(
+                    action_type=FileActionType.INFO_MESSAGE,
+                    reason="Skipped unmanaged file",
+                ),
+            ],
+        )
+        non_verbose = plan.format_text(verbose=False)
+        self.assertIn("DELETE_ITEM", non_verbose)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose)
+        self.assertNotIn("[INFO]", non_verbose)
+
+        verbose = plan.format_text(verbose=True)
+        self.assertIn("DELETE_ITEM", verbose)
+        self.assertIn("SKIP_IDENTICAL", verbose)
+        self.assertIn("[INFO]", verbose)
+
+    def test_add_resource_plan_verbose_filtering(self) -> None:
+        """Verifies AddResourcePlan.format_text obeys verbosity filtering."""
+        plan = AddResourcePlan(
+            package="add_test",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.CREATE_COPY,
+                    src_path=Path("/host/file.conf"),
+                    dst_path=Path("/repo/src/add_test/file.conf"),
+                ),
+                FileAction(
+                    action_type=FileActionType.SKIP_IDENTICAL,
+                    src_path=Path("/host/same.conf"),
+                    dst_path=Path("/repo/src/add_test/same.conf"),
+                ),
+            ],
+        )
+        non_verbose = plan.format_text(verbose=False)
+        self.assertIn("CREATE_COPY", non_verbose)
+        self.assertNotIn("SKIP_IDENTICAL", non_verbose)
+
+        verbose = plan.format_text(verbose=True)
+        self.assertIn("CREATE_COPY", verbose)
+        self.assertIn("SKIP_IDENTICAL", verbose)
+
+
 if __name__ == "__main__":
     unittest.main()
+

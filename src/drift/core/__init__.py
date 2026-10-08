@@ -117,6 +117,8 @@ from .file_action import (
     NON_MUTATING_ACTION_TYPES,
     format_action_line,
     format_action_summary,
+    is_mutating_action,
+    filter_display_actions,
     execute_single_action,
     execute_delivery_actions,
 )
@@ -321,6 +323,8 @@ __all__ = [
     "ReverseSyncPlan",
     "format_action_line",
     "format_action_summary",
+    "is_mutating_action",
+    "filter_display_actions",
     "PackageReverseSyncResult",
     "ReverseSyncResult",
     "RenderResult",

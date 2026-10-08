@@ -47,6 +47,8 @@ from .file_action import (
     DELETE_ACTION_TYPES,
     NO_CHANGE_ACTION_TYPES,
     NON_MUTATING_ACTION_TYPES,
+    is_mutating_action,
+    filter_display_actions,
 )
 
 
@@ -88,7 +90,7 @@ class PackageReverseSyncPlan(SerializableModel):
 
     @property
     def has_mutations(self) -> bool:
-        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+        return any(is_mutating_action(a) for a in self.actions)
 
     @property
     def has_changes(self) -> bool:
@@ -100,7 +102,7 @@ class PackageReverseSyncPlan(SerializableModel):
             lines.append(f"Status: {self.status}")
         if self.error:
             lines.append(f"Error: {self.error}")
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             lines.append("  Reverse Sync Actions: (None)")
         else:
@@ -170,7 +172,7 @@ class PackageRenderResult(SerializableModel):
     @property
     def has_changes(self) -> bool:
         """Returns True if any file was rendered, copied, or pruned (excluding pure cache skips and info messages)."""
-        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+        return any(is_mutating_action(a) for a in self.actions)
 
     def rebased(self, old_base: Path, new_base: Path) -> PackageRenderResult:
         """Returns a copy of PackageRenderResult with all action paths rebased from old_base to new_base."""
@@ -183,7 +185,7 @@ class PackageRenderResult(SerializableModel):
     def format_text(self, drift_root: Optional[Path] = None, verbose: bool = False) -> str:
         """Formats the render plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             lines.append("  Render Actions: (None)")
         else:
@@ -269,7 +271,7 @@ class PackageStagePlan(SerializableModel):
 
     @property
     def has_mutations(self) -> bool:
-        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+        return any(is_mutating_action(a) for a in self.actions)
 
     @property
     def has_changes(self) -> bool:
@@ -286,7 +288,7 @@ class PackageStagePlan(SerializableModel):
     def format_text(self, verbose: bool = False) -> str:
         """Formats the staging plan for human-readable terminal output."""
         lines = [f"📦 Package '{self.package}':"]
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             lines.append("  Stage Actions: (None)")
         else:
@@ -393,7 +395,7 @@ class PackageInstallPlan(SerializableModel):
 
     @property
     def has_mutations(self) -> bool:
-        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+        return any(is_mutating_action(a) for a in self.actions)
 
     @property
     def has_changes(self) -> bool:
@@ -442,7 +444,7 @@ class PackageInstallPlan(SerializableModel):
         lines.append(f"  Target: {self.target_directory}")
         lines.append(f"  Method: {method_str}")
 
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             lines.append("  Planned Actions: (None)")
         else:
@@ -489,7 +491,7 @@ class PackageUninstallPlan(SerializableModel):
 
     @property
     def has_mutations(self) -> bool:
-        return any(a.action_type not in NO_CHANGE_ACTION_TYPES for a in self.actions)
+        return any(is_mutating_action(a) for a in self.actions)
 
     @property
     def has_changes(self) -> bool:
@@ -502,7 +504,7 @@ class PackageUninstallPlan(SerializableModel):
         mode_label = "detach (convert to host copies)" if self.detach_mode else "uninstall"
         lines.append(f"  Mode: {mode_label}")
 
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             lines.append("  Planned Actions: (None - directory missing or no deployed files)")
         else:
@@ -822,7 +824,7 @@ class AddResourcePlan(SerializableModel):
 
     def format_text(self, verbose: bool = False) -> str:
         """Formats human-readable summary of planned resource imports."""
-        display_actions = self.actions if verbose else [a for a in self.actions if a.action_type not in NO_CHANGE_ACTION_TYPES]
+        display_actions = filter_display_actions(self.actions, verbose=verbose)
         if not display_actions:
             return f"No resources to import into '{self.package}'."
         lines = [f"📦 Package '{self.package}':"]
@@ -1311,41 +1313,37 @@ class PackageDeployPreview(SerializableModel):
         if self.drift_warning:
             lines.append(f"  ⚠️  Drift: {self.drift_warning}")
 
+        def len_actions(actions: Optional[List[FileAction]]) -> str:
+            return (f"{len(actions)} {'actions' if len(actions) > 1 else 'action'}"
+                    if actions is not None else "empty")
+
         if self.reverse_sync_plan and (verbose or self.reverse_sync_plan.has_changes):
-            display_rev_actions = self.reverse_sync_plan.actions if verbose else [
-                a for a in self.reverse_sync_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
-            ]
+            display_rev_actions = filter_display_actions(self.reverse_sync_plan.actions, verbose=verbose)
             if display_rev_actions:
-                lines.append(f"  🔄 Reverse Sync Plan: ({len(display_rev_actions)} action(s))")
+                lines.append(f"  🔄 Reverse Sync Plan: ({len_actions(display_rev_actions)})")
                 lines.extend(f"  {format_action_line(a)}" for a in display_rev_actions)
                 lines.append(f"     Summary: {format_action_summary(self.reverse_sync_plan.actions)}")
 
         if self.render_plan:
-            display_render_actions = self.render_plan.actions if verbose else [
-                a for a in self.render_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
-            ]
+            display_render_actions = filter_display_actions(self.render_plan.actions, verbose=verbose)
             if verbose or self.render_plan.has_changes:
-                lines.append(f"  🎨 Render Actions: ({len(display_render_actions)} action(s))")
+                lines.append(f"  🎨 Render Actions: ({len_actions(display_render_actions)})")
                 if display_render_actions:
                     lines.extend(f"  {format_action_line(a)}" for a in display_render_actions)
                 lines.append(f"     Summary: {format_action_summary(self.render_plan.actions)}")
 
         if self.stage_plan:
-            display_stage_actions = self.stage_plan.actions if verbose else [
-                a for a in self.stage_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
-            ]
+            display_stage_actions = filter_display_actions(self.stage_plan.actions, verbose=verbose)
             if verbose or self.stage_plan.has_changes:
-                lines.append(f"  📁 Stage Actions: ({len(display_stage_actions)} action(s))")
+                lines.append(f"  📁 Stage Actions: ({len_actions(display_stage_actions)})")
                 if display_stage_actions:
                     lines.extend(f"  {format_action_line(a)}" for a in display_stage_actions)
                 lines.append(f"     Summary: {format_action_summary(self.stage_plan.actions)}")
 
         if self.install_plan:
-            display_install_actions = self.install_plan.actions if verbose else [
-                a for a in self.install_plan.actions if a.action_type not in NO_CHANGE_ACTION_TYPES
-            ]
+            display_install_actions = filter_display_actions(self.install_plan.actions, verbose=verbose)
             if verbose or self.install_plan.has_changes:
-                lines.append(f"  🚀 Install Actions: ({len(display_install_actions)} action(s))")
+                lines.append(f"  🚀 Install Actions: ({len_actions(display_install_actions)})")
                 if display_install_actions:
                     lines.extend(f"  {format_action_line(a)}" for a in display_install_actions)
                 if self.install_plan.hooks_to_trigger:

@@ -15,6 +15,10 @@ Layer 2: Action Formatting & Summarization
         Formats a single FileAction into a styled terminal line with icons.
     - format_action_summary(actions) -> str
         Formats a concise summary string of action counts across action types.
+    - is_mutating_action(action) -> bool
+        Returns True if the action represents a physical mutation (not in NO_CHANGE_ACTION_TYPES).
+    - filter_display_actions(actions, verbose) -> List[FileAction]
+        Filters a sequence of FileActions for display based on verbosity.
 
 Layer 1: Domain Action Types & Context Models
     - FileActionType (str, Enum):
@@ -35,7 +39,7 @@ import logging
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import FrozenSet, Optional, Sequence
+from typing import FrozenSet, Optional, Sequence, List
 
 from .constants import BackupSubfolder, DRIFT_KEEP_FILE_NAME
 from .serialization import SerializableModel
@@ -235,6 +239,23 @@ def format_action_summary(actions: Sequence[FileAction]) -> str:
     if ensured:
         counts.append(f"{len(ensured)} directories")
     return ", ".join(counts) if counts else "0 actions"
+
+
+def is_mutating_action(action: FileAction) -> bool:
+    """Returns True if the action represents a physical host or repository mutation."""
+    return action.action_type not in NO_CHANGE_ACTION_TYPES
+
+
+def filter_display_actions(
+    actions: Optional[Sequence[FileAction]],
+    verbose: bool = False,
+) -> List[FileAction]:
+    """Filters a sequence of FileActions for display, omitting NO_CHANGE actions unless verbose is True."""
+    if not actions:
+        return []
+    if verbose:
+        return list(actions)
+    return [a for a in actions if is_mutating_action(a)]
 
 
 # =============================================================================
