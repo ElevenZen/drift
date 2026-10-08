@@ -98,6 +98,8 @@ def build_phase2_hooks_dag(
         cache=workspace_config.render_cache,
         path_translation=translation_map,
         drift_root=workspace_config.drift_root,
+        package_render_dir=workspace_config.render_path / pkg_name,
+        package_src_dir=workspace_config.source_path / pkg_name,
     )
     expand_node_dependencies(hooks_root, exp_ctx)
 

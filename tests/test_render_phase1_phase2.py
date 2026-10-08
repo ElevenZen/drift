@@ -31,6 +31,9 @@ from drift.config.render_engine_config import RenderEngineConfig, RenderEngineRe
 from drift.render.render_hooks import render_hooks, ensure_configured_hook_permissions
 from drift.render.render_lock import RenderLockfile, RenderBucket
 from drift.hooks.lifecycle_hooks import resolve_hook_exec_path
+from drift.render.render_package import render_package, RenderOptions
+from drift.core.file_action import FileActionType
+from drift.primitives.plan_repo import preview_deploy, DeployOptions
 
 
 class TestRenderPhase1AndPhase2(unittest.TestCase):
@@ -430,6 +433,104 @@ def configure_package(context):
         third_mtime = rendered_cfg.stat().st_mtime_ns
         self.assertNotEqual(initial_mtime, third_mtime)
         self.assertIn("updated_target", rendered_cfg.read_text(encoding="utf-8"))
+
+    def test_package_config_dry_run_cache_isolation_and_no_render_cache_pollution(self) -> None:
+        """Verifies Phase 1 dry_run=True uses an isolated RenderCache and does not pollute workspace render_cache."""
+        pkg_dir = self.src_dir / "pkg_dry_iso"
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+
+        (pkg_dir / "drift_package.envst.toml").write_text("""
+        [package]
+        name = "pkg_dry_iso"
+        enable_render = true
+
+        [env.override]
+        val = "${TEST_VAR}"
+        """, encoding="utf-8")
+
+        initial_cache_entries = len(self.workspace_config.render_cache._cache)
+        pkg_cfg = load_package_config_from_source_dir(pkg_dir, self.workspace_config, dry_run=True)
+        self.assertEqual(pkg_cfg.name, "pkg_dry_iso")
+        self.assertEqual(pkg_cfg.env_resolve.impact.restricted_env().get("val"), "phase1_success")
+
+        # Workspace render_cache must remain uncontaminated
+        self.assertEqual(len(self.workspace_config.render_cache._cache), initial_cache_entries)
+        # Render destination in real workspace must not exist
+        real_rendered_cfg = self.render_dir / "pkg_dry_iso" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME
+        self.assertFalse(real_rendered_cfg.exists())
+
+    def test_render_dry_run_and_plan_with_engine_inputs_cache_hits_two_pass(self) -> None:
+        """Exhaustively tests that dry-run rendering and deployment planning achieve 100% cache hits
+        on templated packages that depend on engine inputs (two-pass cold vs warm idempotency).
+        """
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        with tempfile.TemporaryDirectory(prefix="host_target_") as host_tmp:
+            target_dir = Path(host_tmp) / "target_pkg"
+            target_dir.mkdir(parents=True, exist_ok=True)
+
+            pkg_dir = self.src_dir / "pkg_templated"
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+
+            # 1. Package config templated with envsubst
+            (pkg_dir / "drift_package.envst.toml").write_text(f"""
+            [package]
+            name = "pkg_templated"
+            enable_render = true
+            target_directory = "{target_dir}"
+            """, encoding="utf-8")
+
+            # 2. Package payload file templated with envsubst
+            (pkg_dir / "app.envst.conf").write_text("setting=${TEST_VAR}\n", encoding="utf-8")
+
+            # ---------------------------------------------------------------------
+            # Pass 1: Cold Mutation Pass (drift render)
+            # ---------------------------------------------------------------------
+            cold_res = render_package(self.workspace_config, pkg_dir, options=RenderOptions(dry_run=False))
+            self.assertTrue(cold_res.is_success)
+            self.assertEqual(cold_res.status, "SUCCESS")
+
+            # Check rendered artifacts on disk
+            rendered_app = self.render_dir / "pkg_templated" / "app.conf"
+            self.assertTrue(rendered_app.is_file())
+            self.assertEqual(rendered_app.read_text(encoding="utf-8"), "setting=phase1_success\n")
+
+            # ---------------------------------------------------------------------
+            # Pass 2: Warm Dry-Run Pass (drift render -nv)
+            # ---------------------------------------------------------------------
+            warm_dry_res = render_package(self.workspace_config, pkg_dir, options=RenderOptions(dry_run=True))
+            self.assertTrue(warm_dry_res.is_success)
+            self.assertEqual(warm_dry_res.status, "UP_TO_DATE")
+
+            # All actions must be SKIP_IDENTICAL, zero RENDER_ITEM or UPDATE_COPY
+            for action in warm_dry_res.actions:
+                self.assertEqual(
+                    action.action_type,
+                    FileActionType.SKIP_IDENTICAL,
+                    f"Expected SKIP_IDENTICAL but got {action.action_type} for {action.dst_path}",
+                )
+
+            # ---------------------------------------------------------------------
+            # Pass 3: Ephemeral Plan Sandbox Pass (drift plan -v)
+            # ---------------------------------------------------------------------
+            preview = preview_deploy(
+                self.workspace_config,
+                target_pkgs=["pkg_templated"],
+                options=DeployOptions(dry_run=True, verbose=True),
+            )
+            self.assertEqual(preview.status, "SUCCESS")
+            pkg_preview = preview.package_previews.get("pkg_templated")
+            self.assertIsNotNone(pkg_preview)
+            self.assertIsNotNone(pkg_preview.render_plan)
+            self.assertEqual(pkg_preview.render_plan.status, "UP_TO_DATE")
+
+            for action in pkg_preview.render_plan.actions:
+                self.assertEqual(
+                    action.action_type,
+                    FileActionType.SKIP_IDENTICAL,
+                    f"Expected SKIP_IDENTICAL in plan render phase but got {action.action_type} for {action.dst_path}",
+                )
 
 
 if __name__ == "__main__":

@@ -31,6 +31,7 @@ from typing import ClassVar, Dict, List, Optional, Tuple, Any, Union, Sequence, 
 
 from ..core.constants import INTERNAL_RENDER_COMMAND, FORBIDDEN_RENDER_ENGINE_SUFFIXES
 from ..core.exceptions import ConfigError
+from ..core.mixins import AlwaysTruthy
 from ..utils.config_utils import validate_known_keys
 from ..utils.path_utils import is_relative_to
 
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RenderEngineConfig:
+class RenderEngineConfig(AlwaysTruthy):
     """Represents a render engine configuration inside workspace configuration."""
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = ("input_file", "suffix", "render_command")
 
@@ -133,7 +134,7 @@ class RenderSourceMatch:
     status: str = "match"  # "match" or "block"
 
 
-class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
+class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]):
     """First-class collection registry managing multiple named RenderEngineConfig objects.
 
     Uses composition (has-a Dict[str, RenderEngineConfig]) and implements MutableMapping
@@ -146,7 +147,7 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         engines: Mapping[str, RenderEngineConfig] = {},
         **kwargs: RenderEngineConfig
     ) -> None:
-        if engines and not isinstance(engines, (RenderEngineRegistry, dict, Mapping)):
+        if engines is not None and not isinstance(engines, (RenderEngineRegistry, dict, Mapping)):
             raise ConfigError(f"engines must be a Mapping, got {type(engines).__name__}")
         self._engines: Dict[str, RenderEngineConfig] = {}
         if engines:
@@ -205,7 +206,7 @@ class RenderEngineRegistry(MutableMapping[str, RenderEngineConfig]):
         - Adds new engine definitions declared in overrides.
         - Validates the resulting merged registry.
         """
-        if not overrides:
+        if not overrides or len(overrides) == 0:
             return self.copy()
 
         override_items = dict(overrides)

@@ -32,17 +32,22 @@ from ..utils.git_utils import (
     append_to_gitignore,
 )
 from ..utils.file_ops import assert_writable
+from ..config.workspace_config import WorkspaceConfig
 
 
 logger = logging.getLogger(__name__)
 
 
-def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: bool = False) -> None:
+def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: bool = False) -> WorkspaceConfig:
     """Initializes the active repository as a drift workspace.
 
     Only works if the directory is empty or tracked by git, unless force is True.
+
+    Returns:
+        The validated WorkspaceConfig instance for the initialized workspace.
     """
     # 1. Ensure the provided drift_root path is valid and read-writable
+    drift_root = Path(drift_root).resolve()
     assert_writable(drift_root, sudo=False)
 
     # 2. Check if the directory is tracked by git
@@ -147,12 +152,10 @@ def init_drift_workspace(drift_root: Path, force: bool = False, no_git_root: boo
     state_file = install_dir / STATE_REGISTRY_FILE_NAME
     state_file.write_text("[packages]\n", encoding="utf-8")
 
-    # 7. Apply workspace-configured git user identity to render/ and install/ if configured
-    try:
-        from ..config.workspace_config import WorkspaceConfig
-        ws_cfg = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, quiet=True)
-        if ws_cfg.git_user_name or ws_cfg.git_user_email:
-            configure_repo_git_user(render_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
-            configure_repo_git_user(install_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
-    except Exception:
-        pass
+    # 7. Apply workspace-configured git user identity to render/ and install/ if configured and return validated WorkspaceConfig
+    ws_cfg = WorkspaceConfig.from_workspace_dir(drift_root, check_legacy=False, quiet=True)
+    if ws_cfg.git_user_name or ws_cfg.git_user_email:
+        configure_repo_git_user(render_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
+        configure_repo_git_user(install_dir, ws_cfg.git_user_name, ws_cfg.git_user_email)
+
+    return ws_cfg

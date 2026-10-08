@@ -78,6 +78,7 @@ from ..core.constants import (
     SECRETS_ENV_FILE_NAME,
 )
 from ..core.exceptions import ConfigError, DriftError, RenderError
+from ..core.mixins import AlwaysTruthy
 from .host_facts import get_cached_system_facts
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ EnvSnapshot = Dict[str, Optional[str]]
 
 
 @dataclass(frozen=True)
-class EnvConfig:
+class EnvConfig(AlwaysTruthy):
     """Structured container holding 4 raw/resolved environment tables."""
     override: Dict[str, str] = field(default_factory=dict)
     secrets: Dict[str, str] = field(default_factory=dict)
@@ -106,7 +107,7 @@ class EnvConfig:
 
 
 @dataclass(frozen=True)
-class EnvImpact:
+class EnvImpact(AlwaysTruthy):
     """Encapsulates the two-phase mutation contract of configuration on the host environment."""
     overrides: Dict[str, str] = field(default_factory=dict)
     defaults: Dict[str, str] = field(default_factory=dict)
@@ -164,7 +165,7 @@ class EnvImpact:
 
 
 @dataclass(frozen=True)
-class EnvResolve:
+class EnvResolve(AlwaysTruthy):
     """Holds layer-local environment definitions, cumulative effective tables, and two-phase impact."""
     current: EnvConfig = field(default_factory=EnvConfig)
     effective: EnvConfig = field(default_factory=EnvConfig)
@@ -181,7 +182,7 @@ class EnvResolve:
         eff = effective or EnvConfig()
         object.__setattr__(self, "current", curr)
         object.__setattr__(self, "effective", eff)
-        imp = impact if impact is not None else self.build_impact(all_facts=all_facts)
+        imp = impact or self.build_impact(all_facts=all_facts)
         object.__setattr__(self, "impact", imp)
 
     def build_impact(

@@ -134,6 +134,83 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         )
         self.assertEqual(proc.stdout.strip(), "")
 
+    def test_plan_templated_engine_input_cache_hit_idempotency(self) -> None:
+        """Verifies that drift plan achieves 100% cache hits and zero unplanned renders
+        on packages with templated configurations and payload files depending on engine inputs.
+        """
+        if not shutil.which("envsubst"):
+            self.skipTest("envsubst command is not available on this system")
+
+        # 1. Add envsubst engine with input_file to drift_workspace.toml
+        (self.config_dir / "env.sh").write_text("export APP_ENV=production\n", encoding="utf-8")
+        ws_toml = (self.config_dir / "drift_workspace.toml").read_text(encoding="utf-8")
+        ws_toml += f"""
+        [render.envst]
+        suffix = "envst"
+        input_file = "{self.config_dir / 'env.sh'}"
+        render_command = "bash -c 'source %i && envsubst < %s'"
+        """
+        (self.config_dir / "drift_workspace.toml").write_text(ws_toml, encoding="utf-8")
+
+        pkg_name = "pkg_tmpl_eng"
+        pkg_dir = self.src_dir / pkg_name
+        pkg_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = self.host_target / pkg_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 2. Setup templated drift_package.envst.toml and templated payload
+        (pkg_dir / "drift_package.envst.toml").write_text(f"""
+        [package]
+        name = "{pkg_name}"
+        enable_render = true
+        enable_install = true
+        install_method = "copy"
+        target_directory = "{target_dir}"
+        """, encoding="utf-8")
+        (pkg_dir / "app.envst.conf").write_text("env=${APP_ENV}\n", encoding="utf-8")
+
+        # 3. Clean full deploy (Cold mutation pass)
+        self._deploy_package_clean(pkg_name)
+
+        # 4. Plan on deployed package (Warm idempotent pass)
+        workspace_config = load_workspace_config(self.drift_root)
+        preview = preview_deploy(workspace_config, [pkg_name])
+
+        self.assertEqual(preview.status, "SUCCESS")
+        self.assertFalse(preview.has_changes)
+        self.assertFalse(preview.has_drift)
+        self.assertEqual(preview.packages_unchanged, [pkg_name])
+        self.assertEqual(preview.packages_with_changes, [])
+
+        pkg_preview = preview.package_previews.get(pkg_name)
+        self.assertIsNotNone(pkg_preview)
+        self.assertIsNotNone(pkg_preview.render_plan)
+        self.assertEqual(pkg_preview.render_plan.status, "UP_TO_DATE")
+
+        for action in pkg_preview.render_plan.actions:
+            self.assertEqual(
+                action.action_type,
+                FileActionType.SKIP_IDENTICAL,
+                f"Expected SKIP_IDENTICAL in plan render actions, got {action.action_type} for {action.dst_path}",
+            )
+
+        # 5. Dual CLI Backend tests (Typer and Argparse)
+        stdout_typer = io.StringIO()
+        with patch("sys.stdout", stdout_typer), patch("sys.stderr", io.StringIO()):
+            main(["-C", str(self.drift_root), "plan", "-v", pkg_name])
+        typer_out = stdout_typer.getvalue()
+        self.assertIn("0 with changes", typer_out)
+        self.assertIn("1 unchanged", typer_out)
+        self.assertIn("SKIP_IDENTICAL", typer_out)
+
+        stdout_argparse = io.StringIO()
+        with patch("sys.stdout", stdout_argparse), patch("sys.stderr", io.StringIO()):
+            run_argparse_cli(["-C", str(self.drift_root), "plan", "-v", pkg_name])
+        argparse_out = stdout_argparse.getvalue()
+        self.assertIn("0 with changes", argparse_out)
+        self.assertIn("1 unchanged", argparse_out)
+        self.assertIn("SKIP_IDENTICAL", argparse_out)
+
     def test_plan_detects_host_drift_without_altering_install_repo(self) -> None:
         """Verifies that Phase 0 host drift inspection detects divergence without modifying install/ repo."""
         self._setup_package("pkg_drift", {"config.ini": "port=8080\n", "unchanged.txt": "same\n"})

@@ -105,7 +105,8 @@ class DigestionContext:
 
     drift_root: Path
     package_name: str
-    package_render_dir: Path  # Path("render") / package_name (relative to drift_root)
+    # relative path to package render directory (e.g., "src/my_package/.drift/render/") or absolute path for external render directories
+    package_render_dir: Path
     lockfile: RenderLockfile
     bucket: RenderBucket
     cache: RenderCache
@@ -208,12 +209,11 @@ def check_and_apply_cache(
 
 def prune_obsolete_config_files(context: DigestionContext) -> List[Path]:
     """Prunes unrendered config files (drift_package.toml, drift_package.local.toml) from .drift/ and .drift/render/."""
-    drift_root = context.drift_root
-    package_render_dir = context.package_render_dir
-    render_internal = drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
+    package_render_dir = context.absolute_package_render_dir
+    render_internal = package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
     candidates = [
-        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
-        drift_root / package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
+        package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
+        package_render_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_LOCAL_FILE_NAME,
         render_internal / PACKAGE_CONFIG_FILE_NAME,
         render_internal / PACKAGE_CONFIG_LOCAL_FILE_NAME,
         render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME / PACKAGE_CONFIG_FILE_NAME,
@@ -235,23 +235,21 @@ def prune_obsolete_config_files(context: DigestionContext) -> List[Path]:
 
 def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
     """Removes obsolete hook scripts and empty directory placeholders from .drift/hooks/."""
-    drift_root = context.drift_root
-    hooks_dir = context.package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
-    disk_hooks = drift_root / hooks_dir
-    if not disk_hooks.is_dir():
+    hooks_dir = context.absolute_package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME
+    if not hooks_dir.is_dir():
         return []
 
     active_set = set(context.result.active_paths)
-    candidates = list_folder_paths(disk_hooks, base_rel=drift_root / hooks_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
+    candidates = list_folder_paths(hooks_dir, base_rel=hooks_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
     for cand in reversed(candidates):
         if cand not in active_set:
-            disk_cand = drift_root / cand
+            disk_cand = cand
             if disk_cand.is_file():
                 if not context.dry_run:
                     disk_cand.unlink()
-                    prune_empty_parents(disk_cand.parent, disk_hooks)
+                    prune_empty_parents(disk_cand.parent, hooks_dir)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
@@ -259,7 +257,7 @@ def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
                 if not context.dry_run:
                     if not any(disk_cand.iterdir()):
                         disk_cand.rmdir()
-                        prune_empty_parents(disk_cand.parent, disk_hooks)
+                        prune_empty_parents(disk_cand.parent, hooks_dir)
                 action = FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=disk_cand)
                 context.log_action(action)
                 pruned.append(cand)
@@ -269,24 +267,22 @@ def prune_obsolete_hooks(context: DigestionContext) -> List[Path]:
 
 def prune_obsolete_payload_files(context: DigestionContext) -> List[Path]:
     """Removes obsolete payload files and empty directories, strictly shielding .drift/."""
-    drift_root = context.drift_root
-    package_render_dir = context.package_render_dir
-    disk_pkg = drift_root / package_render_dir
+    disk_pkg = context.absolute_package_render_dir
     if not disk_pkg.is_dir():
         return []
 
     active_set = set(context.result.active_paths)
-    candidates = list_folder_paths(disk_pkg, base_rel=drift_root / package_render_dir, dir_mode=DirMode.ONLY_EMPTY_DIR)
+    candidates = list_folder_paths(disk_pkg, base_rel=disk_pkg, dir_mode=DirMode.ONLY_EMPTY_DIR)
     pruned: List[Path] = []
 
     payload_candidates = [
         cand for cand in candidates
-        if not is_drift_internal_path(cand, drift_root / package_render_dir)
+        if not is_drift_internal_path(cand, disk_pkg)
     ]
 
     for cand in reversed(payload_candidates):
         if cand not in active_set:
-            disk_cand = drift_root / cand
+            disk_cand = cand
             if disk_cand.is_file():
                 if not context.dry_run:
                     disk_cand.unlink()

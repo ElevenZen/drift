@@ -91,6 +91,7 @@ from ..core.folder_delivery import (
 )
 from ..core.result_models import PackageUninstallPlan, PackageUninstallResult, RestoredBackup, UninstallResult
 from ..core.state_registry import PackageState, StateRegistry, load_state_registry
+from ..core.mixins import AlwaysTruthy
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..utils.config_utils import partition
 from ..utils.file_ops import prune_empty_parents, remove_tree
@@ -112,7 +113,7 @@ logger = logging.getLogger(__name__)
 # =====================================================================
 
 @dataclass
-class UninstallOptions:
+class UninstallOptions(AlwaysTruthy):
     """Configuration options controlling package uninstallation behavior."""
     force: bool = False
     dry_run: bool = False
@@ -531,7 +532,7 @@ def prepare_uninstall_packages(
     PackageUninstallContext objects, and generates declarative PackageUninstallPlan structures.
     Does NOT modify the filesystem, remove deployed files, or mutate the state registry.
     """
-    opts = options if options is not None else UninstallOptions()
+    opts = options or UninstallOptions()
 
     # 1. Load state registry (if exists, otherwise empty)
     state_file = workspace_config.install_path / "state.toml"

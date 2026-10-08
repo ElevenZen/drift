@@ -1,4 +1,21 @@
-"""Dynamic Python package hook loader and context definitions for Drift packages."""
+"""Dynamic Python package preprocessor hook loading and execution.
+
+===============================================================================
+Architecture & Call Chain Overview
+===============================================================================
+
+Layer 2: High-Level Preprocessor Orchestration
+    - apply_package_hook(): Resolves package hook file path, resolves composite
+      environment and package facts, builds PackageHookContext, and executes
+      dynamic configuration transformation before variable stitching.
+
+Layer 1: Low-Level Hook Loading, Path Resolution & Execution
+    - resolve_package_hook_path(): Discovers hook file path from config or default convention.
+    - execute_package_hook(): Invokes configure_package(context) via python_hook_utils.
+    - load_package_hook_module(): Dynamically imports package hook file from disk.
+    - PackageHookContext: Strongly-typed, inspectable context passed to configure_package().
+===============================================================================
+"""
 
 import os
 import logging
@@ -23,7 +40,82 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PackageHookContext:
-    """Context object passed to the configure_package() Python hook."""
+    """In-memory execution context passed to the dynamic package Python preprocessor hook.
+
+    This context is supplied as the sole argument to ``configure_package(context)``
+    defined in ``src/<package_name>/drift_package.py`` (or a custom hook file declared
+    via ``package.hook_file``).
+
+    Execution Lifecycle & Pipeline Stage:
+        1. Layered Discovery & Merging: ``drift_package.toml`` + ``drift_package.local.toml``
+           (or ``.envst.toml`` templates) -> ``config_dict``.
+        2. Package Preprocessor Hook (HERE): ``configure_package(context)`` executes in-memory.
+           The hook can inspect host facts, package metadata, workspace configuration, and
+           environment snapshots to dynamically mutate ``context.config`` (e.g., inject
+           ``[env.default]``, alter ``install_method``, inject dependencies ``[dependencies]``,
+           or override ``target_directory``).
+        3. 6-Tier Environment Evaluation & Variable Stitching: Resolves package-level variables.
+        4. Cross-Section Interpolation: Replaces ``${VAR}`` across package configuration fields.
+        5. Schema Construction & Validation: Builds the strongly-typed ``PackageConfig``.
+
+    Attributes:
+        config (Dict[str, Any]):
+            The raw, mutable configuration dictionary merged from ``drift_package.toml``
+            and ``drift_package.local.toml``. Modifications made to this dictionary directly
+            shape the resulting ``PackageConfig``.
+        package_name (str):
+            Canonical name of the package being configured (e.g. ``"nvim"``, ``"tmux"``).
+        package_dir (Path):
+            Canonical absolute ``Path`` to the package source directory (e.g. ``src/<pkg>/``).
+        drift_root (Optional[Path]):
+            Canonical absolute ``Path`` to the root of the active Drift workspace repository,
+            or ``None`` if operating in standalone/isolated package mode.
+        workspace_config (Optional[WorkspaceConfig]):
+            The fully resolved and validated ``WorkspaceConfig`` instance of the enclosing
+            workspace (if available), providing access to workspace-wide settings, render cache,
+            environment definitions, and sibling package states.
+        env (Dict[str, str]):
+            A composite snapshot of environment variables resolved through Drift's 6-tier
+            precedence hierarchy, including system facts, workspace environment, and
+            package-specific facts (``drift_package_*``). Reading this dictionary provides
+            accurate environment data with zero mutation on global ``os.environ``.
+
+    Properties:
+        facts (Dict[str, str]):
+            Auto-detected host system facts filtered from ``env`` (keys matching ``get_cached_system_facts()``,
+            such as ``drift_os``, ``drift_arch``, ``drift_distro``, ``drift_hostname``, ``drift_user``,
+            ``drift_ip_addresses``).
+        package_facts (Dict[str, str]):
+            Package-specific contextual variables filtered from ``env`` (keys matching ``DRIFT_PACKAGE_FACT_KEYS``,
+            such as ``drift_package_name``, ``drift_package_source_dir``, ``drift_package_src_dir``,
+            ``drift_package_render_dir``, ``drift_package_install_dir``, ``drift_package_install_method``,
+            ``drift_package_target_dir``).
+        os (str):
+            Convenience shorthand for ``facts.get("drift_os", "")`` (e.g. ``"linux"``, ``"darwin"``).
+        arch (str):
+            Convenience shorthand for ``facts.get("drift_arch", "")`` (e.g. ``"x86_64"``, ``"aarch64"``).
+        distro (str):
+            Convenience shorthand for ``facts.get("drift_distro", "")`` (e.g. ``"ubuntu"``, ``"arch"``, ``"macos"``).
+        hostname (str):
+            Convenience shorthand for ``facts.get("drift_hostname", "")``.
+        user (str):
+            Convenience shorthand for ``facts.get("drift_user", "")``.
+
+    Example:
+        ```python
+        def configure_package(context: PackageHookContext) -> Dict[str, Any]:
+            cfg = context.config
+            package = cfg.setdefault("package", {})
+
+            # Adjust install strategy and dependencies based on host environment
+            if context.os == "darwin":
+                package["install_method"] = "symlink"
+            elif context.distro == "nixos":
+                package["install_method"] = "copy"
+
+            return cfg
+        ```
+    """
     config: Dict[str, Any]
     package_name: str
     package_dir: Path
@@ -45,22 +137,27 @@ class PackageHookContext:
 
     @property
     def os(self) -> str:
+        """Standardized operating system identifier ('linux', 'darwin', 'windows')."""
         return self.facts.get("drift_os", "")
 
     @property
     def arch(self) -> str:
+        """Standardized processor architecture ('x86_64', 'aarch64', etc.)."""
         return self.facts.get("drift_arch", "")
 
     @property
     def distro(self) -> str:
+        """Standardized OS distribution name ('ubuntu', 'debian', 'arch', 'macos', etc.)."""
         return self.facts.get("drift_distro", "")
 
     @property
     def hostname(self) -> str:
+        """Network hostname of the current machine."""
         return self.facts.get("drift_hostname", "")
 
     @property
     def user(self) -> str:
+        """Current login user name."""
         return self.facts.get("drift_user", "")
 
 

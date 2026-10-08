@@ -55,6 +55,7 @@ from ..core.constants import (
     WINDOWS_PLATFORM_ALIASES,
 )
 from ..core.exceptions import ConfigError
+from ..core.mixins import AlwaysTruthy
 from ..utils.env_utils import (
     EnvResolve,
     parse_env_dict,
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
-class PackageDependency:
+class PackageDependency(AlwaysTruthy):
     """Declares a dependency on another package for install ordering and prerequisite validation."""
     name: str
     optional: bool = False
@@ -158,7 +159,7 @@ class PackageDependencies:
 
 
 @dataclass
-class PackageSectionConfig:
+class PackageSectionConfig(AlwaysTruthy):
     """Represents package-level metadata and behaviors configured inside the [package] section of drift_package.toml."""
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         "name",
@@ -344,7 +345,7 @@ class PackageSectionConfig:
 
 
 @dataclass
-class PackageConfig:
+class PackageConfig(AlwaysTruthy):
     """Represents the complete package configuration container inside src/<pkg>/drift_package.toml."""
     KNOWN_TOP_SECTIONS: ClassVar[Tuple[str, ...]] = (
         "package",
@@ -398,11 +399,11 @@ class PackageConfig:
 
         self.package = package
         self.source_files = list(source_files) if source_files else []
-        self.hooks = hooks if hooks is not None else PackageHooks()
+        self.hooks = hooks or PackageHooks()
         self.hooks.package_config = self
-        self.requirements = requirements if requirements is not None else PackageRequirements()
-        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
-        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
+        self.requirements = requirements or PackageRequirements()
+        self.env_resolve = env_resolve or EnvResolve()
+        self.render_engine_configs = render_engine_configs or RenderEngineRegistry()
 
     def validate(self) -> None:
         """Validates configuration values."""

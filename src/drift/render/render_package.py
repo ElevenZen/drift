@@ -50,6 +50,7 @@ from .render_core import RenderError
 from ..core.exceptions import ConfigError, RenderCollisionError, HookMissingError, is_logged, mark_logged
 from ..hooks.lifecycle_hooks import trigger_pre_source_hook, HookExecFlags
 from ..core.file_action import FileActionType
+from ..core.mixins import AlwaysTruthy
 from ..core.result_models import PackageRenderResult, RenderResult
 from ..utils.file_ops import copy_file
 from ..utils.path_utils import is_relative_to, to_relative_posix
@@ -77,7 +78,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class RenderOptions:
+class RenderOptions(AlwaysTruthy):
     """Options controlling package rendering behavior.
 
     Attributes:
@@ -194,6 +195,8 @@ def build_phase3_payload_dag(
         cache=workspace_config.render_cache,
         path_translation=translation_map,
         drift_root=workspace_config.drift_root,
+        package_render_dir=render_pkg_dir,
+        package_src_dir=package_dir,
     )
     expand_node_dependencies(payload_root, exp_ctx)
     return payload_root

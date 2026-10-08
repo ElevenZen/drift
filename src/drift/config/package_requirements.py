@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterable, List, Optional, Tuple
 
 from ..core.exceptions import ConfigError
+from ..core.mixins import AlwaysTruthy
 from ..utils.config_utils import get_first_from, validate_known_keys
 
 
@@ -56,7 +57,7 @@ def match_ip_addresses(patterns: Iterable[str], host_ips: Iterable[str]) -> bool
 
 
 @dataclass
-class PackageRequirements:
+class PackageRequirements(AlwaysTruthy):
     """Declarative host platform and environment requirements for a package."""
     IP_KEYS: ClassVar[Tuple[str, ...]] = ("ip", "ips", "ip_addresses")
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (

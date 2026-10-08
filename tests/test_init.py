@@ -395,6 +395,67 @@ class TestInitWorkspace(TestCaseUtilityMixin, unittest.TestCase):
         )
         self.assertEqual(res_email.stdout.strip(), "init@example.com")
 
+    def test_init_returns_workspace_config(self) -> None:
+        """Verifies that init_drift_workspace returns a strongly-typed WorkspaceConfig instance."""
+        from drift.config.workspace_config import WorkspaceConfig
+        ws_cfg = init_drift_workspace(self.drift_root)
+        self.assertIsInstance(ws_cfg, WorkspaceConfig)
+        self.assertEqual(ws_cfg.drift_root, self.drift_root)
+        self.assertEqual(ws_cfg.workspace.source_directory, Path("src"))
+        self.assertEqual(ws_cfg.source_path, self.drift_root / "src")
+        self.assertEqual(ws_cfg.render_path, self.drift_root / "render")
+        self.assertEqual(ws_cfg.install_path, self.drift_root / "install")
+
+    def test_init_raises_error_on_corrupt_workspace_config(self) -> None:
+        """Verifies that init_drift_workspace raises ConfigError when generated workspace config is invalid."""
+        from drift.core.exceptions import ConfigError
+        with patch("drift.primitives.workspace_init.get_default_drift_workspace_toml_content", return_value="[workspace\ninvalid_toml = "):
+            with self.assertRaises(ConfigError):
+                init_drift_workspace(self.drift_root)
+
+    def test_execute_init_returns_workspace_config(self) -> None:
+        """Verifies that execute_init returns the validated WorkspaceConfig instance."""
+        from drift.cli.actions import execute_init
+        from drift.config.workspace_config import WorkspaceConfig
+        ws_cfg = execute_init(self.drift_root)
+        self.assertIsInstance(ws_cfg, WorkspaceConfig)
+        self.assertEqual(ws_cfg.drift_root, self.drift_root)
+
+    def test_init_raises_error_on_invalid_schema_value(self) -> None:
+        """Verifies that init_drift_workspace raises ConfigError when schema validation fails."""
+        from drift.core.constants import get_default_drift_workspace_toml_content
+        from drift.core.exceptions import ConfigError
+        bad_config = get_default_drift_workspace_toml_content().replace(
+            'default_install_method = "symlink"',
+            'default_install_method = "invalid_strategy"',
+        )
+        with patch("drift.primitives.workspace_init.get_default_drift_workspace_toml_content", return_value=bad_config):
+            with self.assertRaises(ConfigError):
+                init_drift_workspace(self.drift_root)
+
+    def test_init_force_returns_workspace_config(self) -> None:
+        """Verifies that re-running init with force=True returns the validated WorkspaceConfig."""
+        from drift.config.workspace_config import WorkspaceConfig
+        ws_cfg1 = init_drift_workspace(self.drift_root)
+        self.assertIsInstance(ws_cfg1, WorkspaceConfig)
+        ws_cfg2 = init_drift_workspace(self.drift_root, force=True)
+        self.assertIsInstance(ws_cfg2, WorkspaceConfig)
+        self.assertEqual(ws_cfg2.drift_root, self.drift_root)
+
+    def test_init_no_git_root_returns_workspace_config_for_subpath(self) -> None:
+        """Verifies that init_drift_workspace with no_git_root returns WorkspaceConfig matching subpath."""
+        sub_dir = self.drift_root / "nested" / "project"
+        sub_dir.mkdir(parents=True, exist_ok=True)
+        ws_cfg = init_drift_workspace(sub_dir, no_git_root=True)
+        self.assertEqual(ws_cfg.drift_root, sub_dir.resolve())
+        self.assertEqual(ws_cfg.source_path, sub_dir.resolve() / "src")
+
+    def test_init_raises_error_on_syntax_error_in_workspace_hook(self) -> None:
+        """Verifies that init_drift_workspace raises an exception if drift_workspace.py has a syntax error."""
+        with patch("drift.primitives.workspace_init.get_default_workspace_hook_content", return_value="def configure_workspace(:: broken syntax"):
+            with self.assertRaises(Exception):
+                init_drift_workspace(self.drift_root)
+
 
 if __name__ == "__main__":
     unittest.main()

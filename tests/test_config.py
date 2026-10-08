@@ -2969,6 +2969,149 @@ class TestPackageDependencies(unittest.TestCase):
                 set_test_mode(True, enable_logging=False)
 
 
+class TestAlwaysTruthyConstraints(unittest.TestCase):
+    """Approach C test suite verifying AlwaysTruthy constraints and safe fallback idioms."""
+
+    def test_domain_models_inherit_always_truthy(self) -> None:
+        """Verifies that all domain configurations and registries explicitly inherit AlwaysTruthy."""
+        from drift.core.mixins import AlwaysTruthy
+        from drift.render.render_cache import RenderCache
+        from drift.render.render_package import RenderOptions
+        from drift.primitives.install_repo import InstallOptions
+        from drift.primitives.uninstall_repo import UninstallOptions
+        from drift.primitives.deploy_repo import DeployOptions
+        from drift.utils.env_utils import EnvConfig, EnvImpact, EnvResolve
+
+        models = [
+            RenderEngineRegistry,
+            RenderEngineConfig,
+            RenderCache,
+            WorkspaceSectionConfig,
+            SettingsConfig,
+            WorkspaceConfig,
+            PackageSectionConfig,
+            PackageDependency,
+            PackageConfig,
+            PackageHooks,
+            PackageRequirements,
+            EnvConfig,
+            EnvImpact,
+            EnvResolve,
+            InstallOptions,
+            UninstallOptions,
+            DeployOptions,
+            RenderOptions,
+        ]
+        for model in models:
+            with self.subTest(model=model.__name__):
+                self.assertTrue(
+                    issubclass(model, AlwaysTruthy),
+                    f"{model.__name__} must inherit from AlwaysTruthy to ensure safe fallback semantics.",
+                )
+
+    def test_package_dependencies_container_evaluates_on_items(self) -> None:
+        """Verifies that PackageDependencies intentionally evaluates bool() based on its items."""
+        from drift.core.mixins import AlwaysTruthy
+        self.assertFalse(issubclass(PackageDependencies, AlwaysTruthy))
+        self.assertFalse(bool(PackageDependencies()))
+        self.assertTrue(bool(PackageDependencies(items=[PackageDependency(name="pkg_a")])))
+
+    def test_instances_evaluate_to_true_when_empty_or_default(self) -> None:
+        """Verifies that empty and default-constructed domain objects evaluate to True."""
+        from drift.render.render_cache import RenderCache
+        from drift.render.render_package import RenderOptions
+        from drift.primitives.install_repo import InstallOptions
+        from drift.primitives.uninstall_repo import UninstallOptions
+        from drift.primitives.deploy_repo import DeployOptions
+        from drift.utils.env_utils import EnvConfig, EnvImpact, EnvResolve
+
+        instances = [
+            RenderEngineRegistry(),  # Collection with len == 0
+            RenderEngineConfig(name="test"),
+            RenderCache(),
+            WorkspaceSectionConfig(),
+            SettingsConfig(),
+            WorkspaceConfig(drift_root=Path("/dummy")),
+            PackageSectionConfig(name="pkg"),
+            PackageDependency(name="dep"),
+            PackageConfig(package=PackageSectionConfig(name="pkg")),
+            PackageHooks(),
+            PackageRequirements(),
+            EnvConfig(),
+            EnvImpact(),
+            EnvResolve(),
+            InstallOptions(),
+            UninstallOptions(),
+            DeployOptions(),
+            RenderOptions(),
+        ]
+        for inst in instances:
+            with self.subTest(cls=type(inst).__name__):
+                self.assertTrue(
+                    bool(inst),
+                    f"{type(inst).__name__} instance must evaluate to True even when empty/default.",
+                )
+
+    def test_safe_or_fallback_behavior(self) -> None:
+        """Verifies that 'a or default' retains 'a' when 'a' is an empty instance, and returns default when 'a' is None."""
+        from drift.render.render_cache import RenderCache
+
+        empty_reg = RenderEngineRegistry()
+        fallback_reg = RenderEngineRegistry()
+        self.assertIs(empty_reg or fallback_reg, empty_reg)
+        self.assertIs(None or fallback_reg, fallback_reg)
+
+        empty_cache = RenderCache()
+        fallback_cache = RenderCache()
+        self.assertIs(empty_cache or fallback_cache, empty_cache)
+        self.assertIs(None or fallback_cache, fallback_cache)
+
+        empty_hooks = PackageHooks()
+        fallback_hooks = PackageHooks()
+        self.assertIs(empty_hooks or fallback_hooks, empty_hooks)
+        self.assertIs(None or fallback_hooks, fallback_hooks)
+
+        empty_reqs = PackageRequirements()
+        fallback_reqs = PackageRequirements()
+        self.assertIs(empty_reqs or fallback_reqs, empty_reqs)
+        self.assertIs(None or fallback_reqs, fallback_reqs)
+
+        empty_env = EnvResolve()
+        fallback_env = EnvResolve()
+        self.assertIs(empty_env or fallback_env, empty_env)
+        self.assertIs(None or fallback_env, fallback_env)
+
+    def test_workspace_and_package_config_init_preserves_empty_registry(self) -> None:
+        """Verifies that WorkspaceConfig and PackageConfig preserve an empty RenderEngineRegistry object."""
+        empty_reg = RenderEngineRegistry()
+        ws = WorkspaceConfig(drift_root=Path("/dummy"), render_engine_configs=empty_reg)
+        self.assertIs(ws.render_engine_configs, empty_reg)
+
+        ws_none = WorkspaceConfig(drift_root=Path("/dummy"), render_engine_configs=None)
+        self.assertIsInstance(ws_none.render_engine_configs, RenderEngineRegistry)
+        self.assertIsNot(ws_none.render_engine_configs, empty_reg)
+
+        pkg_sec = PackageSectionConfig(name="test")
+        pkg = PackageConfig(package=pkg_sec, render_engine_configs=empty_reg)
+        self.assertIs(pkg.render_engine_configs, empty_reg)
+
+        pkg_none = PackageConfig(package=pkg_sec, render_engine_configs=None)
+        self.assertIsInstance(pkg_none.render_engine_configs, RenderEngineRegistry)
+        self.assertIsNot(pkg_none.render_engine_configs, empty_reg)
+
+    def test_always_truthy_decorator(self) -> None:
+        """Verifies that @always_truthy decorator ensures instances evaluate to True."""
+        from drift.core.mixins import always_truthy
+
+        @always_truthy
+        class CustomEmptyList(list):
+            pass
+
+        lst = CustomEmptyList()
+        self.assertEqual(len(lst), 0)
+        self.assertTrue(bool(lst))
+
+
 if __name__ == "__main__":
     unittest.main()
 

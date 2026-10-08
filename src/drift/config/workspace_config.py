@@ -50,6 +50,7 @@ from ..core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
 )
 from ..core.exceptions import ConfigError
+from ..core.mixins import AlwaysTruthy
 from ..utils.env_utils import (
     EnvConfig,
     EnvResolve,
@@ -76,7 +77,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class SettingsConfig:
+class SettingsConfig(AlwaysTruthy):
     """Workspace-level settings defined in [settings] in drift_workspace.toml."""
     HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS: ClassVar[Tuple[str, ...]] = (
         "hook_inject_non_interactive_envs",
@@ -164,7 +165,7 @@ class SettingsConfig:
 
 
 @dataclass
-class WorkspaceSectionConfig:
+class WorkspaceSectionConfig(AlwaysTruthy):
     """Represents options defined under the [workspace] section in drift_workspace.toml."""
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         "source_directory",
@@ -262,7 +263,7 @@ class WorkspaceSectionConfig:
 
 
 @dataclass
-class WorkspaceConfig:
+class WorkspaceConfig(AlwaysTruthy):
     """Represents the global workspace configurations inside config/drift_workspace.toml."""
     PACKAGES_ENABLE_DEFAULT_KEY: ClassVar[str] = "DEFAULT"
     WORKSPACE_PACKAGES_DEFAULT_KEY: ClassVar[str] = PACKAGES_ENABLE_DEFAULT_KEY
@@ -314,13 +315,13 @@ class WorkspaceConfig:
             raise ConfigError(f"render_cache must be a RenderCache instance, got {type(render_cache).__name__}")
 
         self.drift_root = Path(drift_root).resolve()
-        self.workspace = workspace if workspace is not None else WorkspaceSectionConfig()
+        self.workspace = workspace or WorkspaceSectionConfig()
         self.packages_enable = dict(packages_enable)
         self.packages_enable_default = packages_enable_default
-        self.render_engine_configs = render_engine_configs if render_engine_configs is not None else RenderEngineRegistry()
-        self.env_resolve = env_resolve if env_resolve is not None else EnvResolve()
-        self.settings = settings if settings is not None else SettingsConfig()
-        self.render_cache = render_cache if render_cache is not None else RenderCache()
+        self.render_engine_configs = render_engine_configs or RenderEngineRegistry()
+        self.env_resolve = env_resolve or EnvResolve()
+        self.settings = settings or SettingsConfig()
+        self.render_cache = render_cache or RenderCache()
         self.render_path_mask = Path(render_path_mask) if render_path_mask is not None else None
         self.install_path_mask = Path(install_path_mask) if install_path_mask is not None else None
 

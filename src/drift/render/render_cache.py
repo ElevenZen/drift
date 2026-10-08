@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, ItemsView
 
+from ..core.mixins import AlwaysTruthy
+
 
 @dataclass(frozen=True)
 class NodeHashes:
@@ -35,7 +37,7 @@ class CachedFileEntry:
     source_size: Optional[int] = None
 
 
-class RenderCache:
+class RenderCache(AlwaysTruthy):
     """Thread-safe cache storing dst_path -> CachedFileEntry.
 
     Persists across package renders during a render session, allowing downstream

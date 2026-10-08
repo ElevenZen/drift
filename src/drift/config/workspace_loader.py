@@ -75,7 +75,10 @@ def load_workspace_config_file_with_render(rendered_config_path: Path) -> Option
         content = render_workspace_config(envst_path)
     else:
         return None
-    return parse_toml(content)
+    try:
+        return parse_toml(content)
+    except Exception as e:
+        raise ConfigError(f"Failed to parse TOML in '{rendered_config_path}': {e}") from e
 
 
 def assert_no_legacy_workspace_config(drift_root: Path) -> None:
@@ -228,19 +231,19 @@ def load_workspace_config(
 
     secrets_file = parse_secrets_env(root)
 
-    combined_dict = load_workspace_config_files_layered(load_configs_from)
-
-    # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
-    from ..hooks.workspace_hook import apply_workspace_hook
-    combined_dict = apply_workspace_hook(root, combined_dict)
-
-    # Pure in-memory topological resolution and section interpolation
-    interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
-        combined_dict,
-        secrets_file=secrets_file,
-    )
-
     try:
+        combined_dict = load_workspace_config_files_layered(load_configs_from)
+
+        # Apply dynamic workspace hook (config/drift_workspace.py or custom hook_file)
+        from ..hooks.workspace_hook import apply_workspace_hook
+        combined_dict = apply_workspace_hook(root, combined_dict)
+
+        # Pure in-memory topological resolution and section interpolation
+        interpolated_dict, env_res = resolve_and_interpolate_workspace_config(
+            combined_dict,
+            secrets_file=secrets_file,
+        )
+
         return WorkspaceConfig.from_dict(
             interpolated_dict,
             drift_root=root,

@@ -71,6 +71,8 @@ class ExpansionContext:
 
     drift_root: Path
     package_name: str
+    package_render_dir: Path
+    package_src_dir: Path
     enable_render: bool
     env_node: JsonNode
     render_engines: "RenderEngineRegistry"
@@ -111,15 +113,14 @@ class ExpansionContext:
         """Generates path translation rules for engine input files.
 
         Workspace engine inputs:
-            config/<rel_path> -> render/<package_name>/.drift/render/workspace/<rel_path>
+            config/<rel_path> -> <package_render_dir>/.drift/render/workspace/<rel_path>
         Package engine inputs:
-            src/<package_name>/<rel_path> -> render/<package_name>/.drift/render/package/<rel_path>
+            <package_src_dir>/<rel_path> -> <package_render_dir>/.drift/render/package/<rel_path>
         """
-        pkg_render_dir = self.drift_root / "render" / self.package_name
-        render_internal = pkg_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
+        render_internal = self.package_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME
         return {
             self.drift_root / CONFIG_DIR_NAME: render_internal / DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
-            self.drift_root / "src" / self.package_name: render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
+            self.package_src_dir: render_internal / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
         }
 
     def derive_engine_input_context(self) -> "ExpansionContext":
@@ -128,7 +129,10 @@ class ExpansionContext:
         and circularity detection state.
         """
         return ExpansionContext(
+            drift_root=self.drift_root,
             package_name=self.package_name,
+            package_render_dir=self.package_render_dir,
+            package_src_dir=self.package_src_dir,
             enable_render=self.enable_render,
             env_node=self.env_node,
             render_engines=self.render_engines,
@@ -138,7 +142,6 @@ class ExpansionContext:
             collision_map=self.collision_map,
             visiting_paths=self.visiting_paths,
             visiting_engines=self.visiting_engines,
-            drift_root=self.drift_root,
         )
 
 
@@ -207,7 +210,7 @@ def assert_not_driftignore_template_target(
     dst_path: Path,
     file_path: Path,
     package_name: str,
-    drift_root: Path,
+    package_render_dir: Path,
 ) -> None:
     """Validates that a template does not dynamically target .drift_ignore.
 
@@ -216,8 +219,7 @@ def assert_not_driftignore_template_target(
     """
     target_name = encode_dot_prefix(Path(dst_path.name)).name
     if target_name in DRIFT_IGNORE_FILE_NAME_LIST:
-        pkg_render_dir = drift_root / f"render/{package_name}"
-        target_rel = to_relative_posix(dst_path, pkg_render_dir)
+        target_rel = to_relative_posix(dst_path, package_render_dir)
         raise ConfigError(
             f"Package '{package_name}' cannot render template '{file_path.name}' to '{target_rel}'. "
             f"'{DRIFT_IGNORE_FILE_NAME}' is a static configuration file and must be placed directly at the package root."
@@ -250,7 +252,7 @@ def create_node_for_file(file_path: Path, ctx: ExpansionContext) -> Node:
     ctx.collision_map[dst_path] = file_path
 
     if engine:
-        assert_not_driftignore_template_target(dst_path, file_path, ctx.package_name, ctx.drift_root)
+        assert_not_driftignore_template_target(dst_path, file_path, ctx.package_name, ctx.package_render_dir)
         # Recursively expand input template if engine declares an input_file
         input_node: Optional[Node] = None
         if engine.input_file is not None:

@@ -191,6 +191,10 @@ from .state_registry import (
 from .sync_ops import (
     backup_file_or_dir_external,
 )
+from .mixins import (
+    AlwaysTruthy,
+    always_truthy,
+)
 from .folder_diff import (
     FolderDiff,
     FolderListingContext,
@@ -200,6 +204,8 @@ from .folder_diff import (
 )
 
 __all__ = [
+    "AlwaysTruthy",
+    "always_truthy",
     "CONFIG_DIR_NAME",
     "WORKSPACE_CONFIG_FILE_NAME",
     "WORKSPACE_CONFIG_LOCAL_FILE_NAME",

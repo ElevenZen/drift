@@ -111,17 +111,17 @@ def convert_legacy_dotfiles_repo(target_dir: Path, pkg_name: str) -> List[str]:
     actions.append("Isolated existing dotfile contents into temporary payload buffer.")
 
     # 2. Run drift init in target_dir
-    init_drift_workspace(target_dir, no_git_root=True)
+    ws = init_drift_workspace(target_dir, no_git_root=True)
     actions.append("Initialized Drift workspace infrastructure (config/, render/, install/, .gitignore).")
 
-    # 3. Move payload to target_dir / src / pkg_name
-    src_dir = target_dir / "src"
+    # 3. Move payload to target_dir / source_directory / pkg_name
+    src_dir = ws.source_path
     src_dir.mkdir(parents=True, exist_ok=True)
     dest_pkg_dir = src_dir / pkg_name
     if dest_pkg_dir.exists():
         shutil.rmtree(str(dest_pkg_dir))
     shutil.move(str(tmp_payload), str(dest_pkg_dir))
-    actions.append(f"Migrated dotfile assets into package source directory 'src/{pkg_name}/'.")
+    actions.append(f"Migrated dotfile assets into package source directory '{src_dir.name}/{pkg_name}/'.")
 
     # 4. Generate drift_package.toml
     pkg_config_path = dest_pkg_dir / PACKAGE_CONFIG_FILE_NAME

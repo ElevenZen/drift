@@ -44,6 +44,7 @@ from ..core.constants import (
     WINDOWS_PLATFORM_ALIASES,
 )
 from ..core.exceptions import ConfigError, HookMissingError
+from ..core.mixins import AlwaysTruthy
 from ..core.result_models import HookResult
 from ..utils.path_utils import is_relative_to
 from ..utils.config_utils import get_first_from, validate_known_keys
@@ -79,7 +80,7 @@ def normalize_hook_value(
 
 
 @dataclass
-class PackageHooks:
+class PackageHooks(AlwaysTruthy):
     """Encapsulates lifecycle hook configurations and execution methods for a package."""
     probe: Optional[Path] = None
     pre_source: Optional[Path] = None

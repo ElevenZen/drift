@@ -47,6 +47,7 @@ from .package_config import PackageConfig
 
 if TYPE_CHECKING:
     from .workspace_config import WorkspaceConfig
+    from ..render.render_cache import RenderCache
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,8 @@ def _load_package_config_with_workspace(
     silent: bool = False,
 ) -> PackageConfig:
     """Full Phase 1 Merkle DAG compilation pipeline for package configuration."""
+    from ..render.render_cache import RenderCache
+
     if dry_run:
         with tempfile.TemporaryDirectory(prefix=f"{package_dir.name}_cfg_dry_") as tmp_dir:
             temp_pkg_render_dir = Path(tmp_dir) / package_dir.name
@@ -152,6 +155,9 @@ def _load_package_config_with_workspace(
                 workspace_config=workspace_config,
                 pkg_render_dir=temp_pkg_render_dir,
                 silent=silent,
+                # Use an isolated ephemeral cache to prevent leaking temporary sandbox paths
+                # and orphan entries into the persistent workspace_config.render_cache.
+                cache=RenderCache(),
             )
     return _execute_load_package_config_dag(
         package_dir=package_dir,
@@ -166,8 +172,22 @@ def _execute_load_package_config_dag(
     workspace_config: "WorkspaceConfig",
     pkg_render_dir: Path,
     silent: bool = False,
+    cache: Optional["RenderCache"] = None,
 ) -> PackageConfig:
-    """Executes the Phase 1 Merkle DAG compilation pipeline into specified pkg_render_dir."""
+    """Executes the Phase 1 Merkle DAG compilation pipeline into specified pkg_render_dir.
+
+    Args:
+        package_dir: Path to the package source directory (e.g. src/<package>/).
+        workspace_config: Validated WorkspaceConfig instance.
+        pkg_render_dir: Target render directory where config artifacts are generated.
+        silent: If True, suppresses digestion progress messages.
+        cache: Optional explicit RenderCache instance. Defaults to workspace_config.render_cache
+            when None. Providing an isolated instance ensures temporary compilation scratchpaths
+            do not pollute the persistent workspace session cache.
+
+    Returns:
+        The parsed and validated PackageConfig instance.
+    """
     pkg_name = package_dir.name
     candidate_rendered_names = [PACKAGE_CONFIG_FILE_NAME, PACKAGE_CONFIG_LOCAL_FILE_NAME]
     candidate_source_files: List[Path] = []
@@ -207,15 +227,18 @@ def _execute_load_package_config_dag(
         None,
         package_facts=pkg_facts,
     )
+    effective_cache = cache or workspace_config.render_cache
     env_node = JsonNode(env_res.impact.restricted_env())
     exp_ctx = ExpansionContext(
         package_name=pkg_name,
         enable_render=True,
         env_node=env_node,
         render_engines=workspace_config.render_engine_configs,
-        cache=workspace_config.render_cache,
+        cache=effective_cache,
         path_translation=translation_map,
         drift_root=workspace_config.drift_root,
+        package_render_dir=pkg_render_dir,
+        package_src_dir=package_dir,
     )
 
     cand_nodes: List[Node] = []
@@ -240,7 +263,7 @@ def _execute_load_package_config_dag(
         package_render_dir=pkg_render_dir,
         lockfile=lockfile,
         bucket=RenderBucket.CONFIG,
-        cache=workspace_config.render_cache,
+        cache=effective_cache,
         silent=silent,
     )
 

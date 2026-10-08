@@ -30,6 +30,7 @@ from .workspace_gc import run_primitive_9_purge_workspace_garbage
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.exceptions import HookExecutionError, DriftError, is_drift_error, is_logged, mark_logged
 from ..core.constants import STATE_REGISTRY_FILE_NAME, InstallMethod
+from ..core.mixins import AlwaysTruthy
 from ..core.state_registry import load_state_registry
 from ..core.result_models import (
     NextActionType,
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class DeployOptions:
+class DeployOptions(AlwaysTruthy):
     """Execution flags and behavioral options controlling deployment and dry-run planning pipelines.
 
     Attributes:

@@ -119,6 +119,7 @@ from ..core.exceptions import (
     mark_logged,
 )
 from ..core.ignore import DriftIgnore
+from ..core.mixins import AlwaysTruthy
 from ..hooks.lifecycle_hooks import HookExecFlags
 from ..core.state_registry import load_state_registry, StateRegistry
 from .package_assertions import (
@@ -163,7 +164,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 @dataclass
-class InstallOptions:
+class InstallOptions(AlwaysTruthy):
     """Options controlling package installation behavior."""
     resolve_symlinks: bool = True
     force: bool = False
@@ -523,7 +524,7 @@ def install_one_package(
     options: Optional[InstallOptions] = None,
 ) -> PackageInstallResult:
     """Executes installation planning, lifecycle hooks, file deliveries, and state registry updates for a single package."""
-    opts = options if options is not None else InstallOptions()
+    opts = options or InstallOptions()
     context = PackageInstallContext.from_package(
         workspace_config=workspace_config,
         state_registry=state_registry,
@@ -657,7 +658,7 @@ def prepare_install(
         InstallPlan containing validated package metadata mapping, state registry, discovered packages in
         topological order, and options.
     """
-    opts = options if options is not None else InstallOptions()
+    opts = options or InstallOptions()
     install_base = workspace_config.install_path
     state_file = (workspace_config.install_path_mask or install_base) / "state.toml"
     hook_flags = opts.get_hook_flags(settings=workspace_config.settings)

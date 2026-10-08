@@ -518,7 +518,7 @@ class PackageHooksNode(Node):
         pruned = prune_obsolete_hooks(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
-            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)
+            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
             for p in pruned
         )
         context.lockfile.update_bucket_hashes(RenderBucket.HOOKS, context.active_hashes)
@@ -543,7 +543,7 @@ class PackagePayloadNode(Node):
         pruned = prune_obsolete_payload_files(context)
         context.result.pruned_paths.extend(pruned)
         context.result.actions.extend(
-            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=context.drift_root / p)
+            FileAction(action_type=FileActionType.DELETE_ITEM, dst_path=p)
             for p in pruned
         )
         context.lockfile.update_bucket_hashes(RenderBucket.PAYLOAD, context.active_hashes)

@@ -8,6 +8,9 @@ from drift.core.constants import (
     PACKAGE_CONFIG_FILE_NAME,
     PACKAGE_CONFIG_LOCAL_FILE_NAME,
     DRIFT_INTERNAL_DIR_NAME,
+    DRIFT_INTERNAL_RENDER_DIR_NAME,
+    DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
+    DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
     DEFAULT_PACKAGE_HOOK_FILE_NAME,
 )
 from drift.core.exceptions import ConfigError, RenderCollisionError, CyclicDependencyError
@@ -276,6 +279,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({"FOO": "bar"}),
             render_engines=mock_registry,
@@ -306,6 +311,8 @@ class TestRenderDAG(unittest.TestCase):
             ctx = ExpansionContext(
                 drift_root=tmp_root,
                 package_name="test_pkg",
+                package_render_dir=tmp_root / "render/test_pkg",
+                package_src_dir=tmp_root / "src/test_pkg",
                 enable_render=True,
                 env_node=JsonNode({}),
                 render_engines=MagicMock(),
@@ -335,6 +342,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({"PORT": "8080"}),
             render_engines=mock_registry,
@@ -390,6 +399,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -425,6 +436,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -436,6 +449,58 @@ class TestRenderDAG(unittest.TestCase):
         self.assertIsInstance(node, EngineOutputFileNode)
         assert isinstance(node, EngineOutputFileNode)
         self.assertEqual(node.dst_path, Path("/workspace/render/test_pkg/.drift/render/workspace/mustache.json"))
+
+    def test_engine_input_translation_rules_with_custom_package_render_dir_and_src_dir(self) -> None:
+        """Validates that custom package_render_dir and package_src_dir in ExpansionContext
+        translate workspace and package engine inputs to the sandbox render directory.
+        """
+        envsubst_engine = MagicMock()
+        envsubst_engine.name = "envsubst"
+        envsubst_engine.render_command = "envsubst"
+        envsubst_engine.suffix = "envst"
+        envsubst_engine.is_internal = False
+        envsubst_engine.input_file = None
+        envsubst_engine.strip_suffix.return_value = "/workspace/config/mustache.json"
+
+        mock_registry = MagicMock()
+        mock_registry.find_engine_for_file.return_value = envsubst_engine
+
+        custom_render_dir = Path("/tmp/sandbox/render/test_pkg")
+        custom_src_dir = Path("/custom/source/test_pkg")
+
+        ctx = ExpansionContext(
+            drift_root=Path("/workspace"),
+            package_name="test_pkg",
+            enable_render=True,
+            env_node=JsonNode({}),
+            render_engines=mock_registry,
+            cache=self.render_cache,
+            package_render_dir=custom_render_dir,
+            package_src_dir=custom_src_dir,
+        )
+        input_ctx = ctx.derive_engine_input_context()
+        self.assertEqual(input_ctx.package_render_dir, custom_render_dir)
+        self.assertEqual(input_ctx.package_src_dir, custom_src_dir)
+
+        rules = ctx.get_engine_input_translation_rules()
+        self.assertIn(Path("/workspace/config"), rules)
+        self.assertEqual(
+            rules[Path("/workspace/config")],
+            custom_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME,
+        )
+        self.assertIn(custom_src_dir, rules)
+        self.assertEqual(
+            rules[custom_src_dir],
+            custom_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / DRIFT_INTERNAL_PACKAGE_INPUT_DIR_NAME,
+        )
+
+        node = expand_unknown_path(Path("/workspace/config/mustache.envst.json"), input_ctx)
+        self.assertIsInstance(node, EngineOutputFileNode)
+        assert isinstance(node, EngineOutputFileNode)
+        self.assertEqual(
+            node.dst_path,
+            custom_render_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_RENDER_DIR_NAME / DRIFT_INTERNAL_WORKSPACE_INPUT_DIR_NAME / "mustache.json",
+        )
 
     def test_render_cache_produces_cached_node(self) -> None:
         """Validates that a path pre-populated in RenderCache emits a CachedNode."""
@@ -449,6 +514,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -480,6 +547,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({"KEY": "val"}),
             render_engines=mock_registry,
@@ -514,6 +583,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -588,6 +659,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -614,6 +687,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -655,6 +730,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=True,
             env_node=JsonNode({}),
             render_engines=mock_registry,
@@ -672,6 +749,8 @@ class TestRenderDAG(unittest.TestCase):
         ctx = ExpansionContext(
             drift_root=Path("/workspace"),
             package_name="test_pkg",
+            package_render_dir=Path("/workspace/render/test_pkg"),
+            package_src_dir=Path("/workspace/src/test_pkg"),
             enable_render=False,
             env_node=JsonNode({}),
             render_engines=MagicMock(),
