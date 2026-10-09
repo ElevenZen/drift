@@ -910,5 +910,170 @@ class TestRenderActionLogging(unittest.TestCase):
             set_test_mode(True, enable_logging=False)
 
 
+class TestSymlinkAndMacOsPathResolution(unittest.TestCase):
+    """Regression unit and two-pass idempotency tests for symlinked roots and macOS /var -> /private/var topologies."""
+
+    def test_is_drift_internal_path_symlinked_resolution(self) -> None:
+        """Verifies is_drift_internal_path correctly matches internal paths under symlinked root topologies."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            real_base = Path(tmp_dir) / "real"
+            sym_base = Path(tmp_dir) / "sym"
+            real_base.mkdir(parents=True)
+            sym_base.symlink_to(real_base, target_is_directory=True)
+
+            sym_pkg = sym_base / "render" / "pkg_a"
+            sym_pkg.mkdir(parents=True)
+
+            # Test 1: Absolute path under symlinked package render directory
+            internal_abs = sym_pkg / ".drift" / "drift_package.toml"
+            self.assertTrue(is_drift_internal_path(internal_abs, sym_pkg))
+
+            # Test 2: Pure package-relative path
+            internal_rel = Path(".drift") / "hooks" / "post_render.sh"
+            self.assertTrue(is_drift_internal_path(internal_rel, sym_pkg))
+
+            # Test 3: External / payload file (absolute and relative) returns False
+            payload_abs = sym_pkg / "config.txt"
+            payload_rel = Path("config.txt")
+            self.assertFalse(is_drift_internal_path(payload_abs, sym_pkg))
+            self.assertFalse(is_drift_internal_path(payload_rel, sym_pkg))
+
+    def test_scoped_pruning_with_symlink_preserves_active_files(self) -> None:
+        """Verifies that pruning under symlinked topologies (such as macOS /var -> /private/var)
+        never prunes active files and correctly cleans up obsolete files across all 3 buckets."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            real_base = Path(tmp_dir) / "real"
+            sym_base = Path(tmp_dir) / "sym"
+            real_base.mkdir(parents=True)
+            sym_base.symlink_to(real_base, target_is_directory=True)
+
+            sym_pkg = sym_base / "render" / "pkg_a"
+            sym_internal = sym_pkg / ".drift"
+            sym_hooks = sym_internal / "hooks"
+            sym_payload_sub = sym_pkg / "sub"
+
+            sym_hooks.mkdir(parents=True)
+            sym_payload_sub.mkdir(parents=True)
+
+            # Populate config bucket
+            active_cfg = sym_internal / PACKAGE_CONFIG_FILE_NAME
+            active_cfg.write_text("name = 'pkg_a'\n", encoding="utf-8")
+            obsolete_local_cfg = sym_internal / PACKAGE_CONFIG_LOCAL_FILE_NAME
+            obsolete_local_cfg.write_text("debug = true\n", encoding="utf-8")
+
+            # Populate hooks bucket
+            active_hook = sym_hooks / "post_render.sh"
+            active_hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            obsolete_hook = sym_hooks / "old_hook.sh"
+            obsolete_hook.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+
+            # Populate payload bucket
+            active_payload = sym_pkg / "file1.txt"
+            active_payload.write_text("hello", encoding="utf-8")
+            active_sub_payload = sym_payload_sub / "file2.txt"
+            active_sub_payload.write_text("world", encoding="utf-8")
+            obsolete_payload = sym_pkg / "obsolete.txt"
+            obsolete_payload.write_text("obsolete", encoding="utf-8")
+
+            # Create DigestionContext with symlinked paths and rendered_paths populated
+            ctx = DigestionContext(
+                drift_root=sym_base,
+                package_name="pkg_a",
+                package_render_dir=sym_pkg,
+                lockfile=RenderLockfile(),
+                bucket=RenderBucket.PAYLOAD,
+                cache=RenderCache(),
+            )
+            ctx.result.rendered_paths = [active_cfg, active_hook, active_payload, active_sub_payload, sym_payload_sub]
+
+            # 1. Prune config
+            pruned_cfgs = prune_obsolete_config_files(ctx)
+            self.assertEqual(pruned_cfgs, [obsolete_local_cfg])
+            self.assertTrue(active_cfg.is_file())
+            self.assertFalse(obsolete_local_cfg.exists())
+
+            # 2. Prune hooks
+            pruned_hooks = prune_obsolete_hooks(ctx)
+            self.assertEqual(pruned_hooks, [obsolete_hook])
+            self.assertTrue(active_hook.is_file())
+            self.assertFalse(obsolete_hook.exists())
+
+            # 3. Prune payload
+            pruned_payloads = prune_obsolete_payload_files(ctx)
+            self.assertEqual(pruned_payloads, [obsolete_payload])
+            self.assertTrue(active_payload.is_file())
+            self.assertTrue(active_sub_payload.is_file())
+            self.assertFalse(obsolete_payload.exists())
+
+    def test_two_pass_idempotent_digestion_with_symlink_topology(self) -> None:
+        """Mandatory two-pass (Cold vs Warm) idempotency test on a symlinked root topology."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            real_base = Path(tmp_dir) / "real"
+            sym_base = Path(tmp_dir) / "sym"
+            real_base.mkdir(parents=True)
+            sym_base.symlink_to(real_base, target_is_directory=True)
+
+            src_pkg = sym_base / "src" / "pkg_a"
+            render_pkg = sym_base / "render" / "pkg_a"
+            src_pkg.mkdir(parents=True)
+            render_pkg.mkdir(parents=True)
+
+            src_file = src_pkg / "app.txt"
+            src_file.write_text("content-v1", encoding="utf-8")
+            dst_file = render_pkg / "app.txt"
+
+            static_node = StaticFileNode(dst_path=dst_file, src_path=src_file)
+            payload_root = PackagePayloadNode("pkg_a", [static_node])
+
+            # -------------------------------------------------------------
+            # Pass 1: Cold / Mutation Pass
+            # -------------------------------------------------------------
+            lockfile1 = RenderLockfile()
+            cache1 = RenderCache()
+            ctx1 = DigestionContext(
+                drift_root=sym_base,
+                package_name="pkg_a",
+                package_render_dir=render_pkg,
+                lockfile=lockfile1,
+                bucket=RenderBucket.PAYLOAD,
+                cache=cache1,
+            )
+            result1 = digest_render_dag(payload_root, ctx1)
+
+            self.assertEqual(result1.rendered_count, 1)
+            self.assertEqual(result1.pruned_count, 0)
+            self.assertTrue(dst_file.is_file())
+            self.assertEqual(dst_file.read_text(encoding="utf-8"), "content-v1")
+            self.assertEqual(len(result1.actions), 1)
+            self.assertEqual(result1.actions[0].action_type, FileActionType.CREATE_COPY)
+
+            # Verify lockfile on disk
+            saved_lock = RenderLockfile.load_from_dir(render_pkg)
+            self.assertGreater(len(saved_lock.payload_hashes), 0)
+
+            # -------------------------------------------------------------
+            # Pass 2: Warm / Idempotent Pass
+            # -------------------------------------------------------------
+            static_node2 = StaticFileNode(dst_path=dst_file, src_path=src_file)
+            payload_root2 = PackagePayloadNode("pkg_a", [static_node2])
+            cache2 = RenderCache()
+            ctx2 = DigestionContext(
+                drift_root=sym_base,
+                package_name="pkg_a",
+                package_render_dir=render_pkg,
+                lockfile=saved_lock,
+                bucket=RenderBucket.PAYLOAD,
+                cache=cache2,
+            )
+            result2 = digest_render_dag(payload_root2, ctx2)
+
+            self.assertEqual(result2.rendered_count, 0)
+            self.assertEqual(result2.skipped_count, 1)
+            self.assertEqual(result2.pruned_count, 0)
+            self.assertTrue(dst_file.is_file())
+            self.assertEqual(len(result2.actions), 1)
+            self.assertEqual(result2.actions[0].action_type, FileActionType.SKIP_IDENTICAL)
+
+
 if __name__ == "__main__":
     unittest.main()

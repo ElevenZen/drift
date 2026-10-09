@@ -176,7 +176,7 @@ class RenderLockfile:
                     f"[Lockfile] MISS for '{node.dst_path}': file not found on disk at '{disk_path}'."
                 )
                 return None
-            own_h = hash_file_disk(node.dst_path, package_render_dir=package_render_dir)
+            own_h = hash_file_disk(disk_path, package_render_dir=package_render_dir)
             if own_h is None:
                 logger.debug(
                     f"[Lockfile] MISS for '{node.dst_path}': failed to compute own_hash (package_render_dir='{package_render_dir}')."
@@ -220,7 +220,7 @@ class RenderLockfile:
                     f"[Lockfile] MISS for directory '{node.dst_path}': directory not found on disk at '{disk_path}'."
                 )
                 return None
-            own_h = hash_directory_disk(node.dst_path, package_render_dir=package_render_dir)
+            own_h = hash_directory_disk(disk_path, package_render_dir=package_render_dir)
             if own_h is None:
                 logger.debug(
                     f"[Lockfile] MISS for directory '{node.dst_path}': failed to compute own_hash."

@@ -49,6 +49,7 @@ from ..core.exceptions import CyclicDependencyError
 from ..core.file_action import FileAction, FileActionType, format_action_line
 from ..core.folder_diff import list_folder_paths
 from ..utils.file_ops import prune_empty_parents
+from ..utils.path_utils import to_relative_path
 from .render_cache import NodeHashes, RenderCache
 from .render_lock import RenderLockfile, RenderBucket
 from .render_dag import Node
@@ -59,12 +60,9 @@ from .render_dag import Node
 # =====================================================================
 
 def is_drift_internal_path(rel_path: Path, package_render_dir: Path) -> bool:
-    """Checks if rel_path (relative to drift_root) is within package_render_dir/.drift/."""
-    try:
-        sub_rel = rel_path.relative_to(package_render_dir)
-        return bool(sub_rel.parts and sub_rel.parts[0] == DRIFT_INTERNAL_DIR_NAME)
-    except ValueError:
-        return False
+    """Checks if rel_path (relative to package_render_dir or absolute) is within package_render_dir/.drift/."""
+    sub_rel = to_relative_path(rel_path, package_render_dir)
+    return bool(sub_rel.parts and sub_rel.parts[0] == DRIFT_INTERNAL_DIR_NAME)
 
 
 # =====================================================================
@@ -125,8 +123,10 @@ class DigestionContext:
 
     @property
     def absolute_package_render_dir(self) -> Path:
-        """Returns canonical absolute path to the package render directory."""
-        return (self.drift_root / self.package_render_dir).resolve()
+        """Returns absolute path to the package render directory."""
+        if self.package_render_dir.is_absolute():
+            return self.package_render_dir
+        return self.drift_root / self.package_render_dir
 
     def hash_file(self, file_path: Path) -> Optional[str]:
         """Computes file hash on disk, using package-relative path if within package render directory."""
