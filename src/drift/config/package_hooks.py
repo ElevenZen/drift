@@ -280,9 +280,9 @@ class PackageHooks(AlwaysTruthy):
             raise ConfigError(f"rollback_on_failure must be a boolean or list of hook names{name_str}.")
 
         if workspace_config is not None and package_name:
-            package_src_dir = (workspace_config.source_path / package_name).resolve()
-            render_base = (workspace_config.render_path / package_name).resolve()
-            install_base = (workspace_config.install_path / package_name).resolve()
+            package_src_dir = workspace_config.source_path / package_name
+            render_base = workspace_config.render_path / package_name
+            install_base = workspace_config.install_path / package_name
             hook_base_map: Dict[str, Path] = {
                 "probe": render_base,
                 "pre_source": render_base,
@@ -296,7 +296,10 @@ class PackageHooks(AlwaysTruthy):
                 "health": install_base,
             }
         elif base_dir is not None:
-            package_src_dir = Path(base_dir).resolve()
+            package_src_dir = Path(base_dir)
+            assert package_src_dir.is_absolute(), (
+                f"base_dir must be an absolute path when constructing PackageHooks for package '{package_name}', got: '{base_dir}'."
+            )
             hook_base_map = {hook_name: package_src_dir for hook_name in LIFECYCLE_HOOK_NAMES}
         else:
             package_src_dir = None
@@ -309,6 +312,7 @@ class PackageHooks(AlwaysTruthy):
                 return None, None
 
             if norm_val.is_absolute():
+                # Resolve external absolute path to evaluate whether it points inside package_src_dir
                 p_res = norm_val.resolve()
                 if package_src_dir is not None and is_relative_to(p_res, package_src_dir):
                     norm_val = p_res.relative_to(package_src_dir)
@@ -333,6 +337,7 @@ class PackageHooks(AlwaysTruthy):
 
             sub_rel = norm_val.relative_to(DRIFT_HOOKS_DIR_NAME)
             stage_base = hook_base_map[hook_name]
+            # Resolves to the canonical physical path to ensure subprocess execution and permission verification target the real file
             canonical_path = (stage_base / DRIFT_INTERNAL_DIR_NAME / DRIFT_INTERNAL_HOOKS_DIR_NAME / sub_rel).resolve()
             return canonical_path, norm_val
 

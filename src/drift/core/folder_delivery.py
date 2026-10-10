@@ -55,11 +55,10 @@ class DeliveryInspectionContext:
     source_dir_mask: Optional[Path] = None
     reverse_mode: bool = False
     reinstall: bool = False
+    abs_drift_root: Path = field(init=False)
 
-    @property
-    def abs_drift_root(self) -> Path:
-        """Returns pre-resolved absolute Path to drift workspace root."""
-        return self.drift_root.resolve()
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "abs_drift_root", self.drift_root.resolve())
 
     def mask_source_path(self, rel_path: Path) -> Path:
         """Masks relative path with source_dir_mask (e.g. in install/), falling back to source_dir."""
@@ -120,6 +119,14 @@ def assert_target_dir_outside_drift_root(target_dir: Path, drift_root: Path) -> 
             f"points inside drift workspace root '{drift_root}'. "
             f"Resolving this automatically is unsafe. Please resolve manually."
         )
+
+
+def is_symlink_pointing_into(symlink_path: Path, base_dir: Path) -> bool:
+    """Checks if a host symlink resolves to a location inside base_dir."""
+    try:
+        return is_relative_to(symlink_path.resolve(), base_dir)
+    except Exception:
+        return False
 
 
 def _expand_path_ancestors(rel: Path, context: DeliveryInspectionContext) -> Set[Path]:
@@ -193,11 +200,7 @@ def _inspect_directory_node(
 
     # Blocked by an internal symlink, foreign symlink, or physical file
     if target_dir.is_symlink():
-        is_internal = False
-        try:
-            is_internal = is_relative_to(target_dir.resolve(), context.abs_drift_root)
-        except Exception:
-            is_internal = False
+        is_internal = is_symlink_pointing_into(target_dir, context.abs_drift_root)
         reason = "Internal ancestor symlink conflict" if is_internal else "Symlink blocking directory"
     else:
         reason = "File blocking directory"
@@ -337,12 +340,7 @@ def _inspect_symlink_leaf(
         ]
 
     # Symlink points elsewhere (internal conflict vs external collision)
-    points_into_drift = False
-    try:
-        points_into_drift = is_relative_to(system_target.resolve(), context.abs_drift_root)
-    except Exception:
-        points_into_drift = False
-
+    points_into_drift = is_symlink_pointing_into(system_target, context.abs_drift_root)
     reason = "Conflicting internal symlink" if points_into_drift else "Colliding external symlink"
     return [
         _plan_backup_or_delete(context, system_target, rel_file, reason=reason),

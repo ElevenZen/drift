@@ -260,7 +260,7 @@ def _inspect_package_target_dir_validity(
             "non_absolute",
             f"Package '{package_name}': Target directory '{target_dir}' must be absolute.",
         )
-    abs_drift_root = workspace_config.drift_root.resolve()
+    abs_drift_root = workspace_config.drift_root
     resolved_target = target_dir.resolve()
     if is_relative_to(resolved_target, abs_drift_root):
         detail = (

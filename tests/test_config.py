@@ -452,6 +452,10 @@ class TestConfigClasses(unittest.TestCase):
         with self.assertRaises(ConfigError):
             PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir=None)  # type: ignore
 
+        # base_dir must be an absolute path
+        with self.assertRaises(AssertionError):
+            PackageConfig.from_dict(data_no_name, package_name="fallback_name", base_dir="relative/path")
+
     def test_package_config_validation(self) -> None:
         with self.assertRaises(ConfigError):
             PackageConfig("not_a_pkg_section") # type: ignore

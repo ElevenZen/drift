@@ -486,8 +486,8 @@ class PackageConfig(AlwaysTruthy):
         Returns the path of the subfolder to render within package_dir.
         The result is always a subdirectory of package_dir, and cannot escape it.
 
-        Note: We avoid Path.resolve() here to prevent macOS APFS firmlink mutation
-        (e.g., /home -> /System/Volumes/Data/home).
+        Pure path join. We avoid Path.resolve() here to maintain lexical path identity
+        and prevent macOS APFS firmlink mutation (e.g., /home -> /System/Volumes/Data/home).
         """
         if not self.package.source_directory or self.package.source_directory == Path(".") or str(self.package.source_directory) in (".", ""):
             return package_dir
@@ -560,7 +560,10 @@ class PackageConfig(AlwaysTruthy):
         if base_dir is None or not isinstance(base_dir, (str, Path)):
             raise ConfigError(f"base_dir must be provided as a Path or string when constructing PackageConfig for package '{package_name}'.")
 
-        base_dir_path = Path(base_dir).resolve()
+        base_dir_path = Path(base_dir)
+        assert base_dir_path.is_absolute(), (
+            f"base_dir must be an absolute path when constructing PackageConfig for package '{package_name}', got: '{base_dir}'."
+        )
 
         # Error for unknown top-level sections
         name_str = f" for package '{package_name}'" if package_name else ""
@@ -581,7 +584,7 @@ class PackageConfig(AlwaysTruthy):
         # Resolve common package base directory for hooks and render engines
         # workspace_config takes priority over base_dir, matching PackageHooks.from_dict() precedence
         if workspace_config is not None and name:
-            pkg_base = (workspace_config.source_path / name).resolve()
+            pkg_base = workspace_config.source_path / name
         else:
             pkg_base = base_dir_path
 

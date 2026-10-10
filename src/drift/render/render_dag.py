@@ -191,8 +191,11 @@ class StaticFileNode(FileNode[Path]):
 
         if not context.dry_run:
             self.dst_path.parent.mkdir(parents=True, exist_ok=True)
-            if self.src_path.resolve() != self.dst_path.resolve():
-                shutil.copy2(self.src_path, self.dst_path)
+            if self.src_path != self.dst_path:
+                try:
+                    shutil.copy2(self.src_path, self.dst_path)
+                except shutil.SameFileError:
+                    pass
 
         own_h = context.hash_file(self.dst_path) or ""
         self.hashes = NodeHashes(own_hash=own_h, merkle_hash=None)

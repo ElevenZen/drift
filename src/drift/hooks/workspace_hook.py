@@ -193,7 +193,7 @@ def apply_workspace_hook(
     real_env = {**secrets_file, **ws_secrets, **os.environ, **system_facts, **ws_overrides}
 
     source_dir_name = get_nested_from(config_dict, "workspace.source_directory", default="src")
-    source_path = (drift_root / source_dir_name).resolve()
+    source_path = drift_root / source_dir_name
 
     context = WorkspaceHookContext(
         config=config_dict,

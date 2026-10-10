@@ -84,8 +84,8 @@ def get_pending_delta_worklist(
         rel_install = workspace_config.workspace.install_directory / pkg
         rel_render = workspace_config.workspace.render_directory / pkg
 
-        abs_install = workspace_config.install_path / pkg
-        abs_render = workspace_config.render_path / pkg
+        abs_install = (workspace_config.install_path / pkg).resolve()
+        abs_render = (workspace_config.render_path / pkg).resolve()
 
         if abs_install.exists() and abs_render.exists():
             to_diff.append((pkg, rel_install, rel_render))
