@@ -17,6 +17,7 @@ from .stage_repo import (
     prepare_stage_packages,
     execute_stage_packages,
     StageResult,
+    StagePlan,
 )
 from .install_repo import (
     run_primitive_5_install,
@@ -87,7 +88,7 @@ def check_and_prevent_system_drifts(
     state_file = workspace_config.install_path / STATE_REGISTRY_FILE_NAME
     if state_file.exists() and not force:
         state_registry = load_state_registry(state_file)
-        midway_pkgs = state_registry.get_rollback_eligible_packages(target_pkgs)
+        midway_pkgs = state_registry.get_midway_packages(target_pkgs)
 
         if midway_pkgs:
             pkg_names = [p[0] for p in midway_pkgs]
@@ -170,31 +171,23 @@ and half-written state.
     print(card, file=sys.stderr)
 
 
-def execute_sequential_compile_and_apply(
+def execute_render_step(
     workspace_config: WorkspaceConfig,
-    target_pkgs: List[str],
-    force: bool = False,
-    flags: Optional[HookExecFlags] = None,
-    reinstall: bool = False,
-    no_deps: bool = False,
-) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
-    """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
-    logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
-    completed_steps: List[CompletedStep] = []
-    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
-    
-    # 1. Render raw templates to sandbox
+    target_pkgs: Sequence[str],
+    hook_flags: HookExecFlags,
+) -> CompletedStep:
+    """Executes Step 1: Compiles declarative source templates into the render/ sandbox."""
     failed_step = "Step 1 (Template Rendering)"
     try:
         logger.info("   [1/5] Compiling source templates to sandbox render/ ...")
         render_res = run_primitive_2_render_packages(
             workspace_config,
-            target_pkgs=target_pkgs,
+            target_pkgs=list(target_pkgs),
             options=RenderOptions.resolve(hook_flags),
         )
         if render_res.status == "FAILED":
             raise RuntimeError(render_res.error_message or f"{failed_step} failed.")
-        completed_steps.append(CompletedStep(1, "template_rendering"))
+        return CompletedStep(1, "template_rendering")
     except Exception as e:
         if is_drift_error(e) or is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
@@ -204,7 +197,12 @@ def execute_sequential_compile_and_apply(
         logger.info("👉 You can resolve the template issues and simply try 'drift deploy' again.")
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
-    # 2. Commit sandbox changes
+
+def execute_render_commit_step(
+    workspace_config: WorkspaceConfig,
+    target_pkgs: Sequence[str],
+) -> CompletedStep:
+    """Executes Step 2: Commits compiled sandbox changes to the render/ Git repository."""
     failed_step = "Step 2 (Sandbox History Committing)"
     pkgs_label = ", ".join(target_pkgs)
     try:
@@ -212,9 +210,9 @@ def execute_sequential_compile_and_apply(
         run_primitive_3_commit_render_repo(
             workspace_config,
             commit_message=f"Deploy Render: Automatically compile templates for {pkgs_label}",
-            target_pkgs=target_pkgs
+            target_pkgs=list(target_pkgs),
         )
-        completed_steps.append(CompletedStep(2, "render_commit"))
+        return CompletedStep(2, "render_commit")
     except Exception as e:
         if is_drift_error(e) or is_logged(e):
             logger.error(f"❌ [CRITICAL] {failed_step} failed.")
@@ -224,12 +222,23 @@ def execute_sequential_compile_and_apply(
         logger.info("👉 Please resolve any render sandbox repository Git issues and try 'drift deploy' again.")
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
+
+def execute_staging_step(
+    workspace_config: WorkspaceConfig,
+    target_pkgs: Sequence[str],
+    force: bool = False,
+    no_deps: bool = False,
+) -> Optional[Tuple[StagePlan, StageResult, CompletedStep]]:
+    """Executes Step 3: Pre-flight validation and physical staging from render/ to install/.
+
+    Returns None if no active packages are enabled for staging/deployment.
+    """
     # 3a. Pre-flight Validation & Assertion for Sandbox Staging (Read-Only)
     failed_step = "Step 3 (Sandbox Staging Pre-flight)"
     try:
         stage_plan = prepare_stage_packages(
             workspace_config,
-            target_pkgs=target_pkgs,
+            target_pkgs=list(target_pkgs),
             force=force,
             no_deps=no_deps,
         )
@@ -248,8 +257,7 @@ def execute_sequential_compile_and_apply(
         raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
 
     if not stage_plan.pkg_metadata:
-        logger.info("✨ No active packages are enabled for staging/deployment. Skipping physical deployment.")
-        return [], completed_steps
+        return None
 
     # 3b. Stage render sandbox to install state base (State-Mutating)
     failed_step = "Step 3 (Sandbox Staging)"
@@ -259,17 +267,166 @@ def execute_sequential_compile_and_apply(
             workspace_config,
             plan=stage_plan,
         )
-        completed_steps.append(CompletedStep(3, "sandbox_staging"))
+        return stage_plan, stage_result, CompletedStep(3, "sandbox_staging")
     except Exception as e:
-        print_emergency_recovery_card(failed_step, str(e), target_pkgs)
+        print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
         raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
 
-    changed_pkgs = stage_result.packages_changed
+
+def resolve_packages_to_install(
+    stage_plan: StagePlan,
+    stage_result: StageResult,
+    target_pkgs: Sequence[str],
+    reinstall: bool = False,
+) -> List[str]:
+    """Resolves the ordered list of packages requiring physical deployment to the host.
+
+    A package is selected for deployment if:
+    1. Reinstallation is requested (reinstall=True), OR
+    2. Staging detected physical differences (stage_result.packages_changed), OR
+    3. The package is marked as 'staged' (or not yet 'installed') in the state registry.
+
+    Only packages enabled for installation (in stage_plan.pkg_metadata) are considered.
+    """
+    enabled_packages = set(stage_plan.pkg_metadata.keys())
     if reinstall:
-        pkgs_to_install = target_pkgs
-    elif changed_pkgs:
-        pkgs_to_install = changed_pkgs
-    else:
+        return [p for p in target_pkgs if p in enabled_packages]
+
+    changed_pkgs = set(stage_result.packages_changed)
+    state_registry = stage_plan.state_registry
+    staged_pkgs = {
+        pkg for pkg in enabled_packages
+        if state_registry.get_package_state(pkg) != "installed"
+    }
+
+    return [
+        p for p in target_pkgs
+        if p in enabled_packages and (p in changed_pkgs or p in staged_pkgs)
+    ]
+
+
+def execute_physical_install_step(
+    workspace_config: WorkspaceConfig,
+    pkgs_to_install: Sequence[str],
+    target_pkgs: Sequence[str],
+    install_options: InstallOptions,
+) -> Tuple[List[PackageInstallResult], CompletedStep]:
+    """Executes Step 4: Pre-flight validation and physical deployment of files to host paths."""
+    # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
+    failed_step = "Step 4 (Deployment Pre-flight)"
+    try:
+        install_plan = prepare_install(
+            workspace_config,
+            target_pkgs=list(pkgs_to_install),
+            options=install_options,
+        )
+    except Exception as e:
+        print_emergency_recovery_card(failed_step, str(e), list(pkgs_to_install))
+        err = RuntimeError(f"Midway crash: {failed_step} failed.")
+        raise mark_logged(err) from e
+
+    # 4b. Physical Deployment of configurations to host system target paths (State-Mutating)
+    failed_step = "Step 4 (Physical Deploy/Install)"
+    pkgs_install_label = ", ".join(pkgs_to_install)
+    try:
+        logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
+        install_res = execute_install(
+            workspace_config,
+            plan=install_plan,
+        )
+        return install_res.packages, CompletedStep(4, "physical_install")
+    except HookExecutionError as e:
+        if e.requires_rollback:
+            print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
+            raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+        # No rollback needed, so commit the changes here.
+        try:
+            run_primitive_6_commit_install_repo(
+                workspace_config,
+                commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+                target_pkgs=list(pkgs_to_install),
+            )
+        except Exception as commit_err:
+            logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
+        logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
+        raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
+    except Exception as e:
+        print_emergency_recovery_card(failed_step, str(e), list(target_pkgs))
+        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+
+
+def execute_install_commit_step(
+    workspace_config: WorkspaceConfig,
+    pkgs_to_install: Sequence[str],
+) -> CompletedStep:
+    """Executes Step 5: Commits deployed configurations into the install/ state database."""
+    failed_step = "Step 5 (State Database Committing)"
+    pkgs_install_label = ", ".join(pkgs_to_install)
+    try:
+        logger.info("   [5/5] Committing deployment changes in install/ repository ...")
+        run_primitive_6_commit_install_repo(
+            workspace_config,
+            commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
+            target_pkgs=list(pkgs_to_install),
+        )
+        return CompletedStep(5, "install_commit")
+    except Exception as e:
+        if is_drift_error(e) or is_logged(e):
+            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
+        else:
+            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
+            mark_logged(e)
+        msg = (
+            f"The deployment succeeded on your host, but committing to the state database failed.\n"
+            f"👉 Please resolve the Git state manually by running:\n"
+            f"    drift install-commit -m \"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}\""
+        )
+        print(msg, file=sys.stderr)
+        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
+
+
+def execute_sequential_compile_and_apply(
+    workspace_config: WorkspaceConfig,
+    target_pkgs: List[str],
+    force: bool = False,
+    flags: Optional[HookExecFlags] = None,
+    reinstall: bool = False,
+    no_deps: bool = False,
+) -> Tuple[List[PackageInstallResult], List[CompletedStep]]:
+    """Stage 2: Sequential Compile & Apply with midway transaction error catching."""
+    logger.info("🚀 [STAGE 2] Starting sequential compilation and apply pipeline...")
+    completed_steps: List[CompletedStep] = []
+    hook_flags = HookExecFlags.resolve(flags, settings=workspace_config.settings)
+
+    # 1. Render raw templates to sandbox
+    completed_steps.append(
+        execute_render_step(workspace_config, target_pkgs, hook_flags)
+    )
+
+    # 2. Commit sandbox changes
+    completed_steps.append(
+        execute_render_commit_step(workspace_config, target_pkgs)
+    )
+
+    # 3. Sandbox staging (pre-flight validation and physical staging)
+    stage_data = execute_staging_step(
+        workspace_config, target_pkgs, force=force, no_deps=no_deps
+    )
+    if stage_data is None:
+        logger.info("✨ No active packages are enabled for staging/deployment. Skipping physical deployment.")
+        return [], completed_steps
+
+    stage_plan, stage_result, stage_step = stage_data
+    completed_steps.append(stage_step)
+
+    # Resolve packages requiring physical deployment (staging modifications or 'staged' registry status)
+    pkgs_to_install = resolve_packages_to_install(
+        stage_plan=stage_plan,
+        stage_result=stage_result,
+        target_pkgs=target_pkgs,
+        reinstall=reinstall,
+    )
+    if not pkgs_to_install:
         logger.info("✨ No package changes detected during staging. Skipping physical deployment.")
         return [], completed_steps
 
@@ -291,73 +448,21 @@ def execute_sequential_compile_and_apply(
         no_deps=no_deps,
     )
 
-    # 4a. Pre-flight Validation & Pre-Transaction Conflict Audit for Deployment (Read-Only)
-    failed_step = "Step 4 (Deployment Pre-flight)"
-    try:
-        install_plan = prepare_install(
-            workspace_config,
-            target_pkgs=pkgs_to_install,
-            options=install_options,
-        )
-    except Exception as e:
-        print_emergency_recovery_card(failed_step, str(e), pkgs_to_install)
-        err = RuntimeError(f"Midway crash: {failed_step} failed.")
-        raise mark_logged(err) from e
-
-    # 4b. Physical Deployment of configurations to host system target paths (State-Mutating)
-    failed_step = "Step 4 (Physical Deploy/Install)"
-    pkgs_install_label = ", ".join(pkgs_to_install)
-    try:
-        logger.info(f"   [4/5] Deploying and copying/linking configurations to active host paths for: {pkgs_install_label} ...")
-        install_res = execute_install(
-            workspace_config,
-            plan=install_plan,
-        )
-        completed_steps.append(CompletedStep(4, "physical_install"))
-    except HookExecutionError as e:
-        if e.requires_rollback:
-            print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-            raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
-        # No rollback needed, so commit the changes here.
-        try:
-            run_primitive_6_commit_install_repo(
-                workspace_config,
-                commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
-                target_pkgs=pkgs_to_install
-            )
-        except Exception as commit_err:
-            logger.error(f"Failed to commit install/ repository changes following non-rollback hook failure: {commit_err}")
-        logger.error(f"❌ [DEPLOY ABORTED] {failed_step} stopped due to hook failure in '{e.package}'.")
-        raise mark_logged(RuntimeError(f"{failed_step} stopped due to hook failure in '{e.package}': {e.message}")) from e
-    except Exception as e:
-        print_emergency_recovery_card(failed_step, str(e), target_pkgs)
-        raise mark_logged(RuntimeError(f"Midway crash: {failed_step} failed.")) from e
+    # 4. Physical Deployment of configurations to host system target paths (State-Mutating)
+    installed_packages, install_step = execute_physical_install_step(
+        workspace_config,
+        pkgs_to_install=pkgs_to_install,
+        target_pkgs=target_pkgs,
+        install_options=install_options,
+    )
+    completed_steps.append(install_step)
 
     # 5. Commit state database configurations
-    failed_step = "Step 5 (State Database Committing)"
-    try:
-        logger.info("   [5/5] Committing deployment changes in install/ repository ...")
-        run_primitive_6_commit_install_repo(
-            workspace_config,
-            commit_message=f"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}",
-            target_pkgs=pkgs_to_install
-        )
-        completed_steps.append(CompletedStep(5, "install_commit"))
-    except Exception as e:
-        if is_drift_error(e) or is_logged(e):
-            logger.error(f"❌ [CRITICAL] {failed_step} failed.")
-        else:
-            logger.error(f"❌ [CRITICAL] {failed_step} failed. Error: {e}")
-            mark_logged(e)
-        msg = (
-            f"The deployment succeeded on your host, but committing to the state database failed.\n"
-            f"👉 Please resolve the Git state manually by running:\n"
-            f"    drift install-commit -m \"Deploy Install: Automatically commit deployed changes for {pkgs_install_label}\""
-        )
-        print(msg, file=sys.stderr)
-        raise mark_logged(RuntimeError(f"{failed_step} failed.")) from e
+    completed_steps.append(
+        execute_install_commit_step(workspace_config, pkgs_to_install)
+    )
 
-    return install_res.packages, completed_steps
+    return installed_packages, completed_steps
 
 
 def run_primitive_deploy_pipeline(

@@ -233,6 +233,40 @@ class TestStageRepo(unittest.TestCase):
         self.assertFalse(res_force.has_changes)
         self.assertFalse(os.path.exists(os.path.join(self.install_dir, "pkg_b", "file_b.txt")))
 
+    def test_prepare_stage_packages_returns_enable_install_true_only(self) -> None:
+        """Verifies that StagePlan.pkg_metadata strictly contains packages with enable_install=True only."""
+        # 1. Target both installable (pkg_a, pkg_ignored) and non-installable (pkg_b) packages
+        plan = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_a", "pkg_b", "pkg_ignored"])
+        self.assertIsInstance(plan, StagePlan)
+
+        # Invariant: pkg_b (enable_install=False) is strictly excluded from StagePlan.pkg_metadata
+        self.assertIn("pkg_a", plan.pkg_metadata)
+        self.assertIn("pkg_ignored", plan.pkg_metadata)
+        self.assertNotIn("pkg_b", plan.pkg_metadata)
+
+        # Exhaustive validation: all packages in pkg_metadata must have enable_install == True
+        self.assertTrue(all(meta.package.enable_install for meta in plan.pkg_metadata.values()))
+        self.assertFalse(any(not meta.package.enable_install for meta in plan.pkg_metadata.values()))
+
+        # 2. Target ONLY non-installable package (pkg_b)
+        plan_disabled = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"])
+        self.assertEqual(plan_disabled.pkg_metadata, {})
+        self.assertEqual(plan_disabled.packages_stage_order, [])
+        self.assertFalse(plan_disabled.has_changes)
+
+        # 3. Invariant: --force NEVER bypasses enable_install = False
+        plan_forced = prepare_stage_packages(self.workspace_config, target_pkgs=["pkg_b"], force=True)
+        self.assertEqual(plan_forced.pkg_metadata, {})
+        self.assertEqual(plan_forced.packages_stage_order, [])
+        self.assertFalse(plan_forced.has_changes)
+
+        # 4. Global workspace resolution (no target_pkgs specified)
+        plan_all = prepare_stage_packages(self.workspace_config)
+        self.assertIn("pkg_a", plan_all.pkg_metadata)
+        self.assertIn("pkg_ignored", plan_all.pkg_metadata)
+        self.assertNotIn("pkg_b", plan_all.pkg_metadata)
+        self.assertTrue(all(meta.package.enable_install for meta in plan_all.pkg_metadata.values()))
+
     def test_stage_ignores_and_symlinking(self) -> None:
         """Verifies that files matching PCRE .drift_ignore are ignored, and a symlink is created."""
         # 1. First render pkg_ignored

@@ -859,6 +859,106 @@ target_directory = "{self.system_target_dir}"
         self.assertIn("Step 4 (Deployment Pre-flight) failed.", res.failure.error_message)
         self.assertIn("EMERGENCY RECOVERY REQUIRED", stderr_capture.getvalue())
 
+    def test_deploy_pipeline_deploys_staged_package_without_staging_changes(self) -> None:
+        """Mandatory Two-Pass Test: Verifies that a package marked as 'staged' in state registry
+
+        is deployed to the host even when staging detected zero physical file changes.
+        """
+        from drift.core.state_registry import save_state_registry
+
+        # 1. Initial deployment: pkg_a is cleanly deployed and recorded as 'installed'
+        res0 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res0.status, "SUCCESS")
+        self.assertEqual(len(res0.deployed_packages), 1)
+
+        target_file = self.system_target_dir / "file.txt"
+        self.assertTrue(target_file.exists())
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "Hello source config!")
+
+        # 2. Simulate package marked as 'staged' in state registry without any physical file changes
+        reg = load_state_registry(self.state_file)
+        reg.set_package_state("pkg_a", "staged")
+        save_state_registry(reg)
+
+        reg_check = load_state_registry(self.state_file)
+        self.assertEqual(reg_check.get_package_state("pkg_a"), "staged")
+
+        # Pass 1 (Cold / Mutation Pass): deploy must notice 'staged' state and execute physical deploy
+        res1 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res1.status, "SUCCESS")
+        self.assertEqual(len(res1.deployed_packages), 1)
+        self.assertEqual(res1.deployed_packages[0].package, "pkg_a")
+
+        # Post-condition: state is now updated to 'installed'
+        reg_after1 = load_state_registry(self.state_file)
+        self.assertEqual(reg_after1.get_package_state("pkg_a"), "installed")
+
+        # Pass 2 (Warm / Idempotent Pass): re-deploy must skip because it is now 'installed' and has no changes
+        res2 = run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
+        self.assertEqual(res2.status, "SUCCESS")
+        self.assertEqual(len(res2.deployed_packages), 0)
+        reg_after2 = load_state_registry(self.state_file)
+        self.assertEqual(reg_after2.get_package_state("pkg_a"), "installed")
+
+    def test_resolve_packages_to_install_selection_matrix(self) -> None:
+        """Unit test for resolve_packages_to_install covering changes, staged states, and reinstall."""
+        from drift.primitives.deploy_repo import resolve_packages_to_install
+        from drift.primitives.stage_repo import StagePlan, StageResult
+        from drift.config.package_config import PackageConfig, PackageSectionConfig
+
+        reg = load_state_registry(self.state_file)
+        reg.set_package_state("pkg_staged", "staged")
+        reg.set_package_state("pkg_installed", "installed")
+        reg.set_package_state("pkg_changed", "installed")
+
+        # Note: stage_plan.pkg_metadata only ever contains packages with enable_install=True
+        mock_metadata = {
+            "pkg_staged": PackageConfig(
+                package=PackageSectionConfig(name="pkg_staged", enable_install=True)
+            ),
+            "pkg_installed": PackageConfig(
+                package=PackageSectionConfig(name="pkg_installed", enable_install=True)
+            ),
+            "pkg_changed": PackageConfig(
+                package=PackageSectionConfig(name="pkg_changed", enable_install=True)
+            ),
+        }
+
+        stage_plan = StagePlan(
+            pkg_metadata=mock_metadata,
+            state_registry=reg,
+            packages_stage_order=["pkg_changed"],
+        )
+        stage_result = StageResult(
+            command="stage",
+            status="SUCCESS",
+            packages_changed=["pkg_changed"],
+            plans=[],
+        )
+
+        all_target_pkgs = ["pkg_staged", "pkg_installed", "pkg_changed", "pkg_disabled"]
+
+        # Case 1: Normal run (no reinstall)
+        # Should include: pkg_changed (staging changes) + pkg_staged ('staged' status)
+        # Should exclude: pkg_installed (already installed, no changes) + pkg_disabled (enable_install=False)
+        resolved = resolve_packages_to_install(
+            stage_plan=stage_plan,
+            stage_result=stage_result,
+            target_pkgs=all_target_pkgs,
+            reinstall=False,
+        )
+        self.assertEqual(resolved, ["pkg_staged", "pkg_changed"])
+
+        # Case 2: Reinstall run (reinstall=True)
+        # Should include all enabled packages, but strictly exclude pkg_disabled
+        reinstall_resolved = resolve_packages_to_install(
+            stage_plan=stage_plan,
+            stage_result=stage_result,
+            target_pkgs=all_target_pkgs,
+            reinstall=True,
+        )
+        self.assertEqual(reinstall_resolved, ["pkg_staged", "pkg_installed", "pkg_changed"])
+
 
 if __name__ == "__main__":
     unittest.main()
