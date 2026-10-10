@@ -492,7 +492,7 @@ def get_default_internal_gitignore_content() -> str:
 def get_default_package_config_content(
     package_name: str,
     install_method: InstallMethod = DEFAULT_INSTALL_METHOD,
-    target_directory: Optional[str] = None,
+    target_directory: Optional[Path] = None,
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:
     """Renders the default drift_package.toml content for a package."""
@@ -515,7 +515,7 @@ def get_default_package_config_content(
     if target_directory is None:
         target_directory_line = '# target_directory = "~"   # Destination for this package'
     else:
-        target_directory_line = f'target_directory = "{target_directory}"   # Destination for this package'
+        target_directory_line = f'target_directory = "{target_directory.as_posix()}"   # Destination for this package'
 
     return (
         template_str

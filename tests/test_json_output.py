@@ -213,7 +213,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
             source_directory = "src"
             render_directory = "render"
             install_directory = "install"
-            default_target_directory = "{self.target_dir}"
+            default_target_directory = "{Path(self.target_dir).as_posix()}"
             default_install_method = "copy"
 
             [packages.enable]
@@ -229,7 +229,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
             [package]
             name = "pkg_a"
             install_method = "copy"
-            target_directory = "{self.target_dir}"
+            target_directory = "{Path(self.target_dir).as_posix()}"
             """)
         with open(os.path.join(pkg_path, "test.txt"), "w", encoding="utf-8") as f:
             f.write("test content")
@@ -369,7 +369,7 @@ class TestCLIJsonOutput(TestCaseUtilityMixin, unittest.TestCase):
             f.write(f"""[package]
 name = "pkg_a"
 install_method = "copy"
-target_directory = "{self.target_dir}"
+target_directory = "{Path(self.target_dir).as_posix()}"
 [hooks]
 post_update = "drift_hooks/post_update.sh"
 rollback_on_failure = false

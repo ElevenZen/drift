@@ -112,8 +112,8 @@ def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
     elif ext == ".py":
         return [sys.executable, str(hook_path)]
     elif ext in (".sh", ".bash"):
-        # Fallback to Git Bash / bash if present in PATH
-        return ["bash.exe", str(hook_path)]
+        # Fallback to Git Bash / bash if present in PATH (use POSIX slashes for bash)
+        return ["bash.exe", hook_path.as_posix()]
     else:
         return [str(hook_path)]
 

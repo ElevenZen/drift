@@ -267,12 +267,13 @@ class TestConfigClasses(unittest.TestCase):
             WorkspaceConfig(drift_root=self.drift_root, render_cache="invalid_type")
 
     def test_workspace_config_from_dict(self) -> None:
+        abs_target = (self.drift_root / "etc").resolve()
         data = {
             "workspace": {
                 "render_directory": "custom_render",
                 "install_directory": "custom_install",
                 "backup_directory": "custom_backup",
-                "default_target_directory": "/etc"
+                "default_target_directory": str(abs_target)
             },
             "packages": {
                 "enable": {
@@ -286,7 +287,7 @@ class TestConfigClasses(unittest.TestCase):
         self.assertEqual(config.workspace.render_directory, Path("custom_render"))
         self.assertEqual(config.workspace.install_directory, Path("custom_install"))
         self.assertEqual(config.workspace.backup_directory, Path("custom_backup"))
-        self.assertEqual(config.workspace.default_target_directory, Path("/etc"))
+        self.assertEqual(config.workspace.default_target_directory, abs_target)
         self.assertEqual(config.packages_enable, {"shell": True, "nvim": True, "emacs": False})
 
     def test_workspace_config_validation(self) -> None:
@@ -992,7 +993,7 @@ class TestConfigClasses(unittest.TestCase):
     def test_workspace_config_absolute_target_dir(self) -> None:
         """Verifies that WorkspaceConfig.validate raises ValueError if default_target_directory is relative."""
         # Using an absolute directory is valid
-        WorkspaceConfig(drift_root=self.drift_root, workspace=WorkspaceSectionConfig(default_target_directory=Path("/absolute/path"))).validate()
+        WorkspaceConfig(drift_root=self.drift_root, workspace=WorkspaceSectionConfig(default_target_directory=(self.drift_root / "absolute" / "path").resolve())).validate()
         
         # Using a relative directory raises ValueError
         with self.assertRaises(ValueError) as ctx:

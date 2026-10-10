@@ -22,7 +22,7 @@ def run_primitive_10_create_new_package(
     workspace_config: WorkspaceConfig,
     package_name: str,
     force: bool = False,
-    target_directory: Optional[str] = None,
+    target_directory: Optional[Union[Path, str]] = None,
     install_method: Optional[Union[InstallMethod, str]] = None
 ) -> NewPackageResult:
     """Scaffolds a new package directory and a default package configuration file (Primitive 10).
@@ -60,10 +60,11 @@ def run_primitive_10_create_new_package(
     else:
         final_install_method = workspace_config.workspace.default_install_method
 
+    target_dir_path: Optional[Path] = Path(target_directory) if target_directory is not None else None
     config_content = get_default_package_config_content(
         package_name=package_name,
         install_method=final_install_method,
-        target_directory=target_directory,
+        target_directory=target_dir_path,
         config_filename=final_config_name
     )
     config_file.write_text(config_content, encoding="utf-8")

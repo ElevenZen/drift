@@ -228,7 +228,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Add physical file in install
@@ -265,7 +265,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         with open(os.path.join(pkg_install_dir, "dot-bashrc"), "w", encoding="utf-8") as f:
@@ -306,7 +306,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
 
             [hooks]
             post_install = "drift_hooks/on-install.sh"
@@ -392,7 +392,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # 2. Add a file in install/
@@ -645,7 +645,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Add files: one to keep, one to ignore
@@ -724,7 +724,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Add physical file under subfolder nested_app in install
@@ -818,7 +818,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Add physical file under install/pkg_symlink, e.g., ignored_file.txt
@@ -860,7 +860,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         with open(os.path.join(pkg_install_dir, "file1.txt"), "w", encoding="utf-8") as f:
@@ -921,7 +921,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         with open(os.path.join(pkg_install_dir, "file1.txt"), "w", encoding="utf-8") as f:
@@ -969,7 +969,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # We have three files to deploy: internal_link.txt, external_link.txt, and external_broken.txt
@@ -1139,7 +1139,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
 
             [hooks]
             post_install = "drift_hooks/fail.sh"
@@ -1180,7 +1180,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Pre-set state to 'installing'
@@ -1222,7 +1222,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg_name}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         with open(pkg_install_dir / "static.txt", "w", encoding="utf-8") as f:
@@ -1258,7 +1258,7 @@ class TestInstallRepo(unittest.TestCase):
         name = "{pkg_disabled}"
         install_method = "copy"
         enable_install = false
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         res_disabled = run_primitive_5_install(
@@ -1318,7 +1318,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         pre_install = "drift_hooks/pre_hook.sh"
@@ -1366,7 +1366,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         # 2. .drift_ignore and files
@@ -1427,7 +1427,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "file_a.txt").write_text("content A", encoding="utf-8")
@@ -1463,7 +1463,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "file_a.txt").write_text("content A", encoding="utf-8")
@@ -1494,7 +1494,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         sub_dir = pkg_install_dir / "my_dir"
@@ -1538,7 +1538,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "app.conf").write_text("setting=new\n", encoding="utf-8")
@@ -1596,7 +1596,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "config.json").write_text('{"version": 1}', encoding="utf-8")
@@ -1617,7 +1617,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
@@ -1651,7 +1651,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "settings.ini").write_text("key=value1\n", encoding="utf-8")
@@ -1674,7 +1674,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         res2 = run_primitive_5_install(self.workspace_config, [pkg])
@@ -1707,7 +1707,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         pre_install = "drift_hooks/missing.sh"
@@ -1731,7 +1731,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_install = "drift_hooks/hook_dir"
@@ -1753,7 +1753,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """)
 
         # Set up conflicts on system target:
@@ -2073,7 +2073,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """)
 
         # Set up conflicts on system target:
@@ -2433,7 +2433,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "dot-bashrc").write_text("export FOO=1\n", encoding="utf-8")
@@ -2508,7 +2508,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         pre_install = "drift_hooks/pre_install.sh"
@@ -2564,7 +2564,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         # 1. Existing host dotfiles that collide and will be backed up into overwritten/
@@ -2615,7 +2615,7 @@ class TestInstallRepo(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """, encoding="utf-8")
             for f in files:
                 f_path = pkg_dir / f
@@ -2661,7 +2661,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg_inst}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_inst_dir / "dot-app" / "app.conf").parent.mkdir(parents=True, exist_ok=True)
         (pkg_inst_dir / "dot-app" / "app.conf").write_text("installed app conf", encoding="utf-8")
@@ -2685,7 +2685,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg_new}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_new_dir / "dot-app" / "app.conf").parent.mkdir(parents=True, exist_ok=True)
         (pkg_new_dir / "dot-app" / "app.conf").write_text("conflicting app conf", encoding="utf-8")
@@ -2716,7 +2716,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{target_1}"
+        target_directory = "{target_1.as_posix()}"
         """, encoding="utf-8")
         (pkg_dir / "file1.txt").write_text("content 1", encoding="utf-8")
         (pkg_dir / "sub" / "file2.txt").parent.mkdir(parents=True, exist_ok=True)
@@ -2739,7 +2739,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{target_2}"
+        target_directory = "{target_2.as_posix()}"
         """, encoding="utf-8")
 
         # Deploy with reinstall=False (migration automatically forces full deployment to target_2)
@@ -2777,7 +2777,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{target_1}"
+        target_directory = "{target_1.as_posix()}"
         """, encoding="utf-8")
         (pkg_dir / "config.conf").write_text("test config", encoding="utf-8")
         self.workspace_config.packages_enable[pkg] = True
@@ -2791,7 +2791,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{target_2}"
+        target_directory = "{target_2.as_posix()}"
         """, encoding="utf-8")
 
         # Dry-run deployment
@@ -2953,7 +2953,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (install_pkg_dir / "app.conf").write_text("setting = 1\n", encoding="utf-8")
 
@@ -2997,7 +2997,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (install_pkg_dir / "test.conf").write_text("test data\n", encoding="utf-8")
 
@@ -3041,7 +3041,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         pre_install = "drift_hooks/non_existent_hook.sh"
@@ -3651,7 +3651,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "pkg_a"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         enable_install = true
         """, encoding="utf-8")
         (pkg_a_dir / "file_a.txt").write_text("content a\n", encoding="utf-8")
@@ -3663,7 +3663,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "pkg_b"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         enable_install = true
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("content b\n", encoding="utf-8")
@@ -3718,7 +3718,7 @@ class TestInstallRepo(unittest.TestCase):
         [package]
         name = "pkg_reinstall"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         enable_install = true
         """, encoding="utf-8")
         (pkg_dir / "file.txt").write_text("reinstall content\\n", encoding="utf-8")
@@ -3789,7 +3789,7 @@ class TestInstallDependencies(unittest.TestCase):
             "[package]",
             f'name = "{pkg_name}"',
             'install_method = "copy"',
-            f'target_directory = "{target_directory}"',
+            f'target_directory = "{Path(target_directory).as_posix()}"',
             "enable_install = true",
         ]
         if dependencies:
@@ -3933,7 +3933,7 @@ class TestInstallDependencies(unittest.TestCase):
         # pkg_a is installed on machine, but has enable_install = false in its config
         self._create_install_package("pkg_a")
         (self.install_dir / "pkg_a" / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
-            f'[package]\nname = "pkg_a"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir}"\nenable_install = false\n',
+            f'[package]\nname = "pkg_a"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir.as_posix()}"\nenable_install = false\n',
             encoding="utf-8"
         )
         registry = load_state_registry(self.install_dir / "state.toml")

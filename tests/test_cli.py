@@ -5,6 +5,7 @@ import tempfile
 import unittest
 import subprocess
 from io import StringIO
+from pathlib import Path
 from contextlib import nullcontext
 from unittest.mock import patch
 
@@ -32,7 +33,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             [workspace]
             source_directory = "src"
             render_directory = "render"
-            default_target_directory = "{self.system_target_dir}"
+            default_target_directory = "{Path(self.system_target_dir).as_posix()}"
             default_install_method = "copy"
 
             [packages.enable]
@@ -57,7 +58,6 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
                 f.write(f"Hello from {pkg}")
 
         from drift.primitives.workspace_repair import repair_drift_workspace
-        from pathlib import Path
         repair_drift_workspace(Path(self.drift_root))
 
     def tearDown(self) -> None:
@@ -138,7 +138,6 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
 
     def test_cli_render_failure_does_not_print_success_message(self) -> None:
         """Verifies that when rendering fails, CLI exits with error code and does not print success."""
-        from pathlib import Path
         # Enable var render engine in drift_workspace.local.toml
         (Path(self.drift_root) / "config" / "drift_workspace.local.toml").write_text("""
         [render.var]
@@ -268,7 +267,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             [package]
             name = "pkg_a"
             enable_render = true
-            target_directory = "{target_dir}"
+            target_directory = "{Path(target_dir).as_posix()}"
             """)
 
         # 1. Initialize, render, stage, then apply
@@ -326,7 +325,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             name = "pkg_a"
             enable_render = true
             install_method = "copy"
-            target_directory = "{target_dir}"
+            target_directory = "{Path(target_dir).as_posix()}"
             """)
 
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
@@ -602,7 +601,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             [package]
             name = "pkg_a"
             enable_render = true
-            target_directory = "{target_dir}"
+            target_directory = "{Path(target_dir).as_posix()}"
             """)
 
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
@@ -634,7 +633,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             [package]
             name = "pkg_a"
             enable_render = true
-            target_directory = "{target_dir}"
+            target_directory = "{Path(target_dir).as_posix()}"
             """)
 
         with patch("sys.stdout", StringIO()), patch("sys.stderr", StringIO()):
@@ -814,7 +813,7 @@ class TestCLI(TestCaseUtilityMixin, unittest.TestCase):
             [package]
             name = "pkg_a"
             enable_render = true
-            target_directory = "{target_dir}"
+            target_directory = "{Path(target_dir).as_posix()}"
             """)
 
         # Execute full real pipeline once so all layers are synchronized and committed clean

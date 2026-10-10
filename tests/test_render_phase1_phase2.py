@@ -478,7 +478,7 @@ def configure_package(context):
             [package]
             name = "pkg_templated"
             enable_render = true
-            target_directory = "{target_dir}"
+            target_directory = "{target_dir.as_posix()}"
             """, encoding="utf-8")
 
             # 2. Package payload file templated with envsubst

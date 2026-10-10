@@ -136,7 +136,7 @@ name = "failing_pkg"
 enable_render = true
 enable_install = true
 install_method = "copy"
-target_directory = "{custom_target}"
+target_directory = "{custom_target.as_posix()}"
 
 [hooks]
 health = "drift_hooks/probe.sh"
@@ -170,7 +170,7 @@ name = "status_pkg"
 enable_render = true
 enable_install = true
 install_method = "copy"
-target_directory = "{custom_target}"
+target_directory = "{custom_target.as_posix()}"
 """, encoding="utf-8")
 
         # Deploy with custom target

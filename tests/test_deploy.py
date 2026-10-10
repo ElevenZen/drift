@@ -55,7 +55,7 @@ source_directory = "src"
 render_directory = "render"
 install_directory = "install"
 backup_directory = "backup"
-default_target_directory = "{self.system_target_dir}"
+default_target_directory = "{self.system_target_dir.as_posix()}"
 default_install_method = "copy"
 
 [packages.enable]
@@ -80,7 +80,7 @@ pkg_a = true
 [package]
 name = "pkg_a"
 install_method = "copy"
-target_directory = "{self.system_target_dir}"
+target_directory = "{self.system_target_dir.as_posix()}"
 """, encoding="utf-8")
 
         # Create a sample raw config file
@@ -260,7 +260,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_update = "drift_hooks/post_update.sh"
@@ -313,7 +313,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_update = "drift_hooks/post_update.sh"
@@ -356,7 +356,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_b"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("pkg_b initial content", encoding="utf-8")
 
@@ -415,7 +415,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
 
         [hooks]
         post_install = "drift_hooks/post_install.sh"
@@ -460,7 +460,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["conf.d"]
         """, encoding="utf-8")
 
@@ -618,7 +618,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
@@ -662,7 +662,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
 
@@ -733,7 +733,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_b"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
 
@@ -742,7 +742,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_a"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         # Initial deployment of both
@@ -794,7 +794,7 @@ target_directory = "{self.system_target_dir}"
         [package]
         name = "pkg_b"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_b_dir / "file_b.txt").write_text("content b", encoding="utf-8")
 

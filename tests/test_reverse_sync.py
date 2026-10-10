@@ -83,7 +83,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected files in local DB
@@ -112,7 +112,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected files in local DB
@@ -142,7 +142,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected files in local DB
@@ -171,7 +171,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected files in local DB
@@ -201,7 +201,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             fully_controlled_dirs = ["nested_sub"]
             """)
 
@@ -232,7 +232,7 @@ class TestReverseSync(unittest.TestCase):
             name = "{pkg}"
             enable_install = false
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected files in local DB
@@ -260,7 +260,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected file in local DB
@@ -291,7 +291,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # Setup expected file in local DB
@@ -319,7 +319,7 @@ class TestReverseSync(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             fully_controlled_dirs = ["file_fcd", "broken_link_fcd"]
             """)
 
@@ -355,7 +355,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         drift_ignore_path = pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME
@@ -396,7 +396,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / DRIFT_IGNORE_FILE_NAME).write_text("ignored_hook_present.sh\nignored_hook_missing_on_target.sh\n", encoding="utf-8")
@@ -454,7 +454,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["themes"]
         """, encoding="utf-8")
 
@@ -495,7 +495,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["dot-config/app/plugins", ".config/app/themes"]
         """, encoding="utf-8")
 
@@ -533,7 +533,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
 
@@ -576,7 +576,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["controlled_zone"]
         """, encoding="utf-8")
 
@@ -619,7 +619,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "symlink"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
 
@@ -663,7 +663,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         # 1. Setup tracked files in install/ with 'dot-' prefixes
@@ -857,7 +857,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
 
@@ -904,7 +904,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
 
@@ -999,7 +999,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["plugins"]
         """, encoding="utf-8")
 
@@ -1033,7 +1033,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = ["config"]
         """, encoding="utf-8")
 
@@ -1076,7 +1076,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         (pkg_install_dir / "tracked.txt").write_text("local", encoding="utf-8")
@@ -1102,7 +1102,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = [".config/my_app"]
         """, encoding="utf-8")
 
@@ -1133,7 +1133,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = [".config/my_app"]
         """, encoding="utf-8")
 
@@ -1164,7 +1164,7 @@ class TestReverseSync(unittest.TestCase):
         [package]
         name = "{pkg}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         fully_controlled_dirs = [".config/my_app"]
         """, encoding="utf-8")
 

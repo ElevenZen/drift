@@ -157,8 +157,8 @@ def render_template(
     )
     cmd = (
         engine_config.render_command
-        .replace("%i", str(resolved_input_file))
-        .replace("%s", str(template_file_path))
+        .replace("%i", resolved_input_file.as_posix())
+        .replace("%s", template_file_path.as_posix())
     )
 
     try:

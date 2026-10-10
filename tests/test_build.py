@@ -17,13 +17,14 @@ class TestBuildArtifacts(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            zipapp_path = temp_path / "drift_test_app"
+            zipapp_path = temp_path / "drift_test_app.pyz"
 
             # 1. Create zipapp
+            interpreter = "/usr/bin/env python3" if sys.platform != "win32" else None
             zipapp.create_archive(
                 source=src_dir,
                 target=zipapp_path,
-                interpreter="/usr/bin/env python3",
+                interpreter=interpreter,
                 main="drift.cli:main"
             )
             self.assertTrue(zipapp_path.exists())
@@ -32,6 +33,7 @@ class TestBuildArtifacts(unittest.TestCase):
             # 2. Test execution of --help via zipapp without PYTHONPATH
             env = os.environ.copy()
             env.pop("PYTHONPATH", None)
+            env["PYTHONIOENCODING"] = "utf-8"
             env["GIT_AUTHOR_NAME"] = "Drift Test"
             env["GIT_AUTHOR_EMAIL"] = "test@drift.local"
             env["GIT_COMMITTER_NAME"] = "Drift Test"
@@ -44,7 +46,7 @@ class TestBuildArtifacts(unittest.TestCase):
                 env=env
             )
             self.assertEqual(res_help.returncode, 0)
-            self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", res_help.stdout)
+            self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", res_help.stdout or "")
 
             # 3. Test help documentation loading from inside zipapp
             res_doc = subprocess.run(
@@ -73,7 +75,7 @@ class TestBuildArtifacts(unittest.TestCase):
             self.assertTrue((workspace_dir / "config" / "drift_workspace.toml").exists())
 
             res_new = subprocess.run(
-                [sys.executable, str(zipapp_path), "new", "test_pkg", "--target", str(target_dir)],
+                [sys.executable, str(zipapp_path), "new", "test_pkg", "--target", target_dir.as_posix()],
                 cwd=str(workspace_dir),
                 capture_output=True,
                 text=True,

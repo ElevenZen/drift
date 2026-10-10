@@ -130,7 +130,7 @@ class TestNewPackage(unittest.TestCase):
         content_custom = get_default_package_config_content(
             package_name="zsh_pkg",
             install_method=InstallMethod.COPY,
-            target_directory="/etc/zsh"
+            target_directory=Path("/etc/zsh")
         )
         self.assertIn("# src/zsh_pkg/drift_package.toml", content_custom)
         self.assertIn('install_method = "copy"', content_custom)

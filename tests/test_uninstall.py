@@ -76,7 +76,7 @@ class TestUninstall(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
             
         # 2. Setup system target with a symlink (simulating deployment)
@@ -131,7 +131,7 @@ class TestUninstall(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
             
         # 2. Setup system target (simulating deployed file)
@@ -218,7 +218,7 @@ class TestUninstall(unittest.TestCase):
             [package]
             name = "{pkg}"
             install_method = "symlink"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
             
         # 2. Setup system target with a symlink (simulating deployment)

@@ -49,7 +49,7 @@ class TestPackageHealth(unittest.TestCase):
 
         (self.config_dir / "drift_workspace.toml").write_text(f"""
 [workspace]
-default_target_directory = "{self.system_target_dir}"
+default_target_directory = "{self.system_target_dir.as_posix()}"
 [packages]
 [packages.enable]
 DEFAULT = true

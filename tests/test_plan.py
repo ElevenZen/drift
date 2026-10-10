@@ -86,7 +86,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         enable_render = true
         enable_install = true
         install_method = "{install_method}"
-        target_directory = "{target_dir}"
+        target_directory = "{target_dir.as_posix()}"
         dependencies = [{dep_str}]
         """
         (pkg_dir / "drift_package.toml").write_text(config_text, encoding="utf-8")
@@ -147,7 +147,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         ws_toml += f"""
         [render.envst]
         suffix = "envst"
-        input_file = "{self.config_dir / 'env.sh'}"
+        input_file = "{(self.config_dir / 'env.sh').as_posix()}"
         render_command = "bash -c 'source %i && envsubst < %s'"
         """
         (self.config_dir / "drift_workspace.toml").write_text(ws_toml, encoding="utf-8")
@@ -165,7 +165,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         enable_render = true
         enable_install = true
         install_method = "copy"
-        target_directory = "{target_dir}"
+        target_directory = "{target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_dir / "app.envst.conf").write_text("env=${APP_ENV}\n", encoding="utf-8")
 
@@ -491,7 +491,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         name = "pkg_fail"
         enable_render = true
         enable_install = true
-        target_directory = "{self.host_target / 'pkg_fail'}"
+        target_directory = "{(self.host_target / 'pkg_fail').as_posix()}"
 
         [render.broken]
         suffix = "fail"
@@ -545,7 +545,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         name = "{pkg_name}"
         enable_render = true
         enable_install = true
-        target_directory = "{target_dir}"
+        target_directory = "{target_dir.as_posix()}"
 
         [hooks]
         pre_source = "drift_hooks/pre_source.sh"
@@ -554,7 +554,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         hooks_dir = pkg_dir / "drift_hooks"
         hooks_dir.mkdir(parents=True, exist_ok=True)
         hook_script = hooks_dir / "pre_source.sh"
-        hook_script.write_text(f"""#!/bin/sh\necho "hook_ran" > "{marker_file}"\n""", encoding="utf-8")
+        hook_script.write_text(f"""#!/bin/sh\necho "hook_ran" > "{marker_file.as_posix()}"\n""", encoding="utf-8")
         hook_script.chmod(0o755)
 
         workspace_config = load_workspace_config(self.drift_root)
@@ -706,7 +706,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
         # Override target directory in both packages to collide
         for p in ("pkg_col1", "pkg_col2"):
             cfg = (self.src_dir / p / "drift_package.toml").read_text(encoding="utf-8")
-            cfg = cfg.replace(f'target_directory = "{self.host_target / p}"', f'target_directory = "{shared_target}"')
+            cfg = cfg.replace(f'target_directory = "{(self.host_target / p).as_posix()}"', f'target_directory = "{shared_target.as_posix()}"')
             (self.src_dir / p / "drift_package.toml").write_text(cfg, encoding="utf-8")
 
         workspace_config = load_workspace_config(self.drift_root)
@@ -932,7 +932,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         # Override target directory of pkg_bad_target to resolve inside drift_root (InstallCollisionError)
         bad_cfg = (self.src_dir / "pkg_bad_target" / "drift_package.toml").read_text(encoding="utf-8")
-        bad_cfg = bad_cfg.replace(f'target_directory = "{self.host_target / "pkg_bad_target"}"', f'target_directory = "{self.drift_root / "invalid"}"')
+        bad_cfg = bad_cfg.replace(f'target_directory = "{(self.host_target / "pkg_bad_target").as_posix()}"', f'target_directory = "{(self.drift_root / "invalid").as_posix()}"')
         (self.src_dir / "pkg_bad_target" / "drift_package.toml").write_text(bad_cfg, encoding="utf-8")
 
         workspace_config = load_workspace_config(self.drift_root)
@@ -960,7 +960,7 @@ class TestPlan(TestCaseUtilityMixin, unittest.TestCase):
 
         for p in ("pkg_c1", "pkg_c2"):
             cfg = (self.src_dir / p / "drift_package.toml").read_text(encoding="utf-8")
-            cfg = cfg.replace(f'target_directory = "{self.host_target / p}"', f'target_directory = "{shared_target}"')
+            cfg = cfg.replace(f'target_directory = "{(self.host_target / p).as_posix()}"', f'target_directory = "{shared_target.as_posix()}"')
             (self.src_dir / p / "drift_package.toml").write_text(cfg, encoding="utf-8")
 
         workspace_config = load_workspace_config(self.drift_root)

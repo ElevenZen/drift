@@ -56,7 +56,7 @@ class TestRollback(unittest.TestCase):
             [package]
             name = "pkg_a"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # 2. Setup initial committed state in install/
@@ -67,7 +67,7 @@ class TestRollback(unittest.TestCase):
             [package]
             name = "pkg_a"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
         with open(self.pkg_a_install / "file.txt", "w", encoding="utf-8") as f:
             f.write("clean content")
@@ -142,7 +142,7 @@ class TestRollback(unittest.TestCase):
             [package]
             name = "{pkg_first}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
 
         # 2. Setup in install/ (uncommitted, first-time stage)
@@ -153,7 +153,7 @@ class TestRollback(unittest.TestCase):
             [package]
             name = "{pkg_first}"
             install_method = "copy"
-            target_directory = "{self.system_target_dir}"
+            target_directory = "{self.system_target_dir.as_posix()}"
             """)
         with open(pkg_install / "app_config.json", "w", encoding="utf-8") as f:
             f.write('{"installed": true}')
@@ -224,7 +224,7 @@ class TestRollback(unittest.TestCase):
         [package]
         name = "{pkg_first}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
 
         pkg_install = self.install_dir / pkg_first
@@ -233,7 +233,7 @@ class TestRollback(unittest.TestCase):
         [package]
         name = "{pkg_first}"
         install_method = "copy"
-        target_directory = "{self.system_target_dir}"
+        target_directory = "{self.system_target_dir.as_posix()}"
         """, encoding="utf-8")
         (pkg_install / "brand_new.txt").write_text("brand new", encoding="utf-8")
 
@@ -402,7 +402,7 @@ class TestRollback(unittest.TestCase):
             pkg_install = self.install_dir / pkg
             (pkg_install / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
             with open(pkg_install / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME, "w", encoding="utf-8") as f:
-                f.write(f'[package]\nname = "{pkg}"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir}"\n')
+                f.write(f'[package]\nname = "{pkg}"\ninstall_method = "copy"\ntarget_directory = "{self.system_target_dir.as_posix()}"\n')
             with open(pkg_install / f"{pkg}.txt", "w", encoding="utf-8") as f:
                 f.write(f"{pkg} clean")
 
