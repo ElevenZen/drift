@@ -502,6 +502,104 @@ class TestWorkspaceDeployPreview(unittest.TestCase):
         self.assertIn("SKIP_IDENTICAL", verbose_deploy)
         self.assertIn("[INFO]", verbose_deploy)
 
+    def test_package_deploy_preview_format_text_hooks_and_staging_matrix(self) -> None:
+        """Verifies format_text displays hooks and install block when package is staged, even without host file mutations."""
+        action_skip = FileAction(
+            action_type=FileActionType.SKIP_IDENTICAL,
+            src_path=Path("/render/pkg/file.txt"),
+            dst_path=Path("/target/file.txt"),
+        )
+        action_stage = FileAction(
+            action_type=FileActionType.CREATE_COPY,
+            src_path=Path("/render/pkg/.drift/hooks/post_install.sh"),
+            dst_path=Path("/install/pkg/.drift/hooks/post_install.sh"),
+        )
+
+        stage_plan_with_changes = PackageStagePlan(
+            package="pkg_hooks",
+            actions=[action_stage],
+        )
+        stage_plan_no_changes = PackageStagePlan(
+            package="pkg_hooks",
+            actions=[action_skip],
+        )
+        install_plan_no_mutations_with_hooks = PackageInstallPlan(
+            package="pkg_hooks",
+            target_directory="/target",
+            actions=[action_skip],
+            hooks_to_trigger=["post_install", "post_update"],
+            can_skip=True,
+        )
+        install_plan_no_mutations_no_hooks = PackageInstallPlan(
+            package="pkg_hooks",
+            target_directory="/target",
+            actions=[action_skip],
+            hooks_to_trigger=[],
+            can_skip=True,
+        )
+        install_plan_with_mutations = PackageInstallPlan(
+            package="pkg_hooks",
+            target_directory="/target",
+            actions=[
+                FileAction(
+                    action_type=FileActionType.UPDATE_COPY,
+                    src_path=Path("/install/pkg/file.txt"),
+                    dst_path=Path("/target/file.txt"),
+                )
+            ],
+            hooks_to_trigger=["post_install"],
+            can_skip=False,
+        )
+
+        # Case A: Staging has changes, 0 host mutations, but hooks present -> Must display Install Actions and Hooks
+        preview_a = PackageDeployPreview(
+            package_name="pkg_hooks",
+            stage_plan=stage_plan_with_changes,
+            install_plan=install_plan_no_mutations_with_hooks,
+        )
+        text_a = preview_a.format_text(verbose=False)
+        self.assertIn("Install Actions", text_a)
+        self.assertIn("Hooks: post_install, post_update", text_a)
+        self.assertIn("0 actions", text_a)
+
+        # Case B: Staging has changes, 0 host mutations, NO hooks -> Install Actions cleanly suppressed in non-verbose
+        preview_b = PackageDeployPreview(
+            package_name="pkg_hooks",
+            stage_plan=stage_plan_with_changes,
+            install_plan=install_plan_no_mutations_no_hooks,
+        )
+        text_b = preview_b.format_text(verbose=False)
+        self.assertNotIn("Install Actions", text_b)
+        self.assertNotIn("Hooks:", text_b)
+
+        # Case C: Staging has NO changes, 0 host mutations, hooks defined (Untouched package) -> Suppressed
+        preview_c = PackageDeployPreview(
+            package_name="pkg_hooks",
+            stage_plan=stage_plan_no_changes,
+            install_plan=install_plan_no_mutations_with_hooks,
+        )
+        text_c = preview_c.format_text(verbose=False)
+        self.assertNotIn("Install Actions", text_c)
+        self.assertNotIn("Hooks:", text_c)
+        self.assertIn("UNCHANGED", text_c)
+
+        # Case D: Host mutations present -> Install Actions and Hooks displayed regardless of stage plan
+        preview_d = PackageDeployPreview(
+            package_name="pkg_hooks",
+            stage_plan=stage_plan_no_changes,
+            install_plan=install_plan_with_mutations,
+        )
+        text_d = preview_d.format_text(verbose=False)
+        self.assertIn("Install Actions", text_d)
+        self.assertIn("Hooks: post_install", text_d)
+        self.assertIn("1 action", text_d)
+
+        # Case E: Verbose mode -> displays install actions for untouched package with skip actions
+        text_c_verbose = preview_c.format_text(verbose=True)
+        self.assertIn("Install Actions", text_c_verbose)
+        self.assertIn("Hooks: post_install", text_c_verbose)
+        self.assertIn("SKIP_IDENTICAL", text_c_verbose)
+
 
 class TestFilterDisplayActions(unittest.TestCase):
     """Exhaustive tests for filter_display_actions and is_mutating_action predicates."""

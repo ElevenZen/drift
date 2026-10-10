@@ -1314,7 +1314,7 @@ class PackageDeployPreview(SerializableModel):
             lines.append(f"  ⚠️  Drift: {self.drift_warning}")
 
         def len_actions(actions: Optional[List[FileAction]]) -> str:
-            return (f"{len(actions)} {'actions' if len(actions) > 1 else 'action'}"
+            return (f"{len(actions)} {'action' if len(actions) == 1 else 'actions'}"
                     if actions is not None else "empty")
 
         if self.reverse_sync_plan and (verbose or self.reverse_sync_plan.has_changes):
@@ -1342,7 +1342,9 @@ class PackageDeployPreview(SerializableModel):
 
         if self.install_plan:
             display_install_actions = filter_display_actions(self.install_plan.actions, verbose=verbose)
-            if verbose or self.install_plan.has_changes:
+            will_deploy = self.stage_plan is not None and self.stage_plan.has_changes
+            has_hooks = bool(self.install_plan.hooks_to_trigger)
+            if verbose or self.install_plan.has_changes or (will_deploy and has_hooks):
                 lines.append(f"  🚀 Install Actions: ({len_actions(display_install_actions)})")
                 if display_install_actions:
                     lines.extend(f"  {format_action_line(a)}" for a in display_install_actions)
