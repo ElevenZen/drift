@@ -54,6 +54,7 @@ class TestIntegration(unittest.TestCase):
         from drift.primitives.install_repo import run_primitive_5_install
         from drift.primitives.uninstall_repo import run_primitive_7_uninstall_packages, UninstallOptions
         
+        self.workspace_config.settings.enable_symlink_on_windows = True
         pkg = "pkg_symlink"
         # Manually enable the package in the loaded config object
         self.workspace_config.packages_enable[pkg] = True
@@ -126,6 +127,32 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(target_file.exists())
         self.assertFalse(target_file.is_symlink())
         self.assertEqual(target_file.read_text(encoding="utf-8"), "original config")
+
+    def test_lifecycle_symlink_demoted_to_copy_on_windows_by_default(self):
+        """Scenario: Symlink install_method is safely demoted to physical copy on Windows when enable_symlink_on_windows is False."""
+        from unittest.mock import patch
+        from drift.primitives.new_package import run_primitive_10_create_new_package
+        from drift.render.render_package import run_primitive_2_render_packages
+        from drift.primitives.stage_repo import run_primitive_4_stage_render_to_install
+        from drift.primitives.install_repo import run_primitive_5_install
+
+        pkg = "pkg_win_demote"
+        self.workspace_config.packages_enable[pkg] = True
+        self.workspace_config.settings.enable_symlink_on_windows = False
+
+        run_primitive_10_create_new_package(self.workspace_config, pkg)
+        (self.source_dir / pkg / "app.txt").write_text("hello windows")
+
+        run_primitive_2_render_packages(self.workspace_config)
+        run_primitive_4_stage_render_to_install(self.workspace_config)
+
+        with patch("sys.platform", "win32"):
+            run_primitive_5_install(self.workspace_config)
+
+        target_file = self.system_target_dir / "app.txt"
+        self.assertTrue(target_file.is_file())
+        self.assertFalse(target_file.is_symlink())
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "hello windows")
 
     def test_orphan_garbage_collection(self):
         """Scenario: Deploying a package, then disabling it and running gc to trigger cleanup."""

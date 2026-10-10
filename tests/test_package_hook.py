@@ -119,9 +119,8 @@ def configure_package(context):
 def configure_package(context):
     cfg = context.config
     pkg = cfg.setdefault("package", {})
-    # Disable install if os is not windows (test machine is linux/darwin)
-    if context.os != "windows":
-        pkg["enable_install"] = False
+    # Disable install via hook
+    pkg["enable_install"] = False
     return cfg
 """, encoding="utf-8")
 

@@ -497,9 +497,16 @@ class PackageConfig(AlwaysTruthy):
         return self.package.target_directory or workspace_config.default_target_path
 
     def get_install_method(self, workspace_config: WorkspaceConfig) -> InstallMethod:
-        if sys.platform == "win32":
+        method = self.package.install_method or workspace_config.workspace.default_install_method
+        if sys.platform == "win32" and not workspace_config.settings.enable_symlink_on_windows:
+            if method == InstallMethod.SYMLINK:
+                logger.debug(
+                    f"Demoting install_method from 'symlink' to 'copy' for package '{self.name}' "
+                    "on Windows because enable_symlink_on_windows is false."
+                )
             return InstallMethod.COPY
-        return self.package.install_method or workspace_config.workspace.default_install_method
+
+        return method
 
     def get_render_engines(self, workspace_config: WorkspaceConfig) -> RenderEngineRegistry:
         """Computes effective render engines by overlaying package engines onto workspace engines."""

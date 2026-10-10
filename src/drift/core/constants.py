@@ -184,10 +184,6 @@ class InstallMethod(str, Enum):
         raise ValueError(f"Unknown install method '{val}'. Valid choices: 'symlink', 'copy'.")
 
 
-# Global default package installation method (SYMLINK)
-DEFAULT_INSTALL_METHOD: InstallMethod = InstallMethod.DEFAULT
-
-
 class BackupSubfolder(str, Enum):
     """Subfolders within backup/<pkg>/ for different backup categories."""
     OVERWRITTEN = "overwritten"
@@ -491,7 +487,7 @@ def get_default_internal_gitignore_content() -> str:
 
 def get_default_package_config_content(
     package_name: str,
-    install_method: InstallMethod = DEFAULT_INSTALL_METHOD,
+    install_method: InstallMethod = InstallMethod.DEFAULT,
     target_directory: Optional[Path] = None,
     config_filename: str = PACKAGE_CONFIG_FILE_NAME,
 ) -> str:

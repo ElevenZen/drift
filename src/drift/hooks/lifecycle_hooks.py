@@ -39,7 +39,7 @@ import subprocess
 import tempfile
 from contextlib import nullcontext
 from dataclasses import dataclass, replace
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import cast, Optional, List, Union, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -112,8 +112,9 @@ def build_hook_execution_command_win32(hook_path: Path) -> List[str]:
     elif ext == ".py":
         return [sys.executable, str(hook_path)]
     elif ext in (".sh", ".bash"):
-        # Fallback to Git Bash / bash if present in PATH (use POSIX slashes for bash)
-        return ["bash.exe", hook_path.as_posix()]
+        # Convert path to forward slashes for the Unix argument convention of bash,
+        # preventing Windows backslashes from being treated as shell escape sequences (e.g. \n, \t).
+        return ["bash.exe", PureWindowsPath(hook_path).as_posix()]
     else:
         return [str(hook_path)]
 

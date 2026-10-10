@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union, Tuple, TYPE_CHECKING, Iterable
 from datetime import datetime
-from .constants import DEFAULT_INSTALL_METHOD, InstallMethod
+from .constants import InstallMethod
 from .folder_diff import FolderDiff
 from ..utils.git_utils import GitStatusDiff
 from ..utils.config_utils import partition
@@ -388,7 +388,7 @@ class PackageInstallPlan(SerializableModel):
     """Structured install plan detailing all planned filesystem operations and lifecycle hooks."""
     package: str = ""
     target_directory: str = ""
-    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    install_method: InstallMethod = InstallMethod.DEFAULT
     actions: List[FileAction] = field(default_factory=list)
     hooks_to_trigger: List[str] = field(default_factory=list)
     can_skip: bool = False
@@ -464,7 +464,7 @@ class PackageUninstallPlan(SerializableModel):
     """Structured uninstallation plan detailing all planned filesystem operations and lifecycle hooks."""
     package: str = ""
     target_directory: str = ""
-    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    install_method: InstallMethod = InstallMethod.DEFAULT
     detach_mode: bool = False
     actions: List[FileAction] = field(default_factory=list)
     hooks_to_trigger: List[str] = field(default_factory=list)
@@ -789,7 +789,7 @@ class NewPackageResult(SerializableModel):
     package_dir: str = ""
     config_file: str = ""
     target_directory: str = ""
-    install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    install_method: InstallMethod = InstallMethod.DEFAULT
     error_message: Optional[str] = None
 
 

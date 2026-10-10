@@ -19,7 +19,7 @@ from drift.core.constants import (
     BackupSubfolder,
     set_test_mode,
 )
-from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig
+from drift.config.workspace_config import WorkspaceConfig, WorkspaceSectionConfig, SettingsConfig
 from drift.config.package_config import PackageConfig, PackageSectionConfig
 from drift.config.package_hooks import PackageHooks
 from drift.hooks.lifecycle_hooks import HookExecFlags
@@ -111,6 +111,7 @@ class TestInstallRepo(unittest.TestCase):
             workspace=WorkspaceSectionConfig(
                 default_target_directory=self.system_target_dir
             ),
+            settings=SettingsConfig(enable_symlink_on_windows=True),
             packages_enable={
                 "pkg_symlink": True,
                 "pkg_copy": True,
@@ -252,6 +253,40 @@ class TestInstallRepo(unittest.TestCase):
         state_file = self.install_dir / "state.toml"
         registry = load_state_registry(state_file)
         self.assertEqual(registry.get_package_state(pkg), "installed")
+
+    def test_install_symlink_demoted_to_copy_on_windows_when_disabled(self) -> None:
+        """Verifies that symlink install_method is demoted to copy on Windows when enable_symlink_on_windows=False."""
+        from drift.primitives.install_repo import run_primitive_5_install
+        pkg = "pkg_symlink_demote"
+        pkg_install_dir = self.install_dir / pkg
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME).mkdir(parents=True, exist_ok=True)
+
+        (pkg_install_dir / DRIFT_INTERNAL_DIR_NAME / PACKAGE_CONFIG_FILE_NAME).write_text(
+            f"""
+            [package]
+            name = "{pkg}"
+            install_method = "symlink"
+            target_directory = "{self.system_target_dir.as_posix()}"
+            """,
+            encoding="utf-8"
+        )
+        (pkg_install_dir / "file.txt").write_text("demoted content", encoding="utf-8")
+
+        ws_config_no_symlink = WorkspaceConfig(
+            drift_root=self.drift_root,
+            workspace=WorkspaceSectionConfig(default_target_directory=self.system_target_dir),
+            settings=SettingsConfig(enable_symlink_on_windows=False),
+            packages_enable={pkg: True},
+            packages_enable_default=False,
+        )
+
+        with patch("sys.platform", "win32"):
+            run_primitive_5_install(ws_config_no_symlink, [pkg])
+
+        target_file = self.system_target_dir / "file.txt"
+        self.assertTrue(target_file.is_file())
+        self.assertFalse(target_file.is_symlink())
+        self.assertEqual(target_file.read_text(encoding="utf-8"), "demoted content")
 
     def test_install_symlink_collision_guard(self) -> None:
         """Verifies Symlink Collision Guard backs up pre-existing physical files at target."""

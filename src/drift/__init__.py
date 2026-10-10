@@ -36,7 +36,6 @@ from .core import (
     PackageStage,
     LineEnding,
     InstallMethod,
-    DEFAULT_INSTALL_METHOD,
     BackupSubfolder,
     DirMode,
     ExitCode,

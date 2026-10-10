@@ -14,7 +14,6 @@ from drift.core.constants import (
     DRIFT_INTERNAL_DIR_NAME,
     DEFAULT_HOOK_TIMEOUT,
     InstallMethod,
-    DEFAULT_INSTALL_METHOD,
     set_test_mode,
 )
 from drift.utils.toml_utils import parse_toml
@@ -1088,23 +1087,39 @@ class TestConfigClasses(unittest.TestCase):
         ws_config = WorkspaceConfig(
             drift_root=Path("/test"),
             workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.SYMLINK),
+            settings=SettingsConfig(enable_symlink_on_windows=False),
+        )
+        ws_config_win_symlink = WorkspaceConfig(
+            drift_root=Path("/test"),
+            workspace=WorkspaceSectionConfig(default_install_method=InstallMethod.SYMLINK),
+            settings=SettingsConfig(enable_symlink_on_windows=True),
         )
         pkg_config = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=InstallMethod.SYMLINK))
+        pkg_config_copy = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=InstallMethod.COPY))
+        pkg_config_none = PackageConfig(PackageSectionConfig(name="test_pkg", install_method=None))
 
-        # On non-Windows, returns symlink
+        # 1. On non-Windows platforms (e.g. Linux), symlink is always preserved
         with patch("sys.platform", "linux"):
             self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.SYMLINK)
+            self.assertEqual(pkg_config_copy.get_install_method(ws_config), InstallMethod.COPY)
+            self.assertEqual(pkg_config_none.get_install_method(ws_config), InstallMethod.SYMLINK)
 
-        # On Windows (win32), always forces copy
+        # 2. On Windows with enable_symlink_on_windows = False (default): demotes symlink to copy
         with patch("sys.platform", "win32"):
             self.assertEqual(pkg_config.get_install_method(ws_config), InstallMethod.COPY)
+            self.assertEqual(pkg_config_copy.get_install_method(ws_config), InstallMethod.COPY)
+            self.assertEqual(pkg_config_none.get_install_method(ws_config), InstallMethod.COPY)
+
+        # 3. On Windows with enable_symlink_on_windows = True: honors symlink
+        with patch("sys.platform", "win32"):
+            self.assertEqual(pkg_config.get_install_method(ws_config_win_symlink), InstallMethod.SYMLINK)
+            self.assertEqual(pkg_config_copy.get_install_method(ws_config_win_symlink), InstallMethod.COPY)
+            self.assertEqual(pkg_config_none.get_install_method(ws_config_win_symlink), InstallMethod.SYMLINK)
 
     def test_install_method_default_and_parsing(self) -> None:
-        """Verifies InstallMethod.DEFAULT, InstallMethod.default(), DEFAULT_INSTALL_METHOD, and from_str defaults."""
+        """Verifies InstallMethod.DEFAULT, InstallMethod.default(), and from_str defaults."""
         self.assertEqual(InstallMethod.DEFAULT, InstallMethod.SYMLINK)
         self.assertEqual(InstallMethod.default(), InstallMethod.SYMLINK)
-        self.assertEqual(DEFAULT_INSTALL_METHOD, InstallMethod.SYMLINK)
-        self.assertEqual(InstallMethod.DEFAULT, DEFAULT_INSTALL_METHOD)
 
         # from_str without argument or None returns DEFAULT
         self.assertEqual(InstallMethod.from_str(), InstallMethod.DEFAULT)
@@ -2205,15 +2220,18 @@ class TestSettingsConfig(unittest.TestCase):
         settings = SettingsConfig()
         self.assertTrue(settings.hook_inject_non_interactive_envs)
         self.assertTrue(settings.ensure_hooks_executable_in_src)
+        self.assertFalse(settings.enable_symlink_on_windows)
 
     def test_settings_config_from_dict(self) -> None:
         from drift.config.workspace_config import SettingsConfig
         s1 = SettingsConfig.from_dict({
             "hook_inject_non_interactive_envs": False,
             "ensure_hooks_executable_in_src": False,
+            "enable_symlink_on_windows": True,
         })
         self.assertFalse(s1.hook_inject_non_interactive_envs)
         self.assertFalse(s1.ensure_hooks_executable_in_src)
+        self.assertTrue(s1.enable_symlink_on_windows)
 
     def test_settings_config_from_dict_aliases(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2233,9 +2251,26 @@ class TestSettingsConfig(unittest.TestCase):
             s_true = SettingsConfig.from_dict({key: "true"})
             self.assertTrue(s_true.ensure_hooks_executable_in_src, f"Failed for string bool key: {key}")
 
+        # Test all 4 aliases of enable/allow_symlink[s]_on_windows
+        for key in (
+            "enable_symlink_on_windows",
+            "enable_symlinks_on_windows",
+            "allow_symlink_on_windows",
+            "allow_symlinks_on_windows",
+        ):
+            s = SettingsConfig.from_dict({key: True})
+            self.assertTrue(s.enable_symlink_on_windows, f"Failed for key: {key}")
+
+            s_str = SettingsConfig.from_dict({key: "true"})
+            self.assertTrue(s.enable_symlink_on_windows, f"Failed for string bool key: {key}")
+
+            s_false = SettingsConfig.from_dict({key: "false"})
+            self.assertFalse(s_false.enable_symlink_on_windows, f"Failed for string bool key: {key}")
+
         s_empty = SettingsConfig.from_dict({})
         self.assertTrue(s_empty.hook_inject_non_interactive_envs)
         self.assertTrue(s_empty.ensure_hooks_executable_in_src)
+        self.assertFalse(s_empty.enable_symlink_on_windows)
 
     def test_settings_config_validation(self) -> None:
         from drift.config.workspace_config import SettingsConfig
@@ -2261,6 +2296,8 @@ class TestSettingsConfig(unittest.TestCase):
             SettingsConfig.from_dict({"hook_inject_non_interactive_envs": "not_a_bool"})
         with self.assertRaises(ConfigError):
             SettingsConfig.from_dict({"ensure_hooks_executable_in_src": "not_a_bool"})
+        with self.assertRaises(ConfigError):
+            SettingsConfig.from_dict({"enable_symlink_on_windows": "not_a_bool"})
 
     def test_workspace_config_with_settings(self) -> None:
         toml_content = """
@@ -2389,6 +2426,8 @@ class TestSettingsConfig(unittest.TestCase):
         self.assertIn("source_directory", WorkspaceSectionConfig.KNOWN_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS)
         self.assertIn("hook_inject_non_interactive_envs", SettingsConfig.KNOWN_KEYS)
+        self.assertIn("enable_symlink_on_windows", SettingsConfig.ENABLE_SYMLINK_ON_WINDOWS_KEYS)
+        self.assertIn("enable_symlink_on_windows", SettingsConfig.KNOWN_KEYS)
         self.assertIn("git_user_name", SettingsConfig.KNOWN_KEYS)
         self.assertIn("git_user_email", SettingsConfig.KNOWN_KEYS)
 

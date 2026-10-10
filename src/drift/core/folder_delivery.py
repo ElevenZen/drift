@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, FrozenSet, Iterable, List, Optional, Sequence, Set, Tuple, Union
 
-from .constants import DEFAULT_INSTALL_METHOD, BackupSubfolder, InstallMethod, DRIFT_KEEP_FILE_NAME
+from .constants import BackupSubfolder, InstallMethod, DRIFT_KEEP_FILE_NAME
 from .exceptions import InstallCollisionError
 from .file_action import (
     FileAction,

@@ -73,7 +73,6 @@ from ..config.package_config import PackageConfig, PackageSectionConfig
 from ..config.package_hooks import PackageHooks
 from ..config.workspace_config import WorkspaceConfig
 from ..core.constants import (
-    DEFAULT_INSTALL_METHOD,
     UNINSTALL_HOOK_NAMES,
     BackupSubfolder,
     InstallMethod,
@@ -178,7 +177,7 @@ class PackageUninstallContext:
         )
         # Sudo resolution: prefer state registry (authoritative historical deployment), fallback to pkg_config
         sudo = pkg_state.sudo if pkg_state.sudo else (pkg_config.package.sudo if pkg_config else False)
-        install_method = pkg_state.install_method or DEFAULT_INSTALL_METHOD
+        install_method = pkg_state.install_method or InstallMethod.DEFAULT
         hooks = pkg_config.hooks if pkg_config and not is_missing else None
 
         return cls(

@@ -43,7 +43,6 @@ from typing import (
 
 from ..core.constants import (
     CONFIG_DIR_NAME,
-    DEFAULT_INSTALL_METHOD,
     DRIFT_INTERNAL_DIR_NAME,
     FORBIDDEN_PACKAGE_NAMES,
     InstallMethod,
@@ -91,15 +90,23 @@ class SettingsConfig(AlwaysTruthy):
         "ensure_hooks_executable_in_source",
         "ensure_hook_executable_in_source",
     )
+    ENABLE_SYMLINK_ON_WINDOWS_KEYS: ClassVar[Tuple[str, ...]] = (
+        "enable_symlink_on_windows",
+        "enable_symlinks_on_windows",
+        "allow_symlink_on_windows",
+        "allow_symlinks_on_windows",
+    )
     KNOWN_KEYS: ClassVar[Tuple[str, ...]] = (
         *HOOK_INJECT_NON_INTERACTIVE_ENVS_KEYS,
         *ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS,
+        *ENABLE_SYMLINK_ON_WINDOWS_KEYS,
         "git_user_name",
         "git_user_email",
     )
 
     hook_inject_non_interactive_envs: bool = True
     ensure_hooks_executable_in_src: bool = True
+    enable_symlink_on_windows: bool = False
     git_user_name: Optional[str] = None
     git_user_email: Optional[str] = None
 
@@ -109,6 +116,8 @@ class SettingsConfig(AlwaysTruthy):
             raise ConfigError(f"hook_inject_non_interactive_envs under [settings] must be a boolean, got {type(self.hook_inject_non_interactive_envs).__name__}.")
         if not isinstance(self.ensure_hooks_executable_in_src, bool):
             raise ConfigError(f"ensure_hooks_executable_in_src under [settings] must be a boolean, got {type(self.ensure_hooks_executable_in_src).__name__}.")
+        if not isinstance(self.enable_symlink_on_windows, bool):
+            raise ConfigError(f"enable_symlink_on_windows under [settings] must be a boolean, got {type(self.enable_symlink_on_windows).__name__}.")
         if self.git_user_name is not None and not isinstance(self.git_user_name, str):
             raise ConfigError(f"git_user_name under [settings] must be a string, got {type(self.git_user_name).__name__}.")
         if self.git_user_email is not None and not isinstance(self.git_user_email, str):
@@ -141,6 +150,11 @@ class SettingsConfig(AlwaysTruthy):
             cls.ENSURE_HOOKS_EXECUTABLE_IN_SRC_KEYS,
             default=True,
         )
+        raw_symlink_win = get_first_from(
+            data,
+            cls.ENABLE_SYMLINK_ON_WINDOWS_KEYS,
+            default=False,
+        )
         git_user_name = data.get("git_user_name")
         git_user_email = data.get("git_user_email")
 
@@ -156,6 +170,12 @@ class SettingsConfig(AlwaysTruthy):
                 default=True,
                 strict=True,
                 context="[settings] ensure_hooks_executable_in_src",
+            ),
+            enable_symlink_on_windows=parse_bool_value(
+                raw_symlink_win,
+                default=False,
+                strict=True,
+                context="[settings] enable_symlink_on_windows",
             ),
             git_user_name=git_user_name,
             git_user_email=git_user_email,
@@ -182,7 +202,7 @@ class WorkspaceSectionConfig(AlwaysTruthy):
     install_directory: Path = Path("install")
     backup_directory: Path = Path("backup")
     default_target_directory: Path = expand_path(Path("~"))
-    default_install_method: InstallMethod = DEFAULT_INSTALL_METHOD
+    default_install_method: InstallMethod = InstallMethod.DEFAULT
     hook_file: Optional[Path] = None
 
     def __init__(
@@ -192,7 +212,7 @@ class WorkspaceSectionConfig(AlwaysTruthy):
         install_directory: Union[Path, str] = Path("install"),
         backup_directory: Union[Path, str] = Path("backup"),
         default_target_directory: Union[Path, str] = Path("~"),
-        default_install_method: InstallMethod = DEFAULT_INSTALL_METHOD,
+        default_install_method: InstallMethod = InstallMethod.DEFAULT,
         hook_file: Optional[Union[Path, str]] = None,
     ) -> None:
         if not isinstance(source_directory, (str, Path)):
@@ -245,7 +265,7 @@ class WorkspaceSectionConfig(AlwaysTruthy):
             message_prefix="Unknown workspace option",
         )
 
-        raw_install_method = data.get("default_install_method", DEFAULT_INSTALL_METHOD)
+        raw_install_method = data.get("default_install_method", InstallMethod.DEFAULT)
         try:
             default_install_method = InstallMethod.from_str(raw_install_method)
         except ValueError as e:
