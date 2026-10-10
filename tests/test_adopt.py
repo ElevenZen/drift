@@ -1,6 +1,7 @@
 """Unit tests for Primitive 7 & Stage 1: drift adopt."""
 
 import os
+import sys
 import shutil
 import subprocess
 import unittest
@@ -738,8 +739,9 @@ class TestAdopt(unittest.TestCase):
         # Run adopt
         run_primitive_adopt_drifts(self.workspace_config, [pkg], interactive=False)
 
-        # Source script should now have executable bit (0o755)
-        self.assertTrue(bool(src_script.stat().st_mode & 0o111))
+        # Source script should now have executable bit (0o755) on POSIX systems
+        if sys.platform != "win32":
+            self.assertTrue(bool(src_script.stat().st_mode & 0o111))
 
         # Check install/ git status - nothing should be staged
         res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
@@ -916,8 +918,9 @@ class TestAdopt(unittest.TestCase):
         self.assertEqual(list(resolved), [pkg])
         self.assertEqual(resolved.status, "SUCCESS")
 
-        # Source template file must now have executable bit set
-        self.assertTrue(bool(src_template.stat().st_mode & 0o111))
+        # Source template file must now have executable bit set on POSIX systems
+        if sys.platform != "win32":
+            self.assertTrue(bool(src_template.stat().st_mode & 0o111))
 
         # install/ repo should be committed and clean
         res = subprocess.run(["git", "status", "--porcelain"], cwd=str(self.install_dir), capture_output=True, text=True)
@@ -1182,7 +1185,8 @@ class TestAdopt(unittest.TestCase):
         self.assertTrue(patch_and_edit(src_file, "patch content", install_file=install_file, accept_conflicts=False, open_editor=False))
         mock_apply.assert_called_once_with(src_file, "patch content", accept_conflicts=False)
         mock_launch.assert_not_called()
-        self.assertTrue(bool(src_file.stat().st_mode & 0o111))
+        if sys.platform != "win32":
+            self.assertTrue(bool(src_file.stat().st_mode & 0o111))
 
         # 2. Conflicted patch with editor
         mock_apply.reset_mock()

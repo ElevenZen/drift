@@ -987,22 +987,22 @@ class TestEnvTopologicalResolutionAndInterpolation(unittest.TestCase):
         """Verifies that workspace drift_workspace.toml resolves [env.default] stitching and interpolates fields."""
         drift_toml = self.config_dir / WORKSPACE_CONFIG_FILE_NAME
         drift_toml.write_text(
-            """
+            f"""
 [workspace]
-source_directory = "${SRC_SUBDIR}"
-default_target_directory = "${TARGET_ROOT}/user_home"
+source_directory = "${{SRC_SUBDIR}}"
+default_target_directory = "${{TARGET_ROOT}}/user_home"
 
 [packages.enable]
 default = true
 
 [env.default]
-ROOT_DIR = "/custom/base"
+ROOT_DIR = "{(self.drift_root / 'custom' / 'base').as_posix()}"
 SRC_SUBDIR = "src_custom"
-TARGET_ROOT = "${ROOT_DIR}/dest"
+TARGET_ROOT = "${{ROOT_DIR}}/dest"
 SocksProxyHost = "127.0.0.1"
 SocksProxyPort = "9050"
-SOCKS_PROXY = "socks5h://${SocksProxyHost}:${SocksProxyPort}"
-ALL_PROXY = "${SOCKS_PROXY}"
+SOCKS_PROXY = "socks5h://${{SocksProxyHost}}:${{SocksProxyPort}}"
+ALL_PROXY = "${{SOCKS_PROXY}}"
 """,
             encoding="utf-8"
         )
@@ -1011,7 +1011,7 @@ ALL_PROXY = "${SOCKS_PROXY}"
         self.assertEqual(ws.env_resolve.effective.default["ALL_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.env_resolve.impact.restricted_env()["SOCKS_PROXY"], "socks5h://127.0.0.1:9050")
         self.assertEqual(ws.workspace.source_directory, Path("src_custom"))
-        self.assertEqual(str(ws.workspace.default_target_directory), "/custom/base/dest/user_home")
+        self.assertEqual(ws.workspace.default_target_directory, (self.drift_root / "custom" / "base" / "dest" / "user_home").resolve())
 
     def test_workspace_config_with_direct_env_raises_error(self) -> None:
         """Verifies that direct key-value pairs in workspace [env] raise ConfigError."""

@@ -437,7 +437,7 @@ class WorkspaceConfig(AlwaysTruthy):
             'drift_package_render_dir': str(render_base / pkg_name),
             'drift_package_install_dir': str(install_base / pkg_name),
             'drift_package_install_method': str(self.workspace.default_install_method),
-            'drift_package_target_dir': str(self.workspace.default_target_directory),
+            'drift_package_target_dir': self.workspace.default_target_directory.as_posix(),
         }
 
     def get_package_names_from_source_dir(self) -> List[str]:

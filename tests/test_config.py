@@ -729,7 +729,7 @@ class TestConfigClasses(unittest.TestCase):
         )
         self.assertEqual(
             build_hook_execution_command_win32(Path(r"C:\scripts\install.sh")),
-            ["bash.exe", r"C:\scripts\install.sh"]
+            ["bash.exe", "C:/scripts/install.sh"]
         )
         self.assertEqual(
             build_hook_execution_command_win32(Path(r"C:\scripts\install.exe")),

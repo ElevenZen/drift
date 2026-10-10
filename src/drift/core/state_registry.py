@@ -265,14 +265,13 @@ def save_state_registry(registry: StateRegistry) -> None:
         lines.append(f"[packages.{pkg}]")
         lines.append(f'state = "{pkg_state.state}"')
         if pkg_state.target_directory is not None:
-            target_str = str(pkg_state.target_directory).replace("\\", "\\\\").replace('"', '\\"')
-            lines.append(f'target_directory = "{target_str}"')
+            lines.append(f'target_directory = "{pkg_state.target_directory.as_posix()}"')
         if pkg_state.last_deployed is not None:
             lines.append(f'last_deployed = "{pkg_state.last_deployed}"')
         if pkg_state.install_method is not None:
             lines.append(f'install_method = "{pkg_state.install_method}"')
         if pkg_state.deployed_files:
-            list_items = ", ".join(f'"{x}"' for x in pkg_state.deployed_files)
+            list_items = ", ".join(f'"{x.as_posix()}"' for x in pkg_state.deployed_files)
             lines.append(f'deployed_files = [{list_items}]')
         if pkg_state.sudo:
             lines.append("sudo = true")

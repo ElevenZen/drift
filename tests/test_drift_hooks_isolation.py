@@ -55,7 +55,7 @@ class TestDriftHooksIsolation(unittest.TestCase):
         workspace_toml = self.config_dir / "drift_workspace.toml"
         workspace_toml.write_text(
             f"""[workspace]
-default_target_directory = "{self.target_dir}"
+default_target_directory = "{self.target_dir.as_posix()}"
 default_install_method = "symlink"
 
 [packages.enable]
@@ -258,7 +258,7 @@ post_install = "drift_hooks/post_install.sh"
         # Create symlink inside drift_hooks/ to payload script
         dh_src = pkg_src / DRIFT_HOOKS_DIR_NAME
         dh_src.mkdir(parents=True)
-        os.symlink("../bin/my_cli", dh_src / "post_install.sh")
+        os.symlink(os.path.join("..", "bin", "my_cli"), dh_src / "post_install.sh")
 
         (pkg_src / "drift_package.toml").write_text(
             """[package]

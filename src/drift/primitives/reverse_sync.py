@@ -128,8 +128,8 @@ def _record_actions_in_results(
                 repo_rel = action.dst_path.relative_to(install_pkg_dir)
             except ValueError:
                 continue
-            synced_str = str(repo_rel)
-            drifted_str = str(encode_dot_prefix(repo_rel))
+            synced_str = repo_rel.as_posix()
+            drifted_str = encode_dot_prefix(repo_rel).as_posix()
             record_sync_result(drifted_str, synced_str, drifted_files, synced_files)
 
 

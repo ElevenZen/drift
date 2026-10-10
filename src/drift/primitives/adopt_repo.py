@@ -1385,10 +1385,10 @@ def execute_package_adopt(
             rel_path, interactive, force=force
         )
         if resolved:
-            adopted_additions.append(str(rel_path))
+            adopted_additions.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
         else:
-            skipped_files.append(str(rel_path))
+            skipped_files.append(rel_path.as_posix())
 
     # 2. Process Deletions
     for rel_path in plan.deletions:
@@ -1396,10 +1396,10 @@ def execute_package_adopt(
             plan.render_engines, plan.package, plan.src_dir_to_render, rel_path, interactive, force=force
         )
         if resolved:
-            adopted_deletions.append(str(rel_path))
+            adopted_deletions.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
         else:
-            skipped_files.append(str(rel_path))
+            skipped_files.append(rel_path.as_posix())
 
     # 3. Process Renames
     for old_rel_path, new_rel_path in plan.renames:
@@ -1411,12 +1411,12 @@ def execute_package_adopt(
             precomputed_patch=patch_content,
         )
         if resolved:
-            adopted_renames.append(f"{old_rel_path} -> {new_rel_path}")
+            adopted_renames.append(f"{old_rel_path.as_posix()} -> {new_rel_path.as_posix()}")
             resolved_paths.append(old_rel_path)
             resolved_paths.append(new_rel_path)
         else:
-            skipped_files.append(str(old_rel_path))
-            skipped_files.append(str(new_rel_path))
+            skipped_files.append(old_rel_path.as_posix())
+            skipped_files.append(new_rel_path.as_posix())
 
     # 4. Process Modifications
     for rel_path in plan.modifications:
@@ -1428,10 +1428,10 @@ def execute_package_adopt(
             precomputed_patch=patch_content,
         )
         if resolved:
-            adopted_modifications.append(str(rel_path))
+            adopted_modifications.append(rel_path.as_posix())
             resolved_paths.append(rel_path)
         else:
-            skipped_files.append(str(rel_path))
+            skipped_files.append(rel_path.as_posix())
 
     # 5. Staging ONLY resolved files in install/ repository
     if resolved_paths:
@@ -1481,10 +1481,10 @@ def adopt_one_package_drifts(
             dry_run_adopt(plan)
             return PackageAdoptResult(
                 package=pkg,
-                adopted_additions=[str(p) for p in plan.additions],
-                adopted_deletions=[str(p) for p in plan.deletions],
-                adopted_modifications=[str(p) for p in plan.modifications],
-                adopted_renames=[f"{old} -> {new}" for old, new in plan.renames],
+                adopted_additions=[p.as_posix() for p in plan.additions],
+                adopted_deletions=[p.as_posix() for p in plan.deletions],
+                adopted_modifications=[p.as_posix() for p in plan.modifications],
+                adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in plan.renames],
                 status="SUCCESS",
             )
         else:
@@ -1617,10 +1617,10 @@ def run_primitive_adopt_drifts(
                 dry_run_adopt(pkg_plan)
                 package_results.append(PackageAdoptResult(
                     package=pkg_plan.package,
-                    adopted_additions=[str(p) for p in pkg_plan.additions],
-                    adopted_deletions=[str(p) for p in pkg_plan.deletions],
-                    adopted_modifications=[str(p) for p in pkg_plan.modifications],
-                    adopted_renames=[f"{old} -> {new}" for old, new in pkg_plan.renames],
+                    adopted_additions=[p.as_posix() for p in pkg_plan.additions],
+                    adopted_deletions=[p.as_posix() for p in pkg_plan.deletions],
+                    adopted_modifications=[p.as_posix() for p in pkg_plan.modifications],
+                    adopted_renames=[f"{old.as_posix()} -> {new.as_posix()}" for old, new in pkg_plan.renames],
                     status="SUCCESS",
                 ))
             else:

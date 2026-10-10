@@ -5,9 +5,10 @@ import unittest
 import subprocess
 import zipapp
 from pathlib import Path
+from tests.test_utils import TestCaseUtilityMixin
 
 
-class TestBuildArtifacts(unittest.TestCase):
+class TestBuildArtifacts(unittest.TestCase, TestCaseUtilityMixin):
     """Verifies that Drift can be packaged into standalone distribution artifacts and executed cleanly."""
 
     def test_zipapp_packaging_and_execution(self) -> None:
@@ -46,7 +47,7 @@ class TestBuildArtifacts(unittest.TestCase):
                 env=env
             )
             self.assertEqual(res_help.returncode, 0)
-            self.assertIn("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", res_help.stdout or "")
+            self.assertIn_stripped("drift: Decoupled Two-Stage Git-Backed Dotfiles Manager", res_help.stdout or "")
 
             # 3. Test help documentation loading from inside zipapp
             res_doc = subprocess.run(
@@ -56,7 +57,7 @@ class TestBuildArtifacts(unittest.TestCase):
                 env=env
             )
             self.assertEqual(res_doc.returncode, 0)
-            self.assertIn("drift_workspace.toml Complete Global Configuration Reference", res_doc.stdout)
+            self.assertIn_stripped("drift_workspace.toml Complete Global Configuration Reference", res_doc.stdout or "")
 
             # 4. Test end-to-end workspace initialization, package creation, and deployment
             workspace_dir = temp_path / "workspace"

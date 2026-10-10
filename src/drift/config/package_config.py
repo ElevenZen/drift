@@ -443,7 +443,7 @@ class PackageConfig(AlwaysTruthy):
         pkg_facts = { k: str(v) for k, v in {
             'drift_package_name': self.name,
             'drift_package_install_method': self.package.install_method,
-            'drift_package_target_dir': self.package.target_directory,
+            'drift_package_target_dir': self.package.target_directory.as_posix() if self.package.target_directory else None,
         }.items() if v is not None }
         return { **ws_pkg_facts, **pkg_facts }
 
