@@ -285,7 +285,7 @@ class RenderEngineRegistry(AlwaysTruthy, MutableMapping[str, RenderEngineConfig]
             # validation is done in RenderEngineConfig.validate() after construction
             return RenderEngineConfig(
                 name=name,
-                input_file=input_path,
+                input_file=resolved_input if raw_input is not None else None,
                 suffix=str(config_dict.get("suffix", "")),
                 render_command=str(config_dict.get("render_command", "")),
             )
