@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import stat
 import tempfile
 import unittest
@@ -91,12 +92,20 @@ class TestRenderHasher(unittest.TestCase):
             h3 = hash_file_disk(file_path)
             self.assertNotEqual(h1, h3)
 
-            # Changing permissions (e.g. chmod 755 vs 644) changes hash
-            file_path.chmod(0o644)
-            h_644 = hash_file_disk(file_path)
-            file_path.chmod(0o755)
-            h_755 = hash_file_disk(file_path)
-            self.assertNotEqual(h_644, h_755)
+            # Changing permissions changes hash (on Windows: read-only vs writable; on POSIX: 755 vs 644)
+            if sys.platform == "win32":
+                import stat
+                file_path.chmod(stat.S_IREAD)
+                h_ro = hash_file_disk(file_path)
+                file_path.chmod(stat.S_IREAD | stat.S_IWRITE)
+                h_rw = hash_file_disk(file_path)
+                self.assertNotEqual(h_ro, h_rw)
+            else:
+                file_path.chmod(0o644)
+                h_644 = hash_file_disk(file_path)
+                file_path.chmod(0o755)
+                h_755 = hash_file_disk(file_path)
+                self.assertNotEqual(h_644, h_755)
 
     def test_hybrid_scope_hashing(self) -> None:
         """Verifies package-relative hashing for render dir and absolute hashing for external paths."""

@@ -260,7 +260,7 @@ class TestRenderDAG(unittest.TestCase):
         inside_node = make_root_dependency_node(inside_file, pkg_source_dir, drift_root)
         self.assertIsInstance(inside_node, UnknownPathNode)
         assert isinstance(inside_node, UnknownPathNode)
-        self.assertEqual(inside_node.src_path, Path("/workspace/src/test_pkg/scripts/deploy.sh"))
+        self.assertEqual(inside_node.src_path, inside_file.resolve())
         self.assertIsNone(inside_node.dst_path)
 
         # File outside package source directory (e.g. global config or external asset)

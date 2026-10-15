@@ -1,4 +1,5 @@
 import os
+import sys
 import shutil
 import tempfile
 import unittest
@@ -623,13 +624,13 @@ target_directory = "{self.system_target_dir.as_posix()}"
 
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a"])
         reg = load_state_registry(self.state_file)
-        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.SYMLINK)
+        expected_method = InstallMethod.COPY if sys.platform == "win32" else InstallMethod.SYMLINK
+        self.assertEqual(reg.get_package_install_method("pkg_a"), expected_method)
 
         # 2. Modify package file so staging detects changes and proceeds to Step 4
         (pkg_dir / "file.txt").write_text("symlink modified content", encoding="utf-8")
 
         # 3. Deploy update with prepare_install failing on pre-flight: should trigger rollback due to symlinks
-        import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture
@@ -748,7 +749,8 @@ target_directory = "{self.system_target_dir.as_posix()}"
         # Initial deployment of both
         run_primitive_deploy_pipeline(self.workspace_config, packages_to_deploy=["pkg_a", "pkg_b"])
         reg = load_state_registry(self.state_file)
-        self.assertEqual(reg.get_package_install_method("pkg_a"), InstallMethod.SYMLINK)
+        expected_method = InstallMethod.COPY if sys.platform == "win32" else InstallMethod.SYMLINK
+        self.assertEqual(reg.get_package_install_method("pkg_a"), expected_method)
         self.assertEqual(reg.get_package_install_method("pkg_b"), InstallMethod.COPY)
 
         # Modify both packages
@@ -756,7 +758,6 @@ target_directory = "{self.system_target_dir.as_posix()}"
         (pkg_b_dir / "file_b.txt").write_text("copy modified", encoding="utf-8")
 
         # Deploy both, but prepare_install fails on pkg_b (the COPY package!)
-        import sys
         stderr_capture = StringIO()
         orig_stderr = sys.stderr
         sys.stderr = stderr_capture

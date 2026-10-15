@@ -142,8 +142,11 @@ class TestCompletionGenerators(unittest.TestCase):
 
     def test_cli_complete_command_typer(self):
         """Verifies 'drift complete fish' via Typer."""
-        from typer.testing import CliRunner
-        from drift.cli.typer_backend import app
+        try:
+            from typer.testing import CliRunner
+            from drift.cli.typer_backend import app
+        except ImportError:
+            self.skipTest("typer not installed")
 
         runner = CliRunner()
         res = runner.invoke(app, ["complete", "fish"])
