@@ -473,8 +473,12 @@ class TestFileUtils(unittest.TestCase):
         dst_link = self.root / "copied_link.txt"
 
         win_prefixed_target = f"\\\\?\\{src_file.resolve()}"
+        real_readlink = os.readlink
 
-        with patch("sys.platform", "win32"), patch("os.readlink", return_value=win_prefixed_target):
+        with patch("sys.platform", "win32"), patch(
+            "os.readlink",
+            side_effect=lambda p: win_prefixed_target if Path(p) == fake_link else real_readlink(p),
+        ):
             self.assertTrue(_check_symlink_points_to_source(fake_link, src_file))
             with patch.object(Path, "symlink_to") as mock_symlink_to:
                 copy_symlink(fake_link, dst_link)
